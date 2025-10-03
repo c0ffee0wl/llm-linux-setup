@@ -1,0 +1,234 @@
+#!/usr/bin/env python3
+"""
+Context - Extract terminal history from asciinema session recordings
+
+Extracts prompt blocks (prompt + command + output) from your terminal session.
+Each block contains everything from one prompt to the next, preserving the exact
+terminal formatting including multi-line commands.
+
+Usage:
+    context          # Show last prompt block (default)
+    context 5        # Show last 5 prompt blocks
+    context all      # Show entire session
+    context -a       # Show entire session
+    context -e       # Output ASCIINEMA_CAST_FILE environment variable
+Usage:
+    context [number|all]
+    context -e | --environment
+    context -a | --all
+Example:
+    context 5 (shows last 5 prompt blocks)
+    context all (shows entire history)
+    context -a (shows entire history)
+    context -e (outputs export command for ASCIINEMA_CAST_FILE)
+"""
+
+import os
+import sys
+import subprocess
+import tempfile
+import re
+import argparse
+
+
+def find_cast_file():
+    """Find the current session's cast file"""
+    # First, check environment variable
+    if "ASCIINEMA_CAST_FILE" in os.environ:
+        cast_file = os.environ["ASCIINEMA_CAST_FILE"]
+        if os.path.exists(cast_file):
+            return cast_file
+
+    # Fall back to finding most recent cast file in log directory
+    log_dir = "/tmp/session_logs/asciinema"
+    if not os.path.exists(log_dir):
+        return None
+
+    cast_files = [
+        os.path.join(log_dir, f)
+        for f in os.listdir(log_dir)
+        if f.endswith(".cast")
+    ]
+
+    if not cast_files:
+        return None
+
+    # Return most recently modified file
+    return max(cast_files, key=os.path.getmtime)
+
+
+def convert_cast_to_text(cast_file):
+    """Convert .cast file to readable text using asciinema"""
+    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        subprocess.run(
+            ["asciinema", "convert", cast_file, tmp_path, "--overwrite"],
+            check=True,
+            capture_output=True
+        )
+
+        with open(tmp_path, 'r', encoding='utf-8', errors='replace') as f:
+            content = f.read()
+
+        return content
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
+def detect_prompts(text):
+    """
+    Detect command prompts in the text.
+    Returns list of (line_number, line_content) tuples for lines that are prompts.
+
+    Detects various prompt formats:
+    - Lines ending with $ or # (standard bash/sh prompts)
+    - Lines containing user@host patterns
+    - Lines with common zsh theme markers (%, ❯, →, etc.)
+    """
+    lines = text.split('\n')
+    prompt_lines = []
+
+    # Common prompt patterns
+    prompt_patterns = [
+        r'.*[$#]\s*$',           # Ends with $ or # (standard bash/sh)
+        r'.*[$#]\s+\S+',          # $ or # followed by command
+        r'.*[%❯→➜]\s*$',          # Zsh themes (%, ❯, →, ➜)
+        r'.*[%❯→➜]\s+\S+',        # Zsh themes followed by command
+        r'^\S+@\S+.*[$#%]',       # user@host pattern with prompt char
+    ]
+
+    for i, line in enumerate(lines):
+        # Skip empty lines
+        if not line.strip():
+            continue
+
+        # Check against patterns
+        for pattern in prompt_patterns:
+            if re.search(pattern, line):
+                prompt_lines.append((i, line))
+                break
+
+    return prompt_lines
+
+
+def extract_prompt_blocks(text, count=1):
+    """
+    Extract prompt blocks (prompt + command + output) from the converted text.
+
+    Args:
+        text: Converted asciinema text
+        count: Number of recent prompt blocks to extract (None for all)
+
+    Returns:
+        List of text blocks, each containing everything from one prompt to the next
+    """
+    lines = text.split('\n')
+    prompt_lines = detect_prompts(text)
+
+    if not prompt_lines:
+        return []
+
+    blocks = []
+
+    # Process each prompt line - extract everything from this prompt to the next
+    for i, (line_num, prompt_line) in enumerate(prompt_lines):
+        # Get all lines from this prompt to the next prompt (or end of text)
+        start_line = line_num
+        if i + 1 < len(prompt_lines):
+            end_line = prompt_lines[i + 1][0]
+        else:
+            end_line = len(lines)
+
+        block_lines = lines[start_line:end_line]
+        block = '\n'.join(block_lines).rstrip()
+
+        blocks.append(block)
+
+    # Return requested number of blocks
+    if count is None:
+        return blocks
+    else:
+        return blocks[-count:]
+
+
+def format_output(blocks):
+    """Format prompt blocks for display"""
+    if not blocks:
+        return "No prompts found in session recording."
+
+    result = []
+    for i, block in enumerate(blocks, 1):
+        result.append(f"=== Block {i} ===")
+        result.append(block)
+        result.append("")  # Blank line separator
+
+    return '\n'.join(result)
+
+
+def main():
+    # Parse arguments
+    parser = argparse.ArgumentParser(description='Extract prompt blocks from terminal session')
+    parser.add_argument('count', nargs='?', default=1,
+                       help='Number of recent prompt blocks to show or "all" for entire history (default: 1)')
+    parser.add_argument('-e', '--environment', action='store_true',
+                       help='Output ASCIINEMA_CAST_FILE environment variable')
+    parser.add_argument('-a', '--all', action='store_true',
+                       help='Show entire history')
+
+    args = parser.parse_args()
+
+    # Find cast file
+    cast_file = find_cast_file()
+
+    # Handle -e/--environment flag
+    if args.environment:
+        if cast_file:
+            print(f"export ASCIINEMA_CAST_FILE='{cast_file}'")
+        else:
+            print("# No asciinema session recording found", file=sys.stderr)
+            sys.exit(1)
+        return
+
+    # Determine if we want all history
+    show_all = args.all or args.count == 'all'
+
+    if show_all:
+        count = None  # Signal to show all
+    else:
+        # Validate count is a number
+        try:
+            count = int(args.count)
+            if count < 1:
+                raise ValueError()
+        except (ValueError, TypeError):
+            print("Error: Please provide a positive number or 'all'", file=sys.stderr)
+            parser.print_help(sys.stderr)
+            sys.exit(1)
+
+    if not cast_file:
+        print("Error: No asciinema session recording found.", file=sys.stderr)
+        print("Make sure you're in a shell with asciinema recording enabled.", file=sys.stderr)
+        sys.exit(1)
+
+    # Convert to text
+    try:
+        text = convert_cast_to_text(cast_file)
+    except subprocess.CalledProcessError as e:
+        print(f"Error: Failed to convert cast file: {e}", file=sys.stderr)
+        sys.exit(1)
+    except FileNotFoundError:
+        print("Error: asciinema command not found. Is it installed?", file=sys.stderr)
+        sys.exit(1)
+
+    # Extract prompt blocks
+    blocks = extract_prompt_blocks(text, count)
+
+    # Display results
+    print(format_output(blocks))
+
+
+if __name__ == "__main__":
+    main()

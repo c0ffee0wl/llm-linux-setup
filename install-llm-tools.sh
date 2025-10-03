@@ -1,0 +1,479 @@
+#!/bin/bash
+#
+# LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)
+# Installs Simon Willison's llm CLI tool and related AI/LLM command-line utilities
+#
+# Usage: ./install-llm-tools.sh
+# Re-run to update all tools
+
+set -e
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Logging function
+log() {
+    echo -e "${GREEN}[$(date +'%Y-%m-%d %H:%M:%S')]${NC} $1"
+}
+
+error() {
+    echo -e "${RED}[ERROR]${NC} $1" >&2
+    exit 1
+}
+
+warn() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
+
+# Check if running as root
+if [ "$EUID" -eq 0 ]; then
+    warn "Running as root. Some installations will be done in /root/.local/"
+fi
+
+# Check if we're on a Debian-based system (hard requirement)
+if ! grep -qE "(debian|ID_LIKE.*debian)" /etc/os-release 2>/dev/null; then
+    error "This script requires a Debian-based Linux distribution. Detected system is not compatible."
+fi
+
+#############################################################################
+# PHASE 0: Self-Update
+#############################################################################
+
+log "Checking for script updates..."
+cd "$SCRIPT_DIR"
+
+if git rev-parse --git-dir > /dev/null 2>&1; then
+    log "Git repository detected, checking for updates..."
+
+    # Fetch latest changes
+    git fetch origin 2>/dev/null || true
+
+    # Check if we're behind
+    LOCAL=$(git rev-parse HEAD)
+    REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
+
+    if [ "$LOCAL" != "$REMOTE" ]; then
+        log "Updates found! Pulling latest changes..."
+        git pull
+        log "Re-executing updated script..."
+        exec "$0" "$@"
+        exit 0
+    else
+        log "Script is up to date"
+    fi
+else
+    warn "Not running from a git repository. Self-update disabled."
+fi
+
+#############################################################################
+# PHASE 1: Install Prerequisites
+#############################################################################
+
+log "Installing prerequisites..."
+
+sudo apt-get update
+
+# Install git
+if ! command -v git &> /dev/null; then
+    log "Installing git..."
+    sudo apt-get install -y git
+else
+    log "git is already installed"
+fi
+
+# Install jq
+if ! command -v jq &> /dev/null; then
+    log "Installing jq..."
+    sudo apt-get install -y jq
+else
+    log "jq is already installed"
+fi
+
+# Install Python3
+if ! command -v python3 &> /dev/null; then
+    log "Installing Python3..."
+    sudo apt-get install -y python3
+else
+    log "Python3 is already installed"
+fi
+
+# Install pipx
+if ! command -v pipx &> /dev/null; then
+    log "Installing pipx..."
+    sudo apt-get install -y pipx
+else
+    log "pipx is already installed"
+fi
+
+# Install uv
+export PATH=$HOME/.local/bin:$PATH
+if ! command -v uv &> /dev/null; then
+    log "Installing uv..."
+    pipx install uv
+else
+    log "uv is already installed"
+fi
+
+# Install Rust and Cargo from repositories
+if ! command -v cargo &> /dev/null; then
+    log "Installing Rust and Cargo from repositories..."
+    sudo apt-get install -y cargo rustc
+else
+    log "Rust/Cargo is already installed"
+fi
+
+# Install asciinema
+if ! command -v asciinema &> /dev/null; then
+    log "Installing asciinema..."
+    cargo install --locked --git https://github.com/asciinema/asciinema
+else
+    log "asciinema is already installed, updating..."
+    cargo install --locked --force --git https://github.com/asciinema/asciinema
+fi
+
+# Check Node.js version
+REQUIRED_NODE_MAJOR=22
+CURRENT_NODE_VERSION=""
+
+if command -v node &> /dev/null; then
+    CURRENT_NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
+fi
+
+if [ -z "$CURRENT_NODE_VERSION" ] || [ "$CURRENT_NODE_VERSION" -lt "$REQUIRED_NODE_MAJOR" ]; then
+    log "Installing Node.js v${REQUIRED_NODE_MAJOR} via nvm..."
+
+    # Install nvm
+    if [ ! -d "$HOME/.nvm" ]; then
+        log "Installing nvm..."
+        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+    fi
+
+    # Load nvm
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+
+    # Install Node.js
+    nvm install ${REQUIRED_NODE_MAJOR}
+    nvm use ${REQUIRED_NODE_MAJOR}
+else
+    log "Node.js v${CURRENT_NODE_VERSION} is already installed"
+fi
+
+# Detect if npm needs sudo
+log "Detecting npm permissions..."
+NPM_PREFIX=$(npm config get prefix 2>/dev/null || echo "/usr/local")
+if mkdir -p "$NPM_PREFIX/lib/node_modules/.npm-test" 2>/dev/null; then
+    rm -rf "$NPM_PREFIX/lib/node_modules/.npm-test" 2>/dev/null
+    NPM_NEEDS_SUDO=false
+    log "npm can install globally without sudo"
+else
+    NPM_NEEDS_SUDO=true
+    log "npm requires sudo for global installs"
+fi
+
+# Wrapper function for npm global installs
+npm_install() {
+    if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+        sudo npm "$@"
+    else
+        npm "$@"
+    fi
+}
+
+#############################################################################
+# PHASE 2: Install/Update LLM Core
+#############################################################################
+
+log "Installing/updating llm..."
+
+# Check if llm is already installed
+if command -v llm &> /dev/null; then
+    log "llm is already installed, upgrading..."
+    uv tool upgrade llm
+else
+    log "Installing llm..."
+    uv tool install llm
+fi
+
+# Ensure llm is in PATH
+export PATH=$HOME/.local/bin:$PATH
+
+# Configure Azure OpenAI API
+# Check if Azure key is already set
+if ! llm keys path azure &> /dev/null; then
+    log "Configuring Azure OpenAI API..."
+    echo ""
+    read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
+    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+
+    llm keys set azure
+    echo "$AZURE_API_KEY" | llm keys set azure
+else
+    log "Azure API key already configured"
+    read -p "Do you want to reconfigure Azure settings? (y/N): " RECONFIG
+    if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
+        read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
+        read -p "Enter your Azure Foundry resource URL: " AZURE_API_BASE
+        echo "$AZURE_API_KEY" | llm keys set azure
+    else
+        # Try to read existing config for API base
+        AZURE_API_BASE=${AZURE_API_BASE:-"https://REPLACE-ME.openai.azure.com/openai/v1/"}
+    fi
+fi
+
+# Create extra-openai-models.yaml
+EXTRA_MODELS_FILE="$(llm logs path | xargs dirname)/extra-openai-models.yaml"
+log "Creating Azure OpenAI models configuration..."
+
+cat > "$EXTRA_MODELS_FILE" <<EOF
+- model_id: azure/gpt-5
+  model_name: gpt-5
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+
+- model_id: azure/gpt-5-mini
+  model_name: gpt-5-mini
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+
+- model_id: azure/gpt-5-nano
+  model_name: gpt-5-nano
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+
+- model_id: azure/gpt-4.1
+  model_name: gpt-4.1
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+EOF
+
+log "Setting default model to azure/gpt-5-mini..."
+llm models default azure/gpt-5-mini
+
+#############################################################################
+# PHASE 3: Install/Update LLM Plugins
+#############################################################################
+
+log "Installing/updating llm plugins..."
+
+PLUGINS=(
+    "llm-gemini"
+    "llm-anthropic"
+    "llm-tools-quickjs"
+    "llm-tools-sqlite"
+    "llm-fragments-site-text"
+    "llm-fragments-pdf"
+    "llm-fragments-github"
+    "llm-jq"
+    "git+https://github.com/damonmcminn/llm-templates-fabric"
+    "$SCRIPT_DIR/llm-tools-context"
+)
+
+for plugin in "${PLUGINS[@]}"; do
+    log "Installing/updating $plugin..."
+    llm install "$plugin" --upgrade 2>/dev/null || llm install "$plugin"
+done
+
+#############################################################################
+# PHASE 4: Install/Update LLM Templates
+#############################################################################
+
+log "Installing/updating llm templates..."
+
+# Get templates directory path
+TEMPLATES_DIR="$(llm logs path | xargs dirname)/templates"
+
+# Create templates directory if it doesn't exist
+mkdir -p "$TEMPLATES_DIR"
+
+# Copy assistant.yaml template from repository
+if [ -f "$SCRIPT_DIR/llm-template/assistant.yaml" ]; then
+    warn "Template not updated at $SCRIPT_DIR/llm-template/assistant.yaml"
+else
+    log "Installing assistant.yaml template..."
+    cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
+    log "Template installed to $TEMPLATES_DIR/assistant.yaml"
+fi
+
+#############################################################################
+# PHASE 5: Shell Integration
+#############################################################################
+
+log "Setting up shell integration..."
+
+# Create integration files in the script directory
+BASH_INTEGRATION="$SCRIPT_DIR/integration/llm-integration.bash"
+ZSH_INTEGRATION="$SCRIPT_DIR/integration/llm-integration.zsh"
+COMMON_CONFIG="$SCRIPT_DIR/integration/llm-common.sh"
+
+# These files will be created by separate script files
+# For now, we'll check if they exist and source them
+
+# Update .bashrc
+BASHRC="$HOME/.bashrc"
+if [ -f "$BASHRC" ]; then
+    if ! grep -q "llm-integration.bash" "$BASHRC"; then
+        log "Adding llm integration to .bashrc..."
+        cat >> "$BASHRC" <<EOF
+
+# LLM Tools Integration
+if [ -f "$SCRIPT_DIR/integration/llm-integration.bash" ]; then
+    source "$SCRIPT_DIR/integration/llm-integration.bash"
+fi
+EOF
+    else
+        log "llm integration already present in .bashrc"
+    fi
+fi
+
+# Update .zshrc
+ZSHRC="$HOME/.zshrc"
+if [ -f "$ZSHRC" ]; then
+    if ! grep -q "llm-integration.zsh" "$ZSHRC"; then
+        log "Adding llm integration to .zshrc..."
+        cat >> "$ZSHRC" <<EOF
+
+# LLM Tools Integration
+if [ -f "$SCRIPT_DIR/integration/llm-integration.zsh" ]; then
+    source "$SCRIPT_DIR/integration/llm-integration.zsh"
+fi
+EOF
+    else
+        log "llm integration already present in .zshrc"
+    fi
+fi
+
+#############################################################################
+# PHASE 6: Additional Tools
+#############################################################################
+
+log "Installing/updating additional tools..."
+
+# Install/update repomix
+log "Installing/updating repomix..."
+npm_install install -g repomix
+
+# Install/update files-to-prompt
+log "Installing/updating files-to-prompt..."
+if uv tool list | grep -q "files-to-prompt"; then
+    uv tool upgrade files-to-prompt
+else
+    uv tool install git+https://github.com/danmackinlay/files-to-prompt
+fi
+
+# Install context script
+log "Installing context script..."
+mkdir -p "$HOME/.local/bin"
+cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
+chmod +x "$HOME/.local/bin/context"
+
+
+#### SKIP FOR NOW!
+
+exit
+
+#############################################################################
+# PHASE 7: Claude Code & Router
+#############################################################################
+
+log "Installing/updating Claude Code and Claude Code Router..."
+
+# Install/update Claude Code
+log "Installing/updating Claude Code..."
+npm_install install -g @anthropic-ai/claude-code
+
+# Install/update Claude Code Router
+log "Installing/updating Claude Code Router..."
+npm_install install -g @musistudio/claude-code-router
+
+# Configure Claude Code Router for Azure OpenAI
+CCR_CONFIG_DIR="$HOME/.claude-code-router"
+CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
+
+mkdir -p "$CCR_CONFIG_DIR"
+
+if [ -f "$CCR_CONFIG_FILE" ]; then
+    log "Claude Code Router config already exists"
+    read -p "Do you want to reconfigure Claude Code Router for Azure? (y/N): " RECONFIG_CCR
+    if [[ ! "$RECONFIG_CCR" =~ ^[Yy]$ ]]; then
+        log "Skipping Claude Code Router configuration"
+        # Skip to the next phase
+        CCR_CONFIGURED=1
+    fi
+fi
+
+if [ -z "$CCR_CONFIGURED" ]; then
+    log "Configuring Claude Code Router for Azure OpenAI..."
+    echo ""
+    read -p "Enter your Azure OpenAI endpoint for Claude Code (e.g., https://YOUR-RESOURCE.openai.azure.com): " CCR_AZURE_ENDPOINT
+    read -p "Enter your Azure OpenAI API key for Claude Code: " CCR_AZURE_API_KEY
+    read -p "Enter your deployment name (e.g., gpt-4o, claude-sonnet-4): " CCR_DEPLOYMENT_NAME
+    read -p "Enter API version [2024-10-21]: " CCR_API_VERSION
+    CCR_API_VERSION=${CCR_API_VERSION:-2024-10-21}
+
+    # Construct the full API base URL
+    CCR_API_BASE_URL="${CCR_AZURE_ENDPOINT}/openai/deployments/${CCR_DEPLOYMENT_NAME}/chat/completions?api-version=${CCR_API_VERSION}"
+
+    # Create config.json
+    cat > "$CCR_CONFIG_FILE" <<EOF
+{
+  "Providers": [
+    {
+      "name": "azure",
+      "api_base_url": "${CCR_API_BASE_URL}",
+      "api_key": "${CCR_AZURE_API_KEY}",
+      "models": ["${CCR_DEPLOYMENT_NAME}"]
+    }
+  ],
+  "Router": {
+    "default": "azure,${CCR_DEPLOYMENT_NAME}"
+  }
+}
+EOF
+
+    log "Claude Code Router configuration created at $CCR_CONFIG_FILE"
+fi
+
+# Install/update OpenCode
+log "Installing/updating OpenCode..."
+npm_install install -g opencode-ai@latest
+
+#############################################################################
+# COMPLETE
+#############################################################################
+
+log ""
+log "============================================="
+log "Installation/Update Complete!"
+log "============================================="
+log ""
+log "Installed tools:"
+log "  - llm (Simon Willison's CLI tool)"
+log "  - llm plugins (gemini, anthropic, tools, fragments, jq, fabric templates, context)"
+log "  - repomix (repository packager)"
+log "  - files-to-prompt (file content formatter)"
+log "  - asciinema (terminal session recorder)"
+log "  - Claude Code (Anthropic's agentic coding CLI)"
+log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
+log "  - OpenCode (AI coding agent for terminal)"
+log ""
+log "Shell integration files created in: $SCRIPT_DIR/integration"
+log "  - integration/llm-integration.bash (for Bash)"
+log "  - integration/llm-integration.zsh (for Zsh)"
+log ""
+log "Next steps:"
+log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
+log "  2. Test llm: llm 'Hello, how are you?'"
+log "  3. Use Ctrl+N in your shell for AI command completion"
+log "  4. Test Claude Code Router: azure-claude"
+log "  5. Test and configure OpenCode: opencode and configure https://opencode.ai/docs/providers"
+log ""
+log "To update all tools in the future, simply re-run this script:"
+log "  ./install-llm-tools.sh"
+log ""
