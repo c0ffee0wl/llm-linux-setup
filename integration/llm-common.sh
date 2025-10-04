@@ -2,7 +2,6 @@
 #
 # Common LLM Configuration
 # Shared settings for both Bash and Zsh
-#
 
 # Ensure llm tools are in PATH
 export PATH="$HOME/.local/bin:$PATH"
@@ -10,15 +9,39 @@ export PATH="$HOME/.local/bin:$PATH"
 # Ensure cargo/rust tools are in PATH
 export PATH="$HOME/.cargo/bin:$PATH"
 
+# Configure terminal session log directory (can be overridden before sourcing this file)
+export TERMINAL_LOG_DIR="${TERMINAL_LOG_DIR:-/tmp/session_logs/asciinema}"
+
 # Custom llm wrapper function to set default template
 llm() {
-    # Check if the first argument is exactly "chat"
+    # List of subcommands that should NOT get the -t template parameter
+    # These are management/configuration commands, not prompt commands
+    local exclude_commands=(
+        "models" "keys" "plugins" "templates" "tools" "schemas" "fragments"
+        "embed" "embed-models" "embed-multi" "collections" "similar"
+        "logs" "aliases" "install" "uninstall"
+        "openai" "gemini" "openrouter"
+        "cmd" "cmdcomp"
+    )
+
+    # Check if first argument is an excluded subcommand
+    local first_arg="$1"
+    for cmd in "${exclude_commands[@]}"; do
+        if [ "$first_arg" = "$cmd" ]; then
+            # Pass through directly without template
+            command llm "$@"
+            return $?
+        fi
+    done
+
+    # For prompt commands (prompt, chat, cmd, cmdcomp, jq) or default prompt
+    # apply the assistant template
     if [ "$1" = "chat" ]; then
         # Remove "chat" from arguments and call with assistant template
         shift
         command llm chat -t assistant "$@"
     else
-        # Default behavior with assistant template
+        # Default behavior with assistant template (includes default prompt command)
         command llm -t assistant "$@"
     fi
 }
@@ -28,20 +51,23 @@ alias azure-claude='ccr code'
 
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema
+# NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
 if [[ -o interactive && -z "$IN_ASCIINEMA_SESSION" ]]; then
   # Set variable to prevent recursion
   export IN_ASCIINEMA_SESSION=1
 
   # Create log directory and define filename
-  LOG_DIR="/tmp/session_logs/asciinema"
-  mkdir -p "$LOG_DIR"
-  CAST_FILE="$LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S")_$$.cast"
+  mkdir -p "$TERMINAL_LOG_DIR"
+  export TERMINAL_LOG_FILE="$TERMINAL_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
 
-  # Store cast file location for context script to find
-  export ASCIINEMA_CAST_FILE="$CAST_FILE"
-
-  echo "INFO: Shell session is being recorded with asciinema. Cast file: $CAST_FILE"
+  # Show environment variable export command
+  if command -v context &> /dev/null; then
+    context -e
+  else
+    echo "export TERMINAL_LOG_FILE='$TERMINAL_LOG_FILE'"
+  fi
+  echo ""
 
   # Replace current shell with asciinema process
-  exec asciinema rec "$CAST_FILE" --quiet
+  exec asciinema rec "$TERMINAL_LOG_FILE" --quiet
 fi

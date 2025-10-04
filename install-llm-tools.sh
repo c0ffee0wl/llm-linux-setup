@@ -111,13 +111,14 @@ else
     log "pipx is already installed"
 fi
 
-# Install uv
+# Install/update uv
 export PATH=$HOME/.local/bin:$PATH
 if ! command -v uv &> /dev/null; then
     log "Installing uv..."
     pipx install uv
 else
-    log "uv is already installed"
+    log "uv is already installed, upgrading..."
+    pipx upgrade uv
 fi
 
 # Install Rust and Cargo from repositories
@@ -206,21 +207,21 @@ export PATH=$HOME/.local/bin:$PATH
 
 # Configure Azure OpenAI API
 # Check if Azure key is already set
-if ! llm keys path azure &> /dev/null; then
+if ! command llm keys get azure &> /dev/null; then
     log "Configuring Azure OpenAI API..."
     echo ""
     read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
     read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
 
-    llm keys set azure
-    echo "$AZURE_API_KEY" | llm keys set azure
+    command llm keys set azure
+    echo "$AZURE_API_KEY" | command llm keys set azure
 else
     log "Azure API key already configured"
     read -p "Do you want to reconfigure Azure settings? (y/N): " RECONFIG
     if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
         read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
         read -p "Enter your Azure Foundry resource URL: " AZURE_API_BASE
-        echo "$AZURE_API_KEY" | llm keys set azure
+        echo "$AZURE_API_KEY" | command llm keys set azure
     else
         # Try to read existing config for API base
         AZURE_API_BASE=${AZURE_API_BASE:-"https://REPLACE-ME.openai.azure.com/openai/v1/"}
@@ -228,7 +229,7 @@ else
 fi
 
 # Create extra-openai-models.yaml
-EXTRA_MODELS_FILE="$(llm logs path | xargs dirname)/extra-openai-models.yaml"
+EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
 log "Creating Azure OpenAI models configuration..."
 
 cat > "$EXTRA_MODELS_FILE" <<EOF
@@ -253,8 +254,13 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
   api_key_name: azure
 EOF
 
-log "Setting default model to azure/gpt-5-mini..."
-llm models default azure/gpt-5-mini
+# Only set default model on first setup (if no default is currently set)
+if ! command llm models default 2>/dev/null | grep -q "azure/"; then
+    log "Setting default model to azure/gpt-5-mini..."
+    command llm models default azure/gpt-5-mini
+else
+    log "Default model already configured, skipping..."
+fi
 
 #############################################################################
 # PHASE 3: Install/Update LLM Plugins
@@ -264,7 +270,10 @@ log "Installing/updating llm plugins..."
 
 PLUGINS=(
     "llm-gemini"
+    "llm-openrouter"
     "llm-anthropic"
+    "llm-cmd"
+    "llm-cmd-comp"
     "llm-tools-quickjs"
     "llm-tools-sqlite"
     "llm-fragments-site-text"
@@ -277,7 +286,7 @@ PLUGINS=(
 
 for plugin in "${PLUGINS[@]}"; do
     log "Installing/updating $plugin..."
-    llm install "$plugin" --upgrade 2>/dev/null || llm install "$plugin"
+    command llm install "$plugin" --upgrade 2>/dev/null || command llm install "$plugin"
 done
 
 #############################################################################
@@ -287,18 +296,36 @@ done
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(llm logs path | xargs dirname)/templates"
+TEMPLATES_DIR="$(command llm logs path | xargs dirname)/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
 
-# Copy assistant.yaml template from repository
+# Copy assistant.yaml template from repository (with smart update check)
 if [ -f "$SCRIPT_DIR/llm-template/assistant.yaml" ]; then
-    warn "Template not updated at $SCRIPT_DIR/llm-template/assistant.yaml"
+    if [ -f "$TEMPLATES_DIR/assistant.yaml" ]; then
+        # Both files exist - compare them
+        if ! cmp -s "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"; then
+            log "Template has changed in repository"
+            echo ""
+            read -p "The assistant.yaml template in the repository differs from your installed version. Update it? (y/N): " UPDATE_TEMPLATE
+            if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
+                cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
+                log "Template updated to $TEMPLATES_DIR/assistant.yaml"
+            else
+                log "Keeping existing template"
+            fi
+        else
+            log "Template is up to date"
+        fi
+    else
+        # Only repo version exists - install it
+        log "Installing assistant.yaml template..."
+        cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
+        log "Template installed to $TEMPLATES_DIR/assistant.yaml"
+    fi
 else
-    log "Installing assistant.yaml template..."
-    cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
-    log "Template installed to $TEMPLATES_DIR/assistant.yaml"
+    warn "Template not found at $SCRIPT_DIR/llm-template/assistant.yaml"
 fi
 
 #############################################################################
@@ -359,6 +386,14 @@ log "Installing/updating additional tools..."
 log "Installing/updating repomix..."
 npm_install install -g repomix
 
+# Install/update gitingest
+log "Installing/updating gitingest..."
+if uv tool list | grep -q "gitingest"; then
+    uv tool upgrade gitingest
+else
+    uv tool install gitingest
+fi
+
 # Install/update files-to-prompt
 log "Installing/updating files-to-prompt..."
 if uv tool list | grep -q "files-to-prompt"; then
@@ -372,11 +407,6 @@ log "Installing context script..."
 mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
-
-
-#### SKIP FOR NOW!
-
-exit
 
 #############################################################################
 # PHASE 7: Claude Code & Router
@@ -408,37 +438,40 @@ if [ -f "$CCR_CONFIG_FILE" ]; then
     fi
 fi
 
-if [ -z "$CCR_CONFIGURED" ]; then
-    log "Configuring Claude Code Router for Azure OpenAI..."
-    echo ""
-    read -p "Enter your Azure OpenAI endpoint for Claude Code (e.g., https://YOUR-RESOURCE.openai.azure.com): " CCR_AZURE_ENDPOINT
-    read -p "Enter your Azure OpenAI API key for Claude Code: " CCR_AZURE_API_KEY
-    read -p "Enter your deployment name (e.g., gpt-4o, claude-sonnet-4): " CCR_DEPLOYMENT_NAME
-    read -p "Enter API version [2024-10-21]: " CCR_API_VERSION
-    CCR_API_VERSION=${CCR_API_VERSION:-2024-10-21}
+# Commented out: Claude Code Router configuration (configure manually if needed)
+# if [ -z "$CCR_CONFIGURED" ]; then
+#     log "Configuring Claude Code Router for Azure OpenAI..."
+#     echo ""
+#     read -p "Enter your Azure OpenAI endpoint for Claude Code (e.g., https://YOUR-RESOURCE.openai.azure.com): " CCR_AZURE_ENDPOINT
+#     read -p "Enter your Azure OpenAI API key for Claude Code: " CCR_AZURE_API_KEY
+#     read -p "Enter your deployment name (e.g., gpt-4o, claude-sonnet-4): " CCR_DEPLOYMENT_NAME
+#     read -p "Enter API version [2024-10-21]: " CCR_API_VERSION
+#     CCR_API_VERSION=${CCR_API_VERSION:-2024-10-21}
+#
+#     # Construct the full API base URL
+#     CCR_API_BASE_URL="${CCR_AZURE_ENDPOINT}/openai/deployments/${CCR_DEPLOYMENT_NAME}/chat/completions?api-version=${CCR_API_VERSION}"
+#
+#     # Create config.json
+#     cat > "$CCR_CONFIG_FILE" <<EOF
+# {
+#   "Providers": [
+#     {
+#       "name": "azure",
+#       "api_base_url": "${CCR_API_BASE_URL}",
+#       "api_key": "${CCR_AZURE_API_KEY}",
+#       "models": ["${CCR_DEPLOYMENT_NAME}"]
+#     }
+#   ],
+#   "Router": {
+#     "default": "azure,${CCR_DEPLOYMENT_NAME}"
+#   }
+# }
+# EOF
+#
+#     log "Claude Code Router configuration created at $CCR_CONFIG_FILE"
+# fi
 
-    # Construct the full API base URL
-    CCR_API_BASE_URL="${CCR_AZURE_ENDPOINT}/openai/deployments/${CCR_DEPLOYMENT_NAME}/chat/completions?api-version=${CCR_API_VERSION}"
-
-    # Create config.json
-    cat > "$CCR_CONFIG_FILE" <<EOF
-{
-  "Providers": [
-    {
-      "name": "azure",
-      "api_base_url": "${CCR_API_BASE_URL}",
-      "api_key": "${CCR_AZURE_API_KEY}",
-      "models": ["${CCR_DEPLOYMENT_NAME}"]
-    }
-  ],
-  "Router": {
-    "default": "azure,${CCR_DEPLOYMENT_NAME}"
-  }
-}
-EOF
-
-    log "Claude Code Router configuration created at $CCR_CONFIG_FILE"
-fi
+log "Claude Code Router installed. Configure manually in $CCR_CONFIG_FILE if needed."
 
 # Install/update OpenCode
 log "Installing/updating OpenCode..."
@@ -457,6 +490,7 @@ log "Installed tools:"
 log "  - llm (Simon Willison's CLI tool)"
 log "  - llm plugins (gemini, anthropic, tools, fragments, jq, fabric templates, context)"
 log "  - repomix (repository packager)"
+log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - files-to-prompt (file content formatter)"
 log "  - asciinema (terminal session recorder)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"

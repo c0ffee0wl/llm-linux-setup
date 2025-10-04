@@ -1,5 +1,7 @@
 # LLM Tools Installation Script for Linux
 
+**GitHub Repository**: https://github.com/c0ffee0wl/llm-linux-setup
+
 Automated installation script for [Simon Willison's llm CLI tool](https://github.com/simonw/llm) and related AI/LLM command-line utilities.
 
 ## Features
@@ -20,9 +22,11 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 ### LLM Plugins
 - llm-gemini
+- llm-openrouter
 - llm-anthropic
 - llm-tools-quickjs
 - llm-tools-sqlite
+- llm-tools-context (terminal history integration)
 - llm-fragments-site-text
 - llm-fragments-pdf
 - llm-fragments-github
@@ -34,6 +38,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 ### Additional Tools
 - **repomix** - Repository packager for AI consumption
+- **gitingest** - Convert Git repositories to LLM-friendly text
 - **files-to-prompt** - File content formatter for LLM prompts
 
 ### Shell Integration
@@ -46,8 +51,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 ### Quick Start
 
 ```bash
-git clone <your-repo-url> /opt/llm-linux-setup
-cd /opt/llm-linux-setup
+git clone https://github.com/c0ffee0wl/llm-linux-setup.git
+cd llm-linux-setup
 ./install-llm-tools.sh
 ```
 
@@ -60,7 +65,7 @@ During installation, you'll be prompted for:
 Simply re-run the installation script:
 
 ```bash
-cd /opt/llm-linux-setup
+cd llm-linux-setup
 ./install-llm-tools.sh
 ```
 
@@ -68,7 +73,7 @@ The script will:
 1. Pull the latest version from git
 2. Update llm and all plugins
 3. Update custom templates (assistant.yaml)
-4. Update repomix and files-to-prompt
+4. Update repomix, gitingest, and files-to-prompt
 5. Refresh shell integration files
 
 ## Usage
@@ -118,6 +123,10 @@ The following models are configured:
 # Package repository for AI analysis
 repomix
 
+# Convert Git repositories to LLM-friendly text
+gitingest https://github.com/user/repo
+gitingest /path/to/local/repo
+
 # Convert files to LLM-friendly format
 files-to-prompt src/*.py
 ```
@@ -153,7 +162,7 @@ llm models default azure/gpt-5
 llm keys set azure
 
 # View key storage path
-llm keys path azure
+llm keys path
 
 # List all configured keys
 llm keys
@@ -182,7 +191,7 @@ llm keys
 
 1. Verify API key is set:
    ```bash
-   llm keys path azure
+   llm keys get azure
    ```
 
 2. Check model configuration:
@@ -197,7 +206,7 @@ llm keys
 If the script update fails:
 
 ```bash
-cd /opt/llm-linux-setup
+cd llm-linux-setup
 git reset --hard origin/main
 ./install-llm-tools.sh
 ```
@@ -220,6 +229,7 @@ git reset --hard origin/main
 - [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
 - [Pedantic Journal - LLM Guide](https://pedanticjournal.com/llm/)
 - [Repomix Documentation](https://github.com/yamadashy/repomix)
+- [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
 - [Files-to-Prompt](https://github.com/danmackinlay/files-to-prompt)
 
 ## License
@@ -233,9 +243,9 @@ This installation script is provided as-is. Individual tools have their own lice
 
 To modify or extend this installation:
 
-1. Edit the scripts in `/opt/llm-linux-setup/`
+1. Edit the scripts in the repository
 2. Test your changes
-3. Commit to git
+3. Commit and push to git
 4. The changes will be pulled automatically on next run
 
 ## Credits

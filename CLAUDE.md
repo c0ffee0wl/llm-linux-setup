@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Repository Information
+
+**GitHub Repository**: https://github.com/c0ffee0wl/llm-linux-setup
+
 ## Repository Overview
 
 This is an installation and configuration system for Simon Willison's `llm` CLI tool and related AI/LLM command-line utilities on Linux (Debian/Ubuntu/Kali). The repository consists of a main installation script and shell integration files that work together to provide a complete LLM tooling environment.
@@ -24,12 +28,13 @@ The repository includes an **automatic session recording and context extraction 
 
 1. **Automatic Recording** (`integration/llm-common.sh`): Interactive shells automatically start asciinema recording
    - Only triggers in interactive shells (not scripts or nested sessions)
-   - Prevents recursion by checking `$IN_ASCIINEMA_SESSION`, `$TMUX`, and `$STY` env vars
-   - Stores recordings in `/tmp/session_logs/asciinema/` with timestamp-based filenames
-   - Exports `$ASCIINEMA_CAST_FILE` for the context tool to locate the current recording
+   - Prevents recursion by checking `$IN_ASCIINEMA_SESSION` env vars
+   - Stores recordings in configurable directory (default: `/tmp/session_logs/asciinema/`) via `$TERMINAL_LOG_DIR`
+   - Creates timestamp-based filenames
+   - Exports `$TERMINAL_LOG_FILE` for the context tool to locate the current recording
 
 2. **Context Extraction** (`context/context`): Python script that parses asciinema recordings
-   - Finds current session's `.cast` file via `$ASCIINEMA_CAST_FILE` or most recent file in log directory
+   - Finds current session's `.cast` file via `$TERMINAL_LOG_FILE` or most recent file in log directory
    - Converts binary `.cast` format to text using `asciinema convert`
    - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.)
    - Extracts commands and their outputs, returns last N commands or full session
@@ -39,7 +44,17 @@ The repository includes an **automatic session recording and context extraction 
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
 
-**Architecture Flow**: Shell starts → asciinema records → `$ASCIINEMA_CAST_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
+**Architecture Flow**: Shell starts → asciinema records → `$TERMINAL_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
+
+**Configuration**: The session log directory can be customized by setting `$TERMINAL_LOG_DIR` before shell integration loads (e.g., in `.bashrc` before sourcing `llm-integration.bash`). This allows persistent storage outside `/tmp` if desired.
+
+**Behavior with Terminal Multiplexers (tmux/screen)**:
+- **Each pane/window gets its own independent recording** - This is intentional design for workflow isolation
+- When you create a new tmux pane or screen window, that new shell starts its own asciinema recording
+- The `context` command in each pane shows only that pane's history, not other panes
+- This matches the mental model: different panes = different workflows = separate contexts
+- **If you want unified recording**: Start asciinema manually before launching tmux: `asciinema rec --command "tmux attach"`
+- The auto-recording system does NOT prevent per-pane recordings; each new shell in a multiplexer will trigger its own recording session
 
 ### Shell Integration Architecture
 
@@ -65,7 +80,7 @@ The script is organized into numbered phases:
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade`
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks)
-6. **Additional Tools**: Install/update repomix (npm), files-to-prompt (uv), context script
+6. **Additional Tools**: Install/update repomix (npm), gitingest (pipx), files-to-prompt (uv), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
 
 ### Azure OpenAI Configuration
@@ -166,6 +181,7 @@ The script automatically upgrades tools on re-run:
 - `llm`: `uv tool upgrade llm`
 - Plugins: `llm install <plugin> --upgrade`
 - `repomix`: `npm install -g repomix` (npm always installs latest)
+- `gitingest`: `uv tool upgrade gitingest`
 - `files-to-prompt`: `uv tool upgrade files-to-prompt`
 - `asciinema`: `cargo install --locked --force --git https://github.com/asciinema/asciinema`
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
@@ -231,21 +247,3 @@ Note that several packages use **forks** or specific sources:
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 
-## Language & Localization
-
-The **assistant.yaml template** is configured in **German** for a German-speaking security/IT professional. The template:
-- Responds in German (except for code, which is in English)
-- Assumes context of Kali Linux/Debian environment
-- Is tailored for cybersecurity and ethical hacking work
-- Uses the `context` and `web_search` tools proactively
-- Has specific formatting preferences (plain text, no markdown except code blocks)
-
-## Shell Script Best Practices Used
-
-- `set -e`: Exit on error (entire script)
-- `SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"`: Portable script directory detection
-- Color-coded logging functions: `log()`, `error()`, `warn()`
-- Idempotent checks: `if ! command -v <tool>`
-- Explicit PATH exports before using newly installed tools
-- `exec "$0" "$@"`: Process replacement for self-update (not subprocess)
-- `2>/dev/null || true`: Silently ignore expected errors without breaking `set -e`
