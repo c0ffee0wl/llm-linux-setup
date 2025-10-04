@@ -138,24 +138,19 @@ else
     cargo install --locked --force --git https://github.com/asciinema/asciinema
 fi
 
-# Install Node.js and npm from NodeSource
-REQUIRED_NODE_MAJOR=22
-CURRENT_NODE_VERSION=""
-
-if command -v node &> /dev/null; then
-    CURRENT_NODE_VERSION=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-fi
-
-if [ -z "$CURRENT_NODE_VERSION" ] || [ "$CURRENT_NODE_VERSION" -lt "$REQUIRED_NODE_MAJOR" ]; then
-    log "Installing Node.js v${REQUIRED_NODE_MAJOR} from NodeSource..."
-
-    # Download and run NodeSource setup script
-    curl -fsSL https://deb.nodesource.com/setup_${REQUIRED_NODE_MAJOR}.x | sudo -E bash -
-
-    # Install Node.js (includes npm)
+# Install Node.js and npm from OS repositories
+if ! command -v node &> /dev/null; then
+    log "Installing Node.js..."
     sudo apt-get install -y nodejs
 else
-    log "Node.js v${CURRENT_NODE_VERSION} is already installed"
+    log "Node.js is already installed"
+fi
+
+if ! command -v npm &> /dev/null; then
+    log "Installing npm..."
+    sudo apt-get install -y npm
+else
+    log "npm is already installed"
 fi
 
 # Detect if npm needs sudo

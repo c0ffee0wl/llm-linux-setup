@@ -18,7 +18,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 ### Core Tools
 - **llm** - Simon Willison's LLM CLI tool
 - **uv** - Modern Python package installer
-- **Node.js v22+** - Via apt-get from NodeSource
+- **Node.js** - From OS repositories
 
 ### LLM Plugins
 - llm-gemini

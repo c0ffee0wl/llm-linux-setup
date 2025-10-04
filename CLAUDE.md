@@ -75,7 +75,7 @@ Both shell files source the common file at the top. The main installation script
 The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
-1. **Prerequisites**: Install pipx, uv, Node.js (via apt-get from NodeSource), Rust/Cargo, asciinema
+1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema
 2. **LLM Core**: Install/upgrade llm, configure Azure OpenAI, create `extra-openai-models.yaml`
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade`
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
