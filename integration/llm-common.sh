@@ -15,7 +15,7 @@ export TERMINAL_LOG_DIR="${TERMINAL_LOG_DIR:-/tmp/session_logs/asciinema}"
 # Custom llm wrapper function to set default template
 llm() {
     # Check for help flags - pass through to original llm
-    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ] || [ "$1" = "--version" ]; then
         command llm "$@"
         return $?
     fi
@@ -24,10 +24,10 @@ llm() {
     # These are management/configuration commands, not prompt commands
     local exclude_commands=(
         "models" "keys" "plugins" "templates" "tools" "schemas" "fragments"
-        "embed" "embed-models" "embed-multi" "collections" "similar"
-        "logs" "aliases" "install" "uninstall"
+        "collections" "embed" "embed-models" "embed-multi" "similar"
+        "aliases" "logs" "install" "uninstall"
         "openai" "gemini" "openrouter"
-        "cmd" "cmdcomp"
+        "cmd" "cmdcomp" "jq"
     )
 
     # Check if first argument is an excluded subcommand
