@@ -95,8 +95,8 @@ def detect_prompts(text):
     prompt_patterns = [
         r'.*[$#]\s*$',           # Ends with $ or # (standard bash/sh)
         r'.*[$#]\s+\S+',          # $ or # followed by command
-        r'.*[%❯→➜]\s*$',          # Zsh themes (%, ❯, →, ➜)
-        r'.*[%❯→➜]\s+\S+',        # Zsh themes followed by command
+        r'(?<!\d)[%❯→➜]\s*$',     # Zsh themes (%, ❯, →, ➜) - not after digit
+        r'(?<!\d)[%❯→➜]\s+\S+',   # Zsh themes followed by command - not after digit
         r'^\S+@\S+.*[$#%]',       # user@host pattern with prompt char
     ]
 
@@ -111,7 +111,21 @@ def detect_prompts(text):
                 prompt_lines.append((i, line))
                 break
 
-    return prompt_lines
+    # Handle Kali/fancy two-line prompts (header line + prompt line)
+    # Example: ┌──(kali㉿kali)-[~/dir]
+    #          └─$ command
+    adjusted_prompt_lines = []
+    kali_header_pattern = r'^[┌╭]──.*[\])]$'
+
+    for line_num, line_content in prompt_lines:
+        # Check if previous line is a Kali-style header
+        if line_num > 0 and re.search(kali_header_pattern, lines[line_num - 1]):
+            # Start block at header line instead
+            adjusted_prompt_lines.append((line_num - 1, lines[line_num - 1]))
+        else:
+            adjusted_prompt_lines.append((line_num, line_content))
+
+    return adjusted_prompt_lines
 
 
 def extract_prompt_blocks(text, count=1):

@@ -15,21 +15,21 @@ __llm_cmdcomp() {
     local old_cmd="${READLINE_LINE}"
     local cursor_pos="${READLINE_POINT}"
     local result
-
+    
     # Move to a new line
     echo
-
+    
     # Get the LLM completion
-    if result="$(llm cmdcomp "${old_cmd}" 2>/dev/null)"; then
+    if result="$(command llm cmdcomp "${old_cmd}")"; then
         # Replace the command line with the result
         READLINE_LINE="${result}"
         READLINE_POINT="${#result}"
         # Move down a line to prevent bash from overwriting output
         echo
     else
-        # Clear the buffer on error instead of restoring
-        READLINE_LINE=""
-        READLINE_POINT=0
+        # Restore original command on error
+        READLINE_LINE="${old_cmd}"
+        READLINE_POINT="${cursor_pos}"
         echo "Command completion failed" >&2
     fi
 }
