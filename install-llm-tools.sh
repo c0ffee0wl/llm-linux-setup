@@ -249,8 +249,9 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
   vision: true
 EOF
 
-# Only set default model on first setup (if no default is currently set)
-if ! command llm models default 2>/dev/null | grep -q "azure/"; then
+# Only set default model if no custom default has been configured
+DEFAULT_MODEL_FILE="$HOME/.config/io.datasette.llm/default_model.txt"
+if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
     log "Setting default model to azure/gpt-5-mini..."
     command llm models default azure/gpt-5-mini
 else
