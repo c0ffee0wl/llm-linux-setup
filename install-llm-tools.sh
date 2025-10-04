@@ -138,7 +138,7 @@ else
     cargo install --locked --force --git https://github.com/asciinema/asciinema
 fi
 
-# Check Node.js version
+# Install Node.js and npm from NodeSource
 REQUIRED_NODE_MAJOR=22
 CURRENT_NODE_VERSION=""
 
@@ -147,21 +147,13 @@ if command -v node &> /dev/null; then
 fi
 
 if [ -z "$CURRENT_NODE_VERSION" ] || [ "$CURRENT_NODE_VERSION" -lt "$REQUIRED_NODE_MAJOR" ]; then
-    log "Installing Node.js v${REQUIRED_NODE_MAJOR} via nvm..."
+    log "Installing Node.js v${REQUIRED_NODE_MAJOR} from NodeSource..."
 
-    # Install nvm
-    if [ ! -d "$HOME/.nvm" ]; then
-        log "Installing nvm..."
-        curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
-    fi
+    # Download and run NodeSource setup script
+    curl -fsSL https://deb.nodesource.com/setup_${REQUIRED_NODE_MAJOR}.x | sudo -E bash -
 
-    # Load nvm
-    export NVM_DIR="$HOME/.nvm"
-    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
-
-    # Install Node.js
-    nvm install ${REQUIRED_NODE_MAJOR}
-    nvm use ${REQUIRED_NODE_MAJOR}
+    # Install Node.js (includes npm)
+    sudo apt-get install -y nodejs
 else
     log "Node.js v${CURRENT_NODE_VERSION} is already installed"
 fi
