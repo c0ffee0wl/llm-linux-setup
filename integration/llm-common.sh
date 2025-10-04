@@ -14,6 +14,12 @@ export TERMINAL_LOG_DIR="${TERMINAL_LOG_DIR:-/tmp/session_logs/asciinema}"
 
 # Custom llm wrapper function to set default template
 llm() {
+    # Check for help flags - pass through to original llm
+    if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+        command llm "$@"
+        return $?
+    fi
+
     # List of subcommands that should NOT get the -t template parameter
     # These are management/configuration commands, not prompt commands
     local exclude_commands=(
@@ -61,6 +67,7 @@ if [[ -o interactive && -z "$IN_ASCIINEMA_SESSION" ]]; then
   export TERMINAL_LOG_FILE="$TERMINAL_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
 
   # Show environment variable export command
+  echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
   echo "export TERMINAL_LOG_FILE='$TERMINAL_LOG_FILE'"
   echo ""
 
