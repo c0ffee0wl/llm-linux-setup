@@ -422,19 +422,20 @@ npm_install install -g @musistudio/claude-code-router
 CCR_CONFIG_DIR="$HOME/.claude-code-router"
 CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
 
-mkdir -p "$CCR_CONFIG_DIR"
-
-if [ -f "$CCR_CONFIG_FILE" ]; then
-    log "Claude Code Router config already exists"
-    read -p "Do you want to reconfigure Claude Code Router for Azure? (y/N): " RECONFIG_CCR
-    if [[ ! "$RECONFIG_CCR" =~ ^[Yy]$ ]]; then
-        log "Skipping Claude Code Router configuration"
-        # Skip to the next phase
-        CCR_CONFIGURED=1
-    fi
-fi
-
 # Commented out: Claude Code Router configuration (configure manually if needed)
+
+# mkdir -p "$CCR_CONFIG_DIR"
+# 
+# if [ -f "$CCR_CONFIG_FILE" ]; then
+#     log "Claude Code Router config already exists"
+#     read -p "Do you want to reconfigure Claude Code Router for Azure? (y/N): " RECONFIG_CCR
+#     if [[ ! "$RECONFIG_CCR" =~ ^[Yy]$ ]]; then
+#         log "Skipping Claude Code Router configuration"
+#         # Skip to the next phase
+#         CCR_CONFIGURED=1
+#     fi
+# fi
+# 
 # if [ -z "$CCR_CONFIGURED" ]; then
 #     log "Configuring Claude Code Router for Azure OpenAI..."
 #     echo ""
