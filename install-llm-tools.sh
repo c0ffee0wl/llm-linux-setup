@@ -220,21 +220,33 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
   model_name: gpt-5
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
 
 - model_id: azure/gpt-5-mini
   model_name: gpt-5-mini
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
 
 - model_id: azure/gpt-5-nano
   model_name: gpt-5-nano
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
 
 - model_id: azure/gpt-4.1
   model_name: gpt-4.1
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
 EOF
 
 # Only set default model on first setup (if no default is currently set)
