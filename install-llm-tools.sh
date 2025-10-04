@@ -192,6 +192,9 @@ fi
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
 
+# Define the extra models file path early so we can check/preserve existing config
+EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+
 # Configure Azure OpenAI API
 # Check if Azure key is already set
 if ! command llm keys get azure &> /dev/null; then
@@ -207,12 +210,24 @@ else
         command llm keys set azure
     else
         # Try to read existing config for API base
-        AZURE_API_BASE=${AZURE_API_BASE:-"https://REPLACE-ME.openai.azure.com/openai/v1/"}
+        if [ -f "$EXTRA_MODELS_FILE" ]; then
+            # Extract the api_base from the first model entry in the YAML
+            EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+            if [ -n "$EXISTING_API_BASE" ]; then
+                AZURE_API_BASE="$EXISTING_API_BASE"
+                log "Preserving existing API base: $AZURE_API_BASE"
+            else
+                AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+                warn "Could not read existing API base, using placeholder"
+            fi
+        else
+            AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+            log "No existing config found, using placeholder"
+        fi
     fi
 fi
 
 # Create extra-openai-models.yaml
-EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
 log "Creating Azure OpenAI models configuration..."
 
 cat > "$EXTRA_MODELS_FILE" <<EOF
@@ -250,7 +265,7 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
 EOF
 
 # Only set default model if no custom default has been configured
-DEFAULT_MODEL_FILE="$HOME/.config/io.datasette.llm/default_model.txt"
+DEFAULT_MODEL_FILE="$(command llm logs path | xargs dirname)/default_model.txt"
 if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
     log "Setting default model to azure/gpt-5-mini..."
     command llm models default azure/gpt-5-mini
