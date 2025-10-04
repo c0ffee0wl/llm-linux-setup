@@ -164,6 +164,7 @@ def extract_prompt_blocks(text, count=1):
         blocks.append(block)
 
     # Exclude the last block if it's just an empty current prompt
+    # or if it's a self-referential context command with no output yet
     if blocks:
         last_block_lines = [line for line in blocks[-1].split('\n') if line.strip()]
 
@@ -174,12 +175,19 @@ def extract_prompt_blocks(text, count=1):
             # Single-line prompt: check if it's just a prompt with no command
             if re.search(r'[$#%❯→➜]\s*$', last_block_lines[0]):
                 blocks = blocks[:-1]
+            # Or check if it's context command with no output
+            elif re.search(r'[$#%❯→➜]\s+context(\s|$)', last_block_lines[0]):
+                blocks = blocks[:-1]
         elif len(last_block_lines) == 2:
             # Potential two-line prompt (Kali/fancy prompts)
             # Check if first line is header and second is prompt-only
             kali_header_pattern = r'^[┌╭]──.*[\])]$'
             if (re.search(kali_header_pattern, last_block_lines[0]) and
                 re.search(r'[$#%❯→➜]\s*$', last_block_lines[1])):
+                blocks = blocks[:-1]
+            # Or check if it's context command with no output
+            elif (re.search(kali_header_pattern, last_block_lines[0]) and
+                  re.search(r'[$#%❯→➜]\s+context(\s|$)', last_block_lines[1])):
                 blocks = blocks[:-1]
 
     # Return requested number of blocks
