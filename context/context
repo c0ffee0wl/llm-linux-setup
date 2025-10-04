@@ -149,6 +149,14 @@ def extract_prompt_blocks(text, count=1):
 
         blocks.append(block)
 
+    # Exclude the last block if it's just an empty current prompt
+    if blocks:
+        last_block_lines = [line for line in blocks[-1].split('\n') if line.strip()]
+        if len(last_block_lines) == 1:
+            # Single non-empty line - check if it's just a prompt with no command
+            if re.search(r'[$#%❯→➜]\s*$', last_block_lines[0]):
+                blocks = blocks[:-1]
+
     # Return requested number of blocks
     if count is None:
         return blocks
@@ -162,10 +170,11 @@ def format_output(blocks):
         return "#!# No prompts found in session recording."
 
     result = []
-    for i, block in enumerate(blocks, 1):
-        result.append(f"#!# === Block {i} ===")
-        result.append(f"#!# {block}")
-        result.append("#!# ")  # Blank line separator
+    for block in blocks:
+        # Prefix each line of the block
+        for line in block.split('\n'):
+            result.append(f"#!# {line}")
+        result.append("#!# ")  # Blank line separator between blocks
 
     return '\n'.join(result)
 

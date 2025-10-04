@@ -61,11 +61,7 @@ if [[ -o interactive && -z "$IN_ASCIINEMA_SESSION" ]]; then
   export TERMINAL_LOG_FILE="$TERMINAL_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
 
   # Show environment variable export command
-  if command -v context &> /dev/null; then
-    context -e
-  else
-    echo "export TERMINAL_LOG_FILE='$TERMINAL_LOG_FILE'"
-  fi
+  echo "export TERMINAL_LOG_FILE='$TERMINAL_LOG_FILE'"
   echo ""
 
   # Replace current shell with asciinema process

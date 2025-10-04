@@ -202,18 +202,14 @@ export PATH=$HOME/.local/bin:$PATH
 if ! command llm keys get azure &> /dev/null; then
     log "Configuring Azure OpenAI API..."
     echo ""
-    read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
     read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
-
     command llm keys set azure
-    echo "$AZURE_API_KEY" | command llm keys set azure
 else
     log "Azure API key already configured"
     read -p "Do you want to reconfigure Azure settings? (y/N): " RECONFIG
     if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
-        read -p "Enter your Azure OpenAI API key: " AZURE_API_KEY
         read -p "Enter your Azure Foundry resource URL: " AZURE_API_BASE
-        echo "$AZURE_API_KEY" | command llm keys set azure
+        command llm keys set azure
     else
         # Try to read existing config for API base
         AZURE_API_BASE=${AZURE_API_BASE:-"https://REPLACE-ME.openai.azure.com/openai/v1/"}
@@ -368,6 +364,12 @@ EOF
     fi
 fi
 
+# Install context script
+log "Installing context script..."
+mkdir -p "$HOME/.local/bin"
+cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
+chmod +x "$HOME/.local/bin/context"
+
 #############################################################################
 # PHASE 6: Additional Tools
 #############################################################################
@@ -393,12 +395,6 @@ if uv tool list | grep -q "files-to-prompt"; then
 else
     uv tool install git+https://github.com/danmackinlay/files-to-prompt
 fi
-
-# Install context script
-log "Installing context script..."
-mkdir -p "$HOME/.local/bin"
-cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
-chmod +x "$HOME/.local/bin/context"
 
 #############################################################################
 # PHASE 7: Claude Code & Router
