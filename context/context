@@ -11,7 +11,7 @@ Usage:
     context 5        # Show last 5 prompt blocks
     context all      # Show entire session
     context -a       # Show entire session
-    context -e       # Output TERMINAL_LOG_FILE environment variable
+    context -e       # Output SESSION_LOG_FILE environment variable
 Usage:
     context [number|all]
     context -e | --environment
@@ -20,7 +20,7 @@ Example:
     context 5 (shows last 5 prompt blocks)
     context all (shows entire history)
     context -a (shows entire history)
-    context -e (outputs export command for TERMINAL_LOG_FILE)
+    context -e (outputs export command for SESSION_LOG_FILE)
 """
 
 import os
@@ -34,13 +34,13 @@ import argparse
 def find_cast_file():
     """Find the current session's cast file"""
     # First, check environment variable
-    if "TERMINAL_LOG_FILE" in os.environ:
-        cast_file = os.environ["TERMINAL_LOG_FILE"]
+    if "SESSION_LOG_FILE" in os.environ:
+        cast_file = os.environ["SESSION_LOG_FILE"]
         if os.path.exists(cast_file):
             return cast_file
 
     # Fall back to finding most recent cast file in log directory
-    log_dir = os.environ.get("TERMINAL_LOG_DIR", "/tmp/session_logs/asciinema")
+    log_dir = os.environ.get("SESSION_LOG_DIR", "/tmp/session_logs/asciinema")
     if not os.path.exists(log_dir):
         return None
 
@@ -218,7 +218,7 @@ def main():
     parser.add_argument('count', nargs='?', default=1,
                        help='Number of recent prompt blocks to show or "all" for entire history (default: 1)')
     parser.add_argument('-e', '--environment', action='store_true',
-                       help='Output TERMINAL_LOG_FILE environment variable')
+                       help='Output SESSION_LOG_FILE environment variable')
     parser.add_argument('-a', '--all', action='store_true',
                        help='Show entire history')
 
@@ -230,7 +230,7 @@ def main():
     # Handle -e/--environment flag
     if args.environment:
         if cast_file:
-            print(f"export TERMINAL_LOG_FILE='{cast_file}'")
+            print(f"export SESSION_LOG_FILE='{cast_file}'")
         else:
             print("# No asciinema session recording found", file=sys.stderr)
             sys.exit(1)

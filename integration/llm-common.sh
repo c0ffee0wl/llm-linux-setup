@@ -10,7 +10,7 @@ export PATH="$HOME/.local/bin:$PATH"
 export PATH="$HOME/.cargo/bin:$PATH"
 
 # Configure terminal session log directory (can be overridden before sourcing this file)
-export TERMINAL_LOG_DIR="${TERMINAL_LOG_DIR:-/tmp/session_logs/asciinema}"
+export SESSION_LOG_DIR="${SESSION_LOG_DIR:-/tmp/session_logs/asciinema}"
 
 # Custom llm wrapper function to set default template
 llm() {
@@ -63,14 +63,14 @@ if [[ $- == *i* && -z "$IN_ASCIINEMA_SESSION" ]]; then
   export IN_ASCIINEMA_SESSION=1
 
   # Create log directory and define filename
-  mkdir -p "$TERMINAL_LOG_DIR"
-  export TERMINAL_LOG_FILE="$TERMINAL_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
+  mkdir -p "$SESSION_LOG_DIR"
+  export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
 
   # Show environment variable export command
   echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
-  echo "export TERMINAL_LOG_FILE='$TERMINAL_LOG_FILE'"
+  echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
   echo ""
 
   # Replace current shell with asciinema process
-  exec asciinema rec "$TERMINAL_LOG_FILE" --quiet
+  exec asciinema rec "$SESSION_LOG_FILE" --quiet
 fi

@@ -29,12 +29,12 @@ The repository includes an **automatic session recording and context extraction 
 1. **Automatic Recording** (`integration/llm-common.sh`): Interactive shells automatically start asciinema recording
    - Only triggers in interactive shells (not scripts or nested sessions)
    - Prevents recursion by checking `$IN_ASCIINEMA_SESSION` env vars
-   - Stores recordings in configurable directory (default: `/tmp/session_logs/asciinema/`) via `$TERMINAL_LOG_DIR`
+   - Stores recordings in configurable directory (default: `/tmp/session_logs/asciinema/`) via `$SESSION_LOG_DIR`
    - Creates timestamp-based filenames
-   - Exports `$TERMINAL_LOG_FILE` for the context tool to locate the current recording
+   - Exports `$SESSION_LOG_FILE` for the context tool to locate the current recording
 
 2. **Context Extraction** (`context/context`): Python script that parses asciinema recordings
-   - Finds current session's `.cast` file via `$TERMINAL_LOG_FILE` or most recent file in log directory
+   - Finds current session's `.cast` file via `$SESSION_LOG_FILE` or most recent file in log directory
    - Converts binary `.cast` format to text using `asciinema convert`
    - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.)
    - Extracts commands and their outputs, returns last N commands or full session
@@ -44,9 +44,9 @@ The repository includes an **automatic session recording and context extraction 
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
 
-**Architecture Flow**: Shell starts → asciinema records → `$TERMINAL_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
+**Architecture Flow**: Shell starts → asciinema records → `$SESSION_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
 
-**Configuration**: The session log directory can be customized by setting `$TERMINAL_LOG_DIR` before shell integration loads (e.g., in `.bashrc` before sourcing `llm-integration.bash`). This allows persistent storage outside `/tmp` if desired.
+**Configuration**: The session log directory can be customized by setting `$SESSION_LOG_DIR` before shell integration loads (e.g., in `.bashrc` before sourcing `llm-integration.bash`). This allows persistent storage outside `/tmp` if desired.
 
 **Behavior with Terminal Multiplexers (tmux/screen)**:
 - **Each pane/window gets its own independent recording** - This is intentional design for workflow isolation
