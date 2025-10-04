@@ -58,7 +58,7 @@ alias azure-claude='ccr code'
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema
 # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
-if [[ -o interactive && -z "$IN_ASCIINEMA_SESSION" ]]; then
+if [[ $- == *i* && -z "$IN_ASCIINEMA_SESSION" ]]; then
   # Set variable to prevent recursion
   export IN_ASCIINEMA_SESSION=1
 
