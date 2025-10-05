@@ -14,8 +14,8 @@ Usage:
     context -e       # Output SESSION_LOG_FILE environment variable
 Usage:
     context [number|all]
-    context -e | --environment
     context -a | --all
+    context -e | --environment
 Example:
     context 5 (shows last 5 prompt blocks)
     context all (shows entire history)
