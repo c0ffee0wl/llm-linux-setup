@@ -53,7 +53,7 @@ llm() {
 }
 
 # Alias for Claude Code Router
-alias azure-claude='ccr code'
+alias routed-claude='ccr code'
 
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema

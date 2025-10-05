@@ -141,7 +141,7 @@ def extract_prompt_blocks(text, count=1):
     """
     lines = text.split('\n')
     # Filter out lines from previous context command outputs
-    lines = [line for line in lines if not line.startswith('#!#')]
+    lines = [line for line in lines if not line.startswith('#c#')]
     prompt_lines = detect_prompts('\n'.join(lines))
 
     if not prompt_lines:
@@ -200,14 +200,14 @@ def extract_prompt_blocks(text, count=1):
 def format_output(blocks):
     """Format prompt blocks for display"""
     if not blocks:
-        return "#!# No prompts found in session recording."
+        return "#c# No prompts found in session recording."
 
     result = []
     for block in blocks:
         # Prefix each line of the block
         for line in block.split('\n'):
-            result.append(f"#!# {line}")
-        result.append("#!# ")  # Blank line separator between blocks
+            result.append(f"#c# {line}")
+        result.append("#c# ")  # Blank line separator between blocks
 
     return '\n'.join(result)
 

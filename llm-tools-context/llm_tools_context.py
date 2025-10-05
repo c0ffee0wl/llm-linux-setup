@@ -11,7 +11,8 @@ def context(input: str) -> str:
         input: Number of recent entries to show, empty for last entry, or "all" for entire history
 
     Returns:
-        Terminal history from the 'context' command, including input and output (commands ran and their outputs)
+        Terminal history from the 'context' command, including input and output (commands ran and their outputs). 
+        Each line of the history (the output of the 'context' command) is prefixed with #c#
     """
     args = ["context"]
     try:

@@ -353,10 +353,48 @@ COMMON_CONFIG="$SCRIPT_DIR/integration/llm-common.sh"
 # These files will be created by separate script files
 # For now, we'll check if they exist and source them
 
+# Function to prompt for session log directory preference (called once for both shells)
+prompt_for_session_log_dir() {
+    # Only prompt if not already set
+    if [ -z "$SESSION_LOG_DIR_VALUE" ]; then
+        log "Configuring terminal session history storage..."
+        echo ""
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Terminal sessions are logged for AI context retrieval."
+        echo "Choose storage location:"
+        echo ""
+        echo "  1) Temporary - Store in /tmp/session_logs/asciinema (cleared on reboot)"
+        echo "  2) Permanent - Store in ~/session_logs/asciinema (survives reboots)"
+        echo ""
+        read -p "Choice (1/2) [default: 1]: " session_choice
+        echo ""
+
+        if [ "$session_choice" = "2" ]; then
+            SESSION_LOG_DIR_VALUE="\$HOME/session_logs/asciinema"
+        else
+            SESSION_LOG_DIR_VALUE="/tmp/session_logs/asciinema"
+        fi
+    fi
+}
+
 # Update .bashrc
 BASHRC="$HOME/.bashrc"
 if [ -f "$BASHRC" ]; then
-    if ! grep -q "llm-integration.bash" "$BASHRC"; then
+    # Check if SESSION_LOG_DIR export already exists (first-run detection)
+    if ! grep -q "export SESSION_LOG_DIR=" "$BASHRC"; then
+        prompt_for_session_log_dir
+        log "Adding session log configuration and llm integration to .bashrc..."
+        cat >> "$BASHRC" <<EOF
+
+# LLM Session Log Directory
+export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
+
+# LLM Tools Integration
+if [ -f "$SCRIPT_DIR/integration/llm-integration.bash" ]; then
+    source "$SCRIPT_DIR/integration/llm-integration.bash"
+fi
+EOF
+    elif ! grep -q "llm-integration.bash" "$BASHRC"; then
         log "Adding llm integration to .bashrc..."
         cat >> "$BASHRC" <<EOF
 
@@ -373,7 +411,21 @@ fi
 # Update .zshrc
 ZSHRC="$HOME/.zshrc"
 if [ -f "$ZSHRC" ]; then
-    if ! grep -q "llm-integration.zsh" "$ZSHRC"; then
+    # Check if SESSION_LOG_DIR export already exists (first-run detection)
+    if ! grep -q "export SESSION_LOG_DIR=" "$ZSHRC"; then
+        prompt_for_session_log_dir
+        log "Adding session log configuration and llm integration to .zshrc..."
+        cat >> "$ZSHRC" <<EOF
+
+# LLM Session Log Directory
+export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
+
+# LLM Tools Integration
+if [ -f "$SCRIPT_DIR/integration/llm-integration.zsh" ]; then
+    source "$SCRIPT_DIR/integration/llm-integration.zsh"
+fi
+EOF
+    elif ! grep -q "llm-integration.zsh" "$ZSHRC"; then
         log "Adding llm integration to .zshrc..."
         cat >> "$ZSHRC" <<EOF
 
@@ -517,7 +569,7 @@ log "Next steps:"
 log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
-# log "  4. Test Claude Code Router: azure-claude"
+# log "  4. Test Claude Code Router: routed-claude"
 log "  4. Test and configure OpenCode: opencode and configure https://opencode.ai/docs/providers"
 log ""
 log "To update all tools in the future, simply re-run this script:"

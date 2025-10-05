@@ -46,7 +46,15 @@ The repository includes an **automatic session recording and context extraction 
 
 **Architecture Flow**: Shell starts → asciinema records → `$SESSION_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
 
-**Configuration**: The session log directory can be customized by setting `$SESSION_LOG_DIR` before shell integration loads (e.g., in `.bashrc` before sourcing `llm-integration.bash`). This allows persistent storage outside `/tmp` if desired.
+**Configuration**:
+- **First-Run Setup**: On first installation, the script prompts for session history storage preference:
+  - **Permanent**: Stores in `~/session_logs/asciinema` (survives reboots)
+  - **Temporary**: Stores in `/tmp/session_logs/asciinema` (cleared on reboot, default)
+- The preference is saved as `export SESSION_LOG_DIR="..."` in your `.bashrc`/`.zshrc`
+- **To change preference**: Edit your shell rc file and modify the `SESSION_LOG_DIR` export line
+- The installation script detects existing `SESSION_LOG_DIR` export and skips the prompt on subsequent runs
+
+**Context Output Format**: The `context` command prefixes all output lines with `#c#` for easy identification and filtering.
 
 **Behavior with Terminal Multiplexers (tmux/screen)**:
 - **Each pane/window gets its own independent recording** - This is intentional design for workflow isolation
@@ -96,7 +104,7 @@ The system is specifically configured for **Azure Foundry** (not standard OpenAI
 ## Key Files & Components
 
 - **`install-llm-tools.sh`**: Main installation/update script with self-update logic
-- **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, azure-claude alias
+- **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias
 - **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion)
 - **`context/context`**: Python script for extracting terminal history from asciinema recordings
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
@@ -194,8 +202,8 @@ The installation configures **Claude Code Router** as a proxy to use Azure OpenA
 
 1. Configuration stored in `~/.claude-code-router/config.json`
 2. Requires Azure OpenAI endpoint, API key, deployment name, and API version
-3. Use the `azure-claude` alias (defined in `integration/llm-common.sh`) to launch Claude Code via the router
-4. Command: `azure-claude` (equivalent to `ccr code`)
+3. Use the `routed-claude` alias (defined in `integration/llm-common.sh`) to launch Claude Code via the router
+4. Command: `routed-claude` (equivalent to `ccr code`)
 
 **Claude Code Router Config Structure**:
 ```json
