@@ -85,10 +85,12 @@ if [[ $- == *i* && -z "$is_recording" ]]; then
   mkdir -p "$SESSION_LOG_DIR"
   export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
 
-  # Show environment variable export command
-  echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
-  echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
-  echo ""
+  # Show environment variable export command (unless SESSION_LOG_SILENT is set)
+  if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+    echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
+    echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
+    echo ""
+  fi
 
   # Replace current shell with asciinema process
   exec asciinema rec "$SESSION_LOG_FILE" --quiet
