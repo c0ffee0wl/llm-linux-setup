@@ -203,27 +203,21 @@ if ! command llm keys get azure &> /dev/null; then
     read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
     command llm keys set azure
 else
-    log "Azure API key already configured"
-    read -p "Do you want to reconfigure Azure settings? (y/N): " RECONFIG
-    if [[ "$RECONFIG" =~ ^[Yy]$ ]]; then
-        read -p "Enter your Azure Foundry resource URL: " AZURE_API_BASE
-        command llm keys set azure
-    else
-        # Try to read existing config for API base
-        if [ -f "$EXTRA_MODELS_FILE" ]; then
-            # Extract the api_base from the first model entry in the YAML
-            EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
-            if [ -n "$EXISTING_API_BASE" ]; then
-                AZURE_API_BASE="$EXISTING_API_BASE"
-                log "Preserving existing API base: $AZURE_API_BASE"
-            else
-                AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-                warn "Could not read existing API base, using placeholder"
-            fi
+    log "Azure API key already configured, preserving existing settings"
+    # Try to read existing config for API base
+    if [ -f "$EXTRA_MODELS_FILE" ]; then
+        # Extract the api_base from the first model entry in the YAML
+        EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+        if [ -n "$EXISTING_API_BASE" ]; then
+            AZURE_API_BASE="$EXISTING_API_BASE"
+            log "Preserving existing API base: $AZURE_API_BASE"
         else
             AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-            log "No existing config found, using placeholder"
+            warn "Could not read existing API base, using placeholder"
         fi
+    else
+        AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+        log "No existing config found, using placeholder"
     fi
 fi
 

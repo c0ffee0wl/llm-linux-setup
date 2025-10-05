@@ -60,20 +60,16 @@ alias routed-claude='ccr code'
 # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
 
 # Determine unique session identifier based on multiplexer type
+# NOTE: Only tmux needs special handling due to environment variable inheritance between panes
+# Screen windows are isolated and don't need pane-specific markers
 if [ -n "$TMUX_PANE" ]; then
   # In tmux, use pane ID (e.g., "%0", "%1", "%2")
   # Clean it for use in variable name (remove % and other special chars)
   PANE_ID=$(echo "$TMUX_PANE" | tr -cd '[:alnum:]')
   SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
   PANE_SUFFIX="_tmux${PANE_ID}"
-elif [ -n "$STY" ]; then
-  # In screen, use $STY (format: PID.tty.host)
-  # Use just the PID portion for the marker
-  SCREEN_ID=$(echo "$STY" | cut -d. -f1)
-  SESSION_MARKER="IN_ASCIINEMA_SESSION_screen_${SCREEN_ID}"
-  PANE_SUFFIX="_screen${SCREEN_ID}"
 else
-  # Default for regular terminals
+  # Default for regular terminals and screen (no special handling needed)
   SESSION_MARKER="IN_ASCIINEMA_SESSION"
   PANE_SUFFIX=""
 fi
