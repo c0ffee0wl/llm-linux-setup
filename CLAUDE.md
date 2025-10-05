@@ -28,7 +28,7 @@ The repository includes an **automatic session recording and context extraction 
 
 1. **Automatic Recording** (`integration/llm-common.sh`): Interactive shells automatically start asciinema recording
    - Only triggers in interactive shells (not scripts or nested sessions)
-   - Prevents recursion by checking `$IN_ASCIINEMA_SESSION` env vars
+   - Prevents recursion by checking session-specific environment markers
    - Stores recordings in configurable directory (default: `/tmp/session_logs/asciinema/`) via `$SESSION_LOG_DIR`
    - Creates timestamp-based filenames
    - Exports `$SESSION_LOG_FILE` for the context tool to locate the current recording
@@ -64,12 +64,11 @@ The repository includes an **automatic session recording and context extraction 
 - **If you want unified recording**: Start asciinema manually before launching tmux: `asciinema rec --command "tmux attach"`
 
 **Technical Implementation**:
-- Uses **pane-specific environment variables** to enable per-pane recording in tmux/screen
-- In **tmux**: Uses `$TMUX_PANE` to create unique markers (e.g., `IN_ASCIINEMA_SESSION_tmux_0`)
-- In **screen**: Uses `$STY` to create unique markers (e.g., `IN_ASCIINEMA_SESSION_screen_12345`)
-- In **regular terminals**: Uses generic `IN_ASCIINEMA_SESSION` marker
-- Session filenames include pane identifiers: `2025-10-05_14-30-45-123_12345_tmux0.cast`
-- This prevents environment variable inheritance issues that previously blocked tmux pane recordings
+- Uses **pane-specific environment variables** to enable per-pane recording in tmux
+- In **tmux**: Uses `$TMUX_PANE` to create unique markers (e.g., `IN_ASCIINEMA_SESSION_tmux_0`) to prevent environment variable inheritance between panes
+- In **regular terminals and screen**: Uses generic `IN_ASCIINEMA_SESSION` marker (screen windows are already isolated and don't inherit env vars)
+- Session filenames include pane identifiers in tmux: `2025-10-05_14-30-45-123_12345_tmux0.cast`
+- This design allows each tmux pane to maintain its own independent recording session
 
 ### Shell Integration Architecture
 
@@ -143,6 +142,8 @@ env | grep IN_ASCIINEMA_SESSION
 
 # Expected in tmux pane 0:
 # IN_ASCIINEMA_SESSION_tmux_0=1
+#
+# Expected in regular terminal or screen:
 # IN_ASCIINEMA_SESSION=1
 
 # 2. Verify session log files have pane identifiers

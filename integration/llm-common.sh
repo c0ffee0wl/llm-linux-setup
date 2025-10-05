@@ -80,9 +80,6 @@ if [[ $- == *i* && -z "${!SESSION_MARKER}" ]]; then
   # Mark this specific session as recording
   export "$SESSION_MARKER=1"
 
-  # Also export the generic marker for backward compatibility
-  export IN_ASCIINEMA_SESSION=1
-
   # Create log directory and define filename with pane identifier
   mkdir -p "$SESSION_LOG_DIR"
   export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
