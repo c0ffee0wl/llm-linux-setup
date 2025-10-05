@@ -201,6 +201,18 @@ else
         warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
         warn "Then: nvm install 22 && nvm use 22 && nvm alias default 22"
     fi
+
+    # Ensure npm is installed even if node was already present
+    if ! command -v npm &> /dev/null; then
+        # Check if node is from nvm - if so, don't install apt npm
+        if which node 2>/dev/null | grep -q "\.nvm"; then
+            warn "Node.js is from nvm but npm is not found. Please fix your nvm installation."
+            warn "Try: nvm reinstall \$(node --version | tr -d 'v')"
+        else
+            log "npm is not installed, installing from repository..."
+            sudo apt-get install -y npm
+        fi
+    fi
 fi
 
 # Detect if npm needs sudo
