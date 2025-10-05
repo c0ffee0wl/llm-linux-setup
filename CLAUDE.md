@@ -57,12 +57,19 @@ The repository includes an **automatic session recording and context extraction 
 **Context Output Format**: The `context` command prefixes all output lines with `#c#` for easy identification and filtering.
 
 **Behavior with Terminal Multiplexers (tmux/screen)**:
-- **Each pane/window gets its own independent recording** - This is intentional design for workflow isolation
+- **Each pane/window gets its own independent recording** - Intentional design for workflow isolation
 - When you create a new tmux pane or screen window, that new shell starts its own asciinema recording
 - The `context` command in each pane shows only that pane's history, not other panes
 - This matches the mental model: different panes = different workflows = separate contexts
 - **If you want unified recording**: Start asciinema manually before launching tmux: `asciinema rec --command "tmux attach"`
-- The auto-recording system does NOT prevent per-pane recordings; each new shell in a multiplexer will trigger its own recording session
+
+**Technical Implementation**:
+- Uses **pane-specific environment variables** to enable per-pane recording in tmux/screen
+- In **tmux**: Uses `$TMUX_PANE` to create unique markers (e.g., `IN_ASCIINEMA_SESSION_tmux_0`)
+- In **screen**: Uses `$STY` to create unique markers (e.g., `IN_ASCIINEMA_SESSION_screen_12345`)
+- In **regular terminals**: Uses generic `IN_ASCIINEMA_SESSION` marker
+- Session filenames include pane identifiers: `2025-10-05_14-30-45-123_12345_tmux0.cast`
+- This prevents environment variable inheritance issues that previously blocked tmux pane recordings
 
 ### Shell Integration Architecture
 
@@ -122,6 +129,56 @@ context all      # Show entire session
 
 # Test with LLM (requires llm-tools-context installed)
 llm --tool context "what was the output of my last command?"
+```
+
+### Troubleshooting Session Recording
+
+**Issue: New tmux panes don't create separate recordings**
+
+If you're running an older version or experiencing issues:
+
+```bash
+# 1. Check if pane-specific variables are being set
+env | grep IN_ASCIINEMA_SESSION
+
+# Expected in tmux pane 0:
+# IN_ASCIINEMA_SESSION_tmux_0=1
+# IN_ASCIINEMA_SESSION=1
+
+# 2. Verify session log files have pane identifiers
+ls -la "$SESSION_LOG_DIR"
+# Should see: 2025-10-05_14-30-45-123_12345_tmux0.cast
+
+# 3. Re-source the updated integration
+source ~/.bashrc  # or ~/.zshrc
+
+# 4. Create a new tmux pane and check if it starts recording
+# You should see "Session is logged for 'context'..." message
+```
+
+**Issue: Recording not starting in new shells**
+
+```bash
+# Verify the integration file is being sourced
+grep -r "llm-integration" ~/.bashrc ~/.zshrc
+
+# Check if asciinema is in PATH
+which asciinema
+
+# Manually trigger recording test
+SESSION_LOG_DIR=/tmp/test_recording \
+  bash -c 'source integration/llm-common.sh'
+```
+
+**Issue: Context command shows wrong session**
+
+```bash
+# Check which session file is being used
+echo $SESSION_LOG_FILE
+
+# Set specific session manually
+export SESSION_LOG_FILE="/path/to/specific/session.cast"
+context
 ```
 
 ### Developing the llm-tools-context Plugin

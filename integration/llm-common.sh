@@ -58,13 +58,38 @@ alias routed-claude='ccr code'
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema
 # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
-if [[ $- == *i* && -z "$IN_ASCIINEMA_SESSION" ]]; then
-  # Set variable to prevent recursion
+
+# Determine unique session identifier based on multiplexer type
+if [ -n "$TMUX_PANE" ]; then
+  # In tmux, use pane ID (e.g., "%0", "%1", "%2")
+  # Clean it for use in variable name (remove % and other special chars)
+  PANE_ID=$(echo "$TMUX_PANE" | tr -cd '[:alnum:]')
+  SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
+  PANE_SUFFIX="_tmux${PANE_ID}"
+elif [ -n "$STY" ]; then
+  # In screen, use $STY (format: PID.tty.host)
+  # Use just the PID portion for the marker
+  SCREEN_ID=$(echo "$STY" | cut -d. -f1)
+  SESSION_MARKER="IN_ASCIINEMA_SESSION_screen_${SCREEN_ID}"
+  PANE_SUFFIX="_screen${SCREEN_ID}"
+else
+  # Default for regular terminals
+  SESSION_MARKER="IN_ASCIINEMA_SESSION"
+  PANE_SUFFIX=""
+fi
+
+# Use indirect expansion to check if this specific session is already recording
+# Note: ${!SESSION_MARKER} expands to the value of the variable named by $SESSION_MARKER
+if [[ $- == *i* && -z "${!SESSION_MARKER}" ]]; then
+  # Mark this specific session as recording
+  export "$SESSION_MARKER=1"
+
+  # Also export the generic marker for backward compatibility
   export IN_ASCIINEMA_SESSION=1
 
-  # Create log directory and define filename
+  # Create log directory and define filename with pane identifier
   mkdir -p "$SESSION_LOG_DIR"
-  export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$.cast"
+  export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
 
   # Show environment variable export command
   echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
