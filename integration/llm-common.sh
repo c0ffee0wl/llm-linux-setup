@@ -40,15 +40,39 @@ llm() {
         fi
     done
 
-    # For prompt commands (prompt, chat, cmd, cmdcomp, jq) or default prompt
-    # apply the assistant template
+    # Helper function to check if template should be skipped
+    should_skip_template() {
+        for arg in "$@"; do
+            case "$arg" in
+                -c|--continue|--cid|--conversation)
+                    return 0  # Continuing conversation (has context)
+                    ;;
+                -s*|--system*|--sf)
+                    return 0  # Custom system prompt
+                    ;;
+                -t*|--template*)
+                    return 0  # Custom template
+                    ;;
+            esac
+        done
+        return 1  # Add template
+    }
+
+    # For prompt commands (prompt, chat) or default prompt
+    # apply the assistant template unless user specified their own
     if [ "$1" = "chat" ]; then
-        # Remove "chat" from arguments and call with assistant template
         shift
-        command llm chat -t assistant "$@"
+        if should_skip_template "$@"; then
+            command llm chat "$@"
+        else
+            command llm chat -t assistant "$@"
+        fi
     else
-        # Default behavior with assistant template (includes default prompt command)
-        command llm -t assistant "$@"
+        if should_skip_template "$@"; then
+            command llm "$@"
+        else
+            command llm -t assistant "$@"
+        fi
     fi
 }
 
