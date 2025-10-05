@@ -129,6 +129,14 @@ else
     log "Rust/Cargo is already installed"
 fi
 
+# Install curl (needed for nvm installer if required)
+if ! command -v curl &> /dev/null; then
+    log "Installing curl..."
+    sudo apt-get install -y curl
+else
+    log "curl is already installed"
+fi
+
 # Install asciinema
 if ! command -v asciinema &> /dev/null; then
     log "Installing asciinema..."
@@ -138,19 +146,61 @@ else
     cargo install --locked --force --git https://github.com/asciinema/asciinema
 fi
 
-# Install Node.js and npm from OS repositories
-if ! command -v node &> /dev/null; then
-    log "Installing Node.js..."
-    sudo apt-get install -y nodejs
-else
-    log "Node.js is already installed"
+# Check what Node.js version is available in repositories
+log "Checking Node.js version in repositories..."
+REPO_NODE_VERSION=$(apt-cache policy nodejs 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+' | head -1)
+
+if [ -z "$REPO_NODE_VERSION" ]; then
+    REPO_NODE_VERSION=0
+    warn "Could not determine repository Node.js version"
 fi
 
-if ! command -v npm &> /dev/null; then
-    log "Installing npm..."
-    sudo apt-get install -y npm
+log "Repository has Node.js version: $REPO_NODE_VERSION"
+
+# Install Node.js - either from repo (if >= 20) or via nvm (if < 20)
+if ! command -v node &> /dev/null; then
+    if [ "$REPO_NODE_VERSION" -ge 20 ]; then
+        log "Installing Node.js from repositories (version $REPO_NODE_VERSION)..."
+        sudo apt-get install -y nodejs
+
+        # Install npm separately for repository installations
+        if ! command -v npm &> /dev/null; then
+            log "Installing npm..."
+            sudo apt-get install -y npm
+        fi
+    else
+        log "Repository version $REPO_NODE_VERSION is < 20, installing Node 22 via nvm..."
+
+        # Install nvm
+        if [ ! -d "$HOME/.nvm" ]; then
+            log "Installing nvm..."
+            curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+            # Source nvm immediately for this script
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        else
+            log "nvm is already installed"
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+        fi
+
+        # Install Node 22 via nvm
+        log "Installing Node.js 22 via nvm..."
+        nvm install 22
+        nvm use 22
+        nvm alias default 22
+    fi
 else
-    log "npm is already installed"
+    CURRENT_NODE_VERSION=$(node --version | grep -oP 'v\K[0-9]+')
+    log "Node.js is already installed (version $CURRENT_NODE_VERSION)"
+
+    # If current version is < 20, warn user
+    if [ "$CURRENT_NODE_VERSION" -lt 20 ]; then
+        warn "Installed Node.js version $CURRENT_NODE_VERSION is < 20. Consider upgrading to Node 22 via nvm."
+        warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
+        warn "Then: nvm install 22 && nvm use 22 && nvm alias default 22"
+    fi
 fi
 
 # Detect if npm needs sudo
