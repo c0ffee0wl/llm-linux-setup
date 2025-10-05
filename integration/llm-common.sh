@@ -74,9 +74,10 @@ else
   PANE_SUFFIX=""
 fi
 
-# Use indirect expansion to check if this specific session is already recording
-# Note: ${!SESSION_MARKER} expands to the value of the variable named by $SESSION_MARKER
-if [[ $- == *i* && -z "${!SESSION_MARKER}" ]]; then
+# Check if this specific session is already recording
+# Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
+eval "is_recording=\${$SESSION_MARKER}"
+if [[ $- == *i* && -z "$is_recording" ]]; then
   # Mark this specific session as recording
   export "$SESSION_MARKER=1"
 
