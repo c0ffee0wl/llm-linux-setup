@@ -8,7 +8,7 @@ def context(input: str) -> str:
     Execute the context command to get terminal history including commands and their outputs.
 
     Args:
-        input: Number of recent entries to show, empty for last entry, or "all" for entire history
+        input: "all" for entire history, number of recent entries to show, or empty for last entry 
 
     Returns:
         Terminal history from the 'context' command, including input and output (commands ran and their outputs). 
