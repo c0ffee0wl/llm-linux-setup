@@ -249,6 +249,14 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
   supports_schema: true
   vision: true
 
+- model_id: azure/o4-mini
+  model_name: o4-mini
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
+  
 - model_id: azure/gpt-4.1
   model_name: gpt-4.1
   api_base: ${AZURE_API_BASE}
