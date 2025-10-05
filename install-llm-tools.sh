@@ -141,9 +141,34 @@ fi
 if ! command -v asciinema &> /dev/null; then
     log "Installing asciinema..."
     cargo install --locked --git https://github.com/asciinema/asciinema
+
+    # Store the commit hash for future update checks
+    ASCIINEMA_VERSION_FILE="$HOME/.local/share/llm-tools-asciinema-commit"
+    mkdir -p "$(dirname "$ASCIINEMA_VERSION_FILE")"
+    LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
+    if [ -n "$LATEST_COMMIT" ]; then
+        echo "$LATEST_COMMIT" > "$ASCIINEMA_VERSION_FILE"
+    fi
 else
-    log "asciinema is already installed, updating..."
-    cargo install --locked --force --git https://github.com/asciinema/asciinema
+    log "asciinema is already installed, checking for updates..."
+
+    # Get latest commit from GitHub
+    LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
+
+    # Check stored commit hash
+    ASCIINEMA_VERSION_FILE="$HOME/.local/share/llm-tools-asciinema-commit"
+    INSTALLED_COMMIT=$(cat "$ASCIINEMA_VERSION_FILE" 2>/dev/null || echo "")
+
+    if [ -z "$LATEST_COMMIT" ]; then
+        warn "Could not check for asciinema updates (network issue?). Skipping rebuild."
+    elif [ "$LATEST_COMMIT" != "$INSTALLED_COMMIT" ]; then
+        log "New version available, rebuilding asciinema..."
+        cargo install --locked --force --git https://github.com/asciinema/asciinema
+        mkdir -p "$(dirname "$ASCIINEMA_VERSION_FILE")"
+        echo "$LATEST_COMMIT" > "$ASCIINEMA_VERSION_FILE"
+    else
+        log "asciinema is up to date (commit: ${LATEST_COMMIT:0:7}), skipping rebuild"
+    fi
 fi
 
 # Check what Node.js version is available in repositories
