@@ -143,7 +143,7 @@ if ! command -v asciinema &> /dev/null; then
     cargo install --locked --git https://github.com/asciinema/asciinema
 
     # Store the commit hash for future update checks
-    ASCIINEMA_VERSION_FILE="$HOME/.local/share/llm-tools-asciinema-commit"
+    ASCIINEMA_VERSION_FILE="$HOME/.config/llm-tools/asciinema-commit"
     mkdir -p "$(dirname "$ASCIINEMA_VERSION_FILE")"
     LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
     if [ -n "$LATEST_COMMIT" ]; then
@@ -156,7 +156,7 @@ else
     LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
 
     # Check stored commit hash
-    ASCIINEMA_VERSION_FILE="$HOME/.local/share/llm-tools-asciinema-commit"
+    ASCIINEMA_VERSION_FILE="$HOME/.config/llm-tools/asciinema-commit"
     INSTALLED_COMMIT=$(cat "$ASCIINEMA_VERSION_FILE" 2>/dev/null || echo "")
 
     if [ -z "$LATEST_COMMIT" ]; then
@@ -282,36 +282,78 @@ export PATH=$HOME/.local/bin:$PATH
 # Define the extra models file path early so we can check/preserve existing config
 EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
 
+# Define Azure OpenAI configuration flag file
+AZURE_CONFIG_FLAG="$HOME/.config/llm-tools/azure-openai-configured"
+mkdir -p "$(dirname "$AZURE_CONFIG_FLAG")"
+
 # Configure Azure OpenAI API
-# Check if Azure key is already set
-if ! command llm keys get azure &> /dev/null; then
-    log "Configuring Azure OpenAI API..."
+# Check if user has ever configured Azure OpenAI (first run detection)
+if [ ! -f "$AZURE_CONFIG_FLAG" ] && ! command llm keys get azure &> /dev/null; then
+    # First run - ask if user wants to configure Azure OpenAI
+    log "Azure OpenAI Configuration"
     echo ""
-    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
-    command llm keys set azure
-else
-    log "Azure API key already configured, preserving existing settings"
-    # Try to read existing config for API base
-    if [ -f "$EXTRA_MODELS_FILE" ]; then
-        # Extract the api_base from the first model entry in the YAML
-        EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
-        if [ -n "$EXISTING_API_BASE" ]; then
-            AZURE_API_BASE="$EXISTING_API_BASE"
-            log "Preserving existing API base: $AZURE_API_BASE"
+    read -p "Do you want to configure Azure OpenAI? (Y/n): " CONFIG_AZURE
+    CONFIG_AZURE=${CONFIG_AZURE:-Y}
+
+    if [[ "$CONFIG_AZURE" =~ ^[Yy]$ ]]; then
+        log "Configuring Azure OpenAI API..."
+        echo ""
+        read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+        command llm keys set azure
+
+        # Create flag file to remember user configured Azure
+        touch "$AZURE_CONFIG_FLAG"
+        AZURE_CONFIGURED=true
+    else
+        log "Skipping Azure OpenAI configuration"
+        AZURE_CONFIGURED=false
+    fi
+elif [ -f "$AZURE_CONFIG_FLAG" ]; then
+    # Subsequent run - user previously configured Azure
+    log "Azure OpenAI was previously configured"
+
+    # Check if they want to update
+    echo ""
+    read -p "Do you want to update Azure OpenAI configuration? (y/N): " UPDATE_AZURE
+    UPDATE_AZURE=${UPDATE_AZURE:-N}
+
+    if [[ "$UPDATE_AZURE" =~ ^[Yy]$ ]]; then
+        log "Updating Azure OpenAI API configuration..."
+        echo ""
+        read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+        command llm keys set azure
+        AZURE_CONFIGURED=true
+    else
+        log "Preserving existing Azure OpenAI configuration"
+        # Try to read existing config for API base
+        if [ -f "$EXTRA_MODELS_FILE" ]; then
+            # Extract the api_base from the first model entry in the YAML
+            EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+            if [ -n "$EXISTING_API_BASE" ]; then
+                AZURE_API_BASE="$EXISTING_API_BASE"
+                log "Using existing API base: $AZURE_API_BASE"
+            else
+                AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+                warn "Could not read existing API base, using placeholder"
+            fi
         else
             AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-            warn "Could not read existing API base, using placeholder"
+            warn "No existing config found, using placeholder"
         fi
-    else
-        AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-        log "No existing config found, using placeholder"
+        AZURE_CONFIGURED=true
     fi
+else
+    # Subsequent run - user never configured Azure (declined on first run)
+    log "Azure OpenAI configuration was skipped on initial setup, skipping..."
+    AZURE_CONFIGURED=false
 fi
 
-# Create extra-openai-models.yaml
-log "Creating Azure OpenAI models configuration..."
+# Only create YAML configuration if Azure was configured
+if [ "$AZURE_CONFIGURED" = "true" ]; then
+    # Create extra-openai-models.yaml
+    log "Creating Azure OpenAI models configuration..."
 
-cat > "$EXTRA_MODELS_FILE" <<EOF
+    cat > "$EXTRA_MODELS_FILE" <<EOF
 - model_id: azure/gpt-5
   model_name: gpt-5
   api_base: ${AZURE_API_BASE}
@@ -353,13 +395,16 @@ cat > "$EXTRA_MODELS_FILE" <<EOF
   vision: true
 EOF
 
-# Only set default model if no custom default has been configured
-DEFAULT_MODEL_FILE="$(command llm logs path | xargs dirname)/default_model.txt"
-if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
-    log "Setting default model to azure/gpt-5-mini..."
-    command llm models default azure/gpt-5-mini
+    # Only set default model if no custom default has been configured
+    DEFAULT_MODEL_FILE="$(command llm logs path | xargs dirname)/default_model.txt"
+    if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
+        log "Setting default model to azure/gpt-5-mini..."
+        command llm models default azure/gpt-5-mini
+    else
+        log "Default model already configured, skipping..."
+    fi
 else
-    log "Default model already configured, skipping..."
+    log "Azure OpenAI not configured, skipping model configuration"
 fi
 
 #############################################################################
