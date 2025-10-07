@@ -290,14 +290,9 @@ export PATH=$HOME/.local/bin:$PATH
 # Define the extra models file path early so we can check/preserve existing config
 EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
 
-# Define first-run flag file (used to detect if script has ever run successfully)
-FIRST_RUN_FLAG="$HOME/.config/llm-tools/first-run-complete"
-mkdir -p "$(dirname "$FIRST_RUN_FLAG")"
-
 # Detect if this is the first run
 # Check for: new flag, OR YAML config exists, OR shell integration already present
-if [ -f "$FIRST_RUN_FLAG" ] || \
-   [ -f "$EXTRA_MODELS_FILE" ] || \
+if [ -f "$EXTRA_MODELS_FILE" ] || \
    grep -q "llm-integration" "$HOME/.bashrc" 2>/dev/null || \
    grep -q "llm-integration" "$HOME/.zshrc" 2>/dev/null; then
     IS_FIRST_RUN=false
@@ -674,13 +669,6 @@ npm_install install -g opencode-ai@latest
 #############################################################################
 # COMPLETE
 #############################################################################
-
-# Mark first run as complete
-if [ "$IS_FIRST_RUN" = "true" ]; then
-    mkdir -p "$(dirname "$FIRST_RUN_FLAG")"
-    touch "$FIRST_RUN_FLAG"
-    log "First run completed successfully"
-fi
 
 log ""
 log "============================================="
