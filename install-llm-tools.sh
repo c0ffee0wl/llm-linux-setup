@@ -95,6 +95,14 @@ else
     log "jq is already installed"
 fi
 
+# Install xsel (clipboard tool)
+if ! command -v xsel &> /dev/null; then
+    log "Installing xsel..."
+    sudo apt-get install -y xsel
+else
+    log "xsel is already installed"
+fi
+
 # Install Python3
 if ! command -v python3 &> /dev/null; then
     log "Installing Python3..."

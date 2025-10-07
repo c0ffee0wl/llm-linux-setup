@@ -79,6 +79,10 @@ llm() {
 # Alias for Claude Code Router
 alias routed-claude='ccr code'
 
+# Linux version of macOS pbcopy and pbpaste
+alias pbcopy='xsel --clipboard --input'
+alias pbpaste='xsel --clipboard --output'
+
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema
 # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)

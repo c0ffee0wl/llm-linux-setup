@@ -230,7 +230,21 @@ def main():
     # Handle -e/--environment flag
     if args.environment:
         if cast_file:
-            print(f"export SESSION_LOG_FILE='{cast_file}'")
+            export_cmd = f"export SESSION_LOG_FILE='{cast_file}'"
+            print(export_cmd)
+
+            # Try to copy to clipboard using pbcopy
+            try:
+                subprocess.run(
+                    ['pbcopy'],
+                    input=export_cmd.encode(),
+                    check=True,
+                    capture_output=True
+                )
+                print("# Command copied to clipboard", file=sys.stderr)
+            except (subprocess.CalledProcessError, FileNotFoundError):
+                # pbcopy not available or failed - silently continue
+                pass
         else:
             print("# No asciinema session recording found", file=sys.stderr)
             sys.exit(1)
