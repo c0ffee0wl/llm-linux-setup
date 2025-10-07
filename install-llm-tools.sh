@@ -318,38 +318,24 @@ if [ ! -f "$AZURE_CONFIG_FLAG" ] && ! command llm keys get azure &> /dev/null; t
     fi
 elif [ -f "$AZURE_CONFIG_FLAG" ] || [ -f "$EXTRA_MODELS_FILE" ]; then
     # Subsequent run - user previously configured Azure (detected via flag file or existing YAML)
-    log "Azure OpenAI was previously configured"
+    log "Azure OpenAI was previously configured, preserving existing configuration"
 
-    # Check if they want to update
-    echo ""
-    read -p "Do you want to update Azure OpenAI configuration? (y/N): " UPDATE_AZURE
-    UPDATE_AZURE=${UPDATE_AZURE:-N}
-
-    if [[ "$UPDATE_AZURE" =~ ^[Yy]$ ]]; then
-        log "Updating Azure OpenAI API configuration..."
-        echo ""
-        read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
-        command llm keys set azure
-        AZURE_CONFIGURED=true
-    else
-        log "Preserving existing Azure OpenAI configuration"
-        # Try to read existing config for API base
-        if [ -f "$EXTRA_MODELS_FILE" ]; then
-            # Extract the api_base from the first model entry in the YAML
-            EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
-            if [ -n "$EXISTING_API_BASE" ]; then
-                AZURE_API_BASE="$EXISTING_API_BASE"
-                log "Using existing API base: $AZURE_API_BASE"
-            else
-                AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-                warn "Could not read existing API base, using placeholder"
-            fi
+    # Try to read existing config for API base
+    if [ -f "$EXTRA_MODELS_FILE" ]; then
+        # Extract the api_base from the first model entry in the YAML
+        EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+        if [ -n "$EXISTING_API_BASE" ]; then
+            AZURE_API_BASE="$EXISTING_API_BASE"
+            log "Using existing API base: $AZURE_API_BASE"
         else
             AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-            warn "No existing config found, using placeholder"
+            warn "Could not read existing API base, using placeholder"
         fi
-        AZURE_CONFIGURED=true
+    else
+        AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+        warn "No existing config found, using placeholder"
     fi
+    AZURE_CONFIGURED=true
 else
     # Subsequent run - user never configured Azure (declined on first run)
     log "Azure OpenAI configuration was skipped on initial setup, skipping..."

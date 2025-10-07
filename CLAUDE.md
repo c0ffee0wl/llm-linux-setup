@@ -116,7 +116,52 @@ The system is specifically configured for **Azure Foundry** (not standard OpenAI
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
 
-## Common Tasks
+## Common Commands
+
+### Installation and Updates
+
+```bash
+# First-time installation
+./install-llm-tools.sh
+
+# Update all tools (pulls git updates, upgrades packages, preserves config)
+./install-llm-tools.sh
+```
+
+### Context System Commands
+
+```bash
+# Show last command and output
+context
+
+# Show last 5 commands
+context 5
+
+# Show entire session
+context all
+
+# Get export command for current session file
+context -e
+
+# Use context with LLM
+llm --tool context "what was the output of my last command?"
+```
+
+## Common Development Tasks
+
+### Testing the Installation Script
+
+```bash
+# Test the full installation (will update existing tools)
+./install-llm-tools.sh
+
+# Test self-update mechanism (script detects git updates and re-execs)
+git commit --allow-empty -m "test"
+./install-llm-tools.sh  # Should detect update and re-exec
+
+# Test idempotency (should skip already-configured items)
+./install-llm-tools.sh  # Run twice, should handle gracefully
+```
 
 ### Testing the Context System
 
@@ -125,9 +170,27 @@ The system is specifically configured for **Azure Foundry** (not standard OpenAI
 context          # Show last command and output
 context 5        # Show last 5 commands
 context all      # Show entire session
+context -e       # Output SESSION_LOG_FILE export command
 
 # Test with LLM (requires llm-tools-context installed)
 llm --tool context "what was the output of my last command?"
+```
+
+### Testing the llm-tools-context Plugin
+
+```bash
+# Install in editable mode for development
+cd llm-tools-context
+llm install -e '.[test]'
+
+# Run tests
+python -m pytest tests/
+
+# Test the tool with debug output
+llm --tool context "test" --tools-debug
+
+# Verify plugin is loaded
+llm plugins | grep context
 ```
 
 ### Troubleshooting Session Recording
@@ -182,33 +245,22 @@ export SESSION_LOG_FILE="/path/to/specific/session.cast"
 context
 ```
 
-### Developing the llm-tools-context Plugin
+### Updating Azure OpenAI Configuration
+
+If you need to change the Azure OpenAI configuration after initial setup:
 
 ```bash
-# Install in editable mode for development
-cd llm-tools-context
-llm install -e '.[test]'
+# Option 1: Manually edit the config file
+nano ~/.config/io.datasette.llm/extra-openai-models.yaml
 
-# Run tests
-python -m pytest
+# Option 2: Delete flag file to trigger first-run behavior
+rm ~/.config/llm-tools/azure-openai-configured
+./install-llm-tools.sh  # Will prompt for new Azure config
 
-# Test the tool
-llm --tool context "test" --tools-debug
+# Update API key only
+llm keys set azure
 ```
 
-### Testing the Installation Script
-
-```bash
-# Dry-run approach: Comment out sudo and actual installations, test flow
-# The script uses `set -e` so any error will halt execution
-
-# Test self-update mechanism
-git commit --allow-empty -m "test"
-./install-llm-tools.sh  # Should detect update and re-exec
-
-# Test idempotency
-./install-llm-tools.sh  # Run twice, should skip already-installed items
-```
 
 ### Adding New LLM Plugins
 
@@ -293,17 +345,47 @@ bash -c "source integration/llm-integration.bash && bind -P | grep llm"
 zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ```
 
-## Key Constraints
+## Important File Locations
 
-1. **Azure Foundry Only**: This setup is NOT for standard OpenAI API - all model configs use Azure format
+### Configuration Files
+
+- `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions
+- `~/.config/io.datasette.llm/templates/assistant.yaml` - Custom assistant template (installed from `llm-template/` directory)
+- `~/.config/io.datasette.llm/default_model.txt` - Default model selection
+- `~/.config/io.datasette.llm/keys.json` - Encrypted API keys (managed via `llm keys`)
+- `~/.config/llm-tools/azure-openai-configured` - Flag file indicating Azure OpenAI has been configured
+- `~/.config/llm-tools/asciinema-commit` - Tracks installed asciinema version for update detection
+- `~/.claude-code-router/config.json` - Claude Code Router configuration (manually configured)
+- `$SESSION_LOG_DIR/*.cast` - Asciinema session recordings (default: `/tmp/session_logs/asciinema/`)
+
+### Shell Integration Files
+
+- `integration/llm-common.sh` - Shared configuration (PATH, env vars, aliases, asciinema auto-recording)
+- `integration/llm-integration.bash` - Bash-specific integration (sources common, defines Bash widgets)
+- `integration/llm-integration.zsh` - Zsh-specific integration (sources common, defines Zsh widgets)
+- `~/.bashrc` / `~/.zshrc` - Modified by installation script to source integration files
+
+### Installed Tools Locations
+
+- `~/.local/bin/llm` - LLM CLI tool (installed via uv)
+- `~/.local/bin/context` - Context extraction script (copied from `context/context`)
+- `~/.local/bin/gitingest` - Git repository converter (installed via uv)
+- `~/.local/bin/files-to-prompt` - File formatter (installed via uv)
+- `~/.cargo/bin/asciinema` - Terminal recorder (built from git via cargo)
+- Global npm packages (location varies by system): `repomix`, `@anthropic-ai/claude-code`, `@musistudio/claude-code-router`, `opencode-ai`
+
+## Key Constraints & Design Decisions
+
+1. **Azure Foundry Only**: This setup is NOT for standard OpenAI API - all model configs use Azure format with `azure/` prefix
 2. **Debian/Ubuntu/Kali**: Uses `apt-get` for system packages; would need modification for RHEL/Arch
-3. **Interactive Prompts**: The script prompts for Azure API key and resource URL (for both llm and Claude Code Router); not fully automated
+3. **Interactive Prompts on First Run**: The script prompts for Azure API key and resource URL on first run only; subsequent runs preserve existing configuration automatically
 4. **Git Repository Required**: Self-update only works when cloned from git (not if downloaded as ZIP)
 5. **Path Assumptions**: The script assumes it can write to `~/.bashrc`, `~/.zshrc`, `~/.config/io.datasette.llm/`, and `~/.claude-code-router/`
 6. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
 7. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
 8. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
 9. **Rust Required**: asciinema is installed via cargo (Rust's package manager)
+10. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
 
 ## Special Packages & Forks
 
