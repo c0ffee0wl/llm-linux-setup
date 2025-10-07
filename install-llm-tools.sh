@@ -308,8 +308,8 @@ if [ ! -f "$AZURE_CONFIG_FLAG" ] && ! command llm keys get azure &> /dev/null; t
         log "Skipping Azure OpenAI configuration"
         AZURE_CONFIGURED=false
     fi
-elif [ -f "$AZURE_CONFIG_FLAG" ]; then
-    # Subsequent run - user previously configured Azure
+elif [ -f "$AZURE_CONFIG_FLAG" ] || [ -f "$EXTRA_MODELS_FILE" ]; then
+    # Subsequent run - user previously configured Azure (detected via flag file or existing YAML)
     log "Azure OpenAI was previously configured"
 
     # Check if they want to update
