@@ -245,23 +245,6 @@ export SESSION_LOG_FILE="/path/to/specific/session.cast"
 context
 ```
 
-### Updating Azure OpenAI Configuration
-
-If you need to change the Azure OpenAI configuration after initial setup:
-
-```bash
-# Option 1: Manually edit the config file
-nano ~/.config/io.datasette.llm/extra-openai-models.yaml
-
-# Option 2: Delete first-run flag to trigger reconfiguration
-rm ~/.config/llm-tools/first-run-complete
-./install-llm-tools.sh  # Will prompt for Azure config again
-
-# Update API key only
-llm keys set azure
-```
-
-
 ### Adding New LLM Plugins
 
 Edit the `PLUGINS` array in Phase 3 of `install-llm-tools.sh`:
