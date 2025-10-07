@@ -290,13 +290,24 @@ export PATH=$HOME/.local/bin:$PATH
 # Define the extra models file path early so we can check/preserve existing config
 EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
 
-# Define Azure OpenAI configuration flag file
-AZURE_CONFIG_FLAG="$HOME/.config/llm-tools/azure-openai-configured"
-mkdir -p "$(dirname "$AZURE_CONFIG_FLAG")"
+# Define first-run flag file (used to detect if script has ever run successfully)
+FIRST_RUN_FLAG="$HOME/.config/llm-tools/first-run-complete"
+mkdir -p "$(dirname "$FIRST_RUN_FLAG")"
+
+# Detect if this is the first run
+# Check for: new flag, OR YAML config exists, OR shell integration already present
+if [ -f "$FIRST_RUN_FLAG" ] || \
+   [ -f "$EXTRA_MODELS_FILE" ] || \
+   grep -q "llm-integration" "$HOME/.bashrc" 2>/dev/null || \
+   grep -q "llm-integration" "$HOME/.zshrc" 2>/dev/null; then
+    IS_FIRST_RUN=false
+else
+    IS_FIRST_RUN=true
+fi
 
 # Configure Azure OpenAI API
-# Check if user has ever configured Azure OpenAI (first run detection)
-if [ ! -f "$AZURE_CONFIG_FLAG" ] && ! command llm keys get azure &> /dev/null; then
+# Only prompt for Azure configuration on first run
+if [ "$IS_FIRST_RUN" = "true" ]; then
     # First run - ask if user wants to configure Azure OpenAI
     log "Azure OpenAI Configuration"
     echo ""
@@ -308,37 +319,28 @@ if [ ! -f "$AZURE_CONFIG_FLAG" ] && ! command llm keys get azure &> /dev/null; t
         echo ""
         read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
         command llm keys set azure
-
-        # Create flag file to remember user configured Azure
-        touch "$AZURE_CONFIG_FLAG"
         AZURE_CONFIGURED=true
     else
         log "Skipping Azure OpenAI configuration"
         AZURE_CONFIGURED=false
     fi
-elif [ -f "$AZURE_CONFIG_FLAG" ] || [ -f "$EXTRA_MODELS_FILE" ]; then
-    # Subsequent run - user previously configured Azure (detected via flag file or existing YAML)
+elif [ -f "$EXTRA_MODELS_FILE" ]; then
+    # Subsequent run - user previously configured Azure (YAML exists)
     log "Azure OpenAI was previously configured, preserving existing configuration"
 
-    # Try to read existing config for API base
-    if [ -f "$EXTRA_MODELS_FILE" ]; then
-        # Extract the api_base from the first model entry in the YAML
-        EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
-        if [ -n "$EXISTING_API_BASE" ]; then
-            AZURE_API_BASE="$EXISTING_API_BASE"
-            log "Using existing API base: $AZURE_API_BASE"
-        else
-            AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-            warn "Could not read existing API base, using placeholder"
-        fi
+    # Extract the api_base from the first model entry in the YAML
+    EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+    if [ -n "$EXISTING_API_BASE" ]; then
+        AZURE_API_BASE="$EXISTING_API_BASE"
+        log "Using existing API base: $AZURE_API_BASE"
     else
         AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
-        warn "No existing config found, using placeholder"
+        warn "Could not read existing API base, using placeholder"
     fi
     AZURE_CONFIGURED=true
 else
-    # Subsequent run - user never configured Azure (declined on first run)
-    log "Azure OpenAI configuration was skipped on initial setup, skipping..."
+    # Subsequent run - user declined Azure configuration on first run
+    log "Azure OpenAI not configured (skipped during initial setup)"
     AZURE_CONFIGURED=false
 fi
 
@@ -672,6 +674,13 @@ npm_install install -g opencode-ai@latest
 #############################################################################
 # COMPLETE
 #############################################################################
+
+# Mark first run as complete
+if [ "$IS_FIRST_RUN" = "true" ]; then
+    mkdir -p "$(dirname "$FIRST_RUN_FLAG")"
+    touch "$FIRST_RUN_FLAG"
+    log "First run completed successfully"
+fi
 
 log ""
 log "============================================="

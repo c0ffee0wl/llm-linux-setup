@@ -253,9 +253,9 @@ If you need to change the Azure OpenAI configuration after initial setup:
 # Option 1: Manually edit the config file
 nano ~/.config/io.datasette.llm/extra-openai-models.yaml
 
-# Option 2: Delete flag file to trigger first-run behavior
-rm ~/.config/llm-tools/azure-openai-configured
-./install-llm-tools.sh  # Will prompt for new Azure config
+# Option 2: Delete first-run flag to trigger reconfiguration
+rm ~/.config/llm-tools/first-run-complete
+./install-llm-tools.sh  # Will prompt for Azure config again
 
 # Update API key only
 llm keys set azure
@@ -353,7 +353,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.config/io.datasette.llm/templates/assistant.yaml` - Custom assistant template (installed from `llm-template/` directory)
 - `~/.config/io.datasette.llm/default_model.txt` - Default model selection
 - `~/.config/io.datasette.llm/keys.json` - Encrypted API keys (managed via `llm keys`)
-- `~/.config/llm-tools/azure-openai-configured` - Flag file indicating Azure OpenAI has been configured
+- `~/.config/llm-tools/first-run-complete` - Flag file indicating installation script has completed successfully at least once
 - `~/.config/llm-tools/asciinema-commit` - Tracks installed asciinema version for update detection
 - `~/.claude-code-router/config.json` - Claude Code Router configuration (manually configured)
 - `$SESSION_LOG_DIR/*.cast` - Asciinema session recordings (default: `/tmp/session_logs/asciinema/`)
