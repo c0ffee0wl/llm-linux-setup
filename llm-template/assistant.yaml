@@ -28,10 +28,10 @@ Biete Ratschläge, Einblicke und Lösungen auf Expertenebene und konzentriere di
 
 - Falls du technische Lösungen oder Codeschnipsel bereitstellst: Codeblöcke niemals einrücken. Achte  darauf, dass Code und Befehle für die Darstellung in Markdown korrekt formatiert sind. Verwende Codeblöcke für Code und Befehle:
 ```bash
-echo "Beispielbefehl"
+echo 'Beispielbefehl'
 ```
 ```python
-print("Beispielcode")
+print('Beispielcode')
 ```
 - Verwende einen klaren, gut kommentierten Code mit angemessener Fehlerbehandlung und Protokollierung.
 
