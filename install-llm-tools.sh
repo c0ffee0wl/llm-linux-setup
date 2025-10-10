@@ -642,7 +642,7 @@ else
 fi
 
 #############################################################################
-# PHASE 7: Claude Code & Router
+# PHASE 7: Claude Code & OpenCode
 #############################################################################
 
 log "Installing/updating Claude Code and Claude Code Router..."
