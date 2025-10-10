@@ -3,7 +3,12 @@
 # LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)
 # Installs Simon Willison's llm CLI tool and related AI/LLM command-line utilities
 #
-# Usage: ./install-llm-tools.sh
+# Usage: ./install-llm-tools.sh [--azure]
+#
+# Options:
+#   --azure    Force (re)configuration of Azure OpenAI, even if already configured
+#   --help     Show help message
+#
 # Re-run to update all tools
 
 set -e
@@ -40,6 +45,38 @@ fi
 if ! grep -qE "(debian|ID_LIKE.*debian)" /etc/os-release 2>/dev/null; then
     error "This script requires a Debian-based Linux distribution. Detected system is not compatible."
 fi
+
+#############################################################################
+# Parse Command-Line Arguments
+#############################################################################
+
+FORCE_AZURE_CONFIG=false
+
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --azure)
+            FORCE_AZURE_CONFIG=true
+            shift
+            ;;
+        --help|-h)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)"
+            echo ""
+            echo "Options:"
+            echo "  --azure    Force (re)configuration of Azure OpenAI, even if already configured"
+            echo "  --help     Show this help message"
+            echo ""
+            echo "Examples:"
+            echo "  $0              # Normal installation/update"
+            echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
+            exit 0
+            ;;
+        *)
+            error "Unknown option: $1. Use --help for usage information."
+            ;;
+    esac
+done
 
 #############################################################################
 # PHASE 0: Self-Update
@@ -301,8 +338,16 @@ else
 fi
 
 # Configure Azure OpenAI API
-# Only prompt for Azure configuration on first run
-if [ "$IS_FIRST_RUN" = "true" ]; then
+if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
+    # --azure flag was passed - force (re)configuration
+    log "Azure OpenAI Configuration (forced via --azure flag)"
+    echo ""
+    log "Configuring Azure OpenAI API..."
+    echo ""
+    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+    command llm keys set azure
+    AZURE_CONFIGURED=true
+elif [ "$IS_FIRST_RUN" = "true" ]; then
     # First run - ask if user wants to configure Azure OpenAI
     log "Azure OpenAI Configuration"
     echo ""
@@ -699,4 +744,7 @@ log "  4. Test and configure OpenCode: opencode and configure https://opencode.a
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"
+log ""
+log "To reconfigure Azure OpenAI settings:"
+log "  ./install-llm-tools.sh --azure"
 log ""
