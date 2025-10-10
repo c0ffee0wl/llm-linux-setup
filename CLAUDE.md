@@ -79,6 +79,11 @@ The shell integration uses a **three-file pattern** located in the `integration/
 
 Both shell files source the common file at the top. The main installation script appends source statements to `.bashrc` and `.zshrc` that reference these files by absolute path.
 
+**Command Completion (Ctrl+N)**:
+- The Ctrl+N keybinding uses `llm cmdcomp` command provided by the **llm-cmd-comp** plugin
+- The **llm-cmd** plugin provides command execution functionality
+- Both are installed from git repositories: `github.com/c0ffee0wl/llm-cmd` and `github.com/c0ffee0wl/llm-cmd-comp`
+
 **When adding new shell features**:
 - Shell-agnostic features → `integration/llm-common.sh`
 - Bash-specific features (readline bindings) → `integration/llm-integration.bash`
@@ -373,6 +378,8 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ## Special Packages & Forks
 
 Note that several packages use **forks** or specific sources:
+- **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
+- **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/damonmcminn/llm-templates-fabric`
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/danmackinlay/files-to-prompt`
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`

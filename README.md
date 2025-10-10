@@ -24,6 +24,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - llm-gemini
 - llm-openrouter
 - llm-anthropic
+- llm-cmd - Command execution and management
+- llm-cmd-comp - AI-powered command completion (powers Ctrl+N)
 - llm-tools-quickjs
 - llm-tools-sqlite
 - llm-tools-context (terminal history integration)
