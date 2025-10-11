@@ -461,7 +461,7 @@ PLUGINS=(
     "llm-fragments-pdf"
     "llm-fragments-github"
     "llm-jq"
-    "git+https://github.com/damonmcminn/llm-templates-fabric"
+    "git+https://github.com/c0ffee0wl/llm-templates-fabric"
     "$SCRIPT_DIR/llm-tools-context"
 )
 
@@ -638,7 +638,7 @@ log "Installing/updating files-to-prompt..."
 if uv tool list | grep -q "files-to-prompt"; then
     uv tool upgrade files-to-prompt
 else
-    uv tool install git+https://github.com/danmackinlay/files-to-prompt
+    uv tool install git+https://github.com/c0ffee0wl/files-to-prompt
 fi
 
 #############################################################################
