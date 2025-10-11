@@ -79,6 +79,82 @@ while [[ $# -gt 0 ]]; do
 done
 
 #############################################################################
+# Helper Functions
+#############################################################################
+
+# Install apt package with existence check
+install_apt_package() {
+    local package="$1"
+    if ! command -v "$package" &> /dev/null; then
+        log "Installing $package..."
+        sudo apt-get install -y "$package"
+    else
+        log "$package is already installed"
+    fi
+}
+
+# Install or upgrade a uv tool
+install_or_upgrade_uv_tool() {
+    local tool_name="$1"
+    local tool_source="${2:-$tool_name}"  # Default to tool_name if source not provided
+
+    if uv tool list 2>/dev/null | grep -q "^$tool_name "; then
+        log "$tool_name is already installed, upgrading..."
+        uv tool upgrade "$tool_name"
+    else
+        log "Installing $tool_name..."
+        uv tool install "$tool_source"
+    fi
+}
+
+# Update shell RC file with integration
+update_shell_rc_file() {
+    local rc_file="$1"
+    local integration_file="$2"
+    local shell_name="$3"
+
+    if [ ! -f "$rc_file" ]; then
+        return
+    fi
+
+    # Check if SESSION_LOG_DIR export already exists (first-run detection)
+    if ! grep -q "export SESSION_LOG_DIR=" "$rc_file"; then
+        prompt_for_session_log_dir
+        log "Adding session log configuration and llm integration to $shell_name..."
+        cat >> "$rc_file" <<EOF
+
+# LLM Session Log Directory
+export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
+
+# LLM Tools Integration
+if [ -f "$integration_file" ]; then
+    source "$integration_file"
+fi
+EOF
+    elif ! grep -q "$(basename "$integration_file")" "$rc_file"; then
+        log "Adding llm integration to $shell_name..."
+        cat >> "$rc_file" <<EOF
+
+# LLM Tools Integration
+if [ -f "$integration_file" ]; then
+    source "$integration_file"
+fi
+EOF
+    else
+        log "llm integration already present in $shell_name"
+    fi
+}
+
+# Configure Azure OpenAI with prompts
+configure_azure_openai() {
+    log "Configuring Azure OpenAI API..."
+    echo ""
+    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+    command llm keys set azure
+    AZURE_CONFIGURED=true
+}
+
+#############################################################################
 # PHASE 0: Self-Update
 #############################################################################
 
@@ -116,45 +192,12 @@ log "Installing prerequisites..."
 
 sudo apt-get update
 
-# Install git
-if ! command -v git &> /dev/null; then
-    log "Installing git..."
-    sudo apt-get install -y git
-else
-    log "git is already installed"
-fi
-
-# Install jq
-if ! command -v jq &> /dev/null; then
-    log "Installing jq..."
-    sudo apt-get install -y jq
-else
-    log "jq is already installed"
-fi
-
-# Install xsel (clipboard tool)
-if ! command -v xsel &> /dev/null; then
-    log "Installing xsel..."
-    sudo apt-get install -y xsel
-else
-    log "xsel is already installed"
-fi
-
-# Install Python3
-if ! command -v python3 &> /dev/null; then
-    log "Installing Python3..."
-    sudo apt-get install -y python3
-else
-    log "Python3 is already installed"
-fi
-
-# Install pipx
-if ! command -v pipx &> /dev/null; then
-    log "Installing pipx..."
-    sudo apt-get install -y pipx
-else
-    log "pipx is already installed"
-fi
+# Install basic prerequisites
+install_apt_package git
+install_apt_package jq
+install_apt_package xsel
+install_apt_package python3
+install_apt_package pipx
 
 # Install/update uv
 export PATH=$HOME/.local/bin:$PATH
@@ -175,12 +218,7 @@ else
 fi
 
 # Install curl (needed for nvm installer if required)
-if ! command -v curl &> /dev/null; then
-    log "Installing curl..."
-    sudo apt-get install -y curl
-else
-    log "curl is already installed"
-fi
+install_apt_package curl
 
 # Install asciinema
 if ! command -v asciinema &> /dev/null; then
@@ -311,15 +349,7 @@ npm_install() {
 #############################################################################
 
 log "Installing/updating llm..."
-
-# Check if llm is already installed
-if command -v llm &> /dev/null; then
-    log "llm is already installed, upgrading..."
-    uv tool upgrade llm
-else
-    log "Installing llm..."
-    uv tool install llm
-fi
+install_or_upgrade_uv_tool llm
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
@@ -342,11 +372,7 @@ if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
     # --azure flag was passed - force (re)configuration
     log "Azure OpenAI Configuration (forced via --azure flag)"
     echo ""
-    log "Configuring Azure OpenAI API..."
-    echo ""
-    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
-    command llm keys set azure
-    AZURE_CONFIGURED=true
+    configure_azure_openai
 elif [ "$IS_FIRST_RUN" = "true" ]; then
     # First run - ask if user wants to configure Azure OpenAI
     log "Azure OpenAI Configuration"
@@ -355,11 +381,7 @@ elif [ "$IS_FIRST_RUN" = "true" ]; then
     CONFIG_AZURE=${CONFIG_AZURE:-Y}
 
     if [[ "$CONFIG_AZURE" =~ ^[Yy]$ ]]; then
-        log "Configuring Azure OpenAI API..."
-        echo ""
-        read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
-        command llm keys set azure
-        AZURE_CONFIGURED=true
+        configure_azure_openai
     else
         log "Skipping Azure OpenAI configuration"
         AZURE_CONFIGURED=false
@@ -547,67 +569,9 @@ prompt_for_session_log_dir() {
     fi
 }
 
-# Update .bashrc
-BASHRC="$HOME/.bashrc"
-if [ -f "$BASHRC" ]; then
-    # Check if SESSION_LOG_DIR export already exists (first-run detection)
-    if ! grep -q "export SESSION_LOG_DIR=" "$BASHRC"; then
-        prompt_for_session_log_dir
-        log "Adding session log configuration and llm integration to .bashrc..."
-        cat >> "$BASHRC" <<EOF
-
-# LLM Session Log Directory
-export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
-
-# LLM Tools Integration
-if [ -f "$SCRIPT_DIR/integration/llm-integration.bash" ]; then
-    source "$SCRIPT_DIR/integration/llm-integration.bash"
-fi
-EOF
-    elif ! grep -q "llm-integration.bash" "$BASHRC"; then
-        log "Adding llm integration to .bashrc..."
-        cat >> "$BASHRC" <<EOF
-
-# LLM Tools Integration
-if [ -f "$SCRIPT_DIR/integration/llm-integration.bash" ]; then
-    source "$SCRIPT_DIR/integration/llm-integration.bash"
-fi
-EOF
-    else
-        log "llm integration already present in .bashrc"
-    fi
-fi
-
-# Update .zshrc
-ZSHRC="$HOME/.zshrc"
-if [ -f "$ZSHRC" ]; then
-    # Check if SESSION_LOG_DIR export already exists (first-run detection)
-    if ! grep -q "export SESSION_LOG_DIR=" "$ZSHRC"; then
-        prompt_for_session_log_dir
-        log "Adding session log configuration and llm integration to .zshrc..."
-        cat >> "$ZSHRC" <<EOF
-
-# LLM Session Log Directory
-export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
-
-# LLM Tools Integration
-if [ -f "$SCRIPT_DIR/integration/llm-integration.zsh" ]; then
-    source "$SCRIPT_DIR/integration/llm-integration.zsh"
-fi
-EOF
-    elif ! grep -q "llm-integration.zsh" "$ZSHRC"; then
-        log "Adding llm integration to .zshrc..."
-        cat >> "$ZSHRC" <<EOF
-
-# LLM Tools Integration
-if [ -f "$SCRIPT_DIR/integration/llm-integration.zsh" ]; then
-    source "$SCRIPT_DIR/integration/llm-integration.zsh"
-fi
-EOF
-    else
-        log "llm integration already present in .zshrc"
-    fi
-fi
+# Update shell RC files
+update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
+update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
 
 # Install context script
 log "Installing context script..."
@@ -627,19 +591,11 @@ npm_install install -g repomix
 
 # Install/update gitingest
 log "Installing/updating gitingest..."
-if uv tool list | grep -q "gitingest"; then
-    uv tool upgrade gitingest
-else
-    uv tool install gitingest
-fi
+install_or_upgrade_uv_tool gitingest
 
 # Install/update files-to-prompt
 log "Installing/updating files-to-prompt..."
-if uv tool list | grep -q "files-to-prompt"; then
-    uv tool upgrade files-to-prompt
-else
-    uv tool install git+https://github.com/c0ffee0wl/files-to-prompt
-fi
+install_or_upgrade_uv_tool files-to-prompt "git+https://github.com/c0ffee0wl/files-to-prompt"
 
 #############################################################################
 # PHASE 7: Claude Code & OpenCode

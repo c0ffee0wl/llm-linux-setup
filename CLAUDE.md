@@ -102,6 +102,17 @@ The script is organized into numbered phases:
 6. **Additional Tools**: Install/update repomix (npm), gitingest (pipx), files-to-prompt (uv), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
 
+### Helper Functions (Code Reusability)
+
+The installation script uses **helper functions** to eliminate code duplication and follow KISS principles:
+
+- **`install_apt_package(package_name)`**: Installs apt packages with existence checks (used in Phase 1)
+- **`install_or_upgrade_uv_tool(tool_name, [source])`**: Unified uv tool installation/upgrade (used in Phase 2, 6)
+- **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
+- **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
+
+**When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
+
 ### Azure OpenAI Configuration
 
 The system is specifically configured for **Azure Foundry** (not standard OpenAI):
@@ -265,6 +276,21 @@ PLUGINS=(
 
 The loop handles both PyPI packages and git URLs automatically.
 
+### Modifying Installation Script
+
+When adding new functionality to `install-llm-tools.sh`:
+
+1. **Use existing helper functions** where possible:
+   - For apt packages: `install_apt_package package_name`
+   - For uv tools: `install_or_upgrade_uv_tool tool_name [source]`
+   - For shell RC updates: `update_shell_rc_file rc_file integration_file shell_name`
+   - For Azure config: `configure_azure_openai`
+
+2. **Follow the phase structure**: Add new installations to the appropriate phase
+3. **Maintain idempotency**: Check if tools/configs exist before installing/modifying
+4. **Test with syntax check**: `bash -n install-llm-tools.sh`
+5. **Preserve self-update logic**: Never move or remove Phase 0
+
 ### Modifying Shell Integration
 
 The Ctrl+N keybinding is implemented differently in Bash vs Zsh:
@@ -293,30 +319,6 @@ The script automatically upgrades tools on re-run:
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
 - OpenCode: `npm install -g opencode-ai@latest`
-
-### Using Claude Code with Azure OpenAI
-
-The installation configures **Claude Code Router** as a proxy to use Azure OpenAI with Claude Code:
-
-1. Configuration stored in `~/.claude-code-router/config.json`
-2. Requires Azure OpenAI endpoint, API key, deployment name, and API version
-3. Use the `routed-claude` alias (defined in `integration/llm-common.sh`) to launch Claude Code via the router
-4. Command: `routed-claude` (equivalent to `ccr code`)
-
-**Claude Code Router Config Structure**:
-```json
-{
-  "Providers": [{
-    "name": "azure",
-    "api_base_url": "https://YOUR-RESOURCE.openai.azure.com/openai/deployments/DEPLOYMENT/chat/completions?api-version=2024-10-21",
-    "api_key": "YOUR_KEY",
-    "models": ["DEPLOYMENT_NAME"]
-  }],
-  "Router": {
-    "default": "azure,DEPLOYMENT_NAME"
-  }
-}
-```
 
 ### Testing Shell Integration
 
@@ -380,8 +382,8 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 Note that several packages use **forks** or specific sources:
 - **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
-- **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/damonmcminn/llm-templates-fabric`
-- **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/danmackinlay/files-to-prompt`
+- **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`
+- **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 
