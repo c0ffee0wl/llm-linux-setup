@@ -645,19 +645,17 @@ fi
 # PHASE 7: Claude Code & OpenCode
 #############################################################################
 
-log "Installing/updating Claude Code and Claude Code Router..."
-
 # Install/update Claude Code
 log "Installing/updating Claude Code..."
 npm_install install -g @anthropic-ai/claude-code
 
-# Install/update Claude Code Router
-log "Installing/updating Claude Code Router..."
-npm_install install -g @musistudio/claude-code-router
+# # Install/update Claude Code Router
+# log "Installing/updating Claude Code Router..."
+# npm_install install -g @musistudio/claude-code-router
 
-# Configure Claude Code Router for Azure OpenAI
-CCR_CONFIG_DIR="$HOME/.claude-code-router"
-CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
+# # Configure Claude Code Router for Azure OpenAI
+# CCR_CONFIG_DIR="$HOME/.claude-code-router"
+# CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
 
 # Commented out: Claude Code Router configuration (configure manually if needed)
 
@@ -705,7 +703,7 @@ CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
 #     log "Claude Code Router configuration created at $CCR_CONFIG_FILE"
 # fi
 
-log "Claude Code Router installed. Configure manually in $CCR_CONFIG_FILE if needed."
+# log "Claude Code Router installed. Configure manually in $CCR_CONFIG_FILE if needed."
 
 # Install/update OpenCode
 log "Installing/updating OpenCode..."
@@ -728,7 +726,7 @@ log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - files-to-prompt (file content formatter)"
 log "  - asciinema (terminal session recorder)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
-log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
+# log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
 log "  - OpenCode (AI coding agent for terminal)"
 log ""
 log "Shell integration files created in: $SCRIPT_DIR/integration"
