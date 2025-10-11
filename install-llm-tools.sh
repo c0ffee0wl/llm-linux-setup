@@ -167,11 +167,14 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     # Fetch latest changes
     git fetch origin 2>/dev/null || true
 
-    # Check if we're behind
+    # Check if we're behind the remote (not just different)
     LOCAL=$(git rev-parse HEAD)
     REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
 
-    if [ "$LOCAL" != "$REMOTE" ]; then
+    # Count commits we don't have that remote has
+    BEHIND=$(git rev-list HEAD..@{u} 2>/dev/null | wc -l)
+
+    if [ "$BEHIND" -gt 0 ]; then
         log "Updates found! Pulling latest changes..."
         git pull
         log "Re-executing updated script..."

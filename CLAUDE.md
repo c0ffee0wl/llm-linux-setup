@@ -17,8 +17,10 @@ This is an installation and configuration system for Simon Willison's `llm` CLI 
 The core design uses a **self-updating script pattern** with safe execution:
 
 1. **Phase 0 (Self-Update)**: The script checks if it's running in a git repo, fetches updates, compares local vs remote HEAD
-2. **Critical**: If updates exist, the script does `git pull` then `exec "$0" "$@"` to replace the current process with the updated script
-3. This prevents the script from executing with partially-updated code mid-run
+2. **Critical Check**: Uses `git rev-list HEAD..@{u}` to count how many commits **behind** the remote we are (not just different from it)
+   - If behind > 0: pulls updates and re-execs with `exec "$0" "$@"` to replace the current process
+   - If equal or ahead: continues normally without pulling
+3. This prevents the script from executing with partially-updated code mid-run and avoids infinite loops when local commits exist
 
 **When modifying `install-llm-tools.sh`**: The self-update logic in Phase 0 must ALWAYS run before any other operations. Never move or remove this section.
 
@@ -177,6 +179,29 @@ git commit --allow-empty -m "test"
 
 # Test idempotency (should skip already-configured items)
 ./install-llm-tools.sh  # Run twice, should handle gracefully
+
+# Check syntax after modifications
+bash -n install-llm-tools.sh
+```
+
+### Troubleshooting Installation Script
+
+**Issue: Infinite loop on script start ("Updates found! Pulling latest changes...")**
+
+This happens when you have local commits that haven't been pushed to origin:
+
+```bash
+# Check if you're ahead of origin
+git status
+
+# If "Your branch is ahead of 'origin/main' by N commits":
+# Option 1: Push your changes
+git push
+
+# Option 2: Reset to origin (WARNING: loses local commits)
+git reset --hard origin/main
+
+# The script only pulls when BEHIND remote, not when ahead or equal
 ```
 
 ### Testing the Context System
