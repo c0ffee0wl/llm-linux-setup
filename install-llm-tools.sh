@@ -176,7 +176,7 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
 
     if [ "$BEHIND" -gt 0 ]; then
         log "Updates found! Pulling latest changes..."
-        git pull
+        git pull --ff-only
         log "Re-executing updated script..."
         exec "$0" "$@"
         exit 0
