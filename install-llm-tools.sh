@@ -107,6 +107,31 @@ install_or_upgrade_uv_tool() {
     fi
 }
 
+# Install Rust via rustup
+install_rust_via_rustup() {
+    log "Installing Rust via rustup (official Rust installer)..."
+
+    # Download and run rustup-init
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+
+    # Source cargo environment for this script
+    export CARGO_HOME="$HOME/.cargo"
+    export RUSTUP_HOME="$HOME/.rustup"
+    export PATH="$CARGO_HOME/bin:$PATH"
+
+    if [ -f "$HOME/.cargo/env" ]; then
+        source "$HOME/.cargo/env"
+    fi
+
+    log "Rust installed successfully via rustup"
+}
+
+# Update Rust via rustup
+update_rust_via_rustup() {
+    log "Updating Rust via rustup..."
+    rustup update stable
+}
+
 # Update shell RC file with integration
 update_shell_rc_file() {
     local rc_file="$1"
@@ -212,12 +237,65 @@ else
     pipx upgrade uv
 fi
 
-# Install Rust and Cargo from repositories
+# Check what Rust version is available in repositories
+log "Checking Rust version in repositories..."
+REPO_RUST_VERSION=$(apt-cache policy rustc 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+\.[0-9]+' | head -1)
+
+if [ -z "$REPO_RUST_VERSION" ]; then
+    REPO_RUST_VERSION="0.0"
+    warn "Could not determine repository Rust version"
+fi
+
+# Convert version to comparable number (e.g., "1.75" -> 175)
+REPO_RUST_VERSION_NUM=$(echo "$REPO_RUST_VERSION" | awk -F. '{print ($1 * 100) + $2}')
+MINIMUM_RUST_VERSION=175  # Rust 1.75 (asciinema requirement)
+
+log "Repository has Rust version: $REPO_RUST_VERSION (numeric: $REPO_RUST_VERSION_NUM, minimum required: $MINIMUM_RUST_VERSION)"
+
+# Install Rust - either from repo (if >= 1.75) or via rustup (if < 1.75)
 if ! command -v cargo &> /dev/null; then
-    log "Installing Rust and Cargo from repositories..."
-    sudo apt-get install -y cargo rustc
+    # Check if rustup is already managing Rust (rustup might be installed but not active)
+    if command -v rustup &> /dev/null; then
+        log "rustup is installed but cargo not found, installing Rust via rustup..."
+        rustup toolchain install stable
+        rustup default stable
+    elif [ "$REPO_RUST_VERSION_NUM" -ge "$MINIMUM_RUST_VERSION" ]; then
+        log "Installing Rust from repositories (version $REPO_RUST_VERSION)..."
+        sudo apt-get install -y cargo rustc
+    else
+        log "Repository version $REPO_RUST_VERSION is < 1.75, installing Rust via rustup..."
+        install_rust_via_rustup
+    fi
 else
-    log "Rust/Cargo is already installed"
+    # Rust is already installed - determine if it's managed by rustup or apt
+    if command -v rustup &> /dev/null; then
+        CURRENT_RUST_VERSION=$(rustc --version | grep -oP 'rustc \K[0-9]+\.[0-9]+' | head -1)
+        log "Rust is already installed via rustup (version $CURRENT_RUST_VERSION)"
+
+        # Check if we need to update
+        update_rust_via_rustup
+    else
+        CURRENT_RUST_VERSION=$(rustc --version | grep -oP 'rustc \K[0-9]+\.[0-9]+' | head -1)
+        CURRENT_RUST_VERSION_NUM=$(echo "$CURRENT_RUST_VERSION" | awk -F. '{print ($1 * 100) + $2}')
+
+        log "Rust is already installed from system packages (version $CURRENT_RUST_VERSION)"
+
+        # If current version is < 1.75, offer to upgrade via rustup
+        if [ "$CURRENT_RUST_VERSION_NUM" -lt "$MINIMUM_RUST_VERSION" ]; then
+            warn "Installed Rust version $CURRENT_RUST_VERSION is too old (requires 1.75+)"
+            echo ""
+            read -p "Install Rust 1.75+ via rustup? This will shadow the system installation. (Y/n): " UPGRADE_RUST
+            UPGRADE_RUST=${UPGRADE_RUST:-Y}
+
+            if [[ "$UPGRADE_RUST" =~ ^[Yy]$ ]]; then
+                install_rust_via_rustup
+                log "Rust upgraded successfully. rustup version will take precedence over system version."
+            else
+                warn "Continuing with old Rust version. asciinema build may fail."
+                warn "To upgrade manually later, run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            fi
+        fi
+    fi
 fi
 
 # Install curl (needed for nvm installer if required)

@@ -112,8 +112,40 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`install_or_upgrade_uv_tool(tool_name, [source])`**: Unified uv tool installation/upgrade (used in Phase 2, 6)
 - **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
+- **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
+- **`update_rust_via_rustup()`**: Updates Rust via rustup when rustup-managed installation is detected (used in Phase 1)
 
 **When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
+
+### Rust/Cargo Installation Strategy
+
+The script uses **intelligent version detection** similar to the Node.js approach:
+
+**Version Detection Pattern:**
+1. Check repository Rust version via `apt-cache policy rustc`
+2. Extract and compare version (minimum required: 1.75 for asciinema)
+3. Choose installation method based on availability and current state
+
+**Installation Logic:**
+- **If Rust not installed:**
+  - Uses rustup if already available
+  - Installs from apt if repo version ≥ 1.75
+  - Falls back to rustup if repo version < 1.75
+- **If Rust already installed via rustup:**
+  - Automatically updates via `rustup update stable`
+- **If Rust already installed via apt and version < 1.75:**
+  - Prompts user: `"Install Rust 1.75+ via rustup? This will shadow the system installation. (Y/n)"`
+  - Default: Yes (critical for asciinema build)
+  - If accepted: Installs rustup (shadows system packages via PATH)
+  - If declined: Warns that asciinema build may fail
+
+**Coexistence Strategy:**
+- rustup installs to `~/.cargo/bin` (already prioritized in PATH)
+- System packages remain in `/usr/bin` (harmless when shadowed)
+- No package removal needed (consistent with Node.js handling)
+- Uses `-y` flag in rustup installer to prevent blocking prompts
+
+**Why This Matters:** Prevents `cargo install` failures like "hyper-rustls requires rustc 1.71+" on older Debian/Ubuntu/Kali systems with outdated Rust packages.
 
 ### Azure OpenAI Configuration
 
@@ -202,6 +234,50 @@ git push
 git reset --hard origin/main
 
 # The script only pulls when BEHIND remote, not when ahead or equal
+```
+
+**Issue: Rust version too old / asciinema build fails**
+
+If you encounter errors like "package X cannot be built because it requires rustc 1.71 or newer":
+
+```bash
+# Check current Rust version
+rustc --version
+
+# Check if rustup is installed
+command -v rustup
+
+# Manual upgrade via rustup (if not already done)
+curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+source $HOME/.cargo/env
+
+# Verify rustup installation takes precedence
+which rustc  # Should show ~/.cargo/bin/rustc
+
+# Update Rust via rustup
+rustup update stable
+
+# Re-run the installation script
+./install-llm-tools.sh
+```
+
+**Issue: Both rustup and apt Rust installed, wrong version used**
+
+```bash
+# Check which rust is being used
+which rustc
+rustc --version
+
+# Verify PATH order (rustup should come first)
+echo $PATH | tr ':' '\n' | grep -E 'cargo|rust'
+
+# Expected order:
+# /home/user/.cargo/bin  <- rustup (should be first)
+# /usr/bin               <- system packages
+
+# Fix PATH if needed (add to ~/.bashrc or ~/.zshrc)
+export PATH="$HOME/.cargo/bin:$PATH"
+source ~/.bashrc  # or ~/.zshrc
 ```
 
 ### Testing the Context System
@@ -398,8 +474,10 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 6. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
 7. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
 8. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
-9. **Rust Required**: asciinema is installed via cargo (Rust's package manager)
-10. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
+9. **Rust Required**: asciinema is installed via cargo (Rust's package manager); minimum Rust 1.75 required
+10. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
+11. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
+12. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
 
 ## Special Packages & Forks
 
