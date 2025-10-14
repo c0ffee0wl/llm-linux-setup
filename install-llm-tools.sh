@@ -103,7 +103,7 @@ install_or_upgrade_uv_tool() {
         uv tool upgrade "$tool_name"
     else
         log "Installing $tool_name..."
-        uv tool install "$tool_source"
+        uv tool install "$tool_source" --force
     fi
 }
 
