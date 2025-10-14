@@ -101,7 +101,7 @@ The script is organized into numbered phases:
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade`
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks)
-6. **Additional Tools**: Install/update repomix (npm), gitingest (pipx), files-to-prompt (uv), context script
+6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
 
 ### Helper Functions (Code Reusability)
@@ -337,7 +337,6 @@ The Ctrl+N keybinding is implemented differently in Bash vs Zsh:
 The script automatically upgrades tools on re-run:
 - `llm`: `uv tool upgrade llm`
 - Plugins: `llm install <plugin> --upgrade`
-- `repomix`: `npm install -g repomix` (npm always installs latest)
 - `gitingest`: `uv tool upgrade gitingest`
 - `files-to-prompt`: `uv tool upgrade files-to-prompt`
 - `asciinema`: `cargo install --locked --force --git https://github.com/asciinema/asciinema`
@@ -387,7 +386,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.local/bin/gitingest` - Git repository converter (installed via uv)
 - `~/.local/bin/files-to-prompt` - File formatter (installed via uv)
 - `~/.cargo/bin/asciinema` - Terminal recorder (built from git via cargo)
-- Global npm packages (location varies by system): `repomix`, `@anthropic-ai/claude-code`, `@musistudio/claude-code-router`, `opencode-ai`
+- Global npm packages (location varies by system): `@anthropic-ai/claude-code`, `@musistudio/claude-code-router`, `opencode-ai`
 
 ## Key Constraints & Design Decisions
 

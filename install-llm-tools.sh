@@ -588,10 +588,6 @@ chmod +x "$HOME/.local/bin/context"
 
 log "Installing/updating additional tools..."
 
-# Install/update repomix
-log "Installing/updating repomix..."
-npm_install install -g repomix
-
 # Install/update gitingest
 log "Installing/updating gitingest..."
 install_or_upgrade_uv_tool gitingest
@@ -680,7 +676,6 @@ log ""
 log "Installed tools:"
 log "  - llm (Simon Willison's CLI tool)"
 log "  - llm plugins (gemini, anthropic, tools, fragments, jq, fabric templates, context)"
-log "  - repomix (repository packager)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - files-to-prompt (file content formatter)"
 log "  - asciinema (terminal session recorder)"

@@ -39,7 +39,6 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - **assistant.yaml** - Custom assistant template with security/IT expertise configuration
 
 ### Additional Tools
-- **repomix** - Repository packager for AI consumption
 - **gitingest** - Convert Git repositories to LLM-friendly text
 - **files-to-prompt** - File content formatter for LLM prompts
 
@@ -75,7 +74,7 @@ The script will:
 1. Pull the latest version from git
 2. Update llm and all plugins
 3. Update custom templates (assistant.yaml)
-4. Update repomix, gitingest, and files-to-prompt
+4. Update gitingest and files-to-prompt
 5. Refresh shell integration files
 
 ## Usage
@@ -122,9 +121,6 @@ The following models are configured:
 ### Additional Tools
 
 ```bash
-# Package repository for AI analysis
-repomix
-
 # Convert Git repositories to LLM-friendly text
 gitingest https://github.com/user/repo
 gitingest /path/to/local/repo
@@ -230,7 +226,6 @@ git reset --hard origin/main
 - [LLM Documentation](https://llm.datasette.io/)
 - [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
 - [Pedantic Journal - LLM Guide](https://pedanticjournal.com/llm/)
-- [Repomix Documentation](https://github.com/yamadashy/repomix)
 - [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
 - [Files-to-Prompt](https://github.com/danmackinlay/files-to-prompt)
 
@@ -238,7 +233,6 @@ git reset --hard origin/main
 
 This installation script is provided as-is. Individual tools have their own licenses:
 - llm: Apache 2.0
-- Repomix: MIT
 - See individual tool repositories for details
 
 ## Contributing
@@ -253,6 +247,5 @@ To modify or extend this installation:
 ## Credits
 
 - [Simon Willison](https://github.com/simonw) - llm CLI tool
-- [Repomix Team](https://github.com/yamadashy/repomix) - Repository packaging
 - [Dan Mackinlay](https://github.com/danmackinlay) - files-to-prompt fork
 - [Damon McMinn](https://github.com/damonmcminn) - llm-templates-fabric fork
