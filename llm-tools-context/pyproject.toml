@@ -3,7 +3,7 @@ name = "llm-tools-context"
 version = "0.1.0"
 description = "Extract recent shell commands and outputs from asciinema recordings for LLM"
 readme = "README.md"
-authors = [{name = "LLM Linux Setup"}]
+authors = [{name = "c0ffee0wl"}]
 license = {text = "Apache-2.0"}
 classifiers = [
     "License :: OSI Approved :: Apache Software License"
@@ -13,7 +13,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourusername/llm-linux-setup"
+Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
 
 [project.entry-points.llm]
 context = "llm_tools_context"
