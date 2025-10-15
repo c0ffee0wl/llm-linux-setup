@@ -58,8 +58,8 @@ llm() {
         return 1  # Add template
     }
 
-    # For prompt commands (prompt, chat) or default prompt
-    # apply the assistant template unless user specified their own
+    # For prompt commands (prompt, chat, code) or default prompt
+    # apply the appropriate template unless user specified their own
     if [ "$1" = "chat" ]; then
         shift
         if should_skip_template "$@"; then
@@ -67,6 +67,9 @@ llm() {
         else
             command llm chat -t assistant "$@"
         fi
+    elif [ "$1" = "code" ]; then
+        shift
+        command llm -t code "$@"
     else
         if should_skip_template "$@"; then
             command llm "$@"

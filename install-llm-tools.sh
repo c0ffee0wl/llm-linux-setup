@@ -179,6 +179,40 @@ configure_azure_openai() {
     AZURE_CONFIGURED=true
 }
 
+# Update template file with smart update check
+update_template_file() {
+    local template_name="$1"
+    local source_file="$SCRIPT_DIR/llm-template/${template_name}.yaml"
+    local dest_file="$TEMPLATES_DIR/${template_name}.yaml"
+
+    if [ ! -f "$source_file" ]; then
+        warn "Template not found at $source_file"
+        return
+    fi
+
+    if [ -f "$dest_file" ]; then
+        # Both files exist - compare them
+        if ! cmp -s "$source_file" "$dest_file"; then
+            log "${template_name}.yaml template has changed in repository"
+            echo ""
+            read -p "The ${template_name}.yaml template in the repository differs from your installed version. Update it? (y/N): " UPDATE_TEMPLATE
+            if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
+                cp "$source_file" "$dest_file"
+                log "${template_name}.yaml template updated to $dest_file"
+            else
+                log "Keeping existing ${template_name}.yaml template"
+            fi
+        else
+            log "${template_name}.yaml template is up to date"
+        fi
+    else
+        # Only repo version exists - install it
+        log "Installing ${template_name}.yaml template..."
+        cp "$source_file" "$dest_file"
+        log "Template installed to $dest_file"
+    fi
+}
+
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -585,32 +619,9 @@ TEMPLATES_DIR="$(command llm logs path | xargs dirname)/templates"
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
 
-# Copy assistant.yaml template from repository (with smart update check)
-if [ -f "$SCRIPT_DIR/llm-template/assistant.yaml" ]; then
-    if [ -f "$TEMPLATES_DIR/assistant.yaml" ]; then
-        # Both files exist - compare them
-        if ! cmp -s "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"; then
-            log "Template has changed in repository"
-            echo ""
-            read -p "The assistant.yaml template in the repository differs from your installed version. Update it? (y/N): " UPDATE_TEMPLATE
-            if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
-                cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
-                log "Template updated to $TEMPLATES_DIR/assistant.yaml"
-            else
-                log "Keeping existing template"
-            fi
-        else
-            log "Template is up to date"
-        fi
-    else
-        # Only repo version exists - install it
-        log "Installing assistant.yaml template..."
-        cp "$SCRIPT_DIR/llm-template/assistant.yaml" "$TEMPLATES_DIR/assistant.yaml"
-        log "Template installed to $TEMPLATES_DIR/assistant.yaml"
-    fi
-else
-    warn "Template not found at $SCRIPT_DIR/llm-template/assistant.yaml"
-fi
+# Copy templates from repository (with smart update check)
+update_template_file "assistant"
+update_template_file "code"
 
 #############################################################################
 # PHASE 5: Shell Integration

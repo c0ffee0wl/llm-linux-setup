@@ -114,6 +114,7 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
 - **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
 - **`update_rust_via_rustup()`**: Updates Rust via rustup when rustup-managed installation is detected (used in Phase 1)
+- **`update_template_file(template_name)`**: Smart template update with user confirmation - compares repo vs installed version, prompts if different (used in Phase 4)
 
 **When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
 
@@ -160,11 +161,12 @@ The system is specifically configured for **Azure Foundry** (not standard OpenAI
 ## Key Files & Components
 
 - **`install-llm-tools.sh`**: Main installation/update script with self-update logic
-- **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias
+- **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias, code subcommand handler
 - **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion)
 - **`context/context`**: Python script for extracting terminal history from asciinema recordings
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
+- **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
 
 ## Common Commands
 
@@ -196,6 +198,40 @@ context -e
 # Use context with LLM
 llm --tool context "what was the output of my last command?"
 ```
+
+### Code Generation Commands
+
+The `llm code` command generates clean, executable code without explanations or markdown formatting - perfect for piping to files or direct execution:
+
+```bash
+# Generate Python code
+llm code "function to check if number is prime" > prime.py
+
+# Generate bash script
+llm code "script to backup directory with timestamp" > backup.sh
+
+# Generate SQL query
+llm code "select users who registered this month"
+
+# Generate Dockerfile
+llm code "dockerfile for nodejs app with nginx" > Dockerfile
+
+# Direct execution (use with caution!)
+llm code "one-liner to find files larger than 100MB" | bash
+
+# Chain with other commands
+llm code "regex to match email addresses" | grep -o '@'
+
+# Generate configuration file
+llm code "nginx config for reverse proxy on port 3000" > nginx.conf
+```
+
+**Key Features:**
+- No markdown code blocks (no \`\`\`)
+- No explanations or natural language
+- Output is directly executable/pipeable
+- Infers programming language from context
+- Ideal for automation and scripting
 
 ## Common Development Tasks
 
@@ -386,11 +422,14 @@ When adding new functionality to `install-llm-tools.sh`:
    - For uv tools: `install_or_upgrade_uv_tool tool_name [source]`
    - For shell RC updates: `update_shell_rc_file rc_file integration_file shell_name`
    - For Azure config: `configure_azure_openai`
+   - For template updates: `update_template_file template_name`
 
 2. **Follow the phase structure**: Add new installations to the appropriate phase
 3. **Maintain idempotency**: Check if tools/configs exist before installing/modifying
 4. **Test with syntax check**: `bash -n install-llm-tools.sh`
 5. **Preserve self-update logic**: Never move or remove Phase 0
+
+**Adding new templates**: Simply add a new YAML file to `llm-template/` and add one line to Phase 4: `update_template_file "newtemplate"`
 
 ### Modifying Shell Integration
 
@@ -441,6 +480,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions
 - `~/.config/io.datasette.llm/templates/assistant.yaml` - Custom assistant template (installed from `llm-template/` directory)
+- `~/.config/io.datasette.llm/templates/code.yaml` - Code-only generation template (installed from `llm-template/` directory)
 - `~/.config/io.datasette.llm/default_model.txt` - Default model selection
 - `~/.config/io.datasette.llm/keys.json` - Encrypted API keys (managed via `llm keys`)
 - `~/.config/llm-tools/first-run-complete` - Flag file indicating installation script has completed successfully at least once
