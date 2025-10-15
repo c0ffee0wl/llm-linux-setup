@@ -8,7 +8,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Repository Overview
 
-This is an installation and configuration system for Simon Willison's `llm` CLI tool and related AI/LLM command-line utilities on Linux (Debian/Ubuntu/Kali). The repository consists of a main installation script and shell integration files that work together to provide a complete LLM tooling environment.
+Installation and configuration system for Simon Willison's `llm` CLI tool and related AI/LLM command-line utilities on Linux (Debian/Ubuntu/Kali). Consists of a self-updating installation script, shell integration files, and an automatic terminal session recording system that provides AI context.
 
 ## Architecture
 
@@ -38,8 +38,10 @@ The repository includes an **automatic session recording and context extraction 
 2. **Context Extraction** (`context/context`): Python script that parses asciinema recordings
    - Finds current session's `.cast` file via `$SESSION_LOG_FILE` or most recent file in log directory
    - Converts binary `.cast` format to text using `asciinema convert`
-   - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.)
-   - Extracts commands and their outputs, returns last N commands or full session
+   - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.), handles Kali two-line prompts
+   - Extracts **prompt blocks** (prompt + command + output from one prompt to the next)
+   - Filters out previous `context` command outputs (lines starting with `#c#`) to avoid recursion
+   - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
 
 3. **LLM Integration** (`llm-tools-context/`): LLM plugin exposing context as a tool
    - Registered as a tool that LLMs can call during conversations
@@ -75,21 +77,26 @@ The repository includes an **automatic session recording and context extraction 
 ### Shell Integration Architecture
 
 The shell integration uses a **three-file pattern** located in the `integration/` subdirectory:
-- `integration/llm-common.sh` - Shared configuration (PATH, env vars, aliases)
+- `integration/llm-common.sh` - Shared configuration (PATH, env vars, aliases, llm wrapper function)
 - `integration/llm-integration.bash` - Bash-specific integration (sources common, defines Bash widgets)
 - `integration/llm-integration.zsh` - Zsh-specific integration (sources common, defines Zsh widgets)
 
-Both shell files source the common file at the top. The main installation script appends source statements to `.bashrc` and `.zshrc` that reference these files by absolute path.
+**LLM Wrapper Function** (`integration/llm-common.sh:16-80`):
+- Automatically applies templates to prompt commands (chat, code, default prompts)
+- **`llm chat`** → adds `-t assistant` unless user specifies `-t`, `-s`, `-c`, or `--cid`
+- **`llm code`** → always adds `-t code` (outputs clean executable code without markdown)
+- **Default prompts** → adds `-t assistant` unless user specifies template/system prompt/continuation
+- **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, etc.
+- When modifying wrapper logic, update the `exclude_commands` array and `should_skip_template()` function
 
 **Command Completion (Ctrl+N)**:
-- The Ctrl+N keybinding uses `llm cmdcomp` command provided by the **llm-cmd-comp** plugin
-- The **llm-cmd** plugin provides command execution functionality
-- Both are installed from git repositories: `github.com/c0ffee0wl/llm-cmd` and `github.com/c0ffee0wl/llm-cmd-comp`
+- Uses `llm cmdcomp` command from **llm-cmd-comp** plugin (git: `c0ffee0wl/llm-cmd-comp`)
+- **llm-cmd** plugin provides command execution (git: `c0ffee0wl/llm-cmd`)
 
 **When adding new shell features**:
-- Shell-agnostic features → `integration/llm-common.sh`
-- Bash-specific features (readline bindings) → `integration/llm-integration.bash`
-- Zsh-specific features (zle widgets) → `integration/llm-integration.zsh`
+- Shell-agnostic → `integration/llm-common.sh`
+- Bash-specific (readline bindings) → `integration/llm-integration.bash`
+- Zsh-specific (zle widgets) → `integration/llm-integration.zsh`
 
 ### Installation Phases
 
@@ -254,67 +261,11 @@ bash -n install-llm-tools.sh
 
 ### Troubleshooting Installation Script
 
-**Issue: Infinite loop on script start ("Updates found! Pulling latest changes...")**
+**Infinite loop on script start**: Local commits ahead of origin. The script uses `git rev-list HEAD..@{u}` to only pull when BEHIND, not ahead. Solution: `git push` or `git reset --hard origin/main`
 
-This happens when you have local commits that haven't been pushed to origin:
+**Rust version too old**: Script auto-detects and prompts to install rustup if < 1.75. Manual fix: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
-```bash
-# Check if you're ahead of origin
-git status
-
-# If "Your branch is ahead of 'origin/main' by N commits":
-# Option 1: Push your changes
-git push
-
-# Option 2: Reset to origin (WARNING: loses local commits)
-git reset --hard origin/main
-
-# The script only pulls when BEHIND remote, not when ahead or equal
-```
-
-**Issue: Rust version too old / asciinema build fails**
-
-If you encounter errors like "package X cannot be built because it requires rustc 1.71 or newer":
-
-```bash
-# Check current Rust version
-rustc --version
-
-# Check if rustup is installed
-command -v rustup
-
-# Manual upgrade via rustup (if not already done)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source $HOME/.cargo/env
-
-# Verify rustup installation takes precedence
-which rustc  # Should show ~/.cargo/bin/rustc
-
-# Update Rust via rustup
-rustup update stable
-
-# Re-run the installation script
-./install-llm-tools.sh
-```
-
-**Issue: Both rustup and apt Rust installed, wrong version used**
-
-```bash
-# Check which rust is being used
-which rustc
-rustc --version
-
-# Verify PATH order (rustup should come first)
-echo $PATH | tr ':' '\n' | grep -E 'cargo|rust'
-
-# Expected order:
-# /home/user/.cargo/bin  <- rustup (should be first)
-# /usr/bin               <- system packages
-
-# Fix PATH if needed (add to ~/.bashrc or ~/.zshrc)
-export PATH="$HOME/.cargo/bin:$PATH"
-source ~/.bashrc  # or ~/.zshrc
-```
+**Wrong Rust version used**: Ensure `~/.cargo/bin` comes before `/usr/bin` in PATH. Add `export PATH="$HOME/.cargo/bin:$PATH"` to shell RC file if needed.
 
 ### Testing the Context System
 
@@ -348,55 +299,11 @@ llm plugins | grep context
 
 ### Troubleshooting Session Recording
 
-**Issue: New tmux panes don't create separate recordings**
+**New tmux panes don't record**: Check `env | grep IN_ASCIINEMA_SESSION` shows pane-specific markers (`IN_ASCIINEMA_SESSION_tmux_0=1`). Re-source shell RC file if needed.
 
-If you're running an older version or experiencing issues:
+**Recording not starting**: Verify integration is sourced: `grep -r "llm-integration" ~/.bashrc ~/.zshrc` and `which asciinema` shows path.
 
-```bash
-# 1. Check if pane-specific variables are being set
-env | grep IN_ASCIINEMA_SESSION
-
-# Expected in tmux pane 0:
-# IN_ASCIINEMA_SESSION_tmux_0=1
-#
-# Expected in regular terminal or screen:
-# IN_ASCIINEMA_SESSION=1
-
-# 2. Verify session log files have pane identifiers
-ls -la "$SESSION_LOG_DIR"
-# Should see: 2025-10-05_14-30-45-123_12345_tmux0.cast
-
-# 3. Re-source the updated integration
-source ~/.bashrc  # or ~/.zshrc
-
-# 4. Create a new tmux pane and check if it starts recording
-# You should see "Session is logged for 'context'..." message
-```
-
-**Issue: Recording not starting in new shells**
-
-```bash
-# Verify the integration file is being sourced
-grep -r "llm-integration" ~/.bashrc ~/.zshrc
-
-# Check if asciinema is in PATH
-which asciinema
-
-# Manually trigger recording test
-SESSION_LOG_DIR=/tmp/test_recording \
-  bash -c 'source integration/llm-common.sh'
-```
-
-**Issue: Context command shows wrong session**
-
-```bash
-# Check which session file is being used
-echo $SESSION_LOG_FILE
-
-# Set specific session manually
-export SESSION_LOG_FILE="/path/to/specific/session.cast"
-context
-```
+**Context shows wrong session**: Check `echo $SESSION_LOG_FILE` or manually set: `export SESSION_LOG_FILE="/path/to/session.cast"`
 
 ### Adding New LLM Plugins
 
@@ -477,32 +384,18 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ## Important File Locations
 
 ### Configuration Files
-
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions
-- `~/.config/io.datasette.llm/templates/assistant.yaml` - Custom assistant template (installed from `llm-template/` directory)
-- `~/.config/io.datasette.llm/templates/code.yaml` - Code-only generation template (installed from `llm-template/` directory)
-- `~/.config/io.datasette.llm/default_model.txt` - Default model selection
-- `~/.config/io.datasette.llm/keys.json` - Encrypted API keys (managed via `llm keys`)
-- `~/.config/llm-tools/first-run-complete` - Flag file indicating installation script has completed successfully at least once
-- `~/.config/llm-tools/asciinema-commit` - Tracks installed asciinema version for update detection
-- `~/.claude-code-router/config.json` - Claude Code Router configuration (manually configured)
-- `$SESSION_LOG_DIR/*.cast` - Asciinema session recordings (default: `/tmp/session_logs/asciinema/`)
+- `~/.config/io.datasette.llm/templates/{assistant,code}.yaml` - Custom LLM templates
+- `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
+- `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 
-### Shell Integration Files
-
-- `integration/llm-common.sh` - Shared configuration (PATH, env vars, aliases, asciinema auto-recording)
-- `integration/llm-integration.bash` - Bash-specific integration (sources common, defines Bash widgets)
-- `integration/llm-integration.zsh` - Zsh-specific integration (sources common, defines Zsh widgets)
-- `~/.bashrc` / `~/.zshrc` - Modified by installation script to source integration files
-
-### Installed Tools Locations
-
-- `~/.local/bin/llm` - LLM CLI tool (installed via uv)
-- `~/.local/bin/context` - Context extraction script (copied from `context/context`)
-- `~/.local/bin/gitingest` - Git repository converter (installed via uv)
-- `~/.local/bin/files-to-prompt` - File formatter (installed via uv)
-- `~/.cargo/bin/asciinema` - Terminal recorder (built from git via cargo)
-- Global npm packages (location varies by system): `@anthropic-ai/claude-code`, `@musistudio/claude-code-router`, `opencode-ai`
+### Repository Structure
+- `install-llm-tools.sh` - Main installation script with 7 phases
+- `integration/llm-common.sh` - Shared shell config, llm wrapper, asciinema auto-recording
+- `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N)
+- `context/context` - Python script for extracting terminal history from recordings
+- `llm-tools-context/` - LLM plugin exposing context as tool
+- `llm-template/{assistant,code}.yaml` - Template sources installed to user config
 
 ## Key Constraints & Design Decisions
 
