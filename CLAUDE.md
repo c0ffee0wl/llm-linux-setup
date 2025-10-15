@@ -242,6 +242,29 @@ llm code "nginx config for reverse proxy on port 3000" > nginx.conf
 
 ## Common Development Tasks
 
+### Updating the README Table of Contents
+
+The README.md includes an automatically generated Table of Contents (TOC) using [doctoc](https://github.com/thlorenz/doctoc).
+
+**Manual TOC update** (if needed):
+```bash
+# Update the TOC in README.md
+doctoc README.md
+```
+
+**Automatic updates**: A git pre-commit hook automatically updates the TOC whenever README.md is committed. The hook:
+- Detects when README.md is being committed
+- Runs doctoc to regenerate the TOC
+- Adds the updated file to the commit
+
+**TOC markers**: The TOC is placed between these special comments in README.md:
+```markdown
+<!-- START doctoc generated TOC please keep comment here to allow auto update -->
+<!-- END doctoc generated TOC please keep comment here to allow auto update -->
+```
+
+**When editing README.md**: Just edit the content normally. The TOC will auto-update on commit, or you can manually run `doctoc README.md` to regenerate it.
+
 ### Testing the Installation Script
 
 ```bash
