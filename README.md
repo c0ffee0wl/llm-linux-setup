@@ -9,12 +9,6 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 - [Features](#features)
 - [Quick Reference](#quick-reference)
-- [What Gets Installed](#what-gets-installed)
-  - [Core Tools](#core-tools)
-  - [LLM Plugins](#llm-plugins)
-  - [LLM Templates](#llm-templates)
-  - [Additional Tools](#additional-tools)
-  - [Shell Integration](#shell-integration)
 - [System Requirements](#system-requirements)
 - [Supported Shells](#supported-shells)
 - [Installation](#installation)
@@ -24,13 +18,19 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - [Documentation](#documentation)
   - [Original Tools](#original-tools)
   - [This Project](#this-project)
+- [What Gets Installed](#what-gets-installed)
+  - [Core Tools](#core-tools)
+  - [LLM Plugins](#llm-plugins)
+  - [LLM Templates](#llm-templates)
+  - [Additional Tools](#additional-tools)
+  - [Shell Integration](#shell-integration)
 - [Usage](#usage)
   - [Getting Started](#getting-started)
   - [Basic Prompts](#basic-prompts)
+  - [AI Command Completion](#ai-command-completion)
   - [Attachments & Multi-modal](#attachments--multi-modal)
   - [Fragments](#fragments)
   - [Templates](#templates)
-  - [AI Command Completion](#ai-command-completion)
   - [Code Generation](#code-generation)
   - [Tools](#tools)
   - [Context System Usage](#context-system-usage)
@@ -51,7 +51,6 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - [Session Recording & Context System](#session-recording--context-system)
   - [How It Works](#how-it-works)
   - [Storage Configuration](#storage-configuration)
-  - [tmux/screen Behavior](#tmuxscreen-behavior)
 - [Troubleshooting](#troubleshooting)
   - [Command completion not working](#command-completion-not-working)
   - [Azure API errors](#azure-api-errors)
@@ -90,74 +89,39 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 ```bash
 # Ask questions (assistant template auto-applied)
 llm "Your question here"
+llm -c "Your follow up"     # Continue last conversation on CLI
 llm chat                    # Start interactive conversation
-llm chat -c                 # Continue last conversation
+llm chat -c                 # Continue last conversation interactively
+
+# Include local context via shell expansion or piping
+llm "explain this error: $(python zero_division.py 2>&1)"
+docker logs -n 20 my_app | llm "check logs, find errors, provide possible solutions"
+ls -1aG | llm "Describe each of the files"
+
+llm "What does 'ls -1aG' do?"
+
+# Use command completion
+# Type: find pdf files larger than 20MB
+# Press: Ctrl+N
 
 # Generate clean code (shorthand for -t code)
 llm code "python function to..." | tee output.py
-
-# Use command completion
-# Type: find pdf files
-# Press: Ctrl+N
 
 # Use fragments for context
 llm -f github:user/repo "analyze this"
 llm -f pdf:document.pdf "summarize"
 llm -f https://example.com "extract key points"
 
-# Only use -t when you want a DIFFERENT template
+# Use -t when you want a DIFFERENT template that the default assistant template
 llm -t fabric:summarize "..."        # Not the default
 llm -t fabric:analyze_threat_report  # Not the default
 
 # Query terminal history (context tool is built into assistant template!)
-context                     # Show last command
-context 5                   # Show last 5 commands
-llm "what was the error?"   # AI uses context tool automatically
-llm --tool context "..."    # Explicit tool call (for non-assistant templates)
+context                                        # Show last command
+context 5                                      # Show last 5 commands
+llm "what was the error in my last command?"   # Uses context tool automatically in default template
+llm --tool context "..."   # Explicit tool call (for non-assistant templates)
 ```
-
-## What Gets Installed
-
-### Core Tools
-- **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
-- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
-- **Python 3** - Required for llm
-- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
-- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.75+, from repositories or rustup)
-- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
-- **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
-
-### LLM Plugins
-- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
-- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
-- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
-- **[llm-cmd](https://github.com/c0ffee0wl/llm-cmd)** - Command execution and management
-- **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
-- **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
-- **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
-- **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
-- **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
-- **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
-- **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
-- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
-- **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
-
-### LLM Templates
-- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (German language, optimized for cybersecurity and Linux tasks, includes `context` tool by default)
-- **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
-
-### Additional Tools
-- **[gitingest](https://github.com/cyclotruc/gitingest)** - Convert Git repositories to LLM-friendly text
-- **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
-- **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
-- **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
-
-### Shell Integration
-- AI-powered command completion (Ctrl+N) - see [`llm-integration.bash`](integration/llm-integration.bash) / [`.zsh`](integration/llm-integration.zsh)
-- Custom llm wrapper with automatic template application - see [`llm-common.sh`](integration/llm-common.sh)
-- Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
-- macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
-- Common aliases and PATH configuration
 
 ## System Requirements
 
@@ -243,6 +207,49 @@ The script will:
 - [README.md](README.md) - Readme
 - [CLAUDE.md](CLAUDE.md) - Developer documentation and architecture guide (for Claude Code and contributors)
 
+## What Gets Installed
+
+### Core Tools
+- **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
+- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
+- **[Python 3](https://python.org/)** - Required for llm
+- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
+- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.75+, from repositories or rustup)
+- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
+- **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
+
+### LLM Plugins
+- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
+- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
+- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
+- **[llm-cmd](https://github.com/c0ffee0wl/llm-cmd)** - Command execution and management
+- **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
+- **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
+- **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
+- **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
+- **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
+- **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
+- **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
+- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
+- **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
+
+### LLM Templates
+- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (German language, optimized for cybersecurity and Linux tasks, includes `context` tool by default)
+- **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
+
+### Additional Tools
+- **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
+- **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
+- **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
+- **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
+
+### Shell Integration
+- AI-powered command completion (Ctrl+N) - see [`llm-integration.bash`](integration/llm-integration.bash) / [`.zsh`](integration/llm-integration.zsh)
+- Custom llm wrapper with automatic template application - see [`llm-common.sh`](integration/llm-common.sh)
+- Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
+- macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
+- Common aliases and PATH configuration
+
 ## Usage
 
 ### Getting Started
@@ -282,6 +289,9 @@ Simple question-and-answer prompts:
 # The assistant template is automatically applied
 llm "Was ist das meistverbreite Betriebssystem für Pentester?"
 
+# Continue the most recent conversation in CLI mode (--continue / -c)
+llm -c "Und für Forensiker?"
+
 # Include system information in your prompt
 llm "Tell me about my operating system: $(uname -a)"
 
@@ -306,6 +316,34 @@ llm chat -c
 llm "Wenn ich nur eines mache, was ist dann das wichtigste?" -c
 ```
 
+### AI Command Completion
+
+Type a partial command or describe what you want in natural language, then press **Ctrl+N**:
+
+```bash
+# Type: list all pdf files
+# Press Ctrl+N
+# Result: find . -type f -name "*.pdf"
+
+# Type: Wie finde ich alle .sh-Dateien unter /root?
+# Press Ctrl+N
+# Result: find /root -name "*.sh"
+# Don't execute it yet.
+# Type: Aber nur auf demselben Dateisystem.
+# Press Ctrl+N (previous command is used as context)
+# Result: find /root -name "*.sh" -xdev
+```
+
+The AI will suggest and execute the command automatically. You can also use `llm cmd` directly:
+
+```bash
+# Generate a command
+llm cmd "undo last git commit"
+
+# More complex examples
+llm cmd "Wie finde ich alle .sh-Dateien unter /root?"
+```
+
 ### Attachments & Multi-modal
 
 Some models support images, PDFs, audio, and video as input:
@@ -321,9 +359,6 @@ llm "Extrahiere den Text" -a image1.jpg -a image2.jpg
 # Pipe content and attach it
 wget https://www.corporate-trust.de/wp-content/uploads/2023/12/poster_ransomware.pdf -O poster.pdf
 cat poster.pdf | llm 'describe image' -a -
-
-# Read from clipboard
-pbpaste | llm "Was ist das?"
 ```
 
 **Note**: The `-a -` flag reads attachment data from stdin.
@@ -349,8 +384,8 @@ This model does not support file content types.", 'type': 'invalid_request_error
    ```bash
    # Use with attachments
    llm -m gpt-4o "describe this image" -a image.jpg
-   llm -m gemini-2.0-flash-exp "describe" -a poster.pdf
-   llm -m claude-3-5-sonnet-20241022 "analyze" -a document.pdf
+   llm -m gemini-2.5-flash "describe" -a poster.pdf
+   llm -m claude-4-5-sonnet "analyze" -a document.pdf
    ```
 
 See [Azure OpenAI vision documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/gpt-with-vision) for current limitations.
@@ -497,7 +532,7 @@ llm code "Python function to calculate fibonacci"
 
 **Fabric Templates**
 
-The llm-templates-fabric plugin provides access to [Fabric patterns](https://github.com/danielmiessler/fabric):
+The llm-templates-fabric plugin provides access to [Fabric patterns](https://github.com/danielmiessler/Fabric/tree/main/data/patterns):
 
 ```bash
 # Explain code using Fabric's explain_code pattern
@@ -530,34 +565,6 @@ llm "Create a Semgrep rule for SQL injection" -t fabric:write_semgrep_rule
 
 For a complete list of available patterns, see the [Fabric Pattern Explanations](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/pattern_explanations.md).
 
-### AI Command Completion
-
-Type a partial command or describe what you want in natural language, then press **Ctrl+N**:
-
-```bash
-# Type: list all pdf files
-# Press Ctrl+N
-# Result: find . -type f -name "*.pdf"
-
-# Type: Wie finde ich alle .sh-Dateien unter /root?
-# Press Ctrl+N
-# Result: find /root -name "*.sh"
-# Don't execute it yet.
-# Type: Aber nur auf demselben Dateisystem.
-# Press Ctrl+N (previous command is used as context)
-# Result: find /root -name "*.sh" -xdev
-```
-
-The AI will suggest and execute the command automatically. You can also use `llm cmd` directly:
-
-```bash
-# Generate a command
-llm cmd "undo last git commit"
-
-# More complex examples
-llm cmd "Wie finde ich alle .sh-Dateien unter /root?"
-```
-
 ### Code Generation
 
 Generate clean, executable code without markdown formatting using the `llm code` command.
@@ -577,19 +584,19 @@ The `code` template outputs **pure code without explanations or markdown blocks*
 
 ```bash
 # Generate Python function
-llm code "function to check if number is prime" | tee prime.py
+llm code "function to check if number is prime in Python" | tee prime.py
 
 # Generate bash script
-llm code "script to backup directory with timestamp" | tee backup.sh
+llm code "Bash script to backup directory with timestamp" | tee backup.sh
 
 # Generate SQL query (prints to stdout)
-llm code "select users who registered this month"
+llm code "SQL select users who registered this month"
 
 # Generate configuration file
 llm code "nginx config for reverse proxy on port 3000" | tee nginx.conf
 
 # Direct execution (use with caution!)
-llm code "one-liner to find files larger than 100MB" | bash
+llm code "one-liner to find files larger than 100MB in Bash" | bash
 
 # Generate Dockerfile
 llm code "dockerfile for nodejs app with nginx" | tee Dockerfile
@@ -654,22 +661,6 @@ echo '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}' | \
 Query your terminal history to get context-aware AI assistance:
 
 ```bash
-# Show last command and output directly
-context
-
-# Show last 5 commands with outputs
-context 5
-
-# Show entire session history
-context all
-
-# Get export command for current session file
-context -e
-
-# Use the export in another terminal to query the same session
-# Copy the output and paste in a side-by-side terminal (Terminator, tmux split, etc.)
-export SESSION_LOG_FILE="/tmp/session_logs/asciinema/2025-10-15_14-30-45-123_12345.cast"
-
 # ✅ Ask AI naturally - context tool is automatically available
 llm "what was the error in my last command?"
 llm chat
@@ -679,6 +670,15 @@ llm chat
 # ⚠️ Explicit tool invocation (useful for one-shot queries or non-assistant templates)
 llm --tool context "what was the error in my last command?"
 llm --tool context "summarize what I did in this session"
+
+# Show last command and output directly
+context
+
+# Show last 5 commands with outputs
+context 5
+
+# Show entire session history
+context all
 ```
 
 **Side-by-Side Terminal Workflow**
@@ -720,7 +720,6 @@ llm "did the tests pass?"
 - **Real-time debugging**: Watch compilation/test output in one terminal while querying AI for solutions in another
 - **Code review assistance**: Run commands in one terminal while AI analyzes outputs in another
 - **Learning workflows**: Execute tutorials/commands while asking AI to explain what's happening
-- **Pair programming**: Share session file path to allow others (or AI) to follow along
 
 **Note**: Both terminals read from the same `.cast` file, so the side terminal sees all commands and outputs from the work terminal as they happen.
 
@@ -773,6 +772,9 @@ gitingest /path/to/local/repo
 # Combine with LLM for analysis
 cat digest.txt | \
     llm "What is the main purpose of this codebase?"
+
+# Show more parameters, e.g. for exclusion and inclusion
+gitingest --help
 ```
 
 **File Bundling with files-to-prompt**
@@ -788,6 +790,9 @@ files-to-prompt project/ -e py -e js | llm "What frameworks are being used?"
 
 # Output in Claude XML format
 files-to-prompt src/ -c > context.xml
+
+# Show more parameters, e.g. for exclusion and inclusion
+files-to-prompt --help
 ```
 
 **Git Log Analysis**
@@ -1059,10 +1064,6 @@ On first installation, you'll be prompted to choose where session recordings are
 - **Permanent**: `~/session_logs/asciinema/` - Survives reboots, useful for long-term history
 
 You can change this later by editing the `SESSION_LOG_DIR` export in your `.bashrc` or `.zshrc`.
-
-### tmux/screen Behavior
-
-Each tmux pane or screen window gets its own independent recording session. This is intentional - different panes typically represent different workflows, so having separate contexts makes sense. If you want unified recording across all panes, start asciinema manually before launching tmux: `asciinema rec --command "tmux attach"`
 
 ## Troubleshooting
 
