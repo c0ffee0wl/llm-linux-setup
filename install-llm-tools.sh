@@ -324,6 +324,14 @@ install_apt_package xsel
 install_apt_package python3
 install_apt_package pipx
 
+# Check for sha256sum (required for template checksum tracking in Phase 4)
+if ! command -v sha256sum &> /dev/null; then
+    log "Installing coreutils (provides sha256sum)..."
+    sudo apt-get install -y coreutils
+else
+    log "sha256sum is already installed"
+fi
+
 # Install/update uv
 export PATH=$HOME/.local/bin:$PATH
 if ! command -v uv &> /dev/null; then
