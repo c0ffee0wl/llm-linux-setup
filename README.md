@@ -536,15 +536,18 @@ llm code "Python function to calculate fibonacci"
 The llm-templates-fabric plugin provides access to [Fabric patterns](https://github.com/danielmiessler/Fabric/tree/main/data/patterns):
 
 ```bash
+# Summarize content
+llm -f site:https://example.com/article -t fabric:summarize
+
 # Explain code using Fabric's explain_code pattern
 llm -f github:TheR1D/shell_gpt -t fabric:explain_code
+
+# Analyze email headers for phishing detection
+llm -f email_headers.txt -t fabric:analyze_email_headers
 
 # Analyze a threat report
 llm -f https://www.volexity.com/blog/2025/04/22/phishing-for-codes-russian-threat-actors-target-microsoft-365-oauth-workflows/ \
     -t fabric:analyze_threat_report
-
-# Summarize content
-llm -f site:https://example.com/article -t fabric:summarize
 
 # Review code architecture
 llm -f github:user/repo -t fabric:review_code
@@ -552,17 +555,34 @@ llm -f github:user/repo -t fabric:review_code
 # Create STRIDE threat model
 llm -f github:user/secure-app -t fabric:create_stride_threat_model
 
-# Write Semgrep rules
-llm "Create a Semgrep rule for SQL injection" -t fabric:write_semgrep_rule
+# Analyze malware samples and extract IOCs
+llm -f malware_report.txt -t fabric:analyze_malware
+
+# Structure incident/breach analysis
+llm -f breach_article.md -t fabric:analyze_incident
+
+# Generate network threat landscape from port scan
+nmap -sV scanme.nmap.org | llm -t fabric:create_network_threat_landscape
 ```
 
-**Popular Fabric Patterns**:
-- `fabric:explain_code` - Explains code, security tool output, configuration
-- `fabric:analyze_threat_report` - Extracts insights from cybersecurity reports
-- `fabric:summarize` - Creates concise summaries
-- `fabric:review_code` - Analyzes code architecture and design
-- `fabric:create_stride_threat_model` - STRIDE threat modeling
-- `fabric:write_semgrep_rule` - Generates Semgrep security rules
+**Suggested Fabric Patterns**:
+- [`fabric:explain_code`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/explain_code/system.md) - Explains code, security tool output, configuration
+- [`fabric:analyze_email_headers`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_email_headers/system.md) - Analyze phishing/spam emails (SPF, DKIM, DMARC analysis)
+- [`fabric:analyze_threat_report`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_threat_report/system.md) - Extracts insights from cybersecurity reports
+- [`fabric:create_network_threat_landscape`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/create_network_threat_landscape/system.md) - Generate threat assessment from port scans and network services
+- [`fabric:review_code`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/review_code/system.md) - Analyzes code architecture and design
+- [`fabric:review_design`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/review_design/system.md) - Analyzes system and software design architecture
+- [`fabric:create_stride_threat_model`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/create_stride_threat_model/system.md) - STRIDE threat modeling
+- [`fabric:write_nuclei_template_rule`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/write_nuclei_template_rule/system.md) - Create Nuclei vulnerability detection templates
+- [`fabric:write_semgrep_rule`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/write_semgrep_rule/system.md) - Generates Semgrep security rules
+- [`fabric:create_sigma_rules`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/create_sigma_rules/system.md) - Generate Sigma SIEM detection rules from TTPs
+- [`fabric:analyze_malware`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_malware/system.md) - Extract IOCs and MITRE ATT&CK techniques from malware analysis
+- [`fabric:analyze_incident`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_incident/system.md) - Structure breach/incident analysis with attack types and remediation
+- [`fabric:analyze_threat_report_cmds`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_threat_report_cmds/system.md) - Extract penetration testing commands from security materials
+- [`fabric:create_report_finding`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/create_report_finding/system.md) - Structure security findings for professional reports
+- [`fabric:analyze_risk`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_risk/system.md) - Conduct vendor risk assessments and recommend security controls
+- [`fabric:analyze_terraform_plan`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_terraform_plan/system.md) - Evaluate infrastructure as code for security risks and compliance
+- [`fabric:summarize`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/summarize/system.md) - Creates concise summaries
 
 For a complete list of available patterns, see the [Fabric Pattern Explanations](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/pattern_explanations.md).
 
