@@ -780,7 +780,7 @@ pong heise.de
 context
 
 # Ask AI to analyze the error
-context | llm "Was hab ich die letzten beiden Befehle gemacht?"
+context 2 | llm "Was hab ich die letzten beiden Befehle gemacht?"
 
 # Continue in chat mode
 llm chat -c
