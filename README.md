@@ -8,9 +8,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
 
 - [Features](#features)
-- [Quick Reference](#quick-reference)
 - [System Requirements](#system-requirements)
-- [Supported Shells](#supported-shells)
 - [Installation](#installation)
   - [Prerequisites (Recommended)](#prerequisites-recommended)
   - [Quick Start](#quick-start)
@@ -24,6 +22,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [LLM Templates](#llm-templates)
   - [Additional Tools](#additional-tools)
   - [Shell Integration](#shell-integration)
+- [Quick Reference](#quick-reference)
 - [Usage](#usage)
   - [Getting Started](#getting-started)
   - [Basic Prompts](#basic-prompts)
@@ -82,51 +81,6 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm --tool context`
 
-## Quick Reference
-
-**⚡ Most Common Commands** (no need to specify `-t assistant` - it's the default!)
-
-```bash
-# Ask questions (assistant template auto-applied)
-llm "Your question here"
-llm -c "Your follow up"     # Continue last conversation on CLI
-llm chat                    # Start interactive conversation
-llm chat -c                 # Continue last conversation interactively
-
-# Include local context via shell expansion or piping
-llm "explain this error: $(python zero_division.py 2>&1)"
-docker logs -n 20 my_app | llm "check logs, find errors, provide possible solutions"
-
-cat setup.py | llm 'extract the metadata'
-llm -f setup.py 'extract the metadata'    # Alternatively use local fragments
-
-ls -1aG | llm "Describe each of the files"
-
-llm "What does 'ls -1aG' do?"
-
-# Use command completion
-# Type: find pdf files larger than 20MB
-# Press: Ctrl+N
-
-# Generate clean code (shorthand for -t code)
-llm code "python function to..." | tee output.py
-
-# Use fragments for context
-llm -f github:user/repo "analyze this"
-llm -f pdf:document.pdf "summarize"
-llm -f https://example.com "extract key points"
-
-# Use -t when you want a DIFFERENT template that the default assistant template
-llm -t fabric:summarize "..."        # Not the default
-llm -t fabric:analyze_threat_report  # Not the default
-
-# Query terminal history (context tool is built into assistant template!)
-context                                        # Show last command
-context 5                                      # Show last 5 commands
-llm "what was the error in my last command?"   # Uses context tool automatically in default template
-llm --tool context "..."   # Explicit tool call (for non-assistant templates)
-```
-
 ## System Requirements
 
 - **OS**: Debian, Ubuntu, Kali Linux (or derivatives)
@@ -136,14 +90,13 @@ llm --tool context "..."   # Explicit tool call (for non-assistant templates)
 - **Internet**: Required for installation and API access
 - **Disk Space**: ~500MB for all tools and dependencies
 
+**Supported Shells**:
+- Bash (3.0+)
+- Zsh (5.0+)
+
 **Note**: The installation script automatically handles Rust and Node.js version requirements. If your system has older versions, it will offer to install newer versions via rustup and nvm respectively.
 
 **Recommended**: For a fully configured Linux environment with optimized shell settings, security tools, and system utilities, consider installing [linux-setup](https://github.com/c0ffee0wl/linux-setup) first. This provides the base configuration layer that complements the LLM tools.
-
-## Supported Shells
-
-- Bash (3.0+)
-- Zsh (5.0+)
 
 ## Installation
 
@@ -253,6 +206,51 @@ The script will:
 - Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
 - macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
 - Common aliases and PATH configuration
+
+## Quick Reference
+
+**⚡ Most Common Commands** (no need to specify `-t assistant` - it's the default!)
+
+```bash
+# Ask questions (assistant template auto-applied)
+llm "Your question here"
+llm -c "Your follow up"     # Continue last conversation on CLI
+llm chat                    # Start interactive conversation
+llm chat -c                 # Continue last conversation interactively
+
+# Include local context via shell expansion or piping
+llm "explain this error: $(python zero_division.py 2>&1)"
+docker logs -n 20 my_app | llm "check logs, find errors, provide possible solutions"
+
+cat setup.py | llm 'extract the metadata'
+llm -f setup.py 'extract the metadata'    # Alternatively use local fragments
+
+ls -1aG | llm "Describe each of the files"
+
+llm "What does 'ls -1aG' do?"
+
+# Use command completion
+# Type: find pdf files larger than 20MB
+# Press: Ctrl+N
+
+# Generate clean code (shorthand for -t code)
+llm code "python function to..." | tee output.py
+
+# Use fragments for context
+llm -f github:user/repo "analyze this"
+llm -f pdf:document.pdf "summarize"
+llm -f https://example.com "extract key points"
+
+# Use -t when you want a DIFFERENT template that the default assistant template
+llm -t fabric:summarize "..."        # Not the default
+llm -t fabric:analyze_threat_report  # Not the default
+
+# Query terminal history (context tool is built into assistant template!)
+context                                        # Show last command
+context 5                                      # Show last 5 commands
+llm "what was the error in my last command?"   # Uses context tool automatically in default template
+llm --tool context "..."   # Explicit tool call (for non-assistant templates)
+```
 
 ## Usage
 

@@ -132,6 +132,40 @@ update_rust_via_rustup() {
     rustup update stable
 }
 
+# Get stored checksum for a template
+get_stored_checksum() {
+    local template_name="$1"
+    local checksum_file="$HOME/.config/llm-tools/template-checksums"
+
+    if [ ! -f "$checksum_file" ]; then
+        echo ""
+        return
+    fi
+
+    grep "^${template_name}:" "$checksum_file" 2>/dev/null | cut -d: -f2
+}
+
+# Store checksum for a template
+store_checksum() {
+    local template_name="$1"
+    local file_path="$2"
+    local checksum_file="$HOME/.config/llm-tools/template-checksums"
+
+    # Create directory if needed
+    mkdir -p "$(dirname "$checksum_file")"
+
+    # Calculate SHA256 checksum
+    local checksum=$(sha256sum "$file_path" | awk '{print $1}')
+
+    # Remove old entry if exists
+    if [ -f "$checksum_file" ]; then
+        sed -i "/^${template_name}:/d" "$checksum_file"
+    fi
+
+    # Add new entry
+    echo "${template_name}:${checksum}" >> "$checksum_file"
+}
+
 # Update shell RC file with integration
 update_shell_rc_file() {
     local rc_file="$1"
@@ -179,7 +213,7 @@ configure_azure_openai() {
     AZURE_CONFIGURED=true
 }
 
-# Update template file with smart update check
+# Update template file with smart checksum-based update logic
 update_template_file() {
     local template_name="$1"
     local source_file="$SCRIPT_DIR/llm-template/${template_name}.yaml"
@@ -190,26 +224,55 @@ update_template_file() {
         return
     fi
 
-    if [ -f "$dest_file" ]; then
-        # Both files exist - compare them
-        if ! cmp -s "$source_file" "$dest_file"; then
-            log "${template_name}.yaml template has changed in repository"
-            echo ""
-            read -p "The ${template_name}.yaml template in the repository differs from your installed version. Update it? (y/N): " UPDATE_TEMPLATE
-            if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
-                cp "$source_file" "$dest_file"
-                log "${template_name}.yaml template updated to $dest_file"
-            else
-                log "Keeping existing ${template_name}.yaml template"
-            fi
-        else
-            log "${template_name}.yaml template is up to date"
-        fi
-    else
-        # Only repo version exists - install it
+    # Calculate repo file checksum
+    local repo_checksum=$(sha256sum "$source_file" | awk '{print $1}')
+
+    if [ ! -f "$dest_file" ]; then
+        # No installed file - install from repo
         log "Installing ${template_name}.yaml template..."
         cp "$source_file" "$dest_file"
+        store_checksum "$template_name" "$dest_file"
         log "Template installed to $dest_file"
+        return
+    fi
+
+    # Calculate installed file checksum
+    local installed_checksum=$(sha256sum "$dest_file" | awk '{print $1}')
+
+    # Check if already up to date
+    if [ "$installed_checksum" = "$repo_checksum" ]; then
+        log "${template_name}.yaml template is up to date"
+        store_checksum "$template_name" "$dest_file"
+        return
+    fi
+
+    # Get stored checksum (what we last installed)
+    local stored_checksum=$(get_stored_checksum "$template_name")
+
+    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
+        # User hasn't modified the file - auto-update silently
+        log "${template_name}.yaml template updated from repository (no local modifications detected)"
+        cp "$source_file" "$dest_file"
+        store_checksum "$template_name" "$dest_file"
+    else
+        # User has modified the file OR no stored checksum (legacy) - prompt
+        log "${template_name}.yaml template has changed in repository"
+        if [ -z "$stored_checksum" ]; then
+            log "Cannot determine if you have local modifications (legacy installation)"
+        else
+            log "Local modifications detected"
+        fi
+        echo ""
+        read -p "Update ${template_name}.yaml template? This will overwrite your version. (y/N): " UPDATE_TEMPLATE
+        if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
+            cp "$source_file" "$dest_file"
+            store_checksum "$template_name" "$dest_file"
+            log "${template_name}.yaml template updated to $dest_file"
+        else
+            log "Keeping existing ${template_name}.yaml template"
+            # Update stored checksum to current installed version to avoid prompting next time
+            store_checksum "$template_name" "$dest_file"
+        fi
     fi
 }
 
