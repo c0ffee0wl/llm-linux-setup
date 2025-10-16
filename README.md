@@ -332,7 +332,6 @@ Type a partial command or describe what you want in natural language, then press
 # Result: find /root -name "*.sh"
 # Don't execute it yet.
 # Type: Aber nur auf demselben Dateisystem.
-# Press Ctrl+N (previous command is used as context)
 # Result: find /root -name "*.sh" -xdev
 ```
 
