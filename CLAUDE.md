@@ -60,6 +60,11 @@ The repository includes an **automatic session recording and context extraction 
 
 **Context Output Format**: The `context` command prefixes all output lines with `#c#` for easy identification and filtering.
 
+**Suppressing Session Log Messages:**
+- Set `SESSION_LOG_SILENT=true` before sourcing shell integration to suppress the session log notification
+- Useful for automated environments or when you want cleaner shell startup
+- Example: Add `export SESSION_LOG_SILENT=1` in your `.bashrc` before the integration source line
+
 **Behavior with Terminal Multiplexers (tmux/screen)**:
 - **Each pane/window gets its own independent recording** - Intentional design for workflow isolation
 - When you create a new tmux pane or screen window, that new shell starts its own asciinema recording
@@ -121,7 +126,18 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
 - **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
 - **`update_rust_via_rustup()`**: Updates Rust via rustup when rustup-managed installation is detected (used in Phase 1)
-- **`update_template_file(template_name)`**: Smart template update with user confirmation - compares repo vs installed version, prompts if different (used in Phase 4)
+- **`update_template_file(template_name)`**: Smart template update with checksum tracking
+  - Compares repository version vs installed version using SHA256 checksums
+  - Stores checksums in `~/.config/llm-tools/template-checksums`
+  - Auto-updates if user hasn't modified the file (installed checksum = stored checksum)
+  - Prompts user if local modifications detected (installed checksum ≠ stored checksum)
+  - Used in Phase 4 for assistant.yaml and code.yaml templates
+
+**Helper Functions Philosophy:**
+These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
+- **Always check** if an existing helper function can be used or extended
+- **Create new helpers** for operations repeated more than twice
+- **Keep helpers focused** - single responsibility per function
 
 **When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
 
@@ -154,6 +170,38 @@ The script uses **intelligent version detection** similar to the Node.js approac
 - Uses `-y` flag in rustup installer to prevent blocking prompts
 
 **Why This Matters:** Prevents `cargo install` failures like "hyper-rustls requires rustc 1.71+" on older Debian/Ubuntu/Kali systems with outdated Rust packages.
+
+### Node.js Installation Strategy
+
+The script uses **intelligent version detection** similar to the Rust approach:
+
+**Version Detection Pattern:**
+1. Check repository Node.js version via `apt-cache policy nodejs`
+2. Extract and compare version (minimum required: 20 for Claude Code/OpenCode)
+3. Choose installation method based on availability and current state
+
+**Installation Logic:**
+- **If Node.js not installed:**
+  - Installs from apt if repo version ≥ 20
+  - Installs Node 22 via nvm if repo version < 20
+- **If Node.js already installed and version < 20:**
+  - Warns user to upgrade via nvm
+  - Provides upgrade instructions
+- **NPM installation:**
+  - Automatically installs npm from repositories for apt-based installations
+  - For nvm installations, npm is bundled with Node.js
+
+**Coexistence Strategy:**
+- nvm installs to `~/.nvm` (takes precedence in PATH via shell rc files)
+- System packages remain in `/usr` (harmless when shadowed)
+- No package removal needed (consistent with Rust handling)
+
+**NPM Permissions Detection:**
+- Script tests write permissions to npm global directory
+- Automatically uses sudo for npm global installs if needed
+- Provides `npm_install()` wrapper function that adapts based on permissions
+
+**Why This Matters:** Claude Code and OpenCode require Node.js 20+ for modern JavaScript features and APIs.
 
 ### Azure OpenAI Configuration
 
@@ -256,6 +304,13 @@ doctoc README.md
 - Detects when README.md is being committed
 - Runs doctoc to regenerate the TOC
 - Adds the updated file to the commit
+
+**Pre-commit Hook Setup:**
+The repository includes a pre-commit hook at `.git/hooks/pre-commit`. If you're working on a fresh clone:
+- The hook should already be executable (committed to the repository)
+- Verify it exists: `ls -la .git/hooks/pre-commit`
+- If missing or not executable: `chmod +x .git/hooks/pre-commit`
+- Requires doctoc to be installed: `npm install -g doctoc`
 
 **TOC markers**: The TOC is placed between these special comments in README.md:
 ```markdown
@@ -410,6 +465,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions
 - `~/.config/io.datasette.llm/templates/{assistant,code}.yaml` - Custom LLM templates
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
+- `~/.config/llm-tools/template-checksums` - Tracks template checksums for smart updates
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 
 ### Repository Structure
@@ -419,6 +475,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-template/{assistant,code}.yaml` - Template sources installed to user config
+- `.git/hooks/pre-commit` - Automatic TOC updater for README.md
 
 ## Key Constraints & Design Decisions
 
@@ -433,7 +490,8 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 9. **Rust Required**: asciinema is installed via cargo (Rust's package manager); minimum Rust 1.75 required
 10. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
 11. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
-12. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
+12. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
+13. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
 
 ## Special Packages & Forks
 
@@ -444,4 +502,3 @@ Note that several packages use **forks** or specific sources:
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
-
