@@ -96,6 +96,10 @@ llm chat -c                 # Continue last conversation interactively
 # Include local context via shell expansion or piping
 llm "explain this error: $(python zero_division.py 2>&1)"
 docker logs -n 20 my_app | llm "check logs, find errors, provide possible solutions"
+
+cat setup.py | llm 'extract the metadata'
+llm -f setup.py 'extract the metadata'    # Alternatively use local fragments
+
 ls -1aG | llm "Describe each of the files"
 
 llm "What does 'ls -1aG' do?"
