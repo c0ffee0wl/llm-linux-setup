@@ -606,6 +606,32 @@ llm code "dockerfile for nodejs app with nginx" | tee Dockerfile
 llm code "regex to match email addresses"
 ```
 
+**Process Substitution (Execute Without Saving)**
+
+Use Bash/Zsh process substitution `<(command)` to execute generated Python code as a temporary file:
+
+```bash
+# Execute Python code directly without creating files
+python <(llm code "Python script to display fizzbuzz")
+
+# Test code instantly
+python <(llm code "Python function to calculate fibonacci, then print first 10 numbers")
+```
+
+**How it works**: The `<(command)` syntax creates a temporary file descriptor that Python reads as if it were a regular file, then automatically cleans up when done.
+
+**Benefits**:
+- No temporary files to manage or delete
+- Instant testing and iteration
+- Clean workspace
+
+**⚠️ Security Warning**: Only use with trusted prompts. Generated code executes immediately with your user permissions. Review output first for sensitive operations:
+```bash
+# Safer: Review before executing
+llm code "Python script to delete old files" | tee cleanup.py
+# Review cleanup.py, then: python cleanup.py
+```
+
 **Key Features:**
 - No markdown code blocks (no \`\`\`)
 - No explanations or commentary
