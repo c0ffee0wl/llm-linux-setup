@@ -79,7 +79,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Azure OpenAI integration** - Configured for Azure Foundry
 - ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
 - ✅ **Automatic session recording** - Terminal history captured for AI context
-- ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm --tool context`
+- ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
 
 ## System Requirements
 
@@ -249,7 +249,7 @@ llm -t fabric:analyze_threat_report  # Not the default
 context                                        # Show last command
 context 5                                      # Show last 5 commands
 llm "what was the error in my last command?"   # Uses context tool automatically in default template
-llm --tool context "..."   # Explicit tool call (for non-assistant templates)
+command llm -T context "..."   # Explicit tool call (for non-assistant templates)
 ```
 
 ## Usage
@@ -671,10 +671,10 @@ Query SQLite databases using natural language:
 # Download a sample database
 wget https://www.timestored.com/data/sample/chinook.db
 
-# Query with natural language
+# Query with natural language (--td shows DB queries)
 llm -T 'SQLite("chinook.db")' "Count rows in the most interesting looking table" --td
 
-# Interactive chat mode with database access
+# Interactive chat mode with database access (add --td to show DB queries)
 llm chat -T 'SQLite("chinook.db")'
 # > Show me the three most interesting looking tables
 # > What are the top 5 best-selling artists?
@@ -687,13 +687,13 @@ The `--td` flag shows tool descriptions.
 Generate and execute jq programs using natural language:
 
 ```bash
+# Parse JSON structures
+echo '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}' | \
+    llm jq 'extract names and ages'
+    
 # Process JSON from an API
 curl -s https://api.github.com/repos/simonw/datasette/issues | \
     llm jq 'count by user.login, top 3'
-
-# Parse complex JSON structures
-echo '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}' | \
-    llm jq 'extract names and ages'
 
 # Options:
 # -s/--silent: Hide the generated jq program
@@ -703,7 +703,7 @@ echo '{"users": [{"name": "Alice", "age": 30}, {"name": "Bob", "age": 25}]}' | \
 
 ### Context System Usage
 
-**💡 Important**: The `context` tool is **built into the assistant template** by default! You can ask about your terminal history naturally without typing `--tool context` every time.
+**💡 Important**: The `context` tool is **built into the assistant template** by default! You can ask about your terminal history naturally without typing `-T context` or `--tool context` every time.
 
 Query your terminal history to get context-aware AI assistance:
 
@@ -715,8 +715,7 @@ llm chat
 # > Summarize what I did in this session
 
 # ⚠️ Explicit tool invocation (useful for one-shot queries or non-assistant templates)
-llm --tool context "what was the error in my last command?"
-llm --tool context "summarize what I did in this session"
+command llm -T context "summarize what I did in this session"
 
 # Show last command and output directly
 context
