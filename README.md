@@ -335,14 +335,13 @@ Type a partial command or describe what you want in natural language, then press
 # Result: find /root -name "*.sh" -xdev
 ```
 
-The AI will suggest and execute the command automatically. You can also use `llm cmd` directly:
+The AI will suggest a command and execute it after your approval. 
+
+You can also use `llm cmd` to suggest a command and leave you to modify and execute it.
 
 ```bash
 # Generate a command
-llm cmd "undo last git commit"
-
-# More complex examples
-llm cmd "Wie finde ich alle .sh-Dateien unter /root?"
+llm cmd "Find all .sh files below /root"
 ```
 
 ### Attachments & Multi-modal
