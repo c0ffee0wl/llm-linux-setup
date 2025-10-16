@@ -583,6 +583,7 @@ nmap -sV scanme.nmap.org | llm -t fabric:create_network_threat_landscape
 - [`fabric:analyze_risk`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_risk/system.md) - Conduct vendor risk assessments and recommend security controls
 - [`fabric:analyze_terraform_plan`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/analyze_terraform_plan/system.md) - Evaluate infrastructure as code for security risks and compliance
 - [`fabric:summarize`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/summarize/system.md) - Creates concise summaries
+- [`fabric:create_threat_scenarios`](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/create_threat_scenarios/system.md) - Identifies likely attack methods for any system by providing a narrative-based threat model, balancing risk and opportunity.
 
 For a complete list of available patterns, see the [Fabric Pattern Explanations](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/pattern_explanations.md).
 
