@@ -523,7 +523,7 @@ Templates are pre-configured prompt patterns that you can reuse. This setup incl
 llm "Your question here"
 
 # ✅ Use -t when you want a DIFFERENT template
-llm -t fabric:summarize "Explain this concept"
+llm -t fabric:summarize -f https://github.com/c0ffee0wl/llm-linux-setup
 
 # ✅ The code template outputs clean code without markdown
 llm -t code "Python function to calculate fibonacci"
