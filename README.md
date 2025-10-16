@@ -26,7 +26,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - [Usage](#usage)
   - [Getting Started](#getting-started)
   - [Basic Prompts](#basic-prompts)
-  - [AI Command Completion](#ai-command-completion)
+  - [Command Completion](#command-completion)
   - [Attachments & Multi-modal](#attachments--multi-modal)
   - [Fragments](#fragments)
   - [Templates](#templates)
@@ -77,7 +77,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Safe git updates** - Pulls latest script version before execution
 - ✅ **Multi-shell support** - Works with both Bash and Zsh
 - ✅ **Azure OpenAI integration** - Configured for Azure Foundry
-- ✅ **AI command completion** - Press Ctrl+N for intelligent command suggestions
+- ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm --tool context`
 
@@ -318,7 +318,7 @@ llm chat -c
 llm "Wenn ich nur eines mache, was ist dann das wichtigste?" -c
 ```
 
-### AI Command Completion
+### Command Completion
 
 Type a partial command or describe what you want in natural language, then press **Ctrl+N**:
 
