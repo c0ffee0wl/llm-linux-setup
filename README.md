@@ -852,6 +852,8 @@ This allows AI models to provide context-aware debugging and assistance based on
 
 Query your documents, codebases, and knowledge bases using AI with aichat's RAG (Retrieval-Augmented Generation) functionality. The system uses a built-in vector database and automatically syncs with your Azure OpenAI configuration.
 
+`llm rag` is a wrapper that executes `aichat --rag`.
+
 **For detailed documentation**, see the [aichat RAG Guide](https://github.com/sigoden/aichat/wiki/RAG-Guide).
 
 **Quick Start:**
@@ -860,19 +862,17 @@ Query your documents, codebases, and knowledge bases using AI with aichat's RAG 
 # Create/open a RAG collection
 llm rag mydocs
 
-# In the interactive prompt, add documents
-.edit rag-docs
-# Add paths (one per line):
-# /path/to/docs/
-# https://example.com/api-docs
-# /path/to/project/
+# 2. Add documents interactively
+> Set chunk size: 3000
+> Set chunk overlay: 150
+> Add documents: https://github.com/sigoden/aichat/wiki/**
 
 # Ask questions about your documents
 What is the authentication flow?
 How do I configure the database?
 
 # Exit (Ctrl+D) and rebuild if you add more docs
-llm rag mydocs --rebuild
+llm rag mydocs --rebuild-rag
 ```
 
 **RAG Commands:**
@@ -882,7 +882,7 @@ llm rag mydocs --rebuild
 llm rag projectdocs
 
 # Rebuild RAG index after adding/changing documents
-llm rag projectdocs --rebuild
+llm rag projectdocs --rebuild--rag
 
 # List all RAG collections
 aichat --list-rags
