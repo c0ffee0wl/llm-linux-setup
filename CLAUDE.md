@@ -153,21 +153,21 @@ The script uses **intelligent version detection** similar to the Node.js approac
 
 **Version Detection Pattern:**
 1. Check repository Rust version via `apt-cache policy rustc`
-2. Extract and compare version (minimum required: 1.75 for asciinema)
+2. Extract and compare version (minimum required: 1.85 for aichat edition2024)
 3. Choose installation method based on availability and current state
 
 **Installation Logic:**
 - **If Rust not installed:**
   - Uses rustup if already available
-  - Installs from apt if repo version ≥ 1.75
-  - Falls back to rustup if repo version < 1.75
+  - Installs from apt if repo version ≥ 1.85
+  - Falls back to rustup if repo version < 1.85
 - **If Rust already installed via rustup:**
   - Automatically updates via `rustup update stable`
-- **If Rust already installed via apt and version < 1.75:**
-  - Prompts user: `"Install Rust 1.75+ via rustup? This will shadow the system installation. (Y/n)"`
-  - Default: Yes (critical for asciinema build)
+- **If Rust already installed via apt and version < 1.85:**
+  - Prompts user: `"Install Rust 1.85+ via rustup? This will shadow the system installation. (Y/n)"`
+  - Default: Yes (critical for aichat build)
   - If accepted: Installs rustup (shadows system packages via PATH)
-  - If declined: Warns that asciinema build may fail
+  - If declined: Warns that aichat build will fail
 
 **Coexistence Strategy:**
 - rustup installs to `~/.cargo/bin` (already prioritized in PATH)
@@ -175,7 +175,7 @@ The script uses **intelligent version detection** similar to the Node.js approac
 - No package removal needed (consistent with Node.js handling)
 - Uses `-y` flag in rustup installer to prevent blocking prompts
 
-**Why This Matters:** Prevents `cargo install` failures like "hyper-rustls requires rustc 1.71+" on older Debian/Ubuntu/Kali systems with outdated Rust packages.
+**Why This Matters:** Prevents `cargo install` failures caused by outdated Rust versions. Modern tools like aichat v0.30.0+ require edition2024 support (Rust 1.85+).
 
 ### Node.js Installation Strategy
 
@@ -491,7 +491,7 @@ bash -n install-llm-tools.sh
 
 **Infinite loop on script start**: Local commits ahead of origin. The script uses `git rev-list HEAD..@{u}` to only pull when BEHIND, not ahead. Solution: `git push` or `git reset --hard origin/main`
 
-**Rust version too old**: Script auto-detects and prompts to install rustup if < 1.75. Manual fix: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+**Rust version too old**: Script auto-detects and prompts to install rustup if < 1.85. Manual fix: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
 **Wrong Rust version used**: Ensure `~/.cargo/bin` comes before `/usr/bin` in PATH. Add `export PATH="$HOME/.cargo/bin:$PATH"` to shell RC file if needed.
 
@@ -641,7 +641,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 6. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
 7. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
 8. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
-9. **Rust Required**: asciinema is installed via cargo (Rust's package manager); minimum Rust 1.75 required
+9. **Rust Required**: asciinema and aichat are installed via cargo (Rust's package manager); minimum Rust 1.85 required
 10. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
 11. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
 12. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20

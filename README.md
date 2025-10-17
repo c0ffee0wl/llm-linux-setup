@@ -88,7 +88,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 - **OS**: Debian, Ubuntu, Kali Linux (or derivatives)
 - **Python**: 3.8+ (usually pre-installed)
-- **Rust**: 1.75+ (automatically installed via rustup if not available)
+- **Rust**: 1.85+ (automatically installed via rustup if not available)
 - **Node.js**: 20+ (automatically installed via nvm if repository version is older)
 - **Internet**: Required for installation and API access
 - **Disk Space**: ~500MB for all tools and dependencies
@@ -174,7 +174,7 @@ The script will:
 - **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
 - **[Python 3](https://python.org/)** - Required for llm
 - **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
-- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.75+, from repositories or rustup)
+- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
 - **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
@@ -1497,7 +1497,7 @@ git reset --hard origin/main
 
 **Problem**: `cargo install` fails with errors about minimum Rust version
 
-**Solution**: The script automatically detects and offers to upgrade Rust to 1.75+ via rustup. If you declined during installation:
+**Solution**: The script automatically detects and offers to upgrade Rust to 1.85+ via rustup. If you declined during installation:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh

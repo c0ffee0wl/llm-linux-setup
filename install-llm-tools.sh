@@ -348,7 +348,6 @@ install_apt_package jq
 install_apt_package xsel
 install_apt_package python3
 install_apt_package pipx
-install_apt_package pandoc
 
 # Install curl (needed for nvm installer if required)
 install_apt_package curl
@@ -378,6 +377,8 @@ else
     log "pdftotext is already installed"
 fi
 
+install_apt_package pandoc
+
 # Install/update uv
 export PATH=$HOME/.local/bin:$PATH
 if ! command -v uv &> /dev/null; then
@@ -397,13 +398,13 @@ if [ -z "$REPO_RUST_VERSION" ]; then
     warn "Could not determine repository Rust version"
 fi
 
-# Convert version to comparable number (e.g., "1.75" -> 175)
+# Convert version to comparable number (e.g., "1.85" -> 185)
 REPO_RUST_VERSION_NUM=$(echo "$REPO_RUST_VERSION" | awk -F. '{print ($1 * 100) + $2}')
-MINIMUM_RUST_VERSION=175  # Rust 1.75 (asciinema requirement)
+MINIMUM_RUST_VERSION=185  # Rust 1.85 (aichat/edition2024 requirement)
 
 log "Repository has Rust version: $REPO_RUST_VERSION (numeric: $REPO_RUST_VERSION_NUM, minimum required: $MINIMUM_RUST_VERSION)"
 
-# Install Rust - either from repo (if >= 1.75) or via rustup (if < 1.75)
+# Install Rust - either from repo (if >= 1.85) or via rustup (if < 1.85)
 if ! command -v cargo &> /dev/null; then
     # Check if rustup is already managing Rust (rustup might be installed but not active)
     if command -v rustup &> /dev/null; then
@@ -414,7 +415,7 @@ if ! command -v cargo &> /dev/null; then
         log "Installing Rust from repositories (version $REPO_RUST_VERSION)..."
         sudo apt-get install -y cargo rustc
     else
-        log "Repository version $REPO_RUST_VERSION is < 1.75, installing Rust via rustup..."
+        log "Repository version $REPO_RUST_VERSION is < 1.85, installing Rust via rustup..."
         install_rust_via_rustup
     fi
 else
@@ -431,18 +432,18 @@ else
 
         log "Rust is already installed from system packages (version $CURRENT_RUST_VERSION)"
 
-        # If current version is < 1.75, offer to upgrade via rustup
+        # If current version is < 1.85, offer to upgrade via rustup
         if [ "$CURRENT_RUST_VERSION_NUM" -lt "$MINIMUM_RUST_VERSION" ]; then
-            warn "Installed Rust version $CURRENT_RUST_VERSION is too old (requires 1.75+)"
+            warn "Installed Rust version $CURRENT_RUST_VERSION is too old (requires 1.85+)"
             echo ""
-            read -p "Install Rust 1.75+ via rustup? This will shadow the system installation. (Y/n): " UPGRADE_RUST
+            read -p "Install Rust 1.85+ via rustup? This will shadow the system installation. (Y/n): " UPGRADE_RUST
             UPGRADE_RUST=${UPGRADE_RUST:-Y}
 
             if [[ "$UPGRADE_RUST" =~ ^[Yy]$ ]]; then
                 install_rust_via_rustup
                 log "Rust upgraded successfully. rustup version will take precedence over system version."
             else
-                warn "Continuing with old Rust version. asciinema build may fail."
+                warn "Continuing with old Rust version. aichat build will fail."
                 warn "To upgrade manually later, run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
             fi
         fi
