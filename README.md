@@ -91,8 +91,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - **Disk Space**: ~500MB for all tools and dependencies
 
 **Supported Shells**:
+- Zsh (5.0+) - Recommended
 - Bash (3.0+)
-- Zsh (5.0+)
 
 **Note**: The installation script automatically handles Rust and Node.js version requirements. If your system has older versions, it will offer to install newer versions via rustup and nvm respectively.
 
@@ -223,13 +223,14 @@ llm "explain this error: $(python zero_division.py 2>&1)"
 docker logs -n 20 my_app | llm "check logs, find errors, provide possible solutions"
 
 cat setup.py | llm 'extract the metadata'
+llm 'extract the metadata' < setup.py     # Avoid useless use of cat
 llm -f setup.py 'extract the metadata'    # Alternatively use local fragments
 
 ls -1aG | llm "Describe each of the files"
 
 llm "What does 'ls -1aG' do?"
 
-# Use command completion
+# Use command completion (works best with zsh)
 # Type: find pdf files larger than 20MB
 # Press: Ctrl+N
 
@@ -497,11 +498,10 @@ llm -f site:https://www.volexity.com/blog/2025/04/22/phishing-for-codes-russian-
 For models that don't support native PDF attachments, use the `pdf:` fragment type:
 
 ```bash
-# Load a PDF as context
-llm -f pdf:poster.pdf "Beschreibe"
-
-# Alternative to using -a for PDFs (converts to markdown first)
 wget https://www.corporate-trust.de/wp-content/uploads/2023/12/poster_ransomware.pdf -O poster.pdf
+
+# Load a PDF as context
+# Alternative to using -a for PDFs (converts to markdown first)
 llm -f pdf:poster.pdf "Was ist das wichtigste auf diesem Poster?"
 ```
 
@@ -605,7 +605,10 @@ The `code` template outputs **pure code without explanations or markdown blocks*
 
 ```bash
 # Generate Python function
-llm code "function to check if number is prime in Python" | tee prime.py
+llm code "solve classic fizz buzz problem using Python" | tee fizz_buzz.py
+
+# Pass existing code and modify it
+cat fizz_buzz.py | llm code "Generate comments for each line of my code" | sponge fizz_buzz.py
 
 # Generate bash script
 llm code "Bash script to backup directory with timestamp" | tee backup.sh
@@ -705,14 +708,15 @@ curl -s https://api.github.com/repos/simonw/datasette/issues | \
 
 **💡 Important**: The `context` tool is **built into the assistant template** by default! You can ask about your terminal history naturally without typing `-T context` or `--tool context` every time.
 
-Query your terminal history to get context-aware AI assistance:
+Query your terminal history to get context-aware AI assistance.
+Make sure to include wording that lets the LLM know that you want it to query the history as context.
 
 ```bash
 # ✅ Ask AI naturally - context tool is automatically available
 llm "what was the error in my last command?"
 llm chat
-# > Read the context. How do I fix the compilation error?
 # > Summarize what I did in this session
+# > Read the context. How do I fix the compilation error?
 
 # ⚠️ Explicit tool invocation (useful for one-shot queries or non-assistant templates)
 command llm -T context "summarize what I did in this session"
