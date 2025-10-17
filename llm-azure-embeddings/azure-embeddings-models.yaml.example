@@ -1,0 +1,53 @@
+# Azure OpenAI Embeddings Configuration
+#
+# Copy this file to: ~/.config/io.datasette.llm/azure-embeddings-models.yaml
+# Then edit with your Azure OpenAI details
+#
+# cp azure-embeddings-models.yaml.example ~/.config/io.datasette.llm/azure-embeddings-models.yaml
+
+# Example: text-embedding-3-small
+- model_id: azure/text-embedding-3-small
+  model_name: text-embedding-3-small  # Your Azure deployment name
+  api_base: https://YOUR_RESOURCE.openai.azure.com/openai/v1/
+  api_key_name: azure
+  chunk_size: 2000  # Maximum tokens per chunk (default: 2000)
+  aliases:
+    - azure-3-small
+
+# Example: text-embedding-3-large
+- model_id: azure/text-embedding-3-large
+  model_name: text-embedding-3-large  # Your Azure deployment name
+  api_base: https://YOUR_RESOURCE.openai.azure.com/openai/v1/
+  api_key_name: azure
+  aliases:
+    - azure-3-large
+
+# Example: text-embedding-ada-002 (legacy)
+- model_id: azure/text-embedding-ada-002
+  model_name: text-embedding-ada-002  # Your Azure deployment name
+  api_base: https://YOUR_RESOURCE.openai.azure.com/openai/v1/
+  api_key_name: azure
+  aliases:
+    - azure-ada
+
+# Example: text-embedding-3-small with custom dimensions
+- model_id: azure/text-embedding-3-small-512
+  model_name: text-embedding-3-small
+  api_base: https://YOUR_RESOURCE.openai.azure.com/openai/v1/
+  api_key_name: azure
+  dimensions: 512  # Reduce dimension size for smaller embeddings
+  aliases:
+    - azure-3-small-512
+
+# Notes:
+# - model_id: How you'll reference the model in llm commands
+# - model_name: Must match your Azure OpenAI deployment name exactly
+# - api_base: Your Azure OpenAI endpoint URL (format: https://RESOURCE.openai.azure.com/openai/v1/)
+# - api_key_name: Name used in "llm keys set <name>" (default: azure)
+# - dimensions: Optional, only for models that support custom dimensions
+# - chunk_size: Optional, maximum tokens per chunk (default: 2000)
+#   - Texts exceeding this limit are automatically split into chunks
+#   - Each chunk is embedded separately and averaged
+#   - Lower values = more chunks, better for very large texts
+#   - Higher values = fewer chunks, faster processing
+# - aliases: Optional list of alternative names for convenience

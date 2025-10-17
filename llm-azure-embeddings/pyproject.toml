@@ -1,0 +1,34 @@
+[project]
+name = "llm-azure-embeddings"
+version = "0.1.0"
+description = "LLM plugin for Azure OpenAI embeddings with custom endpoints"
+readme = "README.md"
+authors = [{name = "LLM Linux Setup"}]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+requires-python = ">=3.8"
+dependencies = [
+    "llm>=0.15",
+    "openai>=1.0",
+    "pyyaml",
+    "tiktoken",
+]
+
+[project.entry-points.llm]
+azure_embeddings = "llm_azure_embeddings"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_azure_embeddings*"]

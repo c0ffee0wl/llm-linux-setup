@@ -647,6 +647,22 @@ EOF
     else
         log "Default model already configured, skipping..."
     fi
+
+    # Create azure-embeddings-models.yaml for embeddings
+    AZURE_EMBEDDINGS_FILE="$(command llm logs path | xargs dirname)/azure-embeddings-models.yaml"
+    log "Creating Azure OpenAI embeddings configuration..."
+
+    cat > "$AZURE_EMBEDDINGS_FILE" <<EOF
+- model_id: azure/text-embedding-3-small
+  model_name: text-embedding-3-small
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+  aliases:
+    - azure-3-small
+EOF
+
+    log "Azure embeddings configuration created at $AZURE_EMBEDDINGS_FILE"
+    log "Default embedding model will be set after plugin installation..."
 else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
@@ -670,13 +686,53 @@ PLUGINS=(
     "llm-fragments-github"
     "llm-jq"
     "git+https://github.com/c0ffee0wl/llm-templates-fabric"
+    "git+https://github.com/c0ffee0wl/llm-tools-rag"
     "$SCRIPT_DIR/llm-tools-context"
+    "$SCRIPT_DIR/llm-azure-embeddings"
 )
 
 for plugin in "${PLUGINS[@]}"; do
     log "Installing/updating $plugin..."
-    command llm install "$plugin" --upgrade 2>/dev/null || command llm install "$plugin"
+    if ! command llm install "$plugin" --upgrade 2>&1; then
+        warn "Upgrade failed, trying fresh install..."
+        command llm install "$plugin"
+    fi
 done
+
+#############################################################################
+# PHASE 3.5: Configure Default Embedding Model (After Plugin Installation)
+#############################################################################
+
+# Only set default embedding model if Azure was configured
+if [ "$AZURE_CONFIGURED" = "true" ]; then
+    log "Configuring default embedding model..."
+
+    # Verify the azure-embeddings plugin loaded successfully
+    if command llm plugins 2>/dev/null | grep -q "azure"; then
+        log "Azure embeddings plugin loaded successfully"
+
+        # Only set default embedding model if no custom default has been configured
+        DEFAULT_EMBEDDING_MODEL_FILE="$(command llm logs path | xargs dirname)/default_embedding_model.txt"
+        if [ ! -f "$DEFAULT_EMBEDDING_MODEL_FILE" ]; then
+            log "Setting default embedding model to azure/text-embedding-3-small..."
+            if command llm embed-models default azure-embed-small 2>&1; then
+                log "Default embedding model set successfully"
+            else
+                warn "Failed to set default embedding model. You can set it manually with:"
+                warn "  llm embed-models default azure-embed-small"
+            fi
+        else
+            log "Default embedding model already configured, skipping..."
+        fi
+    else
+        warn "Azure embeddings plugin not found in plugin list"
+        warn "Check plugin installation with: llm plugins"
+        warn "You can manually set the default embedding model later with:"
+        warn "  llm embed-models default azure-embed-small"
+    fi
+else
+    log "Azure OpenAI not configured, skipping embedding model setup"
+fi
 
 #############################################################################
 # PHASE 4: Install/Update LLM Templates
@@ -835,7 +891,7 @@ log "============================================="
 log ""
 log "Installed tools:"
 log "  - llm (Simon Willison's CLI tool)"
-log "  - llm plugins (gemini, anthropic, tools, fragments, jq, fabric templates, context)"
+log "  - llm plugins (gemini, anthropic, tools, fragments, jq, fabric templates, context, azure-embeddings)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - files-to-prompt (file content formatter)"
 log "  - asciinema (terminal session recorder)"
