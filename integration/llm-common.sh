@@ -27,11 +27,34 @@ llm() {
         "collections" "embed" "embed-models" "embed-multi" "similar"
         "aliases" "logs" "install" "uninstall"
         "openai" "gemini" "openrouter"
-        "cmd" "cmdcomp" "jq"
+        "cmd" "cmdcomp" "jq" "rag"
     )
 
     # Check if first argument is an excluded subcommand
     local first_arg="$1"
+
+    # Special handling for RAG subcommand - route to aichat
+    if [ "$first_arg" = "rag" ]; then
+        shift  # Remove 'rag' from arguments
+
+        if ! command -v aichat &> /dev/null; then
+            echo "Error: aichat is not installed. RAG functionality requires aichat." >&2
+            echo "Run the installation script to install aichat." >&2
+            return 1
+        fi
+
+        # If no arguments, show error (RAG name is required)
+        if [ $# -eq 0 ]; then
+            echo "Error: RAG name required. Usage: llm rag <name>" >&2
+            echo "For interactive mode without RAG, use: aichat" >&2
+            return 1
+        fi
+
+        # Pass all arguments to aichat with --rag flag
+        aichat --rag "$@"
+        return $?
+    fi
+
     for cmd in "${exclude_commands[@]}"; do
         if [ "$first_arg" = "$cmd" ]; then
             # Pass through directly without template

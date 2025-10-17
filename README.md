@@ -33,7 +33,9 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Code Generation](#code-generation)
   - [Tools](#tools)
   - [Context System Usage](#context-system-usage)
+  - [RAG (Document Querying)](#rag-document-querying)
   - [Integration with Other Tools](#integration-with-other-tools)
+  - [LLM Functions (Optional)](#llm-functions-optional)
   - [Managing Models](#managing-models)
 - [Understanding the Shell Integration](#understanding-the-shell-integration)
   - [How Automatic Templates Work](#how-automatic-templates-work)
@@ -80,6 +82,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
+- ✅ **RAG document querying** - Query your documents with `llm rag` using aichat's built-in vector database
 
 ## System Requirements
 
@@ -172,6 +175,7 @@ The script will:
 - **[Python 3](https://python.org/)** - Required for llm
 - **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
 - **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.75+, from repositories or rustup)
+- **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
 
@@ -183,7 +187,9 @@ The script will:
 - **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
 - **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
 - **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
+- **[llm-tools-sandboxed-shell](https://github.com/c0ffee0wl/llm-tools-sandboxed-shell)** - Sandboxed shell command execution
 - **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
+- **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional llm-functions integration (enables custom tools in Bash/JS/Python)
 - **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
 - **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
@@ -197,6 +203,7 @@ The script will:
 ### Additional Tools
 - **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
+- **[aichat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
 
@@ -245,6 +252,11 @@ llm -f https://example.com "extract key points"
 # Use -t when you want a DIFFERENT template that the default assistant template
 llm -t fabric:summarize "..."        # Not the default
 llm -t fabric:analyze_threat_report  # Not the default
+
+# Query your documents with RAG
+llm rag mydocs                    # Open/create RAG collection for documents
+llm rag mydocs --rebuild          # Rebuild index after changes
+aichat --rag projectdocs          # Direct aichat usage
 
 # Query terminal history (context tool is built into assistant template!)
 context                                        # Show last command
@@ -666,6 +678,37 @@ llm code "Python script to delete old files" | tee cleanup.py
 
 LLM supports tools that AI models can call during conversations.
 
+**Sandboxed Shell Execution**
+
+Execute shell commands safely in an isolated environment using bubblewrap (bwrap):
+
+```bash
+# Execute a command in a sandbox
+llm -T sandboxed_shell "Run this command safely: cat /etc/passwd"
+
+# Interactive mode with sandboxed shell access
+llm chat -T sandboxed_shell
+# > Can you list the files in /tmp?
+# > What's the output of 'uname -a'?
+
+# Combine with other prompts
+llm -T sandboxed_shell "Check if docker is installed and show version"
+```
+
+**Security Benefits:**
+- **Isolation**: Commands run in a restricted environment using Linux namespaces
+- **Limited filesystem access**: Only specific directories are accessible
+- **No network access**: Sandboxed commands cannot access the network by default
+- **Read-only root**: System directories are mounted read-only
+
+**Use Cases:**
+- Testing untrusted code or commands
+- Safe execution of AI-generated commands
+- Running potentially dangerous operations in isolation
+- Security analysis and experimentation
+
+**Note**: Requires bubblewrap (already installed by setup script).
+
 **SQLite Database Queries**
 
 Query SQLite databases using natural language:
@@ -805,6 +848,176 @@ The context system automatically captures:
 
 This allows AI models to provide context-aware debugging and assistance based on your actual terminal activity.
 
+### RAG (Document Querying)
+
+Query your documents, codebases, and knowledge bases using AI with aichat's RAG (Retrieval-Augmented Generation) functionality. The system uses a built-in vector database and automatically syncs with your Azure OpenAI configuration.
+
+**For detailed documentation**, see the [aichat RAG Guide](https://github.com/sigoden/aichat/wiki/RAG-Guide).
+
+**Quick Start:**
+
+```bash
+# Create/open a RAG collection
+llm rag mydocs
+
+# In the interactive prompt, add documents
+.edit rag-docs
+# Add paths (one per line):
+# /path/to/docs/
+# https://example.com/api-docs
+# /path/to/project/
+
+# Ask questions about your documents
+What is the authentication flow?
+How do I configure the database?
+
+# Exit (Ctrl+D) and rebuild if you add more docs
+llm rag mydocs --rebuild
+```
+
+**RAG Commands:**
+
+```bash
+# Create/open a RAG collection
+llm rag projectdocs
+
+# Rebuild RAG index after adding/changing documents
+llm rag projectdocs --rebuild
+
+# List all RAG collections
+aichat --list-rags
+
+# View RAG collection info
+aichat --rag projectdocs --info
+
+# Direct aichat usage (full features)
+aichat --rag projectdocs
+```
+
+**Interactive RAG Commands** (in REPL):
+
+Within the aichat interactive session:
+```bash
+.rag mydocs              # Create/switch to RAG collection
+.edit rag-docs           # Add/edit documents in current RAG
+.rebuild rag             # Rebuild RAG index after document changes
+.sources rag             # Show citation sources from last query
+.info rag                # Show RAG configuration details
+.exit rag                # Exit RAG mode
+.help                    # Show all available REPL commands
+.set                     # View/change RAG settings
+```
+
+**Document Source Types:**
+
+AIChat can build RAG knowledge bases from a variety of document sources:
+
+| Source | Example |
+|--------|---------|
+| Files | `/tmp/dir1/file1;/tmp/dir1/file2` |
+| Directory | `/tmp/dir1/` |
+| Directory (extensions) | `/tmp/dir2/**/*.{md,txt}` |
+| Url | `https://sigoden.github.io/mynotes/tools/linux.html` |
+| RecursiveUrl (websites) | `https://sigoden.github.io/mynotes/tools/**` |
+| Git Repository (remote) | `git:https://github.com/user/repo` |
+| Git Repository (local) | `git:/path/to/local/repo` |
+| Git Subdirectory | `git:https://github.com/user/repo/tree/main/src` |
+
+**⚠️ Important:** The `git:` prefix is **required** to trigger the gitingest document loader. Without it, GitHub URLs will be treated as regular web pages, not repositories.
+
+**Supported Document Types:**
+
+The system automatically processes various file types:
+- **Text files**: .txt, .md, .rst, .json, .yaml, .py, .js, etc.
+- **PDF files**: Automatically extracted with pdftotext (requires poppler-utils)
+- **DOCX files**: Automatically converted with pandoc
+- **Git repositories**: Full repository context via gitingest
+- **Web URLs**: HTTP/HTTPS URLs are fetched and indexed
+- **Directories**: Recursively index all supported files
+
+**Adding Git Repositories to RAG:**
+
+```bash
+# Create a RAG collection for your project
+llm rag myproject
+
+# In the REPL, add documents with .edit rag-docs
+.edit rag-docs
+```
+
+Your editor opens - add sources (one per line):
+```
+# Remote GitHub repositories (use git: prefix!)
+git:https://github.com/sigoden/aichat
+git:https://github.com/user/another-repo
+
+# Local repositories
+git:/home/user/projects/myapp
+git:./relative-path-to-repo
+
+# Subdirectories
+git:https://github.com/user/repo/tree/main/src
+
+# Mix with other sources
+/path/to/docs/
+https://example.com/api-docs
+```
+
+Save and exit - aichat will process all sources:
+```bash
+# Now query your repositories
+Explain the authentication system in this codebase
+What are the main components?
+How does the RAG implementation work?
+
+# Exit (Ctrl+D) and rebuild after adding more repos
+llm rag myproject --rebuild
+```
+
+**💡 Why the `git:` prefix is required:**
+- **Without prefix**: `https://github.com/user/repo` → Fetched as a web page (HTML)
+- **With prefix**: `git:https://github.com/user/repo` → Processed as a git repository (source code)
+
+The `git:` prefix explicitly triggers the gitingest document loader, which:
+- Extracts source code from the repository
+- Respects .gitignore files
+- Provides clean, formatted code for the RAG index
+- Works with both remote URLs and local paths
+
+**Example Workflow:**
+
+```bash
+# 1. Create a RAG for your project documentation
+llm rag myproject
+
+# 2. Add documents interactively
+> Set chunk size: 3000
+> Set chunk overlay: 150
+> Add documents: https://github.com/sigoden/aichat/wiki/**
+
+# 3. Ask questions
+Explain the API authentication mechanism
+What configuration options are available?
+How do I deploy this to production?
+
+# 4. Exit and work on your code
+# Press Ctrl+D
+
+# 5. After updating docs, rebuild the index
+llm rag myproject --rebuild-rag
+
+# 6. Continue querying
+llm rag myproject
+What changed in the latest version?
+```
+
+**Tips:**
+
+- Use descriptive names for RAG collections (e.g., `aws-docs`, `company-policies`, `project-api`)
+- Rebuild the index with `--rebuild-rag` after significant document changes
+- RAG collections are stored in `~/.local/share/aichat/rags/`
+- Each collection has its own vector database and configuration
+- Use `.set` in REPL to adjust settings like `rag_top_k` (number of results)
 
 ### Integration with Other Tools
 
@@ -879,6 +1092,121 @@ docker ps --format json | \
     llm jq 'count by image' | \
     llm "Which containers are running most frequently?"
 ```
+
+### LLM Functions (Optional)
+
+**Note**: This is an **optional** feature. The installation script prepares your environment for llm-functions by installing `argc` and the bridge plugin, but you must install llm-functions separately if you want to use it.
+
+[llm-functions](https://github.com/sigoden/llm-functions/) is a framework that allows you to build custom LLM tools and agents using Bash, JavaScript, and Python. When installed, these tools become available to the `llm` command through the `llm-tools-llm-functions` bridge plugin.
+
+**What's Already Installed:**
+- **argc** - Bash CLI framework and command runner (prerequisite for llm-functions)
+- **jq** - JSON processor (prerequisite for llm-functions)
+- **llm-tools-llm-functions** - Bridge plugin that connects llm to llm-functions
+
+**Installing llm-functions:**
+
+```bash
+# Clone the llm-functions repository
+git clone https://github.com/sigoden/llm-functions.git
+cd llm-functions
+
+# Create tools.txt to specify which tools to enable (one per line)
+cat > tools.txt <<EOF
+get_current_weather.sh
+execute_command.sh
+# execute_py_code.py  # Lines starting with # are disabled
+EOF
+
+# Build function declarations and binaries
+argc build
+
+# Verify environment is ready (checks dependencies, env vars, etc.)
+argc check
+
+# Link to AIChat 
+# Option 1: Symlink to AIChat's functions directory
+ln -s "$(pwd)" "$(aichat --info | sed -n 's/^functions_dir\s\+//p')"
+
+# Option 2: Use environment variable
+export AICHAT_FUNCTIONS_DIR="$(pwd)"
+```
+
+**Creating Custom Tools:**
+
+llm-functions uses a simple comment-based syntax to define tools:
+
+**Bash Example** (`tools/get_current_weather.sh`):
+```bash
+#!/usr/bin/env bash
+set -e
+
+# @describe Get the current weather in a given location.
+# @option --location! The city and optionally the state or country, e.g., "London", "San Francisco, CA".
+
+# @env LLM_OUTPUT=/dev/stdout The output path
+
+main() {
+    curl -fsSL "https://wttr.in/$(echo "$argc_location" | sed 's/ /+/g')?format=4&M" \
+    >> "$LLM_OUTPUT"
+}
+
+eval "$(argc --argc-eval "$0" "$@")"
+```
+
+**Python Example:**
+
+See the [`execute_py_code.py` example](https://github.com/sigoden/llm-functions/blob/main/tools/execute_py_code.py) in the llm-functions repository. This tool uses Python's `ast` module to execute code and capture output, demonstrating how to define function parameters via docstrings.
+
+**JavaScript Example:**
+
+See the [`execute_js_code.js` example](https://github.com/sigoden/llm-functions/blob/main/tools/execute_js_code.js) in the llm-functions repository. This tool demonstrates JavaScript/Node.js code execution with output capture, using JSDoc comments to define parameters.
+
+**Tool Discovery in llm:**
+
+The llm-tools-llm-functions plugin automatically discovers tools by reading the `functions.json` file generated by `argc build`. Tools are registered with llm's function-calling system and become available to AI models.
+
+```bash
+# Use tools with llm
+llm -T get_current_weather "What's the weather in Berlin?"
+
+# In interactive mode
+llm chat -T get_current_weather
+# > What's the weather in Berlin?
+
+# See: https://github.com/sigoden/llm-functions/#quick-start
+```
+
+**Integration with aichat:**
+
+llm-functions was originally designed for [aichat](https://github.com/sigoden/aichat) and is also fully supported there:
+
+```bash
+# Link llm-functions to aichat (if you want to use both)
+# aichat looks for functions in ~/.config/aichat/functions/
+ln -s ~/llm-functions ~/.config/aichat/functions
+
+# Or set environment variable
+export AICHAT_FUNCTIONS_DIR=~/llm-functions
+
+# Use tools with aichat
+aichat --role %functions% what is the weather in Paris?
+```
+
+**Why llm-functions is Optional:**
+
+- Requires manual setup and tool development
+- Best for users who need custom tool integration
+- Not everyone needs to build custom function-calling tools
+- The bridge plugin is harmless if llm-functions isn't installed
+
+**Use Cases:**
+- **System Integration**: Call system commands, APIs, or services from AI conversations
+- **Custom Workflows**: Build domain-specific tools for your projects
+- **Automation**: Create tools that interact with databases, cloud services, or local applications
+- **Multi-Language**: Write tools in the language you're most comfortable with
+
+For complete documentation, see the [llm-functions repository](https://github.com/sigoden/llm-functions/).
 
 ### Managing Models
 
@@ -1047,6 +1375,9 @@ command llm --tool context "what went wrong?"
   - `default_model.txt` - Currently selected default model
   - API keys stored securely via llm's key management
 
+- `~/.config/aichat/` - aichat configuration
+  - `config.yaml` - Auto-configured with Azure OpenAI settings, RAG configuration, and document loaders
+
 - `~/.config/llm-tools/` - Additional tool configuration
   - `asciinema-commit` - Tracks asciinema version for update detection
 
@@ -1054,6 +1385,10 @@ command llm --tool context "what went wrong?"
   - Default: `/tmp/session_logs/asciinema/` (temporary) or `~/session_logs/asciinema/` (permanent)
   - Contains `.cast` files with terminal session recordings
   - Configured via `SESSION_LOG_DIR` environment variable in your shell RC file
+
+- `~/.local/share/aichat/rags/` - RAG collections and vector databases
+  - Each subdirectory is a named RAG collection
+  - Contains vector embeddings and indexed documents
 
 ### Shell Integration Files
 
@@ -1287,6 +1622,9 @@ For issues, questions, or suggestions:
 - [Daniel Miessler](https://github.com/danielmiessler) - Original Fabric prompt patterns
 
 ### Additional Tools
+- [sigoden](https://github.com/sigoden) - aichat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
+- [Bubblewrap Project](https://github.com/containers/bubblewrap) - Sandboxing tool for unprivileged containers
+- [stedolan/jq](https://github.com/stedolan/jq) - Command-line JSON processor
 - [Asciinema](https://github.com/asciinema/asciinema) - Terminal session recorder
 - [Coderamp Labs](https://github.com/coderamp-labs/gitingest) - gitingest repository analyzer
 

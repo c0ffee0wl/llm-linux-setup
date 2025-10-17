@@ -86,12 +86,13 @@ The shell integration uses a **three-file pattern** located in the `integration/
 - `integration/llm-integration.bash` - Bash-specific integration (sources common, defines Bash widgets)
 - `integration/llm-integration.zsh` - Zsh-specific integration (sources common, defines Zsh widgets)
 
-**LLM Wrapper Function** (`integration/llm-common.sh:16-80`):
+**LLM Wrapper Function** (`integration/llm-common.sh`):
 - Automatically applies templates to prompt commands (chat, code, default prompts)
 - **`llm chat`** → adds `-t assistant` unless user specifies `-t`, `-s`, `-c`, or `--cid`
 - **`llm code`** → always adds `-t code` (outputs clean executable code without markdown)
+- **`llm rag`** → routes to `aichat --rag` for RAG functionality (special handling)
 - **Default prompts** → adds `-t assistant` unless user specifies template/system prompt/continuation
-- **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, etc.
+- **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, rag, etc.
 - When modifying wrapper logic, update the `exclude_commands` array and `should_skip_template()` function
 
 **Command Completion (Ctrl+N)**:
@@ -108,12 +109,12 @@ The shell integration uses a **three-file pattern** located in the `integration/
 The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
-1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema
-2. **LLM Core**: Install/upgrade llm, configure Azure OpenAI, create `extra-openai-models.yaml`
-3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade`
+1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
+2. **LLM Core**: Install/upgrade llm, configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat
+3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell)
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
-5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks)
-6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), context script
+5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
+6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
 
 ### Helper Functions (Code Reusability)
@@ -132,6 +133,11 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Auto-updates if user hasn't modified the file (installed checksum = stored checksum)
   - Prompts user if local modifications detected (installed checksum ≠ stored checksum)
   - Used in Phase 4 for assistant.yaml and code.yaml templates
+- **`install_or_upgrade_cargo_tool(tool_name, [git_url])`**: Unified cargo tool installation/upgrade (used in Phase 6)
+  - For crates.io packages: Checks if installed, provides feedback, runs `cargo install`
+  - For git-based packages: Always force reinstall with `--locked --force --git` flags
+  - Provides clear logging for user visibility
+  - Used for aichat; asciinema kept separate due to specialized commit-hash tracking
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -213,6 +219,89 @@ The system is specifically configured for **Azure Foundry** (not standard OpenAI
 
 **When adding new models**: Follow the Azure OpenAI format in the YAML file, not standard OpenAI format.
 
+### RAG Integration with aichat
+
+The system integrates **aichat** (https://github.com/sigoden/aichat) for Retrieval-Augmented Generation (RAG) capabilities:
+
+**Architecture**:
+- `aichat` is installed via cargo in Phase 6
+- Automatically configured with Azure OpenAI credentials from llm config
+- Accessible via both `aichat` command and `llm rag` wrapper
+- Uses Azure OpenAI `text-embedding-3-small` for document embeddings
+- Built-in vector database (no external dependencies like ChromaDB)
+
+**Configuration** (`~/.config/aichat/config.yaml`):
+- Auto-generated inline in Phase 2 (no longer uses a helper function)
+- Syncs Azure API base and model list from llm config
+- **API Key**: Uses `AZURE_OPENAI_API_KEY` environment variable (not stored in config for security)
+- Includes document loaders for PDF (pdftotext), DOCX (pandoc), and Git repos (gitingest)
+- Default embedding model: `azure-openai:text-embedding-3-small`
+- Embedding parameters: `default_chunk_size: 1000`, `max_batch_size: 50`
+
+**Environment Variable**:
+The installation script **automatically** adds the Azure OpenAI API key to your shell configuration:
+```bash
+# Automatically added to ~/.bashrc and ~/.zshrc
+export AZURE_OPENAI_API_KEY="your-api-key-here"
+```
+After installation, reload your shell with `source ~/.bashrc` (or `~/.zshrc`).
+
+**llm Wrapper Integration** (`integration/llm-common.sh`):
+- `llm rag` command routes to `aichat --rag` internally
+- `llm rag` requires a RAG name parameter (consistent with `aichat --rag` behavior)
+- `llm rag <name>` opens/creates RAG collection named `<name>`
+- Arguments passed through: `llm rag mydata --rebuild` → `aichat --rag mydata --rebuild-rag`
+- For interactive mode without RAG, use `aichat` directly
+
+**Document Loaders** (configured in Phase 2):
+- **PDF**: `pdftotext` (from poppler-utils package)
+- **DOCX**: `pandoc` (from pandoc package)
+- **Git Repos**: `gitingest` (already installed in Phase 6)
+
+**Git Repository Loader Configuration**:
+The git document loader is configured in `~/.config/aichat/config.yaml`:
+```yaml
+document_loaders:
+  git: 'gitingest $1 -o -'
+```
+
+**How It Works**:
+- Document loaders are triggered by **explicit prefix syntax** (not file extensions)
+- The `git:` prefix must be used to invoke the gitingest loader
+- Without the prefix, GitHub URLs are treated as regular web pages (HTML fetch)
+- Works with both remote URLs and local paths
+
+**Usage in `.edit rag-docs`**:
+```
+# Correct - uses gitingest loader
+git:https://github.com/user/repo
+git:/path/to/local/repo
+git:https://github.com/user/repo/tree/main/src
+
+# Incorrect - treated as web page, not repository
+https://github.com/user/repo  # This fetches HTML, not source code!
+```
+
+**Gitingest Features**:
+- Automatically clones remote repositories (temporary)
+- Respects `.gitignore` files
+- Extracts source code in LLM-friendly format
+- Supports subdirectories via GitHub tree URLs
+- Outputs to stdout (required for aichat integration)
+
+**RAG Workflow**:
+1. Create RAG collection: `llm rag mydocs` or `aichat --rag mydocs`
+2. Add documents interactively via `.edit rag-docs` command in REPL
+3. Query documents: Ask questions in the interactive session
+4. Manage documents: Use `.rag` commands in REPL (`.help` for details)
+5. Rebuild index: `llm rag mydocs --rebuild` after document changes
+
+**Key Design Decisions**:
+- **Unified credentials**: Single Azure configuration serves both llm and aichat
+- **Dual access**: `llm rag` wrapper for simplicity, `aichat` command for full features
+- **Automatic sync**: Installation script updates aichat config when Azure settings change
+- **No external deps**: aichat includes built-in vector database and full-text search
+
 ## Key Files & Components
 
 - **`install-llm-tools.sh`**: Main installation/update script with self-update logic
@@ -287,6 +376,67 @@ llm code "nginx config for reverse proxy on port 3000" > nginx.conf
 - Output is directly executable/pipeable
 - Infers programming language from context
 - Ideal for automation and scripting
+
+### RAG (Retrieval-Augmented Generation) Commands
+
+Query your documents with AI using aichat's RAG functionality:
+
+```bash
+# Create/open a RAG collection
+llm rag mydocs
+
+# Rebuild RAG index after adding/changing documents
+llm rag mydocs --rebuild
+
+# List all RAG collections
+aichat --list-rags
+
+# View RAG collection info
+aichat --rag mydocs --info
+
+# Direct aichat usage (full features)
+aichat --rag projectdocs
+```
+
+**Interactive RAG Commands** (in REPL):
+```bash
+# Inside the aichat REPL:
+.rag mydocs              # Create/switch to RAG collection
+.edit rag-docs           # Add/edit documents in current RAG
+.rebuild rag             # Rebuild RAG index after document changes
+.sources rag             # Show citation sources from last query
+.info rag                # Show RAG configuration details
+.exit rag                # Exit RAG mode
+.help                    # Show all REPL commands
+```
+
+**Example Workflow**:
+```bash
+# 1. Create a RAG collection for your project
+llm rag myproject
+
+# 2. In the REPL, add documents
+.edit rag-docs
+# Add file paths or URLs, one per line:
+# /path/to/docs/
+# https://example.com/api-docs
+# /path/to/code/
+
+# 3. Ask questions about your documents
+What is the authentication flow?
+How do I configure the database?
+
+# 4. Exit and rebuild if you add more docs
+# Press Ctrl+D to exit
+llm rag myproject --rebuild
+```
+
+**Document Types Supported**:
+- **Text files**: .txt, .md, .rst, .json, .yaml, etc.
+- **PDF files**: Automatically processed with pdftotext
+- **DOCX files**: Automatically processed with pandoc
+- **Git repositories**: Use gitingest to include full repo context
+- **Web URLs**: Direct HTTP/HTTPS URLs are fetched and indexed
 
 ## Common Development Tasks
 
@@ -405,6 +555,7 @@ When adding new functionality to `install-llm-tools.sh`:
 1. **Use existing helper functions** where possible:
    - For apt packages: `install_apt_package package_name`
    - For uv tools: `install_or_upgrade_uv_tool tool_name [source]`
+   - For cargo tools: `install_or_upgrade_cargo_tool tool_name [git_url]`
    - For shell RC updates: `update_shell_rc_file rc_file integration_file shell_name`
    - For Azure config: `configure_azure_openai`
    - For template updates: `update_template_file template_name`
@@ -439,6 +590,7 @@ The script automatically upgrades tools on re-run:
 - Plugins: `llm install <plugin> --upgrade`
 - `gitingest`: `uv tool upgrade gitingest`
 - `files-to-prompt`: `uv tool upgrade files-to-prompt`
+- `aichat`: `install_or_upgrade_cargo_tool aichat` (uses helper function)
 - `asciinema`: `cargo install --locked --force --git https://github.com/asciinema/asciinema`
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
@@ -462,11 +614,13 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ## Important File Locations
 
 ### Configuration Files
-- `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions
+- `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions for llm
 - `~/.config/io.datasette.llm/templates/{assistant,code}.yaml` - Custom LLM templates
+- `~/.config/aichat/config.yaml` - aichat configuration with Azure OpenAI and RAG settings
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template checksums for smart updates
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
+- `~/.local/share/aichat/rags/` - RAG collections and vector databases
 
 ### Repository Structure
 - `install-llm-tools.sh` - Main installation script with 7 phases
@@ -492,13 +646,19 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 11. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
 12. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
 13. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
+14. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
 
 ## Special Packages & Forks
 
 Note that several packages use **forks** or specific sources:
 - **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
+- **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)
+- **llm-tools-sandboxed-shell**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell` (sandboxed shell command execution)
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
+- **aichat**: Installed via cargo from crates.io: `cargo install aichat`
+- **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
+- **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
