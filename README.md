@@ -107,7 +107,7 @@ For the best experience, install [linux-setup](https://github.com/c0ffee0wl/linu
 ```bash
 git clone https://github.com/c0ffee0wl/linux-setup.git
 cd linux-setup
-./install.sh
+./linux-setup.sh
 ```
 
 The linux-setup repository provides:
@@ -807,8 +807,8 @@ Query your documents, codebases, and knowledge bases using AI with AIChat's RAG 
 llm rag mydocs
 
 # 2. Add documents interactively
-> Set chunk size: 3000
-> Set chunk overlay: 150
+> Set chunk size: 2000
+> Set chunk overlay: 200
 > Add documents: https://github.com/sigoden/aichat/wiki/**
 
 # Ask questions about your documents
