@@ -305,7 +305,7 @@ The assistant template is configured for security/IT expertise - perfect for cyb
 Simple question-and-answer prompts:
 
 ```bash
-# Ask a question (per your assistant template, will answer in German)
+# Ask a question (per your assistant template)
 # The assistant template is automatically applied
 llm "Was ist das meistverbreite Betriebssystem für Pentester?"
 
@@ -1268,7 +1268,7 @@ You can change this later by editing the `SESSION_LOG_DIR` export in your `.bash
 
 - `~/.config/io.datasette.llm/` - LLM configuration directory
   - `extra-openai-models.yaml` - Azure OpenAI model definitions
-  - `templates/assistant.yaml` - Custom [assistant template](llm-template/assistant.yaml) with security/IT expertise (German language, cybersecurity focus)
+  - `templates/assistant.yaml` - Custom [assistant template](llm-template/assistant.yaml) with security/IT expertise (cybersecurity focus)
   - `templates/code.yaml` - [Code-only generation template](llm-template/code.yaml) (no markdown, no explanations)
   - `default_model.txt` - Currently selected default model
   - API keys stored securely via llm's key management
