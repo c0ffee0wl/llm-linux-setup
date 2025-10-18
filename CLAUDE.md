@@ -237,6 +237,7 @@ The system integrates **aichat** (https://github.com/sigoden/aichat) for Retriev
 - Includes document loaders for PDF (pdftotext), DOCX (pandoc), and Git repos (gitingest)
 - Default embedding model: `azure-openai:text-embedding-3-small`
 - Embedding parameters: `default_chunk_size: 1000`, `max_batch_size: 50`
+- **Overwrite Protection**: If config file exists, script prompts before overwriting (creates backup if user confirms)
 
 **Environment Variable**:
 The installation script **automatically** adds the Azure OpenAI API key to your shell configuration:
