@@ -264,10 +264,17 @@ llm rag mydocs --rebuild-rag      # Rebuild index after changes
 aichat --rag projectdocs          # Direct aichat usage
 
 # Query terminal history (context tool is built into assistant template!)
-context                                        # Show last command
-context 5                                      # Show last 5 commands
 llm "what was the error in my last command?"   # Uses context tool automatically in default template
 command llm -T context "..."   # Explicit tool call (for non-assistant templates)
+context                                        # Show last command
+context 5                                      # Show last 5 commands
+
+# Run shell commands safely (sandboxed_shell tool is built into assistant template!)
+llm "Check if docker is installed and show version"   # AI runs commands safely, automatically
+llm chat   # Then ask: "Can you list the files in /root?"
+llm "Check kernel version" --td        # Show tool execution details
+llm "Check kernel version" --ta        # Require manual approval before execution
+command llm -T sandboxed_shell "..."   # Explicit tool call (for non-assistant templates)
 ```
 
 ## Usage
