@@ -39,17 +39,23 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Managing Models](#managing-models)
   - [Managing API Keys](#managing-api-keys)
-- [Understanding the Shell Integration](#understanding-the-shell-integration)
-  - [How Automatic Templates Work](#how-automatic-templates-work)
-  - [Bypassing the Shell Wrapper](#bypassing-the-shell-wrapper)
   - [When to Use `-t`](#when-to-use--t)
   - [Key Benefits](#key-benefits)
   - [Context Tool Integration](#context-tool-integration)
 - [Session Recording & Context System](#session-recording--context-system)
   - [How It Works](#how-it-works)
   - [Storage Configuration](#storage-configuration)
-- [Configuration](#configuration)
+- [Understanding Azure OpenAI Setup](#understanding-azure-openai-setup)
+  - [Architecture Overview](#architecture-overview)
   - [Configuration Files](#configuration-files)
+  - [Azure-Specific Limitations](#azure-specific-limitations)
+  - [Why Azure OpenAI?](#why-azure-openai)
+- [Alternative: Gemini for Private Use](#alternative-gemini-for-private-use)
+  - [Setup Instructions for LLM](#setup-instructions-for-llm)
+  - [Setup Instructions for AIChat](#setup-instructions-for-aichat)
+  - [Setup Instructions for RAG with Gemini](#setup-instructions-for-rag-with-gemini)
+- [Configuration](#configuration)
+  - [Configuration Files](#configuration-files-1)
   - [Shell Integration Files](#shell-integration-files)
 - [Troubleshooting](#troubleshooting)
   - [Update fails](#update-fails)
@@ -854,8 +860,8 @@ llm rag mydocs
 > Add documents: https://github.com/sigoden/aichat/wiki/**
 
 # Ask questions about your documents
-What is the authentication flow?
-How do I configure the database?
+How do I configure the RAG?
+What are the configuration files?
 
 # Exit (Ctrl+D) and rebuild if source changed or you add more docs
 llm rag mydocs --rebuild-rag
@@ -1135,7 +1141,7 @@ For complete documentation, see the [llm-functions repository](https://github.co
 **List Available Models**
 
 ```bash
-# List all models
+# List all models (shows Azure, Gemini, and other configured models)
 llm models
 
 # Find default model
@@ -1143,6 +1149,12 @@ llm models | grep -i default
 
 # List Azure models
 llm models | grep azure
+
+# List Gemini models
+llm models | grep gemini
+
+# Get detailed Gemini model info
+llm gemini models
 ```
 
 **Set Default Model**
@@ -1163,13 +1175,14 @@ llm "Your prompt"  # Uses o4-mini
 llm "Ten names for cheesecakes" -m azure/o4-mini
 
 # Use different models for different tasks
-llm -m azure/gpt-5 "Complex reasoning task"
-llm -m azure/gpt-5-mini "Simple question"
+llm -m azure/gpt-5 "Enterprise compliance analysis"
+llm -m gemini-2.5-flash "Personal coding question"
+llm -m gemini-2.5-flash "Describe this image" -a photo.jpg
 ```
 
 **Azure OpenAI Models**
 
-The following models are configured:
+The following Azure models are configured (examples):
 - `azure/gpt-5` - GPT-5 (most capable)
 - `azure/gpt-5-mini` - GPT-5 Mini (balanced, default)
 - `azure/gpt-5-nano` - GPT-5 Nano (fast, cost-effective)
@@ -1180,15 +1193,35 @@ The following models are configured:
 
 ### Managing API Keys
 
+**Configure Azure OpenAI Key:**
+
 ```bash
-# Set Azure key
+# Set Azure key interactively
 llm keys set azure
+
+# View configured keys
+llm keys
 
 # View key storage path
 llm keys path
+```
 
-# List all configured keys
-llm keys
+**Configure Gemini Key:**
+
+```bash
+# Set Gemini key interactively
+llm keys set gemini
+
+# Verify Gemini key is working
+llm -m gemini-2.5-flash "test prompt"
+```
+
+**Get API Keys:**
+
+- **Azure OpenAI**: Obtained from your Azure Foundry portal/deployment
+- **Gemini**: Free from [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key) (no credit card required)
+- **OpenAI**: From [OpenAI platform](https://platform.openai.com/api-keys) (requires payment)
+- **Anthropic**: From [Anthropic console](https://console.anthropic.com/) (requires payment)
 ```
 
 ## Understanding the Shell Integration
@@ -1222,7 +1255,6 @@ command llm -t assistant "Your question"  # You must specify -t explicitly
 ```
 
 **When to use `command llm`:**
-- Debugging shell integration issues
 - Testing without automatic template modifications
 - Scripts that need exact `llm` behavior without wrapper modifications
 - When you want complete manual control over all parameters
@@ -1238,8 +1270,8 @@ llm -t assistant "What is Docker?"
 llm "What is Docker?"
 
 # ✅ Use -t for non-default templates
-llm -t fabric:summarize "Explain Kubernetes"
-llm -t fabric:analyze_threat_report -f report.pdf
+llm -t fabric:summarize < report.txt
+llm -t fabric:analyze_threat_report -a report.pdf
 ```
 
 ### Key Benefits
@@ -1320,6 +1352,145 @@ export SESSION_LOG_SILENT=1
 
 Useful for cleaner shell startup or automated environments.
 
+## Understanding Azure OpenAI Setup
+
+This installation configures **Azure OpenAI (Azure Foundry)** by default, which differs from standard OpenAI API integration.
+
+### Architecture Overview
+
+**Key Differences from Standard OpenAI:**
+- Uses Azure-hosted OpenAI models (not direct OpenAI API)
+- Model IDs require `azure/` prefix (e.g., `azure/gpt-5-mini`, `azure/o4-mini`)
+- Requires separate API key (`azure` not `openai`)
+- API base URL points to your Azure resource (e.g., `https://your-resource.openai.azure.com`)
+
+### Configuration Files
+
+**LLM Configuration:**
+- **Location:** `~/.config/io.datasette.llm/extra-openai-models.yaml`
+- **Purpose:** Defines Azure-hosted models for llm CLI tool
+- **Format:** YAML file with model definitions
+
+**Example structure:**
+```yaml
+- model_id: azure/gpt-5-mini
+  model_name: gpt-5-mini
+  api_base: https://your-resource.openai.azure.com
+  api_key_name: azure
+```
+
+**AIChat Configuration:**
+- **Location:** `~/.config/aichat/config.yaml`
+- **Purpose:** Automatically synced with Azure credentials from llm config by the setup script
+
+### Azure-Specific Limitations
+
+**⚠️ Attachments Not Supported:**
+Azure OpenAI models in this setup **do not support** the `-a`/`--attachment` parameter for images, PDFs, or other files, even with `vision: true` configured.
+
+**Error you'll see:**
+```
+Error code: 400 - {'error': {'message': "Invalid Value: 'file'.
+This model does not support file content types.", 'type': 'invalid_request_error'}}
+```
+
+**Workarounds:**
+1. **For text extraction:** Use fragments instead
+   ```bash
+   llm -f pdf:document.pdf "summarize the text"
+   ```
+
+2. **For visual analysis:** Use non-Azure models
+   ```bash
+   llm -m gemini-2.5-flash "describe this image" -a image.jpg
+   llm -m claude-3-5-sonnet "analyze" -a document.pdf
+   ```
+
+### Why Azure OpenAI?
+
+**When Azure is the right choice:**
+- **Enterprise/workplace requirements** - Compliance, SLAs, data residency
+- **Organizational policies** - Centralized billing, governance
+- **Private deployments** - Models hosted in your Azure subscription
+
+**When to consider alternatives:**
+- **Personal/hobbyist use** - Free tiers available elsewhere (see Gemini section below)
+- **Attachment support needed** - Standard APIs support multimodal better
+- **No Azure subscription** - Direct API access simpler
+
+## Alternative: Gemini for Private Use
+
+For **personal projects, learning, and hobbyist use**, Google's **Gemini 2.5 Flash** offers exceptional value with a generous free tier and competitive performance.
+
+### Setup Instructions for LLM
+
+**1. Get your API key:**
+- Visit [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key)
+- Sign up (free, no credit card required)
+- Generate an API key from the dashboard
+
+**2. Configure the API key:**
+
+```bash
+llm keys set gemini
+# Paste your API key when prompted
+```
+
+**3. Set as default model (optional):**
+```bash
+llm models default gemini-2.5-flash
+```
+
+### Setup Instructions for AIChat
+
+**1. Configure AIChat:**
+
+Edit `~/.config/aichat/config.yaml`:
+
+```yaml
+clients:
+  # Add Gemini client (keep existing Azure client)
+  - type: gemini
+    api_key: null  # Enter API key
+
+# Set Gemini as default model (or keep azure model)
+model: gemini:gemini-2.5-flash
+```
+
+**2. Use with AIChat:**
+```bash
+# Start chat with Gemini (uses default model from config)
+aichat
+
+# Use specific Gemini model
+aichat --model gemini:gemini-2.5-flash
+```
+
+**Temperature Note:** Gemini supports temperature values in the range `[0, 2)`, unlike most models that use `[0, 1]`. Be mindful when setting temperature values.
+
+### Setup Instructions for RAG with Gemini
+
+For **personal projects with document-based AI applications**, Gemini's **text-embedding-004** model provides excellent RAG capabilities on the free tier.
+
+**1. Configure AIChat for RAG with Gemini:**
+
+Edit `~/.config/aichat/config.yaml`:
+
+```yaml
+# Set Gemini embedding model for RAG
+rag_embedding_model: gemini:text-embedding-004
+
+# Optional: Adjust chunk settings for your documents
+rag_chunk_size: 2000
+rag_chunk_overlap: 200
+
+# Document loaders for RAG
+document_loaders:
+  git: 'gitingest $1 -o -'
+```
+
+**Note:** `text-embedding-004` is automatically available when you configure the Gemini client - no need to manually add the embedding model definition.
+
 ## Configuration
 
 ### Configuration Files
@@ -1375,7 +1546,6 @@ git reset --hard origin/main
 git pull --rebase
 
 # Option 3: Nuclear option - delete and re-clone
-cd /opt
 rm -rf llm-linux-setup
 git clone https://github.com/c0ffee0wl/llm-linux-setup
 cd llm-linux-setup
