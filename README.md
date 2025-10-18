@@ -823,6 +823,10 @@ aichat --list-rags
 
 # View RAG collection info
 aichat --rag projectdocs --info
+
+# Launch web playground and query a RAG in browser
+aichat --serve
+xdg-open http://127.0.0.1:8000/playground
 ```
 
 **Interactive RAG Commands** (in REPL):
