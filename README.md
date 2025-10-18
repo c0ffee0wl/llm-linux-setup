@@ -656,9 +656,16 @@ command llm -T sandboxed_shell "Run this command safely: cat /etc/passwd"
 
 # Show tool execution details with --td flag
 llm "Check if docker is installed" --td
+
+# Manually approve each tool execution with --ta flag
+llm "Check if docker is installed" --ta
+
+# Combine both to see details AND approve
+llm "Check if docker is installed" --td --ta
 ```
 
 The `--td` flag shows full details of tool executions.
+The `--ta` flag requires manual approval before each tool execution.
 
 **Security Benefits:**
 - **Isolation**: Commands run in a restricted environment using Linux namespaces
@@ -678,6 +685,9 @@ wget https://www.timestored.com/data/sample/chinook.db
 # Query with natural language (--td shows tool calls, in this case DB queries)
 llm -T 'SQLite("chinook.db")' "Count rows in the most interesting looking table" --td
 
+# Approve database queries before execution (--ta for manual approval)
+llm -T 'SQLite("chinook.db")' "Count rows in the most interesting looking table" --ta
+
 # Interactive chat mode with database access (add --td to show DB queries)
 llm chat -T 'SQLite("chinook.db")'
 # > Show me the three most interesting looking tables
@@ -685,6 +695,7 @@ llm chat -T 'SQLite("chinook.db")'
 ```
 
 The `--td` flag shows full details of tool executions.
+The `--ta` flag requires manual approval before each tool execution.
 
 **JSON Processing with llm-jq**
 
