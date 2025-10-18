@@ -14,10 +14,11 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Quick Start](#quick-start)
   - [Updating](#updating)
 - [Documentation](#documentation)
-  - [Original Tools](#original-tools)
   - [This Project](#this-project)
+  - [Original Tools](#original-tools)
 - [What Gets Installed](#what-gets-installed)
   - [Core Tools](#core-tools)
+  - [Necessary Prerequisites](#necessary-prerequisites)
   - [LLM Plugins](#llm-plugins)
   - [LLM Templates](#llm-templates)
   - [Additional Tools](#additional-tools)
@@ -37,25 +38,23 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Managing Models](#managing-models)
+  - [Managing API Keys](#managing-api-keys)
 - [Understanding the Shell Integration](#understanding-the-shell-integration)
   - [How Automatic Templates Work](#how-automatic-templates-work)
   - [Bypassing the Shell Wrapper](#bypassing-the-shell-wrapper)
-  - [Command Shortcuts](#command-shortcuts)
   - [When to Use `-t`](#when-to-use--t)
   - [Key Benefits](#key-benefits)
   - [Context Tool Integration](#context-tool-integration)
-- [Configuration](#configuration)
-  - [Configuration Files](#configuration-files)
-  - [Shell Integration Files](#shell-integration-files)
-  - [Changing Default Model](#changing-default-model)
-  - [Managing API Keys](#managing-api-keys)
 - [Session Recording & Context System](#session-recording--context-system)
   - [How It Works](#how-it-works)
   - [Storage Configuration](#storage-configuration)
+- [Configuration](#configuration)
+  - [Configuration Files](#configuration-files)
+  - [Shell Integration Files](#shell-integration-files)
 - [Troubleshooting](#troubleshooting)
+  - [Update fails](#update-fails)
   - [Command completion not working](#command-completion-not-working)
   - [Azure API errors](#azure-api-errors)
-  - [Update fails](#update-fails)
   - [Rust version issues](#rust-version-issues)
   - [Node.js version issues](#nodejs-version-issues)
   - [Session recording not working](#session-recording-not-working)
@@ -76,13 +75,11 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 - ✅ **One-command installation** - Run once to install everything
 - ✅ **Self-updating** - Re-run to update all tools automatically
-- ✅ **Safe git updates** - Pulls latest script version before execution
-- ✅ **Multi-shell support** - Works with both Bash and Zsh
 - ✅ **Azure OpenAI integration** - Configured for Azure Foundry
 - ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
-- ✅ **RAG document querying** - Query your documents with `llm rag` using aichat's built-in vector database
+- ✅ **RAG document querying** - Query your documents with `llm rag` using AIChat's built-in vector database
 
 ## System Requirements
 
@@ -114,9 +111,8 @@ cd linux-setup
 ```
 
 The linux-setup repository provides:
-- Optimized Bash/Zsh configurations and aliases
+- Optimized Zsh configurations and aliases
 - Essential security and development tools
-- System utilities and PATH configuration
 - Base environment that complements LLM tools
 
 This step is **optional** but recommended for the most complete setup.
@@ -133,11 +129,6 @@ During first-time installation, you'll be prompted for:
 1. **Azure OpenAI Configuration** (optional) - API key and resource URL
 2. **Session Log Storage** - Choose between temporary (`/tmp`, cleared on reboot) or permanent (`~/session_logs`, survives reboots)
 
-To reconfigure Azure OpenAI settings later:
-```bash
-./install-llm-tools.sh --azure
-```
-
 ### Updating
 
 Simply re-run the installation script:
@@ -147,63 +138,74 @@ cd llm-linux-setup
 ./install-llm-tools.sh
 ```
 
+To reconfigure Azure OpenAI settings later:
+```bash
+./install-llm-tools.sh --azure
+```
+
 The script will:
-1. Pull the latest version from git
-2. Update llm and all plugins
-3. Update custom templates ([assistant.yaml](llm-template/assistant.yaml), [code.yaml](llm-template/code.yaml))
-4. Update gitingest, files-to-prompt, asciinema, Claude Code, and OpenCode
-5. Refresh shell integration files
-6. Preserve existing Azure OpenAI and session log configurations
+1. Pull the latest version of the repository (and itself) from git.
+2. Update llm, its plugins, and all applications installed by the llm-setup.
+3. Update custom templates ([assistant.yaml](llm-template/assistant.yaml), [code.yaml](llm-template/code.yaml)).
+4. Refresh shell integration files.
+5. Preserve existing Azure OpenAI and session log configurations.
 
 ## Documentation
-
-### Original Tools
-- [LLM Documentation](https://llm.datasette.io/)
-- [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
-- [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
-- [Files-to-Prompt](https://github.com/simonw/files-to-prompt) (forked)
 
 ### This Project
 - [README.md](README.md) - Readme
 - [CLAUDE.md](CLAUDE.md) - Developer documentation and architecture guide (for Claude Code and contributors)
 
+### Original Tools
+- [LLM Documentation](https://llm.datasette.io/)
+- [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
+- [AIChat Documentation](https://github.com/sigoden/aichat/blob/main/README.md)
+- [AIChat Wiki](https://github.com/sigoden/aichat/wiki)
+- [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
+- [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
+- [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
+- [OpenCode Documentation](https://opencode.ai/docs)
+
 ## What Gets Installed
 
 ### Core Tools
 - **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
-- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
-- **[Python 3](https://python.org/)** - Required for llm
-- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
-- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
-- **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
+- **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
 
+### Necessary Prerequisites
+
+- **[Python 3](https://python.org/)** - Required for llm
+- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
+- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
+- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
+- **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
+
 ### LLM Plugins
-- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
-- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
-- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
 - **[llm-cmd](https://github.com/c0ffee0wl/llm-cmd)** - Command execution and management
 - **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
 - **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
 - **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
+- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
 - **[llm-tools-sandboxed-shell](https://github.com/c0ffee0wl/llm-tools-sandboxed-shell)** - Sandboxed shell command execution
 - **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
-- **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional llm-functions integration (enables custom tools in Bash/JS/Python)
 - **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
 - **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
-- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
 - **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
+- **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
+- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
+- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
+- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
 
 ### LLM Templates
-- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (German language, optimized for cybersecurity and Linux tasks, includes `context` tool by default)
+- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` tool by default)
 - **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
 
 ### Additional Tools
 - **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
-- **[aichat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
 
@@ -234,15 +236,18 @@ llm 'extract the metadata' < setup.py     # Avoid useless use of cat
 llm -f setup.py 'extract the metadata'    # Alternatively use local fragments
 
 ls -1aG | llm "Describe each of the files"
-
 llm "What does 'ls -1aG' do?"
 
-# Use command completion (works best with zsh)
+# Use command completion (works best with Zsh)
 # Type: find pdf files larger than 20MB
 # Press: Ctrl+N
 
-# Generate clean code (shorthand for -t code)
+# Generate clean code ('llm code' is an alias for 'llm -t code')
 llm code "python function to..." | tee output.py
+
+# You can iterate on generated code by continuing the last conversation
+llm code "find files larger than 100MB as a bash script" | tee script.sh
+llm code -c "and smaller than 500MB; add comments" | tee script.sh
 
 # Use fragments for context
 llm -f github:user/repo "analyze this"
@@ -253,9 +258,9 @@ llm -f https://example.com "extract key points"
 llm -t fabric:summarize "..."        # Not the default
 llm -t fabric:analyze_threat_report  # Not the default
 
-# Query your documents with RAG
+# Query your documents with RAG ('llm rag' is an alias for 'aichat --rag')
 llm rag mydocs                    # Open/create RAG collection for documents
-llm rag mydocs --rebuild          # Rebuild index after changes
+llm rag mydocs --rebuild-rag      # Rebuild index after changes
 aichat --rag projectdocs          # Direct aichat usage
 
 # Query terminal history (context tool is built into assistant template!)
@@ -295,7 +300,7 @@ llm plugins
 
 **💡 Important**: All `llm` and `llm chat` commands automatically use the **[assistant template](llm-template/assistant.yaml)** by default. You don't need to specify `-t assistant`!
 
-The assistant template is configured for security/IT expertise with German language responses - perfect for cybersecurity and Linux tasks.
+The assistant template is configured for security/IT expertise - perfect for cybersecurity and Linux tasks.
 
 Simple question-and-answer prompts:
 
@@ -326,9 +331,6 @@ llm chat
 
 # Continue the most recent conversation (template not re-applied)
 llm chat -c
-
-# Ask a follow-up question (template not re-applied for continuations)
-llm "Wenn ich nur eines mache, was ist dann das wichtigste?" -c
 ```
 
 ### Command Completion
@@ -353,7 +355,7 @@ The AI will suggest a command and execute it after your approval.
 You can also use `llm cmd` to suggest a command and leave you to modify and execute it.
 
 ```bash
-# Generate a command
+# Generate a shell command
 llm cmd "Find all .sh files below /root"
 ```
 
@@ -416,6 +418,8 @@ Load local files or fetch content from URLs:
 ```bash
 # Load a local file as context
 llm -f /path/to/file.py "Explain this code"
+# Simple alternative without local fragment
+llm "Explain this code" < /path/to/file.py
 
 # Load content directly from a URL (raw fetch)
 llm -f https://example.com/article "Summarize this article"
@@ -441,7 +445,6 @@ There are two ways to fetch web content:
    - Uses the `llm-fragments-site-text` plugin
    - Intelligently extracts main content from HTML pages
    - Converts to clean markdown
-   - Removes navigation, ads, sidebars, and boilerplate
    - Best for: Blog posts, articles, documentation pages, news sites
 
 **When to use which:**
@@ -486,25 +489,6 @@ llm -f issue:simonw/llm/123 "Summarize this issue"
 llm -f pr:simonw/llm/456 "Review this PR"
 ```
 
-**Website Content Fragments**
-
-Extract and convert web pages to markdown using the `site:` prefix:
-
-```bash
-# Smart extraction with site: prefix (removes ads, navigation, etc.)
-llm -f site:https://www.heise.de "summarize this"
-
-# You can also use direct URL fetch (but may include extra HTML)
-llm -f https://www.volexity.com/blog/2025/04/22/phishing-for-codes-russian-threat-actors-target-microsoft-365-oauth-workflows/ \
-    "What are the key findings?"
-
-# Compare: site: prefix gives cleaner content for complex web pages
-llm -f site:https://www.volexity.com/blog/2025/04/22/phishing-for-codes-russian-threat-actors-target-microsoft-365-oauth-workflows/ \
-    "Extract the key findings"  # Cleaner, focuses on article content
-```
-
-**Tip**: For web pages with lots of navigation, ads, or HTML structure, use `-f site:https://url` for cleaner results. See the [URL Fragment Types](#-url-fragment-types--f-httpsurl-vs--f-sitehttpsurl) section above for detailed comparison.
-
 **PDF Fragments**
 
 For models that don't support native PDF attachments, use the `pdf:` fragment type:
@@ -534,12 +518,6 @@ llm "Your question here"
 
 # ✅ Use -t when you want a DIFFERENT template
 llm -t fabric:summarize -f https://github.com/c0ffee0wl/llm-linux-setup
-
-# ✅ The code template outputs clean code without markdown
-llm -t code "Python function to calculate fibonacci"
-
-# ✅ Or use the convenient shorthand
-llm code "Python function to calculate fibonacci"
 ```
 
 **Fabric Templates**
@@ -600,39 +578,34 @@ For a complete list of available patterns, see the [Fabric Pattern Explanations]
 
 ### Code Generation
 
-Generate clean, executable code without markdown formatting using the `llm code` command.
+Generate clean, executable code without markdown formatting using the `llm code` command (a convenient shorthand for `llm -t code`).
 
-**💡 Note**: `llm code` is a **convenient shorthand** for `llm -t code` provided by the shell integration. Both forms work identically:
-```bash
-# These are equivalent:
-llm code "python function to check prime"
-llm -t code "python function to check prime"
-```
-
-The `code` template outputs **pure code without explanations or markdown blocks**, making it perfect for piping to files or direct execution.
-
-**💡 Tip**: Examples below use `| tee filename` instead of `> filename` to provide visual feedback - you'll see the generated code in your terminal while it's also being saved to the file. This helps verify the output before using it.
+The `code` template outputs **pure code without explanations or markdown blocks**, making it perfect for piping to files or direct execution. It infers the scripting/programming language from context, but it is better explicitly state it.
 
 **Examples:**
 
 ```bash
-# Generate Python function
-llm code "solve classic fizz buzz problem using Python" | tee fizz_buzz.py
+# Generate bash script
+llm code "Bash script to backup directory with timestamp" | tee backup.sh
 
 # Pass existing code and modify it
 cat fizz_buzz.py | llm code "Generate comments for each line of my code" | sponge fizz_buzz.py
 
-# Generate bash script
-llm code "Bash script to backup directory with timestamp" | tee backup.sh
+# You can iterate on generated code by continuing the last conversation
+llm code "find files larger than 100MB as a bash script" | tee script.sh
+llm code -c "and smaller than 500MB; add comments" | tee script.sh
+
+# Direct execution (use with caution!)
+llm code "one-liner to find files larger than 100MB in Bash" | bash
+
+# Generate Python function
+llm code "solve classic fizz buzz problem using Python" | tee fizz_buzz.py
 
 # Generate SQL query (prints to stdout)
 llm code "SQL select users who registered this month"
 
 # Generate configuration file
 llm code "nginx config for reverse proxy on port 3000" | tee nginx.conf
-
-# Direct execution (use with caution!)
-llm code "one-liner to find files larger than 100MB in Bash" | bash
 
 # Generate Dockerfile
 llm code "dockerfile for nodejs app with nginx" | tee Dockerfile
@@ -641,24 +614,18 @@ llm code "dockerfile for nodejs app with nginx" | tee Dockerfile
 llm code "regex to match email addresses"
 ```
 
+**💡 Tip**: Examples use `| tee filename` instead of `> filename` to provide visual feedback - you'll see the generated code in your terminal while it's also being saved to the file. This helps verify the output before using it.
+
 **Process Substitution (Execute Without Saving)**
 
-Use Bash/Zsh process substitution `<(command)` to execute generated Python code as a temporary file:
+Use Bash/Zsh process substitution `<(command)` to execute generated code as a temporary file:
 
 ```bash
 # Execute Python code directly without creating files
-python <(llm code "Python script to display fizzbuzz")
-
-# Test code instantly
 python <(llm code "Python function to calculate fibonacci, then print first 10 numbers")
 ```
 
-**How it works**: The `<(command)` syntax creates a temporary file descriptor that Python reads as if it were a regular file, then automatically cleans up when done.
-
-**Benefits**:
-- No temporary files to manage or delete
-- Instant testing and iteration
-- Clean workspace
+**How it works**: The `<(command)` syntax creates a temporary file descriptor that Python or any other program reads as if it were a regular file, then automatically cleans up when done.
 
 **⚠️ Security Warning**: Only use with trusted prompts. Generated code executes immediately with your user permissions. Review output first for sensitive operations:
 ```bash
@@ -666,13 +633,6 @@ python <(llm code "Python function to calculate fibonacci, then print first 10 n
 llm code "Python script to delete old files" | tee cleanup.py
 # Review cleanup.py, then: python cleanup.py
 ```
-
-**Key Features:**
-- No markdown code blocks (no \`\`\`)
-- No explanations or commentary
-- Output is directly executable/pipeable
-- Infers language from context
-- Ideal for automation and scripting
 
 ### Tools
 
@@ -686,26 +646,24 @@ Execute shell commands safely in an isolated environment using bubblewrap (bwrap
 # Execute a command in a sandbox
 llm -T sandboxed_shell "Run this command safely: cat /etc/passwd"
 
+# Combine with natural language prompts and show tool calls
+llm -T sandboxed_shell "Check if docker is installed and show version" --td
+
 # Interactive mode with sandboxed shell access
 llm chat -T sandboxed_shell
-# > Can you list the files in /tmp?
-# > What's the output of 'uname -a'?
+# > Can you list the files in /root?
+# > Which kernel am I using?
 
-# Combine with other prompts
-llm -T sandboxed_shell "Check if docker is installed and show version"
+# Continue a previous conversation where the tool was already specified
+llm -c "What's the output of 'uname -a'?"
 ```
+
+The `--td` flag shows full details of tool executions.
 
 **Security Benefits:**
 - **Isolation**: Commands run in a restricted environment using Linux namespaces
-- **Limited filesystem access**: Only specific directories are accessible
-- **No network access**: Sandboxed commands cannot access the network by default
 - **Read-only root**: System directories are mounted read-only
-
-**Use Cases:**
-- Testing untrusted code or commands
-- Safe execution of AI-generated commands
-- Running potentially dangerous operations in isolation
-- Security analysis and experimentation
+- **No network access**: Sandboxed commands cannot access the network by default
 
 **Note**: Requires bubblewrap (already installed by setup script).
 
@@ -717,7 +675,7 @@ Query SQLite databases using natural language:
 # Download a sample database
 wget https://www.timestored.com/data/sample/chinook.db
 
-# Query with natural language (--td shows DB queries)
+# Query with natural language (--td shows tool calls, in this case DB queries)
 llm -T 'SQLite("chinook.db")' "Count rows in the most interesting looking table" --td
 
 # Interactive chat mode with database access (add --td to show DB queries)
@@ -726,7 +684,7 @@ llm chat -T 'SQLite("chinook.db")'
 # > What are the top 5 best-selling artists?
 ```
 
-The `--td` flag shows tool descriptions.
+The `--td` flag shows full details of tool executions.
 
 **JSON Processing with llm-jq**
 
@@ -811,34 +769,9 @@ llm "did the tests pass?"
 
 **Use Cases:**
 - **Real-time debugging**: Watch compilation/test output in one terminal while querying AI for solutions in another
-- **Code review assistance**: Run commands in one terminal while AI analyzes outputs in another
 - **Learning workflows**: Execute tutorials/commands while asking AI to explain what's happening
 
 **Note**: Both terminals read from the same `.cast` file, so the side terminal sees all commands and outputs from the work terminal as they happen.
-
-**Example Workflow**
-
-```bash
-# Run a command that might fail
-pong heise.de
-
-# Check what happened
-context
-
-# Ask AI to analyze the error
-context 2 | llm "Was hab ich die letzten beiden Befehle gemacht?"
-
-# Continue in chat mode
-llm chat -c
-# > Lies den context nochmal. Und der ping-Befehl, den ich gerade ausgeführt habe, hat der besser funktioniert?
-
-# Try the corrected command
-ping heise.de -c 5
-
-# Verify success with AI
-llm chat -c
-# > Lies den context nochmal. Hat der ping jetzt funktioniert?
-```
 
 The context system automatically captures:
 - Commands you run
@@ -850,11 +783,11 @@ This allows AI models to provide context-aware debugging and assistance based on
 
 ### RAG (Document Querying)
 
-Query your documents, codebases, and knowledge bases using AI with aichat's RAG (Retrieval-Augmented Generation) functionality. The system uses a built-in vector database and automatically syncs with your Azure OpenAI configuration.
+Query your documents, codebases, and knowledge bases using AI with AIChat's RAG (Retrieval-Augmented Generation) functionality. The system uses a built-in vector database and automatically syncs with your Azure OpenAI configuration.
 
 `llm rag` is a wrapper that executes `aichat --rag`.
 
-**For detailed documentation**, see the [aichat RAG Guide](https://github.com/sigoden/aichat/wiki/RAG-Guide).
+**For detailed documentation**, see the [AIChat RAG Guide](https://github.com/sigoden/aichat/wiki/RAG-Guide).
 
 **Quick Start:**
 
@@ -871,33 +804,21 @@ llm rag mydocs
 What is the authentication flow?
 How do I configure the database?
 
-# Exit (Ctrl+D) and rebuild if you add more docs
+# Exit (Ctrl+D) and rebuild if source changed or you add more docs
 llm rag mydocs --rebuild-rag
-```
-
-**RAG Commands:**
-
-```bash
-# Create/open a RAG collection
-llm rag projectdocs
-
-# Rebuild RAG index after adding/changing documents
-llm rag projectdocs --rebuild--rag
 
 # List all RAG collections
 aichat --list-rags
 
 # View RAG collection info
 aichat --rag projectdocs --info
-
-# Direct aichat usage (full features)
-aichat --rag projectdocs
 ```
 
 **Interactive RAG Commands** (in REPL):
 
 Within the aichat interactive session:
 ```bash
+aichat
 .rag mydocs              # Create/switch to RAG collection
 .edit rag-docs           # Add/edit documents in current RAG
 .rebuild rag             # Rebuild RAG index after document changes
@@ -923,8 +844,6 @@ AIChat can build RAG knowledge bases from a variety of document sources:
 | Git Repository (local) | `git:/path/to/local/repo` |
 | Git Subdirectory | `git:https://github.com/user/repo/tree/main/src` |
 
-**⚠️ Important:** The `git:` prefix is **required** to trigger the gitingest document loader. Without it, GitHub URLs will be treated as regular web pages, not repositories.
-
 **Supported Document Types:**
 
 The system automatically processes various file types:
@@ -935,10 +854,10 @@ The system automatically processes various file types:
 - **Web URLs**: HTTP/HTTPS URLs are fetched and indexed
 - **Directories**: Recursively index all supported files
 
-**Adding Git Repositories to RAG:**
+**Adding Git Repositories to an existing RAG:**
 
 ```bash
-# Create a RAG collection for your project
+# Enter the name of the RAG collection for your project
 llm rag myproject
 
 # In the REPL, add documents with .edit rag-docs
@@ -949,18 +868,10 @@ Your editor opens - add sources (one per line):
 ```
 # Remote GitHub repositories (use git: prefix!)
 git:https://github.com/sigoden/aichat
-git:https://github.com/user/another-repo
 
 # Local repositories
 git:/home/user/projects/myapp
 git:./relative-path-to-repo
-
-# Subdirectories
-git:https://github.com/user/repo/tree/main/src
-
-# Mix with other sources
-/path/to/docs/
-https://example.com/api-docs
 ```
 
 Save and exit - aichat will process all sources:
@@ -969,9 +880,6 @@ Save and exit - aichat will process all sources:
 Explain the authentication system in this codebase
 What are the main components?
 How does the RAG implementation work?
-
-# Exit (Ctrl+D) and rebuild after adding more repos
-llm rag myproject --rebuild
 ```
 
 **💡 Why the `git:` prefix is required:**
@@ -982,41 +890,12 @@ The `git:` prefix explicitly triggers the gitingest document loader, which:
 - Extracts source code from the repository
 - Respects .gitignore files
 - Provides clean, formatted code for the RAG index
-- Works with both remote URLs and local paths
-
-**Example Workflow:**
-
-```bash
-# 1. Create a RAG for your project documentation
-llm rag myproject
-
-# 2. Add documents interactively
-> Set chunk size: 3000
-> Set chunk overlay: 150
-> Add documents: https://github.com/sigoden/aichat/wiki/**
-
-# 3. Ask questions
-Explain the API authentication mechanism
-What configuration options are available?
-How do I deploy this to production?
-
-# 4. Exit and work on your code
-# Press Ctrl+D
-
-# 5. After updating docs, rebuild the index
-llm rag myproject --rebuild-rag
-
-# 6. Continue querying
-llm rag myproject
-What changed in the latest version?
-```
 
 **Tips:**
 
 - Use descriptive names for RAG collections (e.g., `aws-docs`, `company-policies`, `project-api`)
 - Rebuild the index with `--rebuild-rag` after significant document changes
 - RAG collections are stored in `~/.local/share/aichat/rags/`
-- Each collection has its own vector database and configuration
 - Use `.set` in REPL to adjust settings like `rag_top_k` (number of results)
 
 ### Integration with Other Tools
@@ -1058,6 +937,8 @@ files-to-prompt src/ -c > context.xml
 files-to-prompt --help
 ```
 
+For complete documentation of parameters, see the [files-to-prompt repository](https://github.com/c0ffee0wl/files-to-prompt/blob/main/README.md).
+
 **Git Log Analysis**
 
 Analyze your development history:
@@ -1095,14 +976,9 @@ docker ps --format json | \
 
 ### LLM Functions (Optional)
 
-**Note**: This is an **optional** feature. The installation script prepares your environment for llm-functions by installing `argc` and the bridge plugin, but you must install llm-functions separately if you want to use it.
+**Note**: This is an **optional** feature. The installation script prepares your environment for llm-functions by installing `argc` and the `llm-tools-llm-functions` bridge plugin, but you must install llm-functions separately if you want to use it.
 
-[llm-functions](https://github.com/sigoden/llm-functions/) is a framework that allows you to build custom LLM tools and agents using Bash, JavaScript, and Python. When installed, these tools become available to the `llm` command through the `llm-tools-llm-functions` bridge plugin.
-
-**What's Already Installed:**
-- **argc** - Bash CLI framework and command runner (prerequisite for llm-functions)
-- **jq** - JSON processor (prerequisite for llm-functions)
-- **llm-tools-llm-functions** - Bridge plugin that connects llm to llm-functions
+[llm-functions](https://github.com/sigoden/llm-functions/) is a framework that allows you to build custom LLM tools and agents using Bash, JavaScript, and Python. When installed, these tools become available to the `llm` command through the bridge plugin.
 
 **Installing llm-functions:**
 
@@ -1173,23 +1049,14 @@ llm -T get_current_weather "What's the weather in Berlin?"
 # In interactive mode
 llm chat -T get_current_weather
 # > What's the weather in Berlin?
-
-# See: https://github.com/sigoden/llm-functions/#quick-start
 ```
 
-**Integration with aichat:**
+**Integration with AIChat:**
 
-llm-functions was originally designed for [aichat](https://github.com/sigoden/aichat) and is also fully supported there:
+llm-functions was originally designed for [AIChat](https://github.com/sigoden/aichat) and is also fully supported there:
 
 ```bash
-# Link llm-functions to aichat (if you want to use both)
-# aichat looks for functions in ~/.config/aichat/functions/
-ln -s ~/llm-functions ~/.config/aichat/functions
-
-# Or set environment variable
-export AICHAT_FUNCTIONS_DIR=~/llm-functions
-
-# Use tools with aichat
+# Use tools with AIChat
 aichat --role %functions% what is the weather in Paris?
 ```
 
@@ -1198,13 +1065,11 @@ aichat --role %functions% what is the weather in Paris?
 - Requires manual setup and tool development
 - Best for users who need custom tool integration
 - Not everyone needs to build custom function-calling tools
-- The bridge plugin is harmless if llm-functions isn't installed
 
 **Use Cases:**
 - **System Integration**: Call system commands, APIs, or services from AI conversations
 - **Custom Workflows**: Build domain-specific tools for your projects
 - **Automation**: Create tools that interact with databases, cloud services, or local applications
-- **Multi-Language**: Write tools in the language you're most comfortable with
 
 For complete documentation, see the [llm-functions repository](https://github.com/sigoden/llm-functions/).
 
@@ -1254,6 +1119,19 @@ The following models are configured:
 - `azure/o4-mini` - O4 Mini (advanced reasoning)
 - `azure/gpt-4.1` - GPT-4.1 (previous generation)
 
+### Managing API Keys
+
+```bash
+# Set Azure key
+llm keys set azure
+
+# View key storage path
+llm keys path
+
+# List all configured keys
+llm keys
+```
+
 ## Understanding the Shell Integration
 
 The installation adds a **smart wrapper function** around the `llm` command that automatically applies templates based on context. This means you rarely need to specify `-t assistant` explicitly!
@@ -1277,9 +1155,6 @@ The installation adds a **smart wrapper function** around the `llm` command that
 If you need to execute the original `llm` command without the shell wrapper function (for debugging, testing, or to avoid automatic template application), use the `command` builtin:
 
 ```bash
-# Uses the shell wrapper (assistant template auto-applied)
-llm "Your question"
-
 # Bypasses the wrapper (no automatic template)
 command llm "Your question"
 
@@ -1292,17 +1167,6 @@ command llm -t assistant "Your question"  # You must specify -t explicitly
 - Testing without automatic template modifications
 - Scripts that need exact `llm` behavior without wrapper modifications
 - When you want complete manual control over all parameters
-
-### Command Shortcuts
-
-**`llm code` is a convenient shorthand:**
-```bash
-# These are equivalent:
-llm code "python function to check prime numbers"
-llm -t code "python function to check prime numbers"
-```
-
-The `code` template outputs clean, executable code without markdown blocks or explanations - perfect for piping to files or direct execution.
 
 ### When to Use `-t`
 
@@ -1321,14 +1185,8 @@ llm -t fabric:analyze_threat_report -f report.pdf
 
 ### Key Benefits
 
-- **Less typing**: No need to specify `-t assistant` every time
-- **Consistent behavior**: Your custom [assistant template](llm-template/assistant.yaml) (with security/IT expertise, German language) is used by default
-- **Clear shortcuts**: `llm code` is easier to type than `llm -t code`
-- **Smart detection**: Conversation continuations automatically skip re-applying templates
-
 **What does the assistant template do?** See the [assistant.yaml source](llm-template/assistant.yaml) - it configures the AI with:
 - Security/IT/Linux expertise (20 years experience)
-- German language responses (code/commands in English)
 - Cybersecurity focus (ethical hacking, forensics, incident response)
 - Kali Linux/Ubuntu/Debian environment awareness
 - **Integrated `context` tool** for reading terminal history (automatically available!)
@@ -1348,10 +1206,6 @@ llm chat
 
 **⚠️ When you need to use `--tool context` explicitly:**
 ```bash
-# When continuing a conversation (template not re-applied)
-llm chat -c
-llm --tool context "what was the error?" -c  # Need explicit --tool
-
 # When using a different template
 llm -t fabric:summarize --tool context "what happened?"
 
@@ -1359,10 +1213,35 @@ llm -t fabric:summarize --tool context "what happened?"
 command llm --tool context "what went wrong?"
 ```
 
-**Key Insight**: The assistant template makes the context tool available during conversations, so you can simply ask "what was the error?" or "what did I just do?" and the AI will automatically check your terminal history. The explicit `--tool context` syntax is mainly useful for:
-- One-shot queries outside of conversations
-- Using context with non-assistant templates
-- Continuation commands where the template isn't re-applied
+## Session Recording & Context System
+
+This setup includes an **automatic terminal session recording system** that captures your command history and allows AI models to query it for context-aware assistance.
+
+### How It Works
+
+1. **Automatic Recording**: Every interactive shell session is automatically recorded using asciinema
+   - Recording starts transparently when you open a terminal
+   - Each tmux/screen pane gets its own independent recording
+
+2. **Context Extraction**: The `context` command parses asciinema recordings to show command history
+   - Shows commands with their complete output
+   - Supports showing last N commands or entire session
+
+3. **AI Integration**: The `llm-tools-context` plugin exposes terminal history as a tool
+   - The `context` tool is **built into the assistant template by default**
+   - AI models can automatically query your recent command history during conversations
+   - Just ask naturally: `llm "what was the error?"` - no need for `--tool context`!
+   - Explicit `--tool context` is only needed for non-assistant templates or continuations
+
+### Storage Configuration
+
+On first installation, you'll be prompted to choose where session recordings are stored:
+
+- **Temporary** (default): `/tmp/session_logs/asciinema/` - Cleared on reboot, saves disk space
+- **Permanent**: `~/session_logs/asciinema/` - Survives reboots, useful for long-term history
+
+You can change this later by editing the `SESSION_LOG_DIR` export in your `.bashrc` or `.zshrc`.
+
 
 ## Configuration
 
@@ -1375,9 +1254,6 @@ command llm --tool context "what went wrong?"
   - `default_model.txt` - Currently selected default model
   - API keys stored securely via llm's key management
 
-- `~/.config/aichat/` - aichat configuration
-  - `config.yaml` - Auto-configured with Azure OpenAI settings, RAG configuration, and document loaders
-
 - `~/.config/llm-tools/` - Additional tool configuration
   - `asciinema-commit` - Tracks asciinema version for update detection
 
@@ -1386,6 +1262,9 @@ command llm --tool context "what went wrong?"
   - Contains `.cast` files with terminal session recordings
   - Configured via `SESSION_LOG_DIR` environment variable in your shell RC file
 
+- `~/.config/aichat/` - AIChat configuration
+  - `config.yaml` - Auto-configured with Azure OpenAI settings, RAG configuration, and document loaders
+  
 - `~/.local/share/aichat/rags/` - RAG collections and vector databases
   - Each subdirectory is a named RAG collection
   - Contains vector embeddings and indexed documents
@@ -1399,58 +1278,17 @@ Located in the `integration/` subdirectory:
 
 These are automatically sourced from your `.bashrc` or `.zshrc`.
 
-### Changing Default Model
-
-```bash
-llm models default azure/gpt-5
-```
-
-### Managing API Keys
-
-```bash
-# Set Azure key
-llm keys set azure
-
-# View key storage path
-llm keys path
-
-# List all configured keys
-llm keys
-```
-
-## Session Recording & Context System
-
-This setup includes an **automatic terminal session recording system** that captures your command history and allows AI models to query it for context-aware assistance.
-
-### How It Works
-
-1. **Automatic Recording**: Every interactive shell session is automatically recorded using asciinema
-   - Recording starts transparently when you open a terminal
-   - Each tmux/screen pane gets its own independent recording
-   - No manual intervention required
-
-2. **Context Extraction**: The `context` command parses asciinema recordings to show command history
-   - Shows commands with their complete output
-   - Filters out noise and focuses on actual commands
-   - Supports showing last N commands or entire session
-
-3. **AI Integration**: The `llm-tools-context` plugin exposes terminal history as a tool
-   - The `context` tool is **built into the assistant template by default**
-   - AI models can automatically query your recent command history during conversations
-   - Just ask naturally: `llm "what was the error?"` - no need for `--tool context`!
-   - Explicit `--tool context` is only needed for non-assistant templates or continuations
-   - Example: `llm "what was the error in my last command?"` (context tool used automatically)
-
-### Storage Configuration
-
-On first installation, you'll be prompted to choose where session recordings are stored:
-
-- **Temporary** (default): `/tmp/session_logs/asciinema/` - Cleared on reboot, saves disk space
-- **Permanent**: `~/session_logs/asciinema/` - Survives reboots, useful for long-term history
-
-You can change this later by editing the `SESSION_LOG_DIR` export in your `.bashrc` or `.zshrc`.
-
 ## Troubleshooting
+
+### Update fails
+
+If the script update fails:
+
+```bash
+cd llm-linux-setup
+git reset --hard origin/main
+./install-llm-tools.sh
+```
 
 ### Command completion not working
 
@@ -1482,16 +1320,6 @@ You can change this later by editing the `SESSION_LOG_DIR` export in your `.bash
    ```
 
 3. Update the API base URL in the YAML file if needed
-
-### Update fails
-
-If the script update fails:
-
-```bash
-cd llm-linux-setup
-git reset --hard origin/main
-./install-llm-tools.sh
-```
 
 ### Rust version issues
 
@@ -1589,12 +1417,6 @@ You should see markers like `IN_ASCIINEMA_SESSION_tmux_0=1` for each pane. If no
 source ~/.bashrc  # or ~/.zshrc
 ```
 
-**Note**: Independent per-pane recording is intentional. If you want unified recording across all tmux panes, start asciinema before tmux:
-
-```bash
-asciinema rec --command "tmux attach"
-```
-
 ## Support
 
 For issues, questions, or suggestions:
@@ -1608,11 +1430,12 @@ For issues, questions, or suggestions:
 
 ### Core Tools & Frameworks
 - [Simon Willison](https://github.com/simonw) - llm CLI tool and plugins (llm-gemini, llm-anthropic, llm-openrouter, llm-jq, llm-tools-sqlite, llm-tools-quickjs, llm-fragments-github, llm-cmd)
+- [sigoden](https://github.com/sigoden) - AIChat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
+- [Anthropic](https://www.anthropic.com/) - Claude Code agentic coding CLI
+- [SST](https://sst.dev/) - OpenCode agentic coding CLI
 - [Astral](https://astral.sh/) - uv Python package manager
 - [Rust Foundation](https://foundation.rust-lang.org/) - Rust programming language and Cargo
 - [Node.js Foundation](https://nodejs.org/) - Node.js JavaScript runtime
-- [Anthropic](https://www.anthropic.com/) - Claude Code agentic coding CLI
-- [SST](https://sst.dev/) - OpenCode agentic coding CLI
 
 ### LLM Plugins & Extensions
 - [Daniel Turkel](https://github.com/daturkel) - llm-fragments-pdf, llm-fragments-site-text
@@ -1622,7 +1445,6 @@ For issues, questions, or suggestions:
 - [Daniel Miessler](https://github.com/danielmiessler) - Original Fabric prompt patterns
 
 ### Additional Tools
-- [sigoden](https://github.com/sigoden) - aichat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
 - [Bubblewrap Project](https://github.com/containers/bubblewrap) - Sandboxing tool for unprivileged containers
 - [stedolan/jq](https://github.com/stedolan/jq) - Command-line JSON processor
 - [Asciinema](https://github.com/asciinema/asciinema) - Terminal session recorder
