@@ -775,8 +775,8 @@ document_loaders:
 rag_embedding_model: azure-openai:text-embedding-3-small
 rag_reranker_model: null
 rag_top_k: 5
-rag_chunk_size: null
-rag_chunk_overlap: null
+rag_chunk_size: 2000
+rag_chunk_overlap: 200
 EOF
 
                 log "aichat configured with Azure OpenAI at: $aichat_config_file"
