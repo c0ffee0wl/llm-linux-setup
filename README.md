@@ -13,6 +13,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Prerequisites (Recommended)](#prerequisites-recommended)
   - [Quick Start](#quick-start)
   - [Updating](#updating)
+- [Quick Reference](#quick-reference)
 - [Documentation](#documentation)
   - [This Project](#this-project)
   - [Original Tools](#original-tools)
@@ -23,7 +24,6 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [LLM Templates](#llm-templates)
   - [Additional Tools](#additional-tools)
   - [Shell Integration](#shell-integration)
-- [Quick Reference](#quick-reference)
 - [Usage](#usage)
   - [Getting Started](#getting-started)
   - [Basic Prompts](#basic-prompts)
@@ -150,72 +150,6 @@ The script will:
 4. Refresh shell integration files.
 5. Preserve existing Azure OpenAI and session log configurations.
 
-## Documentation
-
-### This Project
-- [README.md](README.md) - Readme
-- [CLAUDE.md](CLAUDE.md) - Developer documentation and architecture guide (for Claude Code and contributors)
-
-### Original Tools
-- [LLM Documentation](https://llm.datasette.io/)
-- [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
-- [AIChat Documentation](https://github.com/sigoden/aichat/blob/main/README.md)
-- [AIChat Wiki](https://github.com/sigoden/aichat/wiki)
-- [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
-- [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
-- [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
-- [OpenCode Documentation](https://opencode.ai/docs)
-
-## What Gets Installed
-
-### Core Tools
-- **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
-- **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
-- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
-- **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
-
-### Necessary Prerequisites
-
-- **[Python 3](https://python.org/)** - Required for llm
-- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
-- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
-- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
-- **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
-
-### LLM Plugins
-- **[llm-cmd](https://github.com/c0ffee0wl/llm-cmd)** - Command execution and management
-- **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
-- **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
-- **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
-- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
-- **[llm-tools-sandboxed-shell](https://github.com/c0ffee0wl/llm-tools-sandboxed-shell)** - Sandboxed shell command execution
-- **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
-- **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
-- **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
-- **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
-- **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
-- **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
-- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
-- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
-- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
-
-### LLM Templates
-- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
-- **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
-
-### Additional Tools
-- **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
-- **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
-- **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
-- **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
-
-### Shell Integration
-- AI-powered command completion (Ctrl+N) - see [`llm-integration.bash`](integration/llm-integration.bash) / [`.zsh`](integration/llm-integration.zsh)
-- Custom llm wrapper with automatic template application - see [`llm-common.sh`](integration/llm-common.sh)
-- Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
-- macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
-- Common aliases and PATH configuration
-
 ## Quick Reference
 
 **⚡ Most Common Commands** (no need to specify `-t assistant` - it's the default!)
@@ -276,6 +210,77 @@ llm "Check kernel version" --td         # Show tool execution details
 llm "Check kernel version" --ta         # Require manual approval before execution
 command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant templates)
 ```
+
+## Documentation
+
+### This Project
+- [README.md](README.md) - Readme
+- [CLAUDE.md](CLAUDE.md) - Developer documentation and architecture guide (for Claude Code and contributors)
+
+### Original Tools
+- [LLM Documentation](https://llm.datasette.io/)
+- [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
+- [AIChat Documentation](https://github.com/sigoden/aichat/blob/main/README.md)
+- [AIChat Wiki](https://github.com/sigoden/aichat/wiki)
+- [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
+- [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
+- [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
+- [OpenCode Documentation](https://opencode.ai/docs)
+
+## What Gets Installed
+
+### Core Tools
+- **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
+- **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
+- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
+- **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
+
+### Necessary Prerequisites
+
+- **[Python 3](https://python.org/)** - Required for llm
+- **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
+- **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
+- **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
+- **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
+- **[bubblewrap](https://github.com/containers/bubblewrap)** - Sandboxing tool for llm-tools-sandboxed-shell
+- **[poppler-utils](https://poppler.freedesktop.org/)** - PDF utilities (pdftotext for RAG)
+- **[pandoc](https://pandoc.org/)** - Document converter (DOCX support for RAG)
+- **[xsel](https://github.com/kfish/xsel)** - X11 clipboard tool (enables pbcopy/pbpaste on Linux)
+- **[jq](https://stedolan.github.io/jq/)** - Command-line JSON processor
+
+### LLM Plugins
+- **[llm-cmd](https://github.com/c0ffee0wl/llm-cmd)** - Command execution and management
+- **[llm-cmd-comp](https://github.com/c0ffee0wl/llm-cmd-comp)** - AI-powered command completion (powers Ctrl+N)
+- **[llm-tools-quickjs](https://github.com/simonw/llm-tools-quickjs)** - JavaScript execution tool
+- **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
+- **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
+- **[llm-tools-sandboxed-shell](https://github.com/c0ffee0wl/llm-tools-sandboxed-shell)** - Sandboxed shell command execution
+- **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
+- **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
+- **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
+- **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
+- **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
+- **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
+- **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
+- **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
+- **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
+
+### LLM Templates
+- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
+- **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
+
+### Additional Tools
+- **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
+- **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
+- **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
+- **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
+
+### Shell Integration
+- AI-powered command completion (Ctrl+N) - see [`llm-integration.bash`](integration/llm-integration.bash) / [`.zsh`](integration/llm-integration.zsh)
+- Custom llm wrapper with automatic template application - see [`llm-common.sh`](integration/llm-common.sh)
+- Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
+- macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
+- Common aliases and PATH configuration
 
 ## Usage
 
@@ -826,7 +831,6 @@ The context system automatically captures:
 - Commands you run
 - Complete command output
 - Error messages and stack traces
-- Multi-line commands and their results
 
 This allows AI models to provide context-aware debugging and assistance based on your actual terminal activity.
 
@@ -1172,6 +1176,8 @@ The following models are configured:
 - `azure/o4-mini` - O4 Mini (advanced reasoning)
 - `azure/gpt-4.1` - GPT-4.1 (previous generation)
 
+**Note**: Model IDs shown above are examples from a specific Azure deployment. Your available models depend on your Azure Foundry configuration. Use `llm models` to see your configured models.
+
 ### Managing API Keys
 
 ```bash
@@ -1303,6 +1309,16 @@ On first installation, you'll be prompted to choose where session recordings are
 
 You can change this later by editing the `SESSION_LOG_DIR` export in your `.bashrc` or `.zshrc`.
 
+**Suppressing Session Start Messages:**
+
+To hide the "Session is logged for 'context'..." message on shell startup:
+
+```bash
+# Add to your .bashrc or .zshrc before the integration source line
+export SESSION_LOG_SILENT=1
+```
+
+Useful for cleaner shell startup or automated environments.
 
 ## Configuration
 
