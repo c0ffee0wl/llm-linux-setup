@@ -200,7 +200,7 @@ The script will:
 - **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
 
 ### LLM Templates
-- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` tool by default)
+- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
 - **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
 
 ### Additional Tools
@@ -640,22 +640,22 @@ LLM supports tools that AI models can call during conversations.
 
 **Sandboxed Shell Execution**
 
+**💡 Important**: The `sandboxed_shell` tool is **built into the assistant template** by default! You can ask AI to run commands naturally without specifying `-T sandboxed_shell` every time.
+
 Execute shell commands safely in an isolated environment using bubblewrap (bwrap):
 
 ```bash
-# Execute a command in a sandbox
-llm -T sandboxed_shell "Run this command safely: cat /etc/passwd"
-
-# Combine with natural language prompts and show tool calls
-llm -T sandboxed_shell "Check if docker is installed and show version" --td
-
-# Interactive mode with sandboxed shell access
-llm chat -T sandboxed_shell
+# ✅ Ask AI naturally - sandboxed_shell tool is automatically available
+llm "Check if docker is installed and show version"
+llm chat
 # > Can you list the files in /root?
 # > Which kernel am I using?
 
-# Continue a previous conversation where the tool was already specified
-llm -c "What's the output of 'uname -a'?"
+# ⚠️ Explicit tool invocation (useful for non-assistant templates)
+command llm -T sandboxed_shell "Run this command safely: cat /etc/passwd"
+
+# Show tool execution details with --td flag
+llm "Check if docker is installed" --td
 ```
 
 The `--td` flag shows full details of tool executions.
@@ -1190,27 +1190,35 @@ llm -t fabric:analyze_threat_report -f report.pdf
 - Cybersecurity focus (ethical hacking, forensics, incident response)
 - Kali Linux/Ubuntu/Debian environment awareness
 - **Integrated `context` tool** for reading terminal history (automatically available!)
+- **Integrated `sandboxed_shell` tool** for safe command execution (automatically available!)
 
 ### Context Tool Integration
 
-The assistant template includes the **`context` tool by default**, which means AI models can automatically read your terminal history without you needing to explicitly specify `--tool context` every time!
+The assistant template includes the **`context` and `sandboxed_shell` tools by default**, which means AI models can automatically read your terminal history and execute shell commands safely without you needing to explicitly specify `--tool context` or `-T sandboxed_shell` every time!
 
-**✅ When the context tool is automatically available:**
+**✅ When these tools are automatically available:**
 ```bash
 # Just ask naturally - the AI can use the context tool
 llm "what was the error in my last command?"
+
+# Or ask the AI to run commands via sandboxed_shell
+llm "check if docker is installed and show version"
+
 llm chat
 # > Read the context. What did I just run?
 # > Can you explain the output from my last command?
+# > List the files in /root
 ```
 
-**⚠️ When you need to use `--tool context` explicitly:**
+**⚠️ When you need to use tools explicitly:**
 ```bash
 # When using a different template
 llm -t fabric:summarize --tool context "what happened?"
+llm -t fabric:summarize -T sandboxed_shell "check docker"
 
 # When bypassing the shell wrapper
 command llm --tool context "what went wrong?"
+command llm -T sandboxed_shell "run this safely"
 ```
 
 ## Session Recording & Context System
