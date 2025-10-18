@@ -1305,11 +1305,26 @@ These are automatically sourced from your `.bashrc` or `.zshrc`.
 
 ### Update fails
 
-If the script update fails:
+**"fatal: Not possible to fast-forward, aborting"**
+
+This error occurs when your local git branch has diverged from the remote (both have conflicting changes). This typically happens if you made local edits to files that were also updated remotely.
+
+**Solutions:**
 
 ```bash
+# Option 1: Discard local changes and match remote (recommended)
 cd llm-linux-setup
 git reset --hard origin/main
+./install-llm-tools.sh
+
+# Option 2: Try to reapply your local commits on top of remote changes
+git pull --rebase
+
+# Option 3: Nuclear option - delete and re-clone
+cd /opt
+rm -rf llm-linux-setup
+git clone https://github.com/c0ffee0wl/llm-linux-setup
+cd llm-linux-setup
 ./install-llm-tools.sh
 ```
 
