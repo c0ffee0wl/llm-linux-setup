@@ -723,6 +723,37 @@ curl -s https://api.github.com/repos/simonw/datasette/issues | \
 # -v/--verbose: Display the AI prompt and response
 ```
 
+**Controlling Tool Execution with Chain Limits**
+
+When AI models use tools, they can call multiple tools in sequence to accomplish complex tasks. The `--chain-limit` (or `--cl`) parameter controls how many consecutive tool calls are allowed in a single prompt, preventing infinite loops while enabling multi-step reasoning.
+
+**Default Behavior:**
+- Standard llm default: 5 tool calls
+- This setup's default: **15 tool calls** (configured in shell wrapper)
+- Set to 0 for unlimited tool calls
+
+```bash
+# Use the default chain limit (15 in this setup)
+llm "Check if docker is installed, then show all running containers"
+
+# Allow more tool calls for complex multi-step tasks
+llm --cl 30 "Analyze system, check disk space, find large files, and suggest cleanup"
+
+# Limit tool calls to prevent excessive API usage
+llm --cl 3 "Simple task with minimal tool usage"
+
+# Unlimited tool calls (use with caution!)
+llm --cl 0 "Complex task requiring many sequential operations"
+
+# Works in chat mode too
+llm chat --cl 20
+```
+
+**When to adjust:**
+- **Increase** (`--cl 20` or higher): Complex multi-step tasks, extensive data analysis, or when you see "Chain limit reached" errors
+- **Decrease** (`--cl 3-5`): Simple tasks where you want to minimize API calls and costs
+- **Unlimited** (`--cl 0`): Only when necessary, as it can lead to excessive API usage if the model gets stuck in loops
+
 ### Context System Usage
 
 **💡 Important**: The `context` tool is **built into the assistant template** by default! You can ask about your terminal history naturally without typing `-T context` or `--tool context` every time.

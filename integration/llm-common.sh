@@ -86,18 +86,18 @@ llm() {
     if [ "$1" = "chat" ]; then
         shift
         if should_skip_template "$@"; then
-            command llm chat "$@"
+            command llm chat --cl 15 "$@"
         else
-            command llm chat -t assistant "$@"
+            command llm chat -t assistant --cl 15 "$@"
         fi
     elif [ "$1" = "code" ]; then
         shift
-        command llm -t code "$@"
+        command llm -t code --cl 15 "$@"
     else
         if should_skip_template "$@"; then
-            command llm "$@"
+            command llm --cl 15 "$@"
         else
-            command llm -t assistant "$@"
+            command llm -t assistant --cl 15 "$@"
         fi
     fi
 }
