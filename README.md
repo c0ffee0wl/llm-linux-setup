@@ -1199,18 +1199,18 @@ llm gemini models
 
 ```bash
 # Set default model for all commands
-llm models default azure/gpt-5-mini
+llm models default azure/gpt-5-nano
 
 # Alternative: using environment variable
-export LLM_MODEL=azure/o4-mini
-llm "Your prompt"  # Uses o4-mini
+export LLM_MODEL=azure/gpt-5-mini
+llm "Your prompt"  # Uses gpt-5-mini
 ```
 
 **Use Specific Models**
 
 ```bash
 # Override default with -m flag
-llm "Ten names for cheesecakes" -m azure/o4-mini
+llm "Ten names for cheesecakes" -m zure/gpt-5-mini
 
 # Use different models for different tasks
 llm -m azure/gpt-5 "Enterprise compliance analysis"
@@ -1223,10 +1223,22 @@ llm -m gemini-2.5-flash "Describe this image" -a photo.jpg
 The following Azure models are configured (examples):
 
 - `azure/gpt-5` - GPT-5 (most capable)
-- `azure/gpt-5-mini` - GPT-5 Mini (balanced, default)
-- `azure/gpt-5-nano` - GPT-5 Nano (fast, cost-effective)
+- `azure/gpt-5-mini` - GPT-5 Mini (balanced, recommended for complex tasks)
+- `azure/gpt-5-nano` - GPT-5 Nano (fast, cost-effective, **default**)
 - `azure/o4-mini` - O4 Mini (advanced reasoning)
 - `azure/gpt-4.1` - GPT-4.1 (previous generation)
+
+**Default Model Recommendation:**
+
+This setup uses `azure/gpt-5-nano` as the default for its speed and cost-effectiveness. For more complex tasks requiring deeper reasoning (such as extensive code analysis, multi-step problem solving, or nuanced decision making), switch to `azure/gpt-5-mini`:
+
+```bash
+# Switch to gpt-5-mini for complex tasks
+llm models default azure/gpt-5-mini
+
+# Or use it for a single query with -m flag
+llm -m azure/gpt-5-mini "Complex analysis task..."
+```
 
 **Note**: Model IDs shown above are examples from a specific Azure deployment. Your available models depend on your Azure Foundry configuration. Use `llm models` to see your configured models.
 
