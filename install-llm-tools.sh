@@ -3,10 +3,11 @@
 # LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)
 # Installs Simon Willison's llm CLI tool and related AI/LLM command-line utilities
 #
-# Usage: ./install-llm-tools.sh [--azure]
+# Usage: ./install-llm-tools.sh [--azure] [--gemini]
 #
 # Options:
 #   --azure    Force (re)configuration of Azure OpenAI, even if already configured
+#   --gemini   Force (re)configuration of Google Gemini, even if already configured
 #   --help     Show help message
 #
 # Re-run to update all tools
@@ -51,11 +52,16 @@ fi
 #############################################################################
 
 FORCE_AZURE_CONFIG=false
+FORCE_GEMINI_CONFIG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
         --azure)
             FORCE_AZURE_CONFIG=true
+            shift
+            ;;
+        --gemini)
+            FORCE_GEMINI_CONFIG=true
             shift
             ;;
         --help|-h)
@@ -65,11 +71,13 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Options:"
             echo "  --azure    Force (re)configuration of Azure OpenAI, even if already configured"
+            echo "  --gemini   Force (re)configuration of Google Gemini, even if already configured"
             echo "  --help     Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0              # Normal installation/update"
             echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
+            echo "  $0 --gemini     # Reconfigure Google Gemini settings"
             exit 0
             ;;
         *)
@@ -77,6 +85,15 @@ while [[ $# -gt 0 ]]; do
             ;;
     esac
 done
+
+# Validate mutually exclusive flags
+if [ "$FORCE_AZURE_CONFIG" = "true" ] && [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
+    error "Cannot specify both --azure and --gemini flags simultaneously."
+    echo "Please choose one provider at a time:" >&2
+    echo "  $0 --azure    # Configure Azure OpenAI" >&2
+    echo "  $0 --gemini   # Configure Google Gemini" >&2
+    exit 1
+fi
 
 #############################################################################
 # Helper Functions
@@ -211,6 +228,16 @@ configure_azure_openai() {
     read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
     command llm keys set azure
     AZURE_CONFIGURED=true
+}
+
+# Configure Google Gemini with prompts
+configure_gemini() {
+    log "Configuring Google Gemini API..."
+    echo ""
+    echo "Get your free API key from: https://ai.google.dev/gemini-api/docs/api-key"
+    echo ""
+    command llm keys set gemini
+    GEMINI_CONFIGURED=true
 }
 
 # Update template file with smart checksum-based update logic
@@ -602,6 +629,8 @@ if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
     log "Azure OpenAI Configuration (forced via --azure flag)"
     echo ""
     configure_azure_openai
+    # When forcing Azure, disable Gemini (mutually exclusive)
+    GEMINI_CONFIGURED=false
 elif [ "$IS_FIRST_RUN" = "true" ]; then
     # First run - ask if user wants to configure Azure OpenAI
     log "Azure OpenAI Configuration"
@@ -694,51 +723,101 @@ else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
 
-# Configure aichat with Azure OpenAI settings (if Azure was configured)
+#############################################################################
+# Configure Google Gemini API
+#############################################################################
+
+if [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
+    # --gemini flag was passed - force (re)configuration
+    log "Google Gemini Configuration (forced via --gemini flag)"
+    echo ""
+    configure_gemini
+    # When forcing Gemini, disable Azure (mutually exclusive)
+    AZURE_CONFIGURED=false
+elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
+    # First run AND Azure was declined - ask if user wants to configure Gemini
+    log "Google Gemini Configuration"
+    echo ""
+    read -p "Do you want to configure Google Gemini? (y/N): " CONFIG_GEMINI
+    CONFIG_GEMINI=${CONFIG_GEMINI:-N}
+
+    if [[ "$CONFIG_GEMINI" =~ ^[Yy]$ ]]; then
+        configure_gemini
+    else
+        log "Skipping Google Gemini configuration"
+        GEMINI_CONFIGURED=false
+    fi
+elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" = "true" ]; then
+    # First run but Azure was configured - skip Gemini (mutually exclusive)
+    log "Skipping Google Gemini (Azure OpenAI configured)"
+    GEMINI_CONFIGURED=false
+else
+    # Subsequent run - check if Gemini key exists
+    if command llm keys get gemini &>/dev/null; then
+        log "Google Gemini was previously configured, preserving existing configuration"
+        GEMINI_CONFIGURED=true
+        # If Gemini is configured, Azure should not be (mutually exclusive)
+        AZURE_CONFIGURED=false
+    else
+        log "Google Gemini not configured (skipped during initial setup)"
+        GEMINI_CONFIGURED=false
+    fi
+fi
+
+#############################################################################
+# Set Default Model and Configure AIChat
+#############################################################################
+
+# Set default model based on configured provider
+DEFAULT_MODEL_FILE="$(command llm logs path | xargs dirname)/default_model.txt"
+if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
+    if [ "$AZURE_CONFIGURED" = "true" ]; then
+        log "Setting default model to azure/gpt-5-mini..."
+        command llm models default azure/gpt-5-mini
+    elif [ "$GEMINI_CONFIGURED" = "true" ]; then
+        log "Setting default model to gemini-2.5-flash..."
+        command llm models default gemini-2.5-flash
+    fi
+else
+    log "Default model already configured, skipping..."
+fi
+
+# Configure aichat with provider settings (mutually exclusive: either Azure OR Gemini)
+aichat_config_dir="$HOME/.config/aichat"
+aichat_config_file="$aichat_config_dir/config.yaml"
+mkdir -p "$aichat_config_dir"
+
 if [ "$AZURE_CONFIGURED" = "true" ]; then
+    # Configure aichat with Azure OpenAI
     llm_config_dir="$(command llm logs path | xargs dirname)"
     extra_models_file="$llm_config_dir/extra-openai-models.yaml"
-    aichat_config_dir="$HOME/.config/aichat"
-    aichat_config_file="$aichat_config_dir/config.yaml"
 
-    # Check if Azure is configured in llm
-    if [ -f "$extra_models_file" ]; then
-        log "Configuring aichat with Azure OpenAI settings..."
+    # Extract API base from llm config
+    api_base=$(grep -m 1 "^\s*api_base:" "$extra_models_file" | sed 's/.*api_base:\s*//;s/\s*$//')
+    api_base_domain=$(echo "$api_base" | sed 's|\(https\?://[^/]*\).*|\1|')
 
-        # Extract API base and key name from llm config
-        api_base=$(grep -m 1 "^\s*api_base:" "$extra_models_file" | sed 's/.*api_base:\s*//;s/\s*$//')
-        api_key_name=$(grep -m 1 "^\s*api_key_name:" "$extra_models_file" | sed 's/.*api_key_name:\s*//;s/\s*$//')
+    # Get API key
+    azure_api_key=$(command llm keys get azure 2>/dev/null || echo "")
 
-        # Extract domain only from api_base for aichat (aichat expects https://domain.com, not https://domain.com/path)
-        api_base_domain=$(echo "$api_base" | sed 's|\(https\?://[^/]*\).*|\1|')
+    if [ -n "$azure_api_key" ]; then
+        SHOULD_WRITE=true
 
-        if [ -n "$api_base" ] && [ -n "$api_key_name" ]; then
-            # Get API key from llm keys for environment variable setup
-            api_key=$(command llm keys get "$api_key_name" 2>/dev/null || echo "")
+        if [ -f "$aichat_config_file" ]; then
+            # If using --azure flag, automatically overwrite (user explicitly requested switch)
+            if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
+                cp "$aichat_config_file" "$aichat_config_file.backup.$(date +%Y%m%d-%H%M%S)"
+                log "Backed up existing aichat config"
+                log "Switching to Azure OpenAI configuration..."
+            else
+                # Normal setup - keep existing config, don't prompt
+                log "aichat config already exists, keeping it"
+                SHOULD_WRITE=false
+            fi
+        fi
 
-            if [ -n "$api_key" ]; then
-                # Create aichat config directory
-                mkdir -p "$aichat_config_dir"
-
-                # Check if config already exists and prompt user
-                SHOULD_WRITE_CONFIG=true
-                if [ -f "$aichat_config_file" ]; then
-                    log "aichat config already exists at $aichat_config_file"
-                    echo ""
-                    read -p "Overwrite with Azure OpenAI settings? (y/N): " OVERWRITE_AICHAT
-                    if [[ ! "$OVERWRITE_AICHAT" =~ ^[Yy]$ ]]; then
-                        log "Keeping existing aichat config"
-                        SHOULD_WRITE_CONFIG=false
-                    else
-                        # Backup existing config before overwriting
-                        cp "$aichat_config_file" "$aichat_config_file.backup.$(date +%Y%m%d-%H%M%S)"
-                        log "Backed up existing aichat config"
-                    fi
-                fi
-
-                if [ "$SHOULD_WRITE_CONFIG" = "true" ]; then
-                    # Create aichat config with Azure OpenAI
-                    cat > "$aichat_config_file" <<EOF
+        if [ "$SHOULD_WRITE" = "true" ]; then
+            # Create Azure-only aichat configuration file (inline)
+            cat > "$aichat_config_file" <<EOF
 # AIChat Configuration - Auto-generated by llm-linux-setup
 # Azure OpenAI Integration
 
@@ -748,7 +827,7 @@ clients:
   - type: azure-openai
     name: azure-openai
     api_base: ${api_base_domain}
-    api_key: ${api_key}
+    api_key: ${azure_api_key}
     models:
       - name: gpt-5
         max_input_tokens: 272000
@@ -787,20 +866,65 @@ rag_top_k: 5
 rag_chunk_size: 2000
 rag_chunk_overlap: 200
 EOF
-
-                    log "aichat configured with Azure OpenAI at: $aichat_config_file"
-                    log "Embedding model: azure-openai:text-embedding-3-small"
-                fi
-            else
-                warn "Could not retrieve API key for '$api_key_name' from llm"
-                warn "Run: llm keys set $api_key_name"
-                warn "After setting the key, re-run this script"
-            fi
+            log "aichat configured with Azure OpenAI at: $aichat_config_file"
         else
-            warn "Could not extract Azure OpenAI configuration from llm config"
+            log "Keeping existing aichat config"
         fi
     else
-        log "Azure OpenAI not configured in llm, skipping aichat configuration"
+        warn "Could not retrieve Azure API key from llm"
+        warn "Run: llm keys set azure"
+    fi
+
+elif [ "$GEMINI_CONFIGURED" = "true" ]; then
+    # Configure aichat with Gemini
+    gemini_api_key=$(command llm keys get gemini 2>/dev/null || echo "")
+
+    if [ -n "$gemini_api_key" ]; then
+        SHOULD_WRITE=true
+
+        if [ -f "$aichat_config_file" ]; then
+            # If using --gemini flag, automatically overwrite (user explicitly requested switch)
+            if [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
+                cp "$aichat_config_file" "$aichat_config_file.backup.$(date +%Y%m%d-%H%M%S)"
+                log "Backed up existing aichat config"
+                log "Switching to Gemini configuration..."
+            else
+                # Normal setup - keep existing config, don't prompt
+                log "aichat config already exists, keeping it"
+                SHOULD_WRITE=false
+            fi
+        fi
+
+        if [ "$SHOULD_WRITE" = "true" ]; then
+            # Create Gemini-only aichat configuration file (inline)
+            cat > "$aichat_config_file" <<EOF
+# AIChat Configuration - Auto-generated by llm-linux-setup
+# Google Gemini Integration
+
+model: gemini:gemini-2.5-flash
+
+clients:
+  - type: gemini
+    api_key: ${gemini_api_key}
+
+# Document loaders for RAG
+document_loaders:
+  git: 'gitingest \$1 -o -'
+
+# RAG Configuration
+rag_embedding_model: gemini:text-embedding-004
+rag_reranker_model: null
+rag_top_k: 5
+rag_chunk_size: 2000
+rag_chunk_overlap: 200
+EOF
+            log "aichat configured with Gemini at: $aichat_config_file"
+        else
+            log "Keeping existing aichat config"
+        fi
+    else
+        warn "Could not retrieve Gemini API key from llm"
+        warn "Run: llm keys set gemini"
     fi
 fi
 

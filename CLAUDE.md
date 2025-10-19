@@ -147,6 +147,8 @@ These functions follow the DRY (Don't Repeat Yourself) principle and ensure cons
 
 **When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
 
+**Note on AIChat Configuration**: AIChat configuration is now created inline in Phase 2 using heredocs directly at the point of use, rather than through separate helper functions. This follows YAGNI (You Aren't Gonna Need It) since each configuration is only created once per provider.
+
 ### Rust/Cargo Installation Strategy
 
 The script uses **intelligent version detection** similar to the Node.js approach:
@@ -209,15 +211,51 @@ The script uses **intelligent version detection** similar to the Rust approach:
 
 **Why This Matters:** Claude Code and OpenCode require Node.js 20+ for modern JavaScript features and APIs.
 
-### Azure OpenAI Configuration
+### Provider Configuration: Azure OpenAI OR Google Gemini
 
-The system is specifically configured for **Azure Foundry** (not standard OpenAI):
+The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclusive for AIChat):
+
+**First-Run Behavior:**
+- Prompts for Azure OpenAI configuration (Y/n) - default choice for enterprise
+- **Only if Azure is declined**: Prompts for Google Gemini configuration (y/N)
+- Users can only configure one provider at a time for AIChat
+
+**Switching Providers:**
+```bash
+# Switch to or reconfigure Azure
+./install-llm-tools.sh --azure
+
+# Switch to or reconfigure Gemini
+./install-llm-tools.sh --gemini
+
+# ERROR: Cannot use both flags simultaneously
+./install-llm-tools.sh --azure --gemini  # Script will exit with error
+```
+
+**Mutual Exclusivity Implementation:**
+- **Flag validation**: Script errors out if both `--azure` and `--gemini` are specified (fail fast)
+- When `--azure` flag is used: Sets `GEMINI_CONFIGURED=false`
+- When `--gemini` flag is used: Sets `AZURE_CONFIGURED=false`
+- AIChat config is overwritten (with backup) when switching providers
+- Both providers can coexist for `llm` CLI, but AIChat uses only one
+
+**Azure OpenAI Configuration:**
 - Model IDs use `azure/` prefix (e.g., `azure/gpt-5-mini`)
 - Configuration stored in `~/.config/io.datasette.llm/extra-openai-models.yaml`
 - API keys managed via `llm keys set azure` (not `openai`)
 - Each model entry requires: `model_id`, `model_name`, `api_base`, `api_key_name: azure`
 
-**When adding new models**: Follow the Azure OpenAI format in the YAML file, not standard OpenAI format.
+**Google Gemini Configuration:**
+- Uses `llm-gemini` plugin (installed in Phase 3)
+- API key managed via `llm keys set gemini`
+- Free tier available from Google AI Studio
+- Models: `gemini-2.5-flash`, `gemini-2.5-pro`, etc.
+
+**Helper Functions:**
+- **`configure_azure_openai()`**: Prompts for Azure API key and resource URL
+- **`configure_gemini()`**: Prompts for Gemini API key with link to get free key
+
+**When adding new models**: Follow the appropriate provider's format (Azure or Gemini).
 
 ### RAG Integration with aichat
 
@@ -225,27 +263,22 @@ The system integrates **aichat** (https://github.com/sigoden/aichat) for Retriev
 
 **Architecture**:
 - `aichat` is installed via cargo in Phase 6
-- Automatically configured with Azure OpenAI credentials from llm config
+- Automatically configured with the selected provider (Azure OR Gemini)
 - Accessible via both `aichat` command and `llm rag` wrapper
-- Uses Azure OpenAI `text-embedding-3-small` for document embeddings
 - Built-in vector database (no external dependencies like ChromaDB)
 
-**Configuration** (`~/.config/aichat/config.yaml`):
-- Auto-generated inline in Phase 2 (no longer uses a helper function)
-- Syncs Azure API base and model list from llm config
-- **API Key**: Uses `AZURE_OPENAI_API_KEY` environment variable (not stored in config for security)
-- Includes document loaders for PDF (pdftotext), DOCX (pandoc), and Git repos (gitingest)
-- Default embedding model: `azure-openai:text-embedding-3-small`
-- Embedding parameters: `default_chunk_size: 1000`, `max_batch_size: 50`
-- **Overwrite Protection**: If config file exists, script prompts before overwriting (creates backup if user confirms)
+**Embedding Models by Provider:**
+- **Azure OpenAI**: Uses `azure-openai:text-embedding-3-small`
+- **Google Gemini**: Uses `gemini:text-embedding-004`
 
-**Environment Variable**:
-The installation script **automatically** adds the Azure OpenAI API key to your shell configuration:
-```bash
-# Automatically added to ~/.bashrc and ~/.zshrc
-export AZURE_OPENAI_API_KEY="your-api-key-here"
-```
-After installation, reload your shell with `source ~/.bashrc` (or `~/.zshrc`).
+**Configuration** (`~/.config/aichat/config.yaml`):
+- Auto-generated inline in Phase 2 during provider configuration (no separate helper functions)
+- Uses heredocs with variable expansion for direct configuration file creation
+- Includes document loaders for Git repos (gitingest)
+- **Config Preservation**:
+  - Normal setup: If config exists, keeps it without prompting (preserves user customizations)
+  - Forced switch (`--azure` or `--gemini`): Automatically overwrites with backup (user explicitly requested provider change)
+- **Provider-specific**: Contains only the selected provider's configuration (mutually exclusive)
 
 **llm Wrapper Integration** (`integration/llm-common.sh`):
 - `llm rag` command routes to `aichat --rag` internally
@@ -324,120 +357,6 @@ https://github.com/user/repo  # This fetches HTML, not source code!
 # Update all tools (pulls git updates, upgrades packages, preserves config)
 ./install-llm-tools.sh
 ```
-
-### Context System Commands
-
-```bash
-# Show last command and output
-context
-
-# Show last 5 commands
-context 5
-
-# Show entire session
-context all
-
-# Get export command for current session file
-context -e
-
-# Use context with LLM
-llm --tool context "what was the output of my last command?"
-```
-
-### Code Generation Commands
-
-The `llm code` command generates clean, executable code without explanations or markdown formatting - perfect for piping to files or direct execution:
-
-```bash
-# Generate Python code
-llm code "function to check if number is prime" > prime.py
-
-# Generate bash script
-llm code "script to backup directory with timestamp" > backup.sh
-
-# Generate SQL query
-llm code "select users who registered this month"
-
-# Generate Dockerfile
-llm code "dockerfile for nodejs app with nginx" > Dockerfile
-
-# Direct execution (use with caution!)
-llm code "one-liner to find files larger than 100MB" | bash
-
-# Chain with other commands
-llm code "regex to match email addresses" | grep -o '@'
-
-# Generate configuration file
-llm code "nginx config for reverse proxy on port 3000" > nginx.conf
-```
-
-**Key Features:**
-- No markdown code blocks (no \`\`\`)
-- No explanations or natural language
-- Output is directly executable/pipeable
-- Infers programming language from context
-- Ideal for automation and scripting
-
-### RAG (Retrieval-Augmented Generation) Commands
-
-Query your documents with AI using aichat's RAG functionality:
-
-```bash
-# Create/open a RAG collection
-llm rag mydocs
-
-# Rebuild RAG index after adding/changing documents
-llm rag mydocs --rebuild
-
-# List all RAG collections
-aichat --list-rags
-
-# View RAG collection info
-aichat --rag mydocs --info
-
-# Direct aichat usage (full features)
-aichat --rag projectdocs
-```
-
-**Interactive RAG Commands** (in REPL):
-```bash
-# Inside the aichat REPL:
-.rag mydocs              # Create/switch to RAG collection
-.edit rag-docs           # Add/edit documents in current RAG
-.rebuild rag             # Rebuild RAG index after document changes
-.sources rag             # Show citation sources from last query
-.info rag                # Show RAG configuration details
-.exit rag                # Exit RAG mode
-.help                    # Show all REPL commands
-```
-
-**Example Workflow**:
-```bash
-# 1. Create a RAG collection for your project
-llm rag myproject
-
-# 2. In the REPL, add documents
-.edit rag-docs
-# Add file paths or URLs, one per line:
-# /path/to/docs/
-# https://example.com/api-docs
-# /path/to/code/
-
-# 3. Ask questions about your documents
-What is the authentication flow?
-How do I configure the database?
-
-# 4. Exit and rebuild if you add more docs
-# Press Ctrl+D to exit
-llm rag myproject --rebuild
-```
-
-**Document Types Supported**:
-- **Text files**: .txt, .md, .rst, .json, .yaml, etc.
-- **PDF files**: Automatically processed with pdftotext
-- **DOCX files**: Automatically processed with pandoc
-- **Git repositories**: Use gitingest to include full repo context
-- **Web URLs**: Direct HTTP/HTTPS URLs are fetched and indexed
 
 ## Common Development Tasks
 
@@ -634,20 +553,22 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 
 ## Key Constraints & Design Decisions
 
-1. **Azure Foundry Only**: This setup is NOT for standard OpenAI API - all model configs use Azure format with `azure/` prefix
-2. **Debian/Ubuntu/Kali**: Uses `apt-get` for system packages; would need modification for RHEL/Arch
-3. **Interactive Prompts on First Run**: The script prompts for Azure API key and resource URL on first run only; subsequent runs preserve existing configuration automatically
-4. **Git Repository Required**: Self-update only works when cloned from git (not if downloaded as ZIP)
-5. **Path Assumptions**: The script assumes it can write to `~/.bashrc`, `~/.zshrc`, `~/.config/io.datasette.llm/`, and `~/.claude-code-router/`
-6. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
-7. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
-8. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
-9. **Rust Required**: asciinema and aichat are installed via cargo (Rust's package manager); minimum Rust 1.85 required
-10. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
-11. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
-12. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
-13. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
-14. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
+1. **Provider Choice: EITHER Azure OR Gemini**: Users must choose one provider for AIChat configuration (mutually exclusive). The script validates flags and exits with error if both `--azure` and `--gemini` are specified. Both providers can be used with `llm` CLI, but AIChat supports only one at a time.
+2. **Azure Foundry Format**: When using Azure, all model configs use Azure format with `azure/` prefix (NOT standard OpenAI API)
+3. **Debian/Ubuntu/Kali**: Uses `apt-get` for system packages; would need modification for RHEL/Arch
+4. **Interactive Prompts on First Run**: The script prompts for provider choice (Azure or Gemini) on first run only; subsequent runs preserve existing configuration automatically
+5. **Simplified Configuration**: No manual YAML editing required - provider configs are automatically generated via helper functions
+6. **Git Repository Required**: Self-update only works when cloned from git (not if downloaded as ZIP)
+7. **Path Assumptions**: The script assumes it can write to `~/.bashrc`, `~/.zshrc`, `~/.config/io.datasette.llm/`, and `~/.claude-code-router/`
+8. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
+9. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
+10. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
+11. **Rust Required**: asciinema and aichat are installed via cargo (Rust's package manager); minimum Rust 1.85 required
+12. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
+13. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
+14. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
+15. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
+16. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
 
 ## Special Packages & Forks
 

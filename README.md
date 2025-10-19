@@ -52,9 +52,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Azure-Specific Limitations](#azure-specific-limitations)
   - [Why Azure OpenAI?](#why-azure-openai)
 - [Alternative: Gemini for Private Use](#alternative-gemini-for-private-use)
-  - [Setup Instructions for LLM](#setup-instructions-for-llm)
-  - [Setup Instructions for AIChat](#setup-instructions-for-aichat)
-  - [Setup Instructions for RAG with Gemini](#setup-instructions-for-rag-with-gemini)
+  - [Switching Providers](#switching-providers)
 - [Configuration](#configuration)
   - [Configuration Files](#configuration-files-1)
   - [Shell Integration Files](#shell-integration-files)
@@ -82,7 +80,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 
 - ✅ **One-command installation** - Run once to install everything
 - ✅ **Self-updating** - Re-run to update all tools automatically
-- ✅ **Azure OpenAI integration** - Configured for Azure Foundry
+- ✅ **Provider choice** - Configure either Azure OpenAI (enterprise) or Google Gemini (free tier)
+- ✅ **Easy provider switching** - Use `--azure` or `--gemini` flags to switch anytime
 - ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
@@ -136,8 +135,12 @@ cd llm-linux-setup
 
 During first-time installation, you'll be prompted for:
 
-1. **Azure OpenAI Configuration** (optional) - API key and resource URL
+1. **Provider Choice** - Choose **either** Azure OpenAI (enterprise) **or** Google Gemini (free tier)
+   - **Azure**: Prompts for API key and resource URL
+   - **Gemini**: Prompts for API key (free from Google AI Studio)
 2. **Session Log Storage** - Choose between temporary (`/tmp`, cleared on reboot) or permanent (`~/session_logs`, survives reboots)
+
+**Note:** You can only use one provider at a time for AIChat, especially for its RAG feature. To switch providers later, use the appropriate flag.
 
 ### Updating
 
@@ -148,10 +151,14 @@ cd llm-linux-setup
 ./install-llm-tools.sh
 ```
 
-To reconfigure Azure OpenAI settings later:
+To switch or reconfigure providers:
 
 ```bash
+# Switch to or reconfigure Azure OpenAI
 ./install-llm-tools.sh --azure
+
+# Switch to or reconfigure Google Gemini
+./install-llm-tools.sh --gemini
 ```
 
 The script will:
@@ -160,7 +167,7 @@ The script will:
 2. Update llm, its plugins, and all applications installed by the llm-setup.
 3. Update custom templates ([assistant.yaml](llm-template/assistant.yaml), [code.yaml](llm-template/code.yaml)).
 4. Refresh shell integration files.
-5. Preserve existing Azure OpenAI and session log configurations.
+5. Preserve existing provider and session log configurations (unless switching providers).
 
 ## Quick Reference
 
@@ -1392,7 +1399,9 @@ Useful for cleaner shell startup or automated environments.
 
 ## Understanding Azure OpenAI Setup
 
-This installation configures **Azure OpenAI (Azure Foundry)** by default, which differs from standard OpenAI API integration.
+This installation can configure **either** Azure OpenAI (Azure Foundry) **or** Google Gemini. On first run, you'll be asked which provider you want to use. **You can only use one provider at a time** for AIChat.
+
+If you choose **Azure OpenAI** (default choice for enterprise/workplace use), the setup differs from standard OpenAI API integration.
 
 ### Architecture Overview
 
@@ -1470,77 +1479,32 @@ This model does not support file content types.", 'type': 'invalid_request_error
 
 For **personal projects, learning, and hobbyist use**, Google's **Gemini 2.5 Flash** offers exceptional value with a generous free tier and competitive performance.
 
-### Setup Instructions for LLM
+**⚠️ Important:** This script configures **either** Azure OpenAI **or** Gemini - you cannot use both simultaneously for AIChat. Choose the provider that best fits your needs:
 
-**1. Get your API key:**
+- **Azure OpenAI**: Enterprise/workplace environments, compliance requirements
+- **Gemini**: Personal projects, free tier, hobbyist use
+
+**Get your API key:**
 
 - Visit [Google AI Studio](https://ai.google.dev/gemini-api/docs/api-key)
 - Sign up (free, no credit card required)
 - Generate an API key from the dashboard
 
-**2. Configure the API key:**
+### Switching Providers
+
+To switch from Azure to Gemini or vice versa:
 
 ```bash
-llm keys set gemini
-# Paste your API key when prompted
+# Switch to Gemini
+./install-llm-tools.sh --gemini
+
+# Switch to Azure
+./install-llm-tools.sh --azure
 ```
 
-**3. Set as default model (optional):**
-
-```bash
-llm models default gemini-2.5-flash
-```
-
-### Setup Instructions for AIChat
-
-**1. Configure AIChat:**
-
-Edit `~/.config/aichat/config.yaml`:
-
-```yaml
-clients:
-  # Add Gemini client (keep existing Azure client)
-  - type: gemini
-    api_key: null  # Enter API key
-
-# Set Gemini as default model (or keep azure model)
-model: gemini:gemini-2.5-flash
-```
-
-**2. Use with AIChat:**
-
-```bash
-# Start chat with Gemini (uses default model from config)
-aichat
-
-# Use specific Gemini model
-aichat --model gemini:gemini-2.5-flash
-```
+The script will backup your existing AIChat configuration and reconfigure for the selected provider.
 
 **Temperature Note:** Gemini supports temperature values in the range `[0, 2)`, unlike most models that use `[0, 1]`. Be mindful when setting temperature values.
-
-### Setup Instructions for RAG with Gemini
-
-For **personal projects with document-based AI applications**, Gemini's **text-embedding-004** model provides excellent RAG capabilities on the free tier.
-
-**1. Configure AIChat for RAG with Gemini:**
-
-Edit `~/.config/aichat/config.yaml`:
-
-```yaml
-# Set Gemini embedding model for RAG
-rag_embedding_model: gemini:text-embedding-004
-
-# Optional: Adjust chunk settings for your documents
-rag_chunk_size: 2000
-rag_chunk_overlap: 200
-
-# Document loaders for RAG
-document_loaders:
-  git: 'gitingest $1 -o -'
-```
-
-**Note:** `text-embedding-004` is automatically available when you configure the Gemini client - no need to manually add the embedding model definition.
 
 ## Configuration
 
