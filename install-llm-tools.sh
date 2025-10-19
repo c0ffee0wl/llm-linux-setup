@@ -778,8 +778,6 @@ clients:
 
 # Document loaders for RAG
 document_loaders:
-  pdf: 'pdftotext \$1 -'
-  docx: 'pandoc --to plain --wrap=none \$1'
   git: 'gitingest \$1 -o -'
 
 # RAG Configuration
