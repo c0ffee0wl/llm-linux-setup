@@ -250,10 +250,10 @@ The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclu
 - Both providers can coexist for `llm` CLI, but AIChat uses only one
 
 **Azure OpenAI Configuration:**
-- Model IDs use `azure/` prefix (e.g., `azure/gpt-5-nano`, `azure/gpt-5-mini`)
-- Default model: `azure/gpt-5-nano` (fast, cost-effective)
-- Recommended upgrade: `azure/gpt-5-mini` for complex tasks
-- Migration logic: Script automatically updates existing `azure/gpt-5-mini` defaults to `azure/gpt-5-nano`
+- Model IDs use `azure/` prefix (e.g., `azure/gpt-4.1-mini`, `azure/gpt-4.1-nano`)
+- Default model: `azure/gpt-4.1-mini` (balanced, recommended for most tasks)
+- Available models: `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `o4-mini`, plus legacy `gpt-5`, `gpt-5-mini`, `gpt-5-nano`
+- Migration logic: Script automatically updates existing `azure/gpt-5*` defaults to `azure/gpt-4.1-mini`
 - Configuration stored in `~/.config/io.datasette.llm/extra-openai-models.yaml`
 - API keys managed via `llm keys set azure` (not `openai`)
 - Each model entry requires: `model_id`, `model_name`, `api_base`, `api_key_name: azure`
