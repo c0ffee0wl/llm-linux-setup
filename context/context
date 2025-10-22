@@ -141,7 +141,7 @@ def extract_prompt_blocks(text, count=1):
     """
     lines = text.split('\n')
     # Filter out lines from previous context command outputs
-    lines = [line for line in lines if not line.startswith('#c#')]
+    lines = [line for line in lines if not line.lstrip().startswith('#c#')]
     prompt_lines = detect_prompts('\n'.join(lines))
 
     if not prompt_lines:
