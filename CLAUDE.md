@@ -99,10 +99,20 @@ The shell integration uses a **three-file pattern** located in the `integration/
 - Uses `llm cmdcomp` command from **llm-cmd-comp** plugin (git: `c0ffee0wl/llm-cmd-comp`)
 - **llm-cmd** plugin provides command execution (git: `c0ffee0wl/llm-cmd`)
 
+**Tab Completion (Zsh)**:
+- Uses **llm-zsh-plugin** (forked from `eliyastein/llm-zsh-plugin`) with custom extensions
+- Provides comprehensive tab completion for all llm commands, options, models, and templates
+- **Custom Extensions**: Adds completion for `llm code` and `llm rag` subcommands (not in upstream)
+- **Version-controlled in repository**: Fork is maintained directly in `integration/llm-zsh-plugin/`
+- **Update Strategy**: Manual updates to the fork in this repository (not auto-pulled from upstream)
+- **Coexistence**: Tab completion (plugin) and Ctrl+N (AI cmdcomp) serve different purposes - both work together
+- Only active in Zsh; Bash users can use Ctrl+N for AI-powered command suggestions
+
 **When adding new shell features**:
 - Shell-agnostic → `integration/llm-common.sh`
 - Bash-specific (readline bindings) → `integration/llm-integration.bash`
 - Zsh-specific (zle widgets) → `integration/llm-integration.zsh`
+- **If adding new llm subcommands**: Update the completion file `integration/llm-zsh-plugin/completions/_llm`
 
 ### Installation Phases
 
@@ -343,7 +353,8 @@ https://github.com/user/repo  # This fetches HTML, not source code!
 
 - **`install-llm-tools.sh`**: Main installation/update script with self-update logic
 - **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias, code subcommand handler
-- **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion)
+- **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion) and tab completion setup
+- **`integration/llm-zsh-plugin/`**: Fork of llm-zsh-plugin with custom extensions for `code` and `rag` subcommands
 - **`context/context`**: Python script for extracting terminal history from asciinema recordings
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
@@ -456,6 +467,18 @@ llm plugins | grep context
 
 **Context shows wrong session**: Check `echo $SESSION_LOG_FILE` or manually set: `export SESSION_LOG_FILE="/path/to/session.cast"`
 
+### Troubleshooting Tab Completion
+
+**Tab completion not working**: Verify zsh completion system is loaded: `which compinit` should show a path. Re-source your `.zshrc` or start a new shell.
+
+**Completions show old commands**: Clear the zsh completion cache: `rm -f ~/.zcompdump*` then restart your shell.
+
+**Code/rag subcommands not completing**: Check if custom modifications are applied: `grep -q "'code:Generate code" "$SCRIPT_DIR/integration/llm-zsh-plugin/completions/_llm"`. Re-run the installation script to apply modifications.
+
+**Model/template completions not appearing**: Ensure llm is accessible: `which llm` and that you have configured at least one model. The plugin dynamically fetches available models via `llm models list`.
+
+**Completion conflicts or errors**: Delete the plugin and let the script reinstall: `rm -rf "$SCRIPT_DIR/integration/llm-zsh-plugin"` then run `./install-llm-tools.sh`.
+
 ### Adding New LLM Plugins
 
 Edit the `PLUGINS` array in Phase 3 of `install-llm-tools.sh`:
@@ -548,7 +571,9 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ### Repository Structure
 - `install-llm-tools.sh` - Main installation script with 7 phases
 - `integration/llm-common.sh` - Shared shell config, llm wrapper, asciinema auto-recording
-- `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N)
+- `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
+- `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
+- `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-template/{assistant,code}.yaml` - Template sources installed to user config
@@ -582,6 +607,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-sandboxed-shell**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell` (sandboxed shell command execution)
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
+- **llm-zsh-plugin**: Forked in-repository from eliyastein/llm-zsh-plugin with custom modifications for `code` and `rag` subcommands
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
 - **aichat**: Installed via cargo from crates.io: `cargo install aichat`
 - **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)

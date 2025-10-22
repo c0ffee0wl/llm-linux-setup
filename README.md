@@ -82,7 +82,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Self-updating** - Re-run to update all tools automatically
 - ✅ **Provider choice** - Configure either Azure OpenAI (enterprise) or Google Gemini (free tier)
 - ✅ **Easy provider switching** - Use `--azure` or `--gemini` flags to switch anytime
-- ✅ **Command completion** - Press Ctrl+N for intelligent command suggestions
+- ✅ **Command completion** - Press Ctrl+N for AI command suggestions, Tab for llm autocompletion (Zsh)
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
 - ✅ **RAG document querying** - Query your documents with `llm rag` using AIChat's built-in vector database
@@ -303,6 +303,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 ### Shell Integration
 
 - AI-powered command completion (Ctrl+N) - see [`llm-integration.bash`](integration/llm-integration.bash) / [`.zsh`](integration/llm-integration.zsh)
+- Tab completion for llm commands (Zsh only) - see [`llm-zsh-plugin`](integration/llm-zsh-plugin/)
 - Custom llm wrapper with automatic template application - see [`llm-common.sh`](integration/llm-common.sh)
 - Automatic session recording with asciinema - see [`llm-common.sh`](integration/llm-common.sh)
 - macOS-style clipboard aliases (`pbcopy`/`pbpaste` via `xsel` on Linux)
@@ -388,7 +389,7 @@ Type a partial command or describe what you want in natural language, then press
 # Result: find /root -name "*.sh" -xdev
 ```
 
-The AI will suggest a command and execute it after your approval. 
+The AI will suggest a command and execute it after your approval.
 
 You can also use `llm cmd` to suggest a command and leave you to modify and execute it.
 
@@ -396,6 +397,19 @@ You can also use `llm cmd` to suggest a command and leave you to modify and exec
 # Generate a shell command
 llm cmd "Find all .sh files below /root"
 ```
+
+**Tab Completion (Zsh only)**:
+
+In addition to AI-powered Ctrl+N, Zsh users also get traditional tab completion for `llm` commands:
+
+```bash
+llm <TAB>          # Shows: chat, code, rag, models, templates, etc.
+llm chat -<TAB>    # Shows all available options
+llm -m <TAB>       # Lists available models dynamically
+llm -t <TAB>       # Lists available templates
+```
+
+This uses a forked version of [llm-zsh-plugin](https://github.com/eliyastein/llm-zsh-plugin) maintained in this repository with custom extensions for `llm code` and `llm rag` subcommands.
 
 ### Attachments & Multi-modal
 
@@ -1582,6 +1596,8 @@ cd llm-linux-setup
 
 ### Command completion not working
 
+**For Ctrl+N (AI completion)**:
+
 1. Restart your shell or source your profile:
 
    ```bash
@@ -1598,6 +1614,29 @@ cd llm-linux-setup
 
    ```bash
    llm cmdcomp "list files"
+   ```
+
+**For Tab completion (Zsh only)**:
+
+1. Verify you're using Zsh: `echo $SHELL` (should show `/bin/zsh` or similar)
+
+2. Clear completion cache and restart shell:
+
+   ```bash
+   rm -f ~/.zcompdump*
+   exec zsh
+   ```
+
+3. Verify the plugin is in fpath:
+
+   ```bash
+   echo $fpath | grep llm-zsh-plugin
+   ```
+
+4. Test tab completion:
+
+   ```bash
+   llm <TAB>  # Should show: chat, code, rag, models, etc.
    ```
 
 ### Azure API errors

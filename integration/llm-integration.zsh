@@ -2,10 +2,20 @@
 #
 # LLM Command Completion for Zsh
 # Provides AI-powered command completion using Ctrl+N
+# and tab completion for llm commands
 #
 
 # Source common configuration
 source "${0:A:h}/llm-common.sh"
+
+# Set up llm tab completion
+
+# Add the completion directory to fpath
+fpath=("${0:A:h}/llm-zsh-plugin/completions" $fpath)
+
+# Initialize completion system if not already done
+autoload -Uz compinit
+compinit -i
 
 # Define the command completion widget
 __llm_cmdcomp() {
