@@ -348,6 +348,50 @@ install_or_upgrade_cargo_tool() {
     fi
 }
 
+# Install or upgrade a Rust/Cargo tool from git with commit-hash checking
+# Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
+# Usage: install_or_upgrade_cargo_git_tool tool_name git_url
+# Examples:
+#   install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
+#   install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
+install_or_upgrade_cargo_git_tool() {
+    local tool_name="$1"
+    local git_url="$2"
+
+    if ! command -v "$tool_name" &> /dev/null; then
+        log "Installing $tool_name from git..."
+        cargo install --locked --git "$git_url"
+
+        # Store the commit hash for future update checks
+        local version_file="$HOME/.config/llm-tools/${tool_name}-commit"
+        mkdir -p "$(dirname "$version_file")"
+        local latest_commit=$(git ls-remote "${git_url}.git" HEAD 2>/dev/null | awk '{print $1}')
+        if [ -n "$latest_commit" ]; then
+            echo "$latest_commit" > "$version_file"
+        fi
+    else
+        log "$tool_name is already installed, checking for updates..."
+
+        # Get latest commit from GitHub
+        local latest_commit=$(git ls-remote "${git_url}.git" HEAD 2>/dev/null | awk '{print $1}')
+
+        # Check stored commit hash
+        local version_file="$HOME/.config/llm-tools/${tool_name}-commit"
+        local installed_commit=$(cat "$version_file" 2>/dev/null || echo "")
+
+        if [ -z "$latest_commit" ]; then
+            warn "Could not check for $tool_name updates (network issue?). Skipping rebuild."
+        elif [ "$latest_commit" != "$installed_commit" ]; then
+            log "New version available, rebuilding $tool_name..."
+            cargo install --locked --force --git "$git_url"
+            mkdir -p "$(dirname "$version_file")"
+            echo "$latest_commit" > "$version_file"
+        else
+            log "$tool_name is up to date (commit: ${latest_commit:0:7}), skipping rebuild"
+        fi
+    fi
+}
+
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -497,39 +541,8 @@ else
     fi
 fi
 
-# Install asciinema
-if ! command -v asciinema &> /dev/null; then
-    log "Installing asciinema..."
-    cargo install --locked --git https://github.com/asciinema/asciinema
-
-    # Store the commit hash for future update checks
-    ASCIINEMA_VERSION_FILE="$HOME/.config/llm-tools/asciinema-commit"
-    mkdir -p "$(dirname "$ASCIINEMA_VERSION_FILE")"
-    LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
-    if [ -n "$LATEST_COMMIT" ]; then
-        echo "$LATEST_COMMIT" > "$ASCIINEMA_VERSION_FILE"
-    fi
-else
-    log "asciinema is already installed, checking for updates..."
-
-    # Get latest commit from GitHub
-    LATEST_COMMIT=$(git ls-remote https://github.com/asciinema/asciinema.git HEAD 2>/dev/null | awk '{print $1}')
-
-    # Check stored commit hash
-    ASCIINEMA_VERSION_FILE="$HOME/.config/llm-tools/asciinema-commit"
-    INSTALLED_COMMIT=$(cat "$ASCIINEMA_VERSION_FILE" 2>/dev/null || echo "")
-
-    if [ -z "$LATEST_COMMIT" ]; then
-        warn "Could not check for asciinema updates (network issue?). Skipping rebuild."
-    elif [ "$LATEST_COMMIT" != "$INSTALLED_COMMIT" ]; then
-        log "New version available, rebuilding asciinema..."
-        cargo install --locked --force --git https://github.com/asciinema/asciinema
-        mkdir -p "$(dirname "$ASCIINEMA_VERSION_FILE")"
-        echo "$LATEST_COMMIT" > "$ASCIINEMA_VERSION_FILE"
-    else
-        log "asciinema is up to date (commit: ${LATEST_COMMIT:0:7}), skipping rebuild"
-    fi
-fi
+# Install/update asciinema (with commit-hash checking to avoid unnecessary rebuilds)
+install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
 
 # Check what Node.js version is available in repositories
 log "Checking Node.js version in repositories..."
@@ -1046,6 +1059,9 @@ install_or_upgrade_cargo_tool aichat
 # Install/update argc (prerequisite for llm-functions if users want to install it)
 install_or_upgrade_cargo_tool argc
 
+# Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
+install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
+
 #############################################################################
 # PHASE 7: Claude Code & OpenCode
 #############################################################################
@@ -1131,6 +1147,7 @@ log "  - Claude Code (Anthropic's agentic coding CLI)"
 # log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
 log "  - OpenCode (AI coding agent for terminal)"
 log "  - gitingest (Git repository to LLM-friendly text)"
+log "  - yek (fast repository to LLM-friendly text converter)"
 log "  - files-to-prompt (file content formatter)"
 log "  - argc (Bash CLI framework, enables optional llm-functions)"
 log "  - asciinema (terminal session recorder)"

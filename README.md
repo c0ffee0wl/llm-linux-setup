@@ -296,6 +296,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 ### Additional Tools
 
 - **[gitingest](https://github.com/coderamp-labs/gitingest)** - Convert Git repositories to LLM-friendly text
+- **[yek](https://github.com/bodo-run/yek)** - Fast repository to LLM-friendly text converter (230x faster than alternatives, written in Rust)
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
@@ -1013,24 +1014,40 @@ The `git:` prefix explicitly triggers the gitingest document loader, which:
 
 ### Integration with Other Tools
 
-**Repository Analysis with gitingest**
+**Repository Analysis with gitingest and yek**
 
-Convert Git repositories to LLM-friendly text:
+Convert Git repositories to LLM-friendly text. Both tools serve the same purpose but with different performance characteristics:
+
+- **gitingest**: Python-based, feature-rich, good compatibility
+- **yek**: Rust-based, extremely fast (230x faster), parallel processing
 
 ```bash
-# Analyze a remote repository
+# Using gitingest (Python-based)
 gitingest https://github.com/user/repo
-
-# Analyze a local repository
 gitingest /path/to/local/repo
 
+# Using yek (Rust-based, much faster)
+yek https://github.com/user/repo
+yek /path/to/local/repo
+
+# Both tools output to stdout by default
+yek https://github.com/user/repo > repo-context.txt
+
 # Combine with LLM for analysis
-cat digest.txt | \
+yek https://github.com/user/repo | \
     llm "What is the main purpose of this codebase?"
 
-# Show more parameters, e.g. for exclusion and inclusion
+# Direct analysis without saving
+yek /path/to/local/repo | llm "Review architecture and suggest improvements"
+
+# Show more parameters
 gitingest --help
+yek --help
 ```
+
+**Performance comparison**: For large repositories with many files, yek is significantly faster due to Rust's performance and parallel processing. Choose based on your needs:
+- Use **yek** for large repos or when speed matters
+- Use **gitingest** for maximum compatibility or specific features
 
 **File Bundling with files-to-prompt**
 
