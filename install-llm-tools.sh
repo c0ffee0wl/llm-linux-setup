@@ -875,10 +875,6 @@ clients:
         default_chunk_size: 1000
         max_batch_size: 50
 
-# Document loaders for RAG
-document_loaders:
-  git: 'gitingest \$1 -o -'
-
 # RAG Configuration
 rag_embedding_model: azure-openai:text-embedding-3-small
 rag_reranker_model: null
@@ -926,10 +922,6 @@ model: gemini:gemini-2.5-flash
 clients:
   - type: gemini
     api_key: ${gemini_api_key}
-
-# Document loaders for RAG
-document_loaders:
-  git: 'gitingest \$1 -o -'
 
 # RAG Configuration
 rag_embedding_model: gemini:text-embedding-004
