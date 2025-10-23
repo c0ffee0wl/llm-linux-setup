@@ -640,7 +640,17 @@ npm_install() {
 # PHASE 2: Install/Update LLM Core
 #############################################################################
 
-install_or_upgrade_uv_tool llm
+# Install/upgrade llm
+# Note: We use `llm install -U llm` instead of `uv tool upgrade llm` to preserve plugins.
+# `uv tool upgrade` destroys the virtual environment, causing all plugins to be lost.
+# See: https://news.ycombinator.com/item?id=44110584
+if command -v llm &>/dev/null; then
+    log "Upgrading llm (preserves plugins)..."
+    command llm install -U llm
+else
+    log "Installing llm..."
+    uv tool install llm
+fi
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH

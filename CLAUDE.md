@@ -532,7 +532,7 @@ The Ctrl+N keybinding is implemented differently in Bash vs Zsh:
 ### Updating Tool Versions
 
 The script automatically upgrades tools on re-run:
-- `llm`: `uv tool upgrade llm`
+- `llm`: **`llm install -U llm`** (uses in-place upgrade to preserve plugins; `uv tool upgrade` would destroy the virtual environment and lose all plugins)
 - Plugins: `llm install <plugin> --upgrade`
 - `gitingest`: `uv tool upgrade gitingest`
 - `files-to-prompt`: `uv tool upgrade files-to-prompt`
@@ -541,6 +541,8 @@ The script automatically upgrades tools on re-run:
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
 - OpenCode: `npm install -g opencode-ai@latest`
+
+**Important Note on llm Upgrades**: The script uses `llm install -U llm` instead of `uv tool upgrade llm` because `uv tool upgrade` destroys the virtual environment, causing all installed plugins to be lost. Using `llm install -U llm` upgrades llm in-place using pip, which preserves the environment and all plugins. See: https://news.ycombinator.com/item?id=44110584
 
 ### Testing Shell Integration
 
