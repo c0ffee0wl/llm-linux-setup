@@ -285,6 +285,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 - **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
 - **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
 - **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
+- **[llm-vertex](https://github.com/c0ffee0wl/llm-vertex)** - Google Vertex AI Gemini models integration
 - **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
 - **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
 

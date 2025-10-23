@@ -26,7 +26,7 @@ llm() {
         "models" "keys" "plugins" "templates" "tools" "schemas" "fragments"
         "collections" "embed" "embed-models" "embed-multi" "similar"
         "aliases" "logs" "install" "uninstall"
-        "openai" "gemini" "openrouter"
+        "openai" "gemini" "openrouter" "vertex"
         "cmd" "cmdcomp" "jq" "rag"
     )
 

@@ -974,6 +974,7 @@ log "Installing/updating llm plugins..."
 
 PLUGINS=(
     "llm-gemini"
+    "git+https://github.com/c0ffee0wl/llm-vertex"
     "llm-openrouter"
     "llm-anthropic"
     "git+https://github.com/c0ffee0wl/llm-cmd"
