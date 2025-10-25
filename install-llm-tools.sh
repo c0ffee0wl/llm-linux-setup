@@ -994,6 +994,7 @@ PLUGINS=(
     "llm-fragments-site-text"
     "llm-fragments-pdf"
     "llm-fragments-github"
+    "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
     "llm-jq"
     "git+https://github.com/c0ffee0wl/llm-templates-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"

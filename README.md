@@ -205,6 +205,7 @@ llm code -c "and smaller than 500MB; add comments" | tee script.sh
 # Use fragments for context
 llm -f github:user/repo "analyze this"
 llm -f pdf:document.pdf "summarize"
+llm -f yt:https://youtube.com/watch?v=VIDEO_ID "summarize video"
 llm -f https://example.com "extract key points"
 
 # Use -t when you want a DIFFERENT template that the default assistant template
@@ -282,6 +283,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 - **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
 - **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
+- **[llm-fragments-youtube-transcript](https://github.com/c0ffee0wl/llm-fragments-youtube-transcript)** - YouTube video transcript extraction with metadata
 - **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
 - **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
 - **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
@@ -577,6 +579,35 @@ wget https://www.corporate-trust.de/wp-content/uploads/2023/12/poster_ransomware
 # Alternative to using -a for PDFs (converts to markdown first)
 llm -f pdf:poster.pdf "Was ist das wichtigste auf diesem Poster?"
 ```
+
+**YouTube Video Fragments**
+
+Extract transcripts and metadata from YouTube videos using the `yt:` fragment type:
+
+```bash
+# Summarize a YouTube video
+llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID "Summarize this video"
+
+# Extract key points from a video
+llm -f yt:https://youtu.be/VIDEO_ID "What are the main topics discussed?"
+
+# Analyze video content
+llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID "Create a detailed outline of the topics covered"
+
+# Compare multiple videos
+llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID_1 \
+    -f yt:https://www.youtube.com/watch?v=VIDEO_ID_2 \
+    "Compare these two videos and highlight the differences"
+```
+
+**What's included in YouTube fragments:**
+- Video title
+- Channel/uploader information
+- Publication date
+- Video description
+- Full transcript text (converted to plaintext)
+
+**Note**: The plugin uses yt-dlp for metadata extraction and youtube-transcript-api for transcript retrieval. Auto-generated captions are used if manual transcripts aren't available.
 
 ### Templates
 

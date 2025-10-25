@@ -609,6 +609,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)
 - **llm-tools-sandboxed-shell**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell` (sandboxed shell command execution)
 - **llm-vertex**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-vertex` (Google Vertex AI Gemini models integration)
+- **llm-fragments-youtube-transcript**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript` (YouTube video transcript extraction with metadata)
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **llm-zsh-plugin**: Forked in-repository from eliyastein/llm-zsh-plugin with custom modifications for `code` and `rag` subcommands
