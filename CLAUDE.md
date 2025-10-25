@@ -121,7 +121,7 @@ The script is organized into numbered phases:
 0. **Self-Update**: Git fetch/pull/exec pattern
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
 2. **LLM Core**: Install/upgrade llm, configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat
-3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell)
+3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
@@ -608,6 +608,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
 - **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)
 - **llm-tools-sandboxed-shell**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell` (sandboxed shell command execution)
+- **llm-tools-patch**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-patch` (file manipulation tools: read, write, edit, multi_edit, info)
 - **llm-vertex**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-vertex` (Google Vertex AI Gemini models integration)
 - **llm-fragments-youtube-transcript**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript` (YouTube video transcript extraction with metadata)
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`

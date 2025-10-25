@@ -991,6 +991,7 @@ PLUGINS=(
     "llm-tools-quickjs"
     "llm-tools-sqlite"
     "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
+    "git+https://github.com/c0ffee0wl/llm-tools-patch"
     "llm-fragments-site-text"
     "llm-fragments-pdf"
     "llm-fragments-github"

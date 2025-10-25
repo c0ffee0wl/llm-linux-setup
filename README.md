@@ -229,6 +229,11 @@ llm chat   # Then ask: "Can you list the files in /root?"
 llm "Check kernel version" --td         # Show tool execution details
 llm "Check kernel version" --ta         # Require manual approval before execution
 command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant templates)
+
+# File manipulation (use -T Patch with --ta for safety)
+llm -T Patch "Read config.yaml" --ta                           # Read files
+llm -T Patch "Create hello.py with a hello world program" --ta # Create files
+llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 ```
 
 ## Documentation
@@ -279,6 +284,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 - **[llm-tools-sqlite](https://github.com/simonw/llm-tools-sqlite)** - SQLite database tool
 - **[llm-jq](https://github.com/simonw/llm-jq)** - JSON processing tool
 - **[llm-tools-sandboxed-shell](https://github.com/c0ffee0wl/llm-tools-sandboxed-shell)** - Sandboxed shell command execution
+- **[llm-tools-patch](https://github.com/c0ffee0wl/llm-tools-patch)** - File manipulation tools (read, write, edit, multi_edit, info)
 - **[llm-tools-context](llm-tools-context/)** - Terminal history integration (exposes `context` tool to AI)
 - **[llm-fragments-site-text](https://github.com/daturkel/llm-fragments-site-text)** - Web page content extraction
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
@@ -784,6 +790,83 @@ The `--ta` flag requires manual approval before each tool execution.
 - **No network access**: Sandboxed commands cannot access the network by default
 
 **Note**: Requires bubblewrap (already installed by setup script).
+
+**File Manipulation with llm-tools-patch**
+
+The llm-tools-patch plugin provides AI agents with direct file system access for reading, writing, and editing files. This enables AI to autonomously manage files during conversations.
+
+**⚠️ IMPORTANT SECURITY CONSIDERATIONS:**
+
+- This plugin grants **direct file system access** to AI agents
+- Always use `--ta` flag to manually approve each file operation
+- Review operations carefully before approving
+- Works within the current working directory by default
+- Use `--chain-limit 0` to allow unlimited consecutive tool invocations when needed
+
+**Available Operations:**
+
+1. **patch_read** - Read complete file contents
+2. **patch_write** - Create or overwrite files
+3. **patch_edit** - Perform single string replacement
+4. **patch_multi_edit** - Execute multiple replacements sequentially
+5. **patch_info** - Access file metadata (size, permissions, modification time)
+
+**Usage Examples:**
+
+```bash
+# Read a file (with manual approval)
+llm -T Patch "Read the contents of config.yaml" --ta
+
+# Create a new file
+llm -T Patch "Create a file hello.py with a hello world program" --ta
+
+# Edit existing file (single replacement)
+llm -T Patch "In config.yaml, replace 'debug: false' with 'debug: true'" --ta
+
+# Multiple edits in one operation
+llm -T Patch "In script.sh, replace all instances of 'echo' with 'printf' and add error handling" --ta --chain-limit 0
+
+# Get file information
+llm -T Patch "Show me the file info for README.md" --ta
+
+# Interactive mode with file access
+llm chat -T Patch --ta
+# > Read the package.json file
+# > Update the version to 2.0.0
+# > Create a new test file with basic scaffolding
+```
+
+**Best Practices:**
+
+- **Always use `--ta`** (tool approval) for file operations to review changes before they're applied
+- **Backup important files** before running multi-step edit operations
+- **Use specific file paths** to avoid ambiguity
+- **Test with `--td`** flag first to see what operations will be performed without executing
+- **Be explicit** in your prompts about what changes you want
+
+**Safety Example - Dry Run:**
+
+```bash
+# See what the AI plans to do without executing
+llm -T Patch "Refactor index.js to use ES6 imports" --td --ta
+
+# The --td flag shows tool execution details
+# The --ta flag requires your approval before any changes
+```
+
+**Integration with Other Workflows:**
+
+```bash
+# Combine with context tool - fix errors automatically
+llm -T Patch "Read the context. The last command failed. Fix the error in the script." --ta
+
+# Chain with code generation
+llm code "python script for file backup" | tee backup.py
+llm -T Patch "Add error handling to backup.py" --ta
+
+# Use with sandboxed_shell for complete automation
+llm -T Patch "Check if config.yaml exists, if not create it with default values" --ta
+```
 
 **SQLite Database Queries**
 
