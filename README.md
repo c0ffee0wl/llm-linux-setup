@@ -36,6 +36,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Managing Models](#managing-models)
+  - [Model-Specific Parameters](#model-specific-parameters)
   - [Managing API Keys](#managing-api-keys)
 - [Understanding the Shell Integration](#understanding-the-shell-integration)
   - [How Automatic Templates Work](#how-automatic-templates-work)
@@ -403,6 +404,26 @@ llm chat
 llm chat -c
 ```
 
+**Help Documentation Queries**
+
+A powerful workflow is piping command help output to llm for natural language questions, then continuing the conversation:
+
+```bash
+# Ask questions about command options
+bat --help | llm "What is the difference between '| bat -p -l md' and '| bat --language=markdown --force-colorization'?"
+
+# Continue asking follow-up questions in a chat
+docker --help | llm chat
+# > What's the difference between 'docker run' and 'docker exec'?
+# > When should I use '--detach' vs '--interactive'?
+
+# Get explanations for complex commands
+git --help | llm "Explain git rebase in simple terms"
+llm -c "Now explain the difference between rebase and merge"
+```
+
+The `-c` (continue) flag lets you maintain context and ask follow-up questions without re-sending the help text.
+
 ### Command Completion
 
 Type a partial command or describe what you want in natural language, then press **Ctrl+N**:
@@ -463,27 +484,35 @@ cat poster.pdf | llm 'describe image' -a -
 
 **⚠️ Azure OpenAI Limitation**
 
-Azure OpenAI models configured in this setup **do not support the `-a`/`--attachment` parameter** for images, PDFs, or other files. Even with `vision: true` in the configuration, you will receive this error:
+Azure OpenAI models configured in this setup **support image attachments but NOT PDF attachments**. When trying to use PDFs with the `-a`/`--attachment` parameter, you will receive this error:
 
 ```
 Error: Error code: 400 - {'error': {'message': "Invalid Value: 'file'.
 This model does not support file content types.", 'type': 'invalid_request_error'}}
 ```
 
-**Workarounds**:
+**Image attachments work:**
 
-1. **For text extraction only**: Use fragments to extract text content (not visual analysis):
+```bash
+# ✅ Images work with Azure OpenAI vision models
+llm -m azure/gpt-4.1 "describe this image" -a image.jpg
+llm -m azure/gpt-4.1 "extract text from this screenshot" -a screenshot.png
+```
+
+**Workarounds for PDF attachments**:
+
+1. **For text extraction from PDFs**: Use the `pdf:` fragment to extract text content (not visual analysis):
 
    ```bash
    # Extract text from PDF (not visual analysis!)
    llm -f pdf:poster.pdf "summarize the text"
    ```
 
-2. **Use non-Azure models for vision tasks**: Switch to OpenAI, Gemini, or Anthropic models that support attachments:
+2. **For PDF visual analysis**: Switch to OpenAI, Gemini, or Anthropic models that support PDF attachments:
 
    ```bash
-   # Use with attachments
-   llm -m gpt-4o "describe this image" -a image.jpg
+   # Use non-Azure models for PDF attachments
+   llm -m gpt-4o "analyze this PDF" -a document.pdf
    llm -m gemini-2.5-flash "describe" -a poster.pdf
    llm -m claude-4-5-sonnet "analyze" -a document.pdf
    ```
@@ -719,6 +748,54 @@ nmap -sV scanme.nmap.org | llm -t fabric:create_network_threat_landscape
 
 For a complete list of available patterns, see the [Fabric Pattern Explanations](https://github.com/danielmiessler/Fabric/blob/main/data/patterns/pattern_explanations.md).
 
+**Creating Custom Templates**
+
+You can create your own templates to customize AI behavior for specific tasks. Templates are YAML files stored in `~/.config/io.datasette.llm/templates/`.
+
+**Quick Start:**
+
+```bash
+# Create a simple template for a user prompt
+llm 'Summarize the following: ' --save summarize
+
+# Create a system prompt
+llm --system 'Summarize this' --save summarize
+
+# Create a new template file
+cat > ~/.config/io.datasette.llm/templates/mytemplate.yaml <<'EOF'
+system: |
+  You are a helpful assistant specialized in database design.
+  Always provide SQL examples when relevant.
+  Use PostgreSQL syntax by default.
+EOF
+
+# Use your template
+llm -t mytemplate "How do I create an index on multiple columns?"
+```
+
+**Template Components:**
+
+Templates support these fields:
+- **`system`**: System prompt that defines the AI's role and behavior
+- **`model`**: Default model to use (e.g., `azure/gpt-4.1`, `gemini-2.5-flash`)
+- **`tools`**: List of tools to make available (e.g., `context`, `sandboxed_shell`)
+- **`options`**: Model parameters (temperature, max_tokens, etc.)
+
+**Using Templates:**
+
+```bash
+# Use custom template
+llm -t mytemplate "Your user prompt here"
+
+# List all available templates
+llm templates
+
+# Show template details
+llm templates show mytemplate
+```
+
+For complete template documentation, see the [LLM Templates Guide](https://llm.datasette.io/en/stable/templates.html).
+
 ### Code Generation
 
 Generate clean, executable code without markdown formatting using the `llm code` command (a convenient shorthand for `llm -t code`).
@@ -777,6 +854,73 @@ python <(llm code "Python function to calculate fibonacci, then print first 10 n
 llm code "Python script to delete old files" | tee cleanup.py
 # Review cleanup.py, then: python cleanup.py
 ```
+
+**Advanced Code Generation**
+
+Use fragments to provide context for code generation, enabling sophisticated plugin development and code transformations:
+
+**Plugin Development with Repository Context**
+
+Generate complete plugins by providing reference implementations as context:
+
+```bash
+# Develop a new llm plugin using an existing plugin as reference
+llm code -m openai/o4-mini \
+  -f github:simonw/llm-hacker-news \
+      'write a new plugin called llm_video_frames.py which takes video:path-to-video.mp4
+      and creates a temporary directory which it then populates with one frame per second
+      of that video using ffmpeg - then it returns a list of
+      [llm.Attachment(path="path-to-frame1.jpg"), ...]
+      - it should also support passing video:video.mp4?fps=2 to increase to two frames per second,
+      and if you pass ?timestamps=1 or &timestamps=1 then it should add a text timestamp to the
+      bottom right corner of each image with the mm:ss timestamp of that frame (or hh:mm:ss if
+      more than one hour in) and the filename of the video without the path as well.' \
+  -o reasoning_effort high
+
+# Generate a fragments plugin using reference code
+llm -m claude-4-5-sonnet \
+  -f https://raw.githubusercontent.com/simonw/llm-hacker-news/refs/heads/main/llm_hacker_news.py \
+  -f https://raw.githubusercontent.com/simonw/tools/refs/heads/main/github-issue-to-markdown.html \
+  -s 'Write a new fragments plugin in Python that registers issue:org/repo/123 which fetches
+      that issue number from the specified github repo and uses the same markdown logic as the
+      HTML page to turn that into a fragment'
+```
+
+**Code Transformation and Modernization**
+
+Use fragments to provide existing code as context for transformations:
+
+```bash
+# Convert setup.py to modern pyproject.toml
+llm code -f setup.py "convert to pyproject.toml" -m claude-4.5-sonnet | tee pyproject.toml
+```
+
+**Using Multiple Fragments for Complex Tasks**
+
+Combine documentation, code, and requirements:
+
+```bash
+# Generate code with full project context
+llm code \
+  -f github:user/project \
+  -f requirements.txt \
+  -f docs/API.md \
+  "Create a Python client library for this API with async support"
+
+# Refactor code using style guide
+llm code \
+  -f existing_module.py \
+  -f CONTRIBUTING.md \
+  "Refactor this module to match our style guide, add type hints and docstrings"
+```
+
+**Workflow Tips**
+
+- **Use reasoning models** (`-m openai/o4-mini -o reasoning_effort high`) for complex plugin development
+- **Provide reference code** via fragments to establish patterns and coding style
+- **Leverage GitHub fragments** (`-f github:org/repo`) to quickly pull in reference implementations
+- **Use `-s` (system prompt)** to override the code template when you need additional context or explanations
+- **Combine with `-c`** to iterate: generate initial code, review, then refine with follow-up prompts
 
 ### Tools
 
@@ -1436,6 +1580,82 @@ llm -m azure/gpt-4.1 "Complex analysis task..."
 
 **Note**: Model IDs shown above are examples from a specific Azure deployment. Your available models depend on your Azure Foundry configuration. Use `llm models` to see your configured models.
 
+### Model-Specific Parameters
+
+Different model providers support unique parameters beyond the standard temperature and max_tokens settings. Use the `-o` (options) flag to pass provider-specific parameters.
+
+**Gemini and Vertex AI Models**
+
+Google's Gemini models (via `llm-gemini` and `llm-vertex` plugins) support advanced features like code execution:
+
+```bash
+# Enable code execution for computational tasks
+command llm -m gemini-2.5-flash -o code_execution 1 \
+  "write and execute python to calculate fibonacci sequence up to n=20"
+
+# Use Vertex AI with code execution
+command llm -m vertex/gemini-2.5-flash -o code_execution 1 \
+  "write and execute python to generate a 80x40 ascii art fractal"
+
+# Combine with other options
+command llm -m gemini-2.5-flash \
+  -o code_execution 1 \
+  -o temperature 0.7 \
+  "solve this math problem step by step with code"
+```
+
+**Code Execution Feature**: When enabled, Gemini models can write Python code, execute it in a secure sandbox, see the results, and incorporate the output into their response. This is particularly powerful for:
+- Mathematical calculations
+- Data analysis and visualization
+- Algorithm implementation and testing
+- Generating dynamic content (ASCII art, graphs, etc.)
+
+**Reasoning Models (o-series)**
+
+OpenAI's reasoning models support effort control:
+
+```bash
+# High reasoning effort for complex problems
+command llm -m openai/o4-mini \
+  -o reasoning_effort high \
+  "design a distributed caching system with these requirements..."
+
+# Medium effort for balanced performance
+command llm -m azure/o4-mini \
+  -o reasoning_effort medium \
+  "analyze this algorithm's time complexity"
+
+# Low effort for simpler reasoning tasks
+command llm -m openai/o4-mini \
+  -o reasoning_effort low \
+  "explain this code pattern"
+```
+
+**Common Model Options**
+
+Standard options supported across most models:
+
+```bash
+# Control randomness (0.0 = deterministic, 2.0 = very creative)
+llm -m gemini-2.5-flash -o temperature 0.9 "creative story prompt"
+
+# Limit output length
+llm -m azure/gpt-4.1 -o max_tokens 500 "brief summary needed"
+
+# Combine multiple options
+llm -m claude-3-5-sonnet \
+  -o temperature 0.3 \
+  -o max_tokens 2000 \
+  "technical documentation request"
+```
+
+**Temperature Range Note**: Gemini models support temperature values from 0 to 2.0, while most other models use 0 to 1.0. Check your model's documentation for valid ranges.
+
+For complete parameter documentation:
+- [Gemini Models](https://github.com/simonw/llm-gemini#code-execution)
+- [Vertex AI](https://github.com/c0ffee0wl/llm-vertex)
+- [OpenAI Models](https://platform.openai.com/docs/api-reference/chat/create)
+
 ### Managing API Keys
 
 **Configure Azure OpenAI Key:**
@@ -1642,8 +1862,8 @@ If you choose **Azure OpenAI** (default choice for enterprise/workplace use), th
 
 ### Azure-Specific Limitations
 
-**⚠️ Attachments Not Supported:**
-Azure OpenAI models in this setup **do not support** the `-a`/`--attachment` parameter for images, PDFs, or other files, even with `vision: true` configured.
+**⚠️ PDF Attachments Not Supported:**
+Azure OpenAI models in this setup **support image attachments but NOT PDF attachments**. When trying to use PDFs with the `-a`/`--attachment` parameter, you will receive this error:
 
 **Error you'll see:**
 
@@ -1652,19 +1872,20 @@ Error code: 400 - {'error': {'message': "Invalid Value: 'file'.
 This model does not support file content types.", 'type': 'invalid_request_error'}}
 ```
 
-**Workarounds:**
+**Workarounds for PDF attachments:**
 
-1. **For text extraction:** Use fragments instead
+1. **For text extraction from PDFs:** Use the `pdf:` fragment
 
    ```bash
    llm -f pdf:document.pdf "summarize the text"
    ```
 
-2. **For visual analysis:** Use non-Azure models
+2. **For PDF visual analysis:** Use non-Azure models
 
    ```bash
-   llm -m gemini-2.5-flash "describe this image" -a image.jpg
-   llm -m claude-3-5-sonnet "analyze" -a document.pdf
+   llm -m gpt-4o "analyze this PDF" -a document.pdf
+   llm -m gemini-2.5-flash "describe" -a poster.pdf
+   llm -m claude-4-5-sonnet "analyze" -a document.pdf
    ```
 
 ### Why Azure OpenAI?
