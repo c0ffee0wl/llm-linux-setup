@@ -9,7 +9,7 @@
   <p><em>Supercharge your shell with LLM command completion 🚀</em></p>
 </div>
 
-A Zsh plugin providing command completion for the [LLM CLI tool](https://llm.datasette.io/) by [Simon Willison](https://simonwillison.net/). Supports all LLM commands, model names, and options with intelligent context-aware completion.
+A Zsh plugin providing command completion for the [LLM CLI tool](https://github.com/c0ffee0wl/llm) (fork with markdown rendering, originally by [Simon Willison](https://simonwillison.net/) - [Documentation](https://llm.datasette.io/)). Supports all LLM commands, model names, and options with intelligent context-aware completion.
 
 ## 🚀 Features
 

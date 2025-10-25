@@ -252,7 +252,7 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 
 ### Core Tools
 
-- **[llm](https://llm.datasette.io/)** - Simon Willison's LLM CLI tool
+- **[llm](https://github.com/c0ffee0wl/llm)** - LLM CLI tool (fork with markdown markup enhancements, originally by Simon Willison - [Documentation](https://llm.datasette.io/))
 - **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
@@ -361,6 +361,26 @@ llm "Was ist das meistverbreite Betriebssystem für Pentester?" | pbcopy
 ```
 
 **Note**: The shell integration provides macOS-style clipboard commands (`pbcopy`/`pbpaste`) on Linux via aliases to `xsel`.
+
+**Markdown Rendering (Fork Feature)**
+
+This llm fork includes markdown rendering capabilities using the `rich` library:
+
+```bash
+# Render output as beautifully formatted markdown
+llm "Explain Docker in markdown format" --markdown
+
+# Use the shorthand flag
+llm "Create a bullet list of top 5 Linux commands" --md
+
+# Works with piping too
+cat article.txt | llm "Summarize in markdown" --md
+```
+
+The `--markdown`/`--md` flags provide:
+- Syntax-highlighted code blocks
+- Formatted tables, lists, and headers
+- Better readability in the terminal
 
 **Interactive Chat Mode**
 
@@ -1791,7 +1811,8 @@ For issues, questions, or suggestions:
 
 ### Core Tools & Frameworks
 
-- [Simon Willison](https://github.com/simonw) - llm CLI tool and plugins (llm-gemini, llm-anthropic, llm-openrouter, llm-jq, llm-tools-sqlite, llm-tools-quickjs, llm-fragments-github, llm-cmd)
+- [Simon Willison](https://github.com/simonw) - Original llm CLI tool and plugins (llm-gemini, llm-anthropic, llm-openrouter, llm-jq, llm-tools-sqlite, llm-tools-quickjs, llm-fragments-github, llm-cmd)
+- [c0ffee0wl](https://github.com/c0ffee0wl) - llm fork with markdown markup enhancements
 - [sigoden](https://github.com/sigoden) - AIChat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
 - [Anthropic](https://www.anthropic.com/) - Claude Code agentic coding CLI
 - [SST](https://sst.dev/) - OpenCode agentic coding CLI

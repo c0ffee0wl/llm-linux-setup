@@ -106,7 +106,9 @@ _llm() {
                         '--async[Run asynchronously]' \
                         '-u[Show token usage]' \
                         '-x[Extract first code block]' \
-                        '--xl[Extract last code block]'
+                        '--xl[Extract last code block]' \
+                        '--markdown[Render output as markdown]' \
+                        '--md[Render output as markdown (shorthand)]'
                     ;;
                 chat)
                     _llm_handle_options \
@@ -118,7 +120,9 @@ _llm() {
                         '-p+[Template Params]:params:_default' \
                         '-o+[Options]:options:_default' \
                         '--no-stream[Disable streaming]' \
-                        '--key+[API Key]:key:_default'
+                        '--key+[API Key]:key:_default' \
+                        '--markdown[Render output as markdown]' \
+                        '--md[Render output as markdown (shorthand)]'
                     ;;
                 code)
                     _llm_handle_options \

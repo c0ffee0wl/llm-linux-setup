@@ -532,7 +532,7 @@ The Ctrl+N keybinding is implemented differently in Bash vs Zsh:
 ### Updating Tool Versions
 
 The script automatically upgrades tools on re-run:
-- `llm`: **`llm install -U llm`** (uses in-place upgrade to preserve plugins; `uv tool upgrade` would destroy the virtual environment and lose all plugins)
+- `llm`: **`uv tool upgrade llm`** (upgrades from fork; git-based installations are reinstalled from source)
 - Plugins: `llm install <plugin> --upgrade`
 - `gitingest`: `uv tool upgrade gitingest`
 - `files-to-prompt`: `uv tool upgrade files-to-prompt`
@@ -542,7 +542,7 @@ The script automatically upgrades tools on re-run:
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
 - OpenCode: `npm install -g opencode-ai@latest`
 
-**Important Note on llm Upgrades**: The script uses `llm install -U llm` instead of `uv tool upgrade llm` because `uv tool upgrade` destroys the virtual environment, causing all installed plugins to be lost. Using `llm install -U llm` upgrades llm in-place using pip, which preserves the environment and all plugins. See: https://news.ycombinator.com/item?id=44110584
+**Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `uv tool upgrade llm` which reinstalls from the fork's main branch. This ensures the custom markdown markup enhancements are preserved during updates.
 
 ### Testing Shell Integration
 
@@ -603,6 +603,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ## Special Packages & Forks
 
 Note that several packages use **forks** or specific sources:
+- **llm**: Installed from git repository fork: `git+https://github.com/c0ffee0wl/llm` (forked from simonw/llm with markdown markup enhancements)
 - **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
 - **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)

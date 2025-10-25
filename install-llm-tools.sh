@@ -640,16 +640,15 @@ npm_install() {
 # PHASE 2: Install/Update LLM Core
 #############################################################################
 
-# Install/upgrade llm
-# Note: We use `llm install -U llm` instead of `uv tool upgrade llm` to preserve plugins.
-# `uv tool upgrade` destroys the virtual environment, causing all plugins to be lost.
-# See: https://news.ycombinator.com/item?id=44110584
+# Install/upgrade llm from fork
+# Using c0ffee0wl/llm fork which includes markdown markup enhancements
+# Installed via uv tool from git repository
 if command -v llm &>/dev/null; then
-    log "Upgrading llm (preserves plugins)..."
-    command llm install -U llm
+    log "Upgrading llm from fork..."
+    uv tool upgrade llm
 else
-    log "Installing llm..."
-    uv tool install llm
+    log "Installing llm from fork..."
+    uv tool install "git+https://github.com/c0ffee0wl/llm"
 fi
 
 # Ensure llm is in PATH
