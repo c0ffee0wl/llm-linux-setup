@@ -290,6 +290,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
 - **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
 - **[llm-fragments-youtube-transcript](https://github.com/c0ffee0wl/llm-fragments-youtube-transcript)** - YouTube video transcript extraction with metadata
+- **[llm-fragments-dir](https://github.com/RKeelan/llm-fragments-dir)** - Load all text files from a local directory recursively
 - **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
 - **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
 - **[llm-gemini](https://github.com/simonw/llm-gemini)** - Google Gemini models integration
@@ -614,6 +615,33 @@ llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID_1 \
 - Full transcript text (converted to plaintext)
 
 **Note**: The plugin uses yt-dlp for metadata extraction and youtube-transcript-api for transcript retrieval. Auto-generated captions are used if manual transcripts aren't available.
+
+**Directory Fragments**
+
+Load all text files from a local directory recursively using the `dir:` fragment type:
+
+```bash
+# Load all text files from a directory
+llm -f dir:/path/to/project "Analyze the structure of this codebase"
+
+# Load from current directory
+llm -f dir:. "Summarize all documentation files in this project"
+
+# Combine with other fragments
+llm -f dir:./docs -f dir:./src "Compare documentation with implementation"
+
+# Use in interactive mode
+llm chat -f dir:/etc/nginx/conf.d
+# > Explain the nginx configuration
+# > What security settings are configured?
+```
+
+**What's included:**
+- Recursively includes all text files from the specified directory
+- Automatically skips binary files
+- Useful for analyzing local codebases, documentation, or configuration directories
+
+**Tip**: For large directories, consider using more specific paths or combining with other tools like `files-to-prompt` for better control over file selection.
 
 ### Templates
 
