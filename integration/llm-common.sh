@@ -109,6 +109,19 @@ alias routed-claude='ccr code'
 alias pbcopy='xsel --clipboard --input'
 alias pbpaste='xsel --clipboard --output'
 
+# VTE Integration for directory tracking in terminal emulators
+# Enables proper working directory preservation when opening new tabs/windows
+# Supports: GNOME Terminal, Terminator, Tilix, Guake, and other VTE-based terminals
+# Works by emitting OSC 7 escape sequences that asciinema transparently passes through
+if [ -n "$VTE_VERSION" ]; then
+  for vte_script in /etc/profile.d/vte.sh /etc/profile.d/vte-*.sh; do
+    if [ -f "$vte_script" ]; then
+      . "$vte_script"
+      break
+    fi
+  done
+fi
+
 # -- Automatic asciinema session recording --
 # Only run if this is an interactive shell and we're not already in asciinema
 # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
