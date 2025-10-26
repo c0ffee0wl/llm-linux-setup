@@ -132,11 +132,16 @@ The script is organized into numbered phases:
 The installation script uses **helper functions** to eliminate code duplication and follow KISS principles:
 
 - **`install_apt_package(package_name)`**: Installs apt packages with existence checks (used in Phase 1)
-- **`install_or_upgrade_uv_tool(tool_source, [is_git_package])`**: Unified uv tool installation/upgrade with smart git package handling (used in Phase 2, 6)
-  - **Git packages** (is_git_package=true): Uses `uv tool install --force` to ensure git source is used (fixes PyPI→fork migration)
-  - **PyPI packages** (is_git_package=false): Uses `uv tool upgrade` for efficiency (no unnecessary reinstalls)
+- **`install_or_upgrade_uv_tool(tool_source, [is_git_package])`**: Unified uv tool installation/upgrade with intelligent source detection (used in Phase 2, 6)
+  - **Intelligent source detection**: Uses `uv tool list --show-version-specifiers` to check current installation source
+  - **Git packages** (is_git_package=true):
+    - If already from **same git URL** → uses `uv tool upgrade` (efficient, checks for new commits)
+    - If from **PyPI or different git URL** → uses `uv tool install --force` (migration needed)
+    - Provides clear logging showing migration path (PyPI→git or git1→git2)
+  - **PyPI packages** (is_git_package=false): Uses `uv tool upgrade` for efficiency
   - Automatically extracts tool name from git URLs (e.g., `git+https://github.com/user/llm` → `llm`)
-  - **Critical for fork installations**: When `llm` is installed from PyPI first, `uv tool upgrade` would look for PyPI updates instead of switching to the fork. The `is_git_package=true` flag forces reinstall from git source.
+  - **Implementation**: Parses uv's output format: `llm v0.27.1 [required:  git+https://github.com/...]` to detect git sources
+  - **Why this matters**: uv remembers the original installation source. Without source detection, `uv tool upgrade` checks the original source (PyPI→PyPI, git→git). The intelligent detection only forces reinstall when source switching is needed.
 - **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
 - **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
@@ -547,7 +552,12 @@ The script automatically upgrades tools on re-run:
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
 - OpenCode: `npm install -g opencode-ai@latest`
 
-**Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `install_or_upgrade_uv_tool` with `is_git_package=true` which forces reinstall from the git source. This is critical because `uv tool upgrade` respects the original installation source—if llm was previously installed from PyPI, upgrade would check PyPI instead of the fork. The force reinstall ensures the custom markdown markup enhancements are preserved and migrates PyPI installations to the fork.
+**Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `install_or_upgrade_uv_tool` with `is_git_package=true` which intelligently detects the current installation source:
+- **If already from the fork**: Uses `uv tool upgrade` (efficient, checks for new commits)
+- **If from PyPI**: Forces reinstall to migrate to the fork (one-time migration)
+- **If from different git URL**: Forces reinstall to switch sources
+
+This is critical because `uv tool upgrade` respects the original installation source—if llm was previously installed from PyPI, upgrade would check PyPI instead of the fork. The intelligent source detection ensures efficient updates while handling migrations automatically.
 
 ### Testing Shell Integration
 

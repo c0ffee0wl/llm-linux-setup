@@ -110,7 +110,7 @@ install_apt_package() {
     fi
 }
 
-# Install or upgrade a uv tool
+# Install or upgrade a uv tool with intelligent source detection
 # Usage: install_or_upgrade_uv_tool tool_name_or_source [is_git_package]
 # Examples:
 #   install_or_upgrade_uv_tool gitingest                                    # PyPI package
@@ -131,16 +131,40 @@ install_or_upgrade_uv_tool() {
     # Check if tool is already installed
     if uv tool list 2>/dev/null | grep -q "^$tool_name "; then
         if [ "$is_git_package" = "true" ]; then
-            # For git packages, force reinstall to ensure we get the git source
-            # uv tool upgrade would upgrade from the ORIGINAL source (PyPI vs git)
-            # This ensures migration from PyPI version to git fork works correctly
-            log "Force reinstalling $tool_name from git source..."
-            uv tool install --force "$tool_source"
+            # For git packages, check if already from the same git source using uv command
+            # Format: "llm v0.27.1 [required:  git+https://github.com/c0ffee0wl/llm]"
+            local tool_info=$(uv tool list --show-version-specifiers 2>/dev/null | grep "^$tool_name ")
+
+            # Extract current git URL if present
+            local current_git_url=$(echo "$tool_info" | grep -oP '\[required:\s+git\+\K[^\]]+' || echo "")
+
+            # Extract new git URL (remove git+ prefix)
+            local new_git_url="${tool_source#git+}"
+
+            if [ -n "$current_git_url" ] && [ "$current_git_url" = "$new_git_url" ]; then
+                # Already from the same git source - just check for updates
+                log "$tool_name is already from git source, checking for updates..."
+                uv tool upgrade "$tool_name"
+            else
+                # Different source (PyPI or different git repo) - force reinstall to migrate
+                if [ -n "$current_git_url" ]; then
+                    log "Migrating $tool_name git source:"
+                    log "  Old: $current_git_url"
+                    log "  New: $new_git_url"
+                    log "Force reinstalling..."
+                else
+                    log "Migrating $tool_name from PyPI to git source..."
+                    log "  Git: $new_git_url"
+                fi
+                uv tool install --force "$tool_source"
+            fi
         else
+            # PyPI package - just upgrade
             log "$tool_name is already installed, upgrading..."
             uv tool upgrade "$tool_name"
         fi
     else
+        # Not installed - install it
         log "Installing $tool_name..."
         uv tool install "$tool_source"
     fi
