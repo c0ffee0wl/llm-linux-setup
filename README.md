@@ -627,21 +627,14 @@ llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID "Summarize this video"
 # Extract key points from a video
 llm -f yt:https://youtu.be/VIDEO_ID "What are the main topics discussed?"
 
-# Analyze video content
-llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID "Create a detailed outline of the topics covered"
+# Analyze video content with fabric pattern
+llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID -t fabric:youtube_summary --md
 
 # Compare multiple videos
 llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID_1 \
     -f yt:https://www.youtube.com/watch?v=VIDEO_ID_2 \
     "Compare these two videos and highlight the differences"
 ```
-
-**What's included in YouTube fragments:**
-- Video title
-- Channel/uploader information
-- Publication date
-- Video description
-- Full transcript text (converted to plaintext)
 
 **Note**: The plugin uses yt-dlp for metadata extraction and youtube-transcript-api for transcript retrieval. Auto-generated captions are used if manual transcripts aren't available.
 
@@ -670,7 +663,7 @@ llm chat -f dir:/etc/nginx/conf.d
 - Automatically skips binary files
 - Useful for analyzing local codebases, documentation, or configuration directories
 
-**Tip**: For large directories, consider using more specific paths or combining with other tools like `files-to-prompt` for better control over file selection.
+**Tip**: For large directories, consider using more specific paths or combining with [other tools like gitingest, files-to-prompt, or yek](#integration-with-other-tools) for better control over file selection.
 
 ### Templates
 
