@@ -111,16 +111,38 @@ install_apt_package() {
 }
 
 # Install or upgrade a uv tool
+# Usage: install_or_upgrade_uv_tool tool_name_or_source [is_git_package]
+# Examples:
+#   install_or_upgrade_uv_tool gitingest                                    # PyPI package
+#   install_or_upgrade_uv_tool "git+https://github.com/user/repo" true     # Git package
 install_or_upgrade_uv_tool() {
-    local tool_name="$1"
-    local tool_source="${2:-$tool_name}"  # Default to tool_name if source not provided
+    local tool_source="$1"
+    local is_git_package="${2:-false}"  # Default to false (PyPI package)
 
+    # Extract tool name from source (handles both PyPI names and git URLs)
+    # Example: "git+https://github.com/c0ffee0wl/llm" -> "llm"
+    local tool_name
+    if [[ "$tool_source" =~ git\+https://.+/([^/]+?)(\.git)?$ ]]; then
+        tool_name="${BASH_REMATCH[1]}"
+    else
+        tool_name="$tool_source"
+    fi
+
+    # Check if tool is already installed
     if uv tool list 2>/dev/null | grep -q "^$tool_name "; then
-        log "$tool_name is already installed, upgrading..."
-        uv tool upgrade "$tool_name"
+        if [ "$is_git_package" = "true" ]; then
+            # For git packages, force reinstall to ensure we get the git source
+            # uv tool upgrade would upgrade from the ORIGINAL source (PyPI vs git)
+            # This ensures migration from PyPI version to git fork works correctly
+            log "Force reinstalling $tool_name from git source..."
+            uv tool install --force "$tool_source"
+        else
+            log "$tool_name is already installed, upgrading..."
+            uv tool upgrade "$tool_name"
+        fi
     else
         log "Installing $tool_name..."
-        uv tool install "$tool_source" --force
+        uv tool install "$tool_source"
     fi
 }
 
@@ -643,13 +665,8 @@ npm_install() {
 # Install/upgrade llm from fork
 # Using c0ffee0wl/llm fork which includes markdown markup enhancements
 # Installed via uv tool from git repository
-if command -v llm &>/dev/null; then
-    log "Upgrading llm from fork..."
-    uv tool upgrade llm
-else
-    log "Installing llm from fork..."
-    uv tool install "git+https://github.com/c0ffee0wl/llm"
-fi
+# Note: is_git_package=true ensures migration from PyPI to git fork works correctly
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm" true
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
@@ -1081,8 +1098,8 @@ log "Installing/updating additional tools..."
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
 
-# Install/update files-to-prompt
-install_or_upgrade_uv_tool files-to-prompt "git+https://github.com/c0ffee0wl/files-to-prompt"
+# Install/update files-to-prompt (from fork)
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true
 
 # Install/update aichat
 install_or_upgrade_cargo_tool aichat

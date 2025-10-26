@@ -132,7 +132,11 @@ The script is organized into numbered phases:
 The installation script uses **helper functions** to eliminate code duplication and follow KISS principles:
 
 - **`install_apt_package(package_name)`**: Installs apt packages with existence checks (used in Phase 1)
-- **`install_or_upgrade_uv_tool(tool_name, [source])`**: Unified uv tool installation/upgrade (used in Phase 2, 6)
+- **`install_or_upgrade_uv_tool(tool_source, [is_git_package])`**: Unified uv tool installation/upgrade with smart git package handling (used in Phase 2, 6)
+  - **Git packages** (is_git_package=true): Uses `uv tool install --force` to ensure git source is used (fixes PyPI→fork migration)
+  - **PyPI packages** (is_git_package=false): Uses `uv tool upgrade` for efficiency (no unnecessary reinstalls)
+  - Automatically extracts tool name from git URLs (e.g., `git+https://github.com/user/llm` → `llm`)
+  - **Critical for fork installations**: When `llm` is installed from PyPI first, `uv tool upgrade` would look for PyPI updates instead of switching to the fork. The `is_git_package=true` flag forces reinstall from git source.
 - **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
 - **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
@@ -500,7 +504,8 @@ When adding new functionality to `install-llm-tools.sh`:
 
 1. **Use existing helper functions** where possible:
    - For apt packages: `install_apt_package package_name`
-   - For uv tools: `install_or_upgrade_uv_tool tool_name [source]`
+   - For uv tools from PyPI: `install_or_upgrade_uv_tool tool_name`
+   - For uv tools from git: `install_or_upgrade_uv_tool "git+https://github.com/user/repo" true`
    - For cargo tools: `install_or_upgrade_cargo_tool tool_name [git_url]`
    - For shell RC updates: `update_shell_rc_file rc_file integration_file shell_name`
    - For Azure config: `configure_azure_openai`
@@ -532,17 +537,17 @@ The Ctrl+N keybinding is implemented differently in Bash vs Zsh:
 ### Updating Tool Versions
 
 The script automatically upgrades tools on re-run:
-- `llm`: **`uv tool upgrade llm`** (upgrades from fork; git-based installations are reinstalled from source)
+- `llm`: Uses `install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm" true` with force reinstall for git packages
 - Plugins: `llm install <plugin> --upgrade`
-- `gitingest`: `uv tool upgrade gitingest`
-- `files-to-prompt`: `uv tool upgrade files-to-prompt`
+- `gitingest`: `install_or_upgrade_uv_tool gitingest` (PyPI package, uses upgrade)
+- `files-to-prompt`: `install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true` (force reinstall)
 - `aichat`: `install_or_upgrade_cargo_tool aichat` (uses helper function)
-- `asciinema`: `cargo install --locked --force --git https://github.com/asciinema/asciinema`
+- `asciinema`: `install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema` (with commit-hash tracking)
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
 - OpenCode: `npm install -g opencode-ai@latest`
 
-**Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `uv tool upgrade llm` which reinstalls from the fork's main branch. This ensures the custom markdown markup enhancements are preserved during updates.
+**Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `install_or_upgrade_uv_tool` with `is_git_package=true` which forces reinstall from the git source. This is critical because `uv tool upgrade` respects the original installation source—if llm was previously installed from PyPI, upgrade would check PyPI instead of the fork. The force reinstall ensures the custom markdown markup enhancements are preserved and migrates PyPI installations to the fork.
 
 ### Testing Shell Integration
 
