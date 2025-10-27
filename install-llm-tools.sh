@@ -454,8 +454,8 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
     git fetch origin 2>/dev/null || true
 
     # Check if we're behind the remote (not just different)
-    LOCAL=$(git rev-parse HEAD)
-    REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
+    #LOCAL=$(git rev-parse HEAD)
+    #REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
 
     # Count commits we don't have that remote has
     BEHIND=$(git rev-list HEAD..@{u} 2>/dev/null | wc -l)
@@ -1042,6 +1042,7 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-templates-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
     "$SCRIPT_DIR/llm-tools-context"
+    "$SCRIPT_DIR/llm-tools-terminator-fragments"
 )
 
 for plugin in "${PLUGINS[@]}"; do
@@ -1064,6 +1065,7 @@ mkdir -p "$TEMPLATES_DIR"
 # Copy templates from repository (with smart update check)
 update_template_file "assistant"
 update_template_file "code"
+update_template_file "terminator-sidechat"
 
 #############################################################################
 # PHASE 5: Shell Integration
@@ -1112,6 +1114,22 @@ log "Installing context script..."
 mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
+
+# Install Terminator sidechat plugin
+if command -v terminator &> /dev/null; then
+    log "Installing Terminator sidechat plugin..."
+    mkdir -p "$HOME/.config/terminator/plugins"
+    cp "$SCRIPT_DIR/integration/terminator-sidechat-plugin/terminator_sidechat.py" \
+       "$HOME/.config/terminator/plugins/terminator_sidechat.py"
+    log "Terminator sidechat plugin installed. Enable it in Terminator Preferences > Plugins"
+else
+    warn "Terminator not found. Skipping Terminator sidechat plugin installation."
+fi
+
+# Install llm-terminator-sidechat application
+log "Installing llm-terminator-sidechat..."
+cp "$SCRIPT_DIR/integration/llm-terminator-sidechat" "$HOME/.local/bin/llm-terminator-sidechat"
+chmod +x "$HOME/.local/bin/llm-terminator-sidechat"
 
 #############################################################################
 # PHASE 6: Additional Tools

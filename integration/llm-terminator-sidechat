@@ -1,0 +1,574 @@
+#!/usr/bin/env python3
+"""
+llm-terminator-sidechat - Terminal AI Assistant for Terminator
+
+A Terminator-integrated AI assistant that provides:
+- Automatic Exec terminal creation
+- Terminal content capture and analysis
+- Command execution with approval
+- Watch Mode for proactive monitoring
+- Context squashing to manage token limits
+- Streaming responses with markdown rendering
+
+Inspired by TmuxAI but designed for Terminator terminal emulator.
+
+Author: c0ffee0wl
+License: GPL v2 only
+"""
+
+import llm
+import sys
+import os
+import re
+import time
+import asyncio
+import dbus
+from pathlib import Path
+from rich.console import Console
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+from rich.text import Text
+from typing import List, Optional, Tuple, Dict
+
+
+class TerminatorSidechatSession:
+    """Main sidechat session manager for Terminator"""
+
+    def __init__(self, model_name: Optional[str] = None):
+        self.console = Console()
+        self.model_name = model_name or self._get_default_model()
+
+        try:
+            self.model = llm.get_model(self.model_name)
+        except Exception as e:
+            self.console.print(f"[red]Error loading model '{self.model_name}': {e}[/]")
+            self.console.print("[yellow]Available models:[/]")
+            for model in llm.get_models():
+                self.console.print(f"  - {model.model_id}")
+            sys.exit(1)
+
+        self.conversation = llm.Conversation(model=self.model)
+
+        # Load template
+        try:
+            template = llm.Template("terminator-sidechat")
+            self.conversation.add_message('system', template.prompt)
+        except Exception:
+            # Template not installed yet, use basic system prompt
+            self.conversation.add_message('system',
+                "You are an AI terminal assistant. Provide commands in ```bash blocks.")
+
+        # Terminal tracking
+        self.chat_terminal_uuid = None
+        self.exec_terminal_uuid = None
+
+        # Context management (like tmuxai)
+        self.max_context_size = 100000  # tokens
+        self.context_squash_threshold = 0.8  # 80%
+
+        # Watch mode
+        self.watch_mode = False
+        self.watch_goal = None
+        self.watch_task = None
+        self.watch_interval = 5  # seconds
+
+        # Plugin and D-Bus connections
+        self.plugin = None
+        self.dbus_service = None
+
+    def _get_default_model(self) -> str:
+        """Get default model from llm configuration"""
+        try:
+            return llm.get_default_model().model_id
+        except Exception:
+            return "azure/gpt-4.1-mini"
+
+    def _connect_to_terminator(self):
+        """Connect to Terminator via plugin and D-Bus"""
+        # Get plugin via PluginRegistry
+        try:
+            from terminatorlib.plugin import PluginRegistry
+            registry = PluginRegistry()
+            registry.load_plugins()
+            self.plugin = registry.instances.get('TerminatorSidechatPlugin')
+
+            if not self.plugin:
+                self.console.print("[red]Error: TerminatorSidechatPlugin not loaded[/]")
+                self.console.print("Ensure the plugin is installed in ~/.config/terminator/plugins/")
+                sys.exit(1)
+
+        except ImportError:
+            self.console.print("[red]Error: Could not import Terminator libraries[/]")
+            self.console.print("Ensure this script is run within Terminator terminal")
+            sys.exit(1)
+
+        # Connect to D-Bus for terminal management
+        try:
+            bus = dbus.SessionBus()
+            self.dbus_service = bus.get_object(
+                'net.tenshu.Terminator2',
+                '/net/tenshu/Terminator2'
+            )
+        except dbus.exceptions.DBusException:
+            self.console.print("[red]Error: Could not connect to Terminator D-Bus service[/]")
+            self.console.print("Ensure Terminator is running with D-Bus enabled")
+            sys.exit(1)
+
+    def setup_terminals(self):
+        """Auto-create Exec terminal like tmuxai"""
+        self.console.print("[cyan]Setting up terminals...[/]")
+
+        # Get current (Chat) terminal UUID
+        self.chat_terminal_uuid = str(self.dbus_service.get_focused_terminal())
+
+        # Split horizontally to create Exec terminal
+        try:
+            exec_uuid = self.dbus_service.hsplit(
+                self.chat_terminal_uuid,
+                dbus.Dictionary({
+                    'title': 'Sidechat: Exec'
+                }, signature='ss')
+            )
+            self.exec_terminal_uuid = str(exec_uuid)
+
+            self.console.print(f"[green]✓[/] Chat terminal: {self.chat_terminal_uuid[:8]}...")
+            self.console.print(f"[green]✓[/] Exec terminal: {self.exec_terminal_uuid[:8]}...")
+
+        except Exception as e:
+            self.console.print(f"[red]Error creating Exec terminal: {e}[/]")
+            sys.exit(1)
+
+    def capture_context(self, include_exec_output=False) -> str:
+        """
+        Capture visible content from all terminals (like tmuxai).
+
+        Excludes:
+        - Chat terminal (where sidechat is running) - to avoid self-reference
+        - Exec terminal (unless include_exec_output=True)
+
+        Returns:
+            Formatted context string with XML-wrapped terminal content
+        """
+        terminals = self.plugin.get_all_terminals_metadata()
+        context_parts = []
+
+        for term in terminals:
+            # Skip chat terminal (self-awareness)
+            if term['uuid'] == self.chat_terminal_uuid:
+                continue
+
+            # Optionally skip exec terminal
+            if not include_exec_output and term['uuid'] == self.exec_terminal_uuid:
+                continue
+
+            # Capture visible content (100 lines default)
+            content = self.plugin.capture_terminal_content(term['uuid'], lines=100)
+
+            if content and not content.startswith('ERROR'):
+                # Format like tmux-fragments
+                context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
+{content}
+</terminal>''')
+
+        return "\n\n".join(context_parts)
+
+    def estimate_tokens(self) -> int:
+        """Estimate token count of conversation (rough: 4 chars = 1 token)"""
+        total_chars = sum(
+            len(msg.content) if hasattr(msg, 'content') else 0
+            for msg in self.conversation.messages
+        )
+        return total_chars // 4
+
+    def check_and_squash_context(self):
+        """Auto-squash when context reaches threshold (like tmuxai)"""
+        current_tokens = self.estimate_tokens()
+
+        if current_tokens >= self.max_context_size * self.context_squash_threshold:
+            self.console.print("[yellow]Context approaching limit, auto-squashing...[/]")
+            self.squash_context()
+
+    def squash_context(self):
+        """Compress earlier messages into summary (like tmuxai)"""
+        if len(self.conversation.messages) <= 6:  # Keep at least system + 5 messages
+            self.console.print("[yellow]Too few messages to squash[/]")
+            return
+
+        # Keep system message + last 5 messages, summarize the rest
+        system_msg = self.conversation.messages[0]
+        messages_to_squash = self.conversation.messages[1:-5]
+        recent_messages = self.conversation.messages[-5:]
+
+        # Generate summary
+        summary_prompt = f"""Summarize this conversation history concisely, focusing on:
+- Key technical issues discussed
+- Commands executed and their results
+- Important decisions or insights
+- Relevant context for continuing the conversation
+
+Previous messages:
+{chr(10).join(f"{i}. {msg.role}: {msg.content[:200]}..." for i, msg in enumerate(messages_to_squash, 1))}
+
+Provide a brief but comprehensive summary."""
+
+        try:
+            summary_response = self.model.prompt(summary_prompt)
+            summary = summary_response.text()
+
+            # Create new conversation with system + summary + recent messages
+            new_conv = llm.Conversation(model=self.model)
+            new_conv.add_message('system', system_msg.content)
+            new_conv.add_message('system', f"[Previous conversation summary]\n{summary}\n[End of summary]")
+
+            for msg in recent_messages:
+                new_conv.add_message(msg.role, msg.content)
+
+            self.conversation = new_conv
+
+            old_tokens = self.estimate_tokens()
+            self.console.print(f"[green]✓[/] Context squashed: ~{old_tokens} tokens")
+
+        except Exception as e:
+            self.console.print(f"[red]Error squashing context: {e}[/]")
+
+    def extract_commands(self, text: str) -> List[str]:
+        """Extract bash commands from ```bash code blocks"""
+        pattern = r'```bash\n(.*?)\n```'
+        matches = re.findall(pattern, text, re.DOTALL)
+        return [cmd.strip() for cmd in matches if cmd.strip()]
+
+    def execute_command(self, command: str) -> bool:
+        """
+        Execute command in Exec terminal with user approval.
+
+        Returns:
+            True if executed, False if skipped
+        """
+        self.console.print(Panel(
+            Text(command, style="bold cyan"),
+            title="[bold]Command to Execute[/]",
+            border_style="cyan"
+        ))
+
+        # Ask for approval
+        choice = Prompt.ask(
+            "Execute in Exec terminal?",
+            choices=["y", "n", "e"],  # yes, no, edit
+            default="y"
+        )
+
+        if choice == "n":
+            return False
+
+        if choice == "e":
+            # Allow editing
+            edited = Prompt.ask("Edit command", default=command)
+            command = edited
+
+        # Send to Exec terminal
+        success = self.plugin.send_keys_to_terminal(
+            self.exec_terminal_uuid,
+            command,
+            execute=True
+        )
+
+        if success:
+            self.console.print("[green]✓[/] Command sent to Exec terminal")
+            # Wait a bit for command to execute
+            time.sleep(0.5)
+            return True
+        else:
+            self.console.print("[red]✗[/] Failed to send command")
+            return False
+
+    async def watch_loop(self):
+        """Background monitoring of all terminals (like tmuxai watch mode)"""
+        while self.watch_mode:
+            try:
+                # Capture all terminal content (including exec output for watch)
+                context = self.capture_context(include_exec_output=True)
+
+                if not context.strip():
+                    await asyncio.sleep(self.watch_interval)
+                    continue
+
+                # Send to AI with watch goal
+                prompt = f"""[Watch Mode] Goal: {self.watch_goal}
+
+Current terminal state:
+{context}
+
+Based on the watch goal, analyze the terminal activity and provide suggestions ONLY if you observe something relevant to the goal. If everything looks normal, respond with "OK" only."""
+
+                # Use streaming for watch mode too
+                response = self.model.prompt(prompt, conversation=self.conversation)
+                response_text = response.text()
+
+                # Only show if AI has actionable feedback (not just "OK")
+                if response_text.strip() and response_text.strip().lower() != "ok":
+                    self.console.print()
+                    self.console.print(Panel(
+                        Markdown(response_text),
+                        title="[bold yellow]⚠ Watch Mode Alert[/]",
+                        border_style="yellow"
+                    ))
+                    self.console.print()
+
+            except Exception as e:
+                self.console.print(f"[red]Watch mode error: {e}[/]")
+
+            await asyncio.sleep(self.watch_interval)
+
+    def handle_slash_command(self, command: str) -> bool:
+        """
+        Handle slash commands.
+
+        Returns:
+            True if should continue REPL, False to exit
+        """
+        parts = command.split(maxsplit=1)
+        cmd = parts[0].lower()
+        args = parts[1] if len(parts) > 1 else ""
+
+        if cmd == "/help":
+            self.console.print(Panel("""
+[bold]Available Commands:[/]
+
+/help              Show this help message
+/clear             Clear conversation history
+/model [name]      Switch model or list available models
+/info              Show session information
+/watch <goal>      Enable watch mode with goal
+/watch off         Disable watch mode
+/watch status      Show watch mode status
+/squash            Manually compress conversation context
+/quit or /exit     Exit sidechat
+
+[bold]Usage:[/]
+- Type messages to chat with AI
+- AI provides commands in ```bash blocks
+- Commands are sent to Exec terminal with approval
+""", title="Sidechat Help", border_style="cyan"))
+            return True
+
+        elif cmd == "/clear":
+            # Reset conversation (keep system prompt)
+            system_prompt = self.conversation.messages[0].content if self.conversation.messages else ""
+            self.conversation = llm.Conversation(model=self.model)
+            if system_prompt:
+                self.conversation.add_message('system', system_prompt)
+            self.console.print("[green]✓[/] Conversation cleared")
+            return True
+
+        elif cmd == "/model":
+            if not args:
+                # List available models
+                self.console.print("[bold]Available models:[/]")
+                for model in llm.get_models():
+                    current = " [green](current)[/]" if model.model_id == self.model_name else ""
+                    self.console.print(f"  - {model.model_id}{current}")
+            else:
+                # Switch model
+                try:
+                    self.model = llm.get_model(args)
+                    self.model_name = args
+                    self.console.print(f"[green]✓[/] Switched to model: {args}")
+
+                    # Update conversation model
+                    self.conversation.model = self.model
+                except Exception as e:
+                    self.console.print(f"[red]Error switching model: {e}[/]")
+            return True
+
+        elif cmd == "/info":
+            tokens = self.estimate_tokens()
+            self.console.print(Panel(f"""
+[bold]Session Information:[/]
+
+Model: {self.model_name}
+Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({tokens * 100 // self.max_context_size}%)
+Messages: {len(self.conversation.messages)}
+Watch mode: {"enabled" if self.watch_mode else "disabled"}
+{f"Watch goal: {self.watch_goal}" if self.watch_mode else ""}
+
+Chat terminal: {self.chat_terminal_uuid[:16]}...
+Exec terminal: {self.exec_terminal_uuid[:16]}...
+""", title="Session Info", border_style="cyan"))
+            return True
+
+        elif cmd == "/watch":
+            if not args or args.lower() == "off":
+                # Disable watch mode
+                if self.watch_mode:
+                    self.watch_mode = False
+                    if self.watch_task:
+                        self.watch_task.cancel()
+                    self.console.print("[yellow]Watch mode disabled[/]")
+                else:
+                    self.console.print("[yellow]Watch mode is already off[/]")
+            elif args.lower() == "status":
+                # Show watch mode status
+                if self.watch_mode:
+                    self.console.print(f"[green]Watch mode: enabled[/]")
+                    self.console.print(f"Goal: {self.watch_goal}")
+                    self.console.print(f"Interval: {self.watch_interval}s")
+                else:
+                    self.console.print("[yellow]Watch mode: disabled[/]")
+            else:
+                # Enable watch mode with goal
+                self.watch_mode = True
+                self.watch_goal = args
+                self.console.print(f"[green]✓[/] Watch mode enabled")
+                self.console.print(f"Goal: {self.watch_goal}")
+                self.console.print(f"Monitoring all terminals every {self.watch_interval}s...")
+            return True
+
+        elif cmd == "/squash":
+            self.squash_context()
+            return True
+
+        elif cmd in ["/quit", "/exit"]:
+            return False
+
+        else:
+            self.console.print(f"[red]Unknown command: {cmd}[/]")
+            self.console.print("Type /help for available commands")
+            return True
+
+    def run(self):
+        """Main REPL loop"""
+        # Connect to Terminator
+        self._connect_to_terminator()
+
+        # Setup terminals
+        self.setup_terminals()
+
+        # Display welcome message
+        self.console.print(Panel.fit(
+            f"""[bold green]Terminator Sidechat Started[/]
+
+Model: [cyan]{self.model_name}[/]
+Type your message or /help for commands
+""",
+            title="llm-terminator-sidechat",
+            border_style="green"
+        ))
+
+        # Main REPL loop
+        try:
+            while True:
+                # Get user input
+                try:
+                    user_input = Prompt.ask("\n[bold cyan]you[/]").strip()
+                except (KeyboardInterrupt, EOFError):
+                    self.console.print("\n[yellow]Exiting...[/]")
+                    break
+
+                if not user_input:
+                    continue
+
+                # Handle slash commands
+                if user_input.startswith('/'):
+                    should_continue = self.handle_slash_command(user_input)
+                    if not should_continue:
+                        break
+                    continue
+
+                # Capture context from terminals
+                context = self.capture_context(include_exec_output=False)
+
+                # Build prompt with context
+                if context:
+                    full_prompt = f"""{user_input}
+
+[Current terminal context]
+{context}
+"""
+                else:
+                    full_prompt = user_input
+
+                # Check if we need to squash context
+                self.check_and_squash_context()
+
+                # Send to AI with streaming
+                try:
+                    self.console.print("\n[bold green]ai[/]")
+
+                    response_text = ""
+                    for chunk in self.model.prompt(full_prompt, conversation=self.conversation).stream():
+                        print(chunk, end='', flush=True)
+                        response_text += chunk
+
+                    print()  # Newline after streaming
+
+                    # Extract and execute commands
+                    commands = self.extract_commands(response_text)
+                    if commands:
+                        self.console.print(f"\n[cyan]Found {len(commands)} command(s)[/]")
+
+                        for i, cmd in enumerate(commands, 1):
+                            if len(commands) > 1:
+                                self.console.print(f"\n[bold]Command {i}/{len(commands)}[/]")
+
+                            executed = self.execute_command(cmd)
+
+                            if executed:
+                                # Capture exec output for next iteration
+                                time.sleep(1)  # Wait for command to produce output
+                                exec_content = self.plugin.capture_terminal_content(
+                                    self.exec_terminal_uuid,
+                                    lines=50
+                                )
+
+                                # Add to conversation for context
+                                self.conversation.add_message('system',
+                                    f"[Command executed in Exec terminal]\n{cmd}\n\n[Output]\n{exec_content}")
+
+                except Exception as e:
+                    self.console.print(f"\n[red]Error: {e}[/]")
+
+        finally:
+            # Cleanup
+            if self.watch_mode:
+                self.watch_mode = False
+                if self.watch_task:
+                    self.watch_task.cancel()
+
+
+def main():
+    """Entry point"""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Terminator AI Sidechat - Terminal assistant for pair programming"
+    )
+    parser.add_argument(
+        'model',
+        nargs='?',
+        help='LLM model to use (default: azure/gpt-4.1-mini)'
+    )
+    args = parser.parse_args()
+
+    session = TerminatorSidechatSession(model_name=args.model)
+
+    # Run watch mode in background if enabled
+    async def run_with_watch():
+        if session.watch_mode:
+            session.watch_task = asyncio.create_task(session.watch_loop())
+
+        # Run main REPL in executor to not block asyncio
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as pool:
+            await asyncio.get_event_loop().run_in_executor(pool, session.run)
+
+    # Try to run with asyncio (for watch mode), fallback to sync
+    try:
+        asyncio.run(run_with_watch())
+    except Exception:
+        # Fallback: run synchronously without async watch
+        session.run()
+
+
+if __name__ == "__main__":
+    main()
