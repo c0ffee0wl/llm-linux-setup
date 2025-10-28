@@ -43,63 +43,97 @@ class TerminatorSidechatPlugin(plugin.Plugin):
 
         dbg('TerminatorSidechatPlugin initialized')
 
-    def capture_terminal_content(self, terminal_uuid, lines=100):
+    def capture_terminal_content(self, terminal_uuid, lines=None):
         """
         Capture visible scrollback content from a VTE terminal.
 
         Args:
             terminal_uuid: UUID of terminal to capture (string format)
-            lines: Number of lines to capture (default 100)
+            lines: Number of lines to capture (default None = auto-detect visible viewport)
 
         Returns:
             String containing terminal content, or error message
         """
-        # Check cache first
-        cache_key = f"{terminal_uuid}:{lines}"
-        if cache_key in self.content_cache:
-            if time.time() - self.last_capture.get(cache_key, 0) < self.cache_ttl:
-                dbg(f'Returning cached content for {terminal_uuid}')
-                return self.content_cache[cache_key]
-
         try:
-            # Find terminal by UUID
+            # Find terminal by UUID with validation
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
             if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
                 return f"ERROR: Terminal with UUID {terminal_uuid} not found"
 
-            # Get VTE widget
-            vte = terminal.get_vte()
-            if not vte:
-                return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
+            # Get VTE widget with validation
+            try:
+                vte = terminal.get_vte()
+                if not vte:
+                    err(f'VTE not accessible for terminal {terminal_uuid}')
+                    return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
+            except Exception as e:
+                err(f'Error accessing VTE: {e}')
+                return f"ERROR: VTE access failed: {str(e)}"
 
-            # Get cursor position (defines end of content)
-            row, col = vte.get_cursor_position()
+            # Auto-detect visible viewport size if not specified
+            if lines is None:
+                lines = vte.get_row_count()
+                dbg(f'Auto-detected {lines} visible rows for {terminal_uuid}')
+
+            # Check cache after determining lines
+            cache_key = f"{terminal_uuid}:{lines}"
+            if cache_key in self.content_cache:
+                if time.time() - self.last_capture.get(cache_key, 0) < self.cache_ttl:
+                    dbg(f'Returning cached content for {terminal_uuid}')
+                    return self.content_cache[cache_key]
+
+            # Get cursor position with validation
+            try:
+                cursor_pos = vte.get_cursor_position()
+                if isinstance(cursor_pos, tuple) and len(cursor_pos) == 2:
+                    row, col = cursor_pos
+                else:
+                    err(f'Unexpected cursor position format: {cursor_pos}')
+                    return "ERROR: Could not determine cursor position"
+            except Exception as e:
+                err(f'Error getting cursor position: {e}')
+                return "ERROR: Could not access terminal state"
 
             # Calculate start position (capture 'lines' lines of scrollback)
             start_row = max(0, row - lines)
 
-            # Version-aware content capture (like dumptofile plugin)
+            # Version-aware content capture with error handling
             content = None
             vte_version = Vte.get_minor_version()
 
             if vte_version >= 72:
                 # Modern VTE: use get_text_range_format
                 dbg(f'Using get_text_range_format (VTE {vte_version})')
-                content = vte.get_text_range_format(
-                    Vte.Format.TEXT,
-                    start_row, 0,  # start row, start col
-                    row, col       # end row, end col
-                )[0]  # Returns (text, attributes)
+                try:
+                    result = vte.get_text_range_format(
+                        Vte.Format.TEXT,
+                        start_row, 0,  # start row, start col
+                        row, col       # end row, end col
+                    )
+                    # Verify it's a tuple and extract text
+                    if isinstance(result, tuple) and len(result) > 0:
+                        content = result[0]
+                    else:
+                        content = str(result)  # Fallback to string conversion
+                except Exception as e:
+                    err(f'VTE 72+ capture failed: {e}')
+                    return f"ERROR: Content capture failed: {str(e)}"
             else:
                 # Older VTE: use get_text_range with lambda
                 dbg(f'Using get_text_range (VTE {vte_version})')
-                content = vte.get_text_range(
-                    start_row, 0,  # start row, start col
-                    row, col,      # end row, end col
-                    lambda *a: True  # Include all cells
-                )
+                try:
+                    content = vte.get_text_range(
+                        start_row, 0,  # start row, start col
+                        row, col,      # end row, end col
+                        lambda *a: True  # Include all cells
+                    )
+                except Exception as e:
+                    err(f'VTE legacy capture failed: {e}')
+                    return f"ERROR: Content capture failed: {str(e)}"
 
             if content is None:
+                err('Content capture returned None')
                 return f"ERROR: Failed to capture content from terminal {terminal_uuid}"
 
             # Cache the result

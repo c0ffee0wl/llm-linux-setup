@@ -5,51 +5,42 @@ LLM plugin to capture Terminator terminal content as context fragments.
 Provides a tool interface for accessing terminal scrollback content.
 """
 
+import html
 import llm
 from typing import Optional
 
 
 @llm.hookimpl
-def register_tools(tool_registry):
-    """Register the Terminator fragment tool with LLM"""
-    tool_registry.register(TerminatorFragmentTool())
+def register_tools(register):
+    """Register the Terminator fragment toolbox with LLM"""
+    register(TerminatorFragments)
 
 
-class TerminatorFragmentTool:
+class TerminatorFragments(llm.Toolbox):
     """
-    Tool to capture content from Terminator terminals.
+    Toolbox to capture content from Terminator terminals.
 
     Provides access to visible scrollback content from Terminator VTE terminals
     via the TerminatorSidechatPlugin.
     """
 
-    name = "terminator"
-    description = """Capture visible content from Terminator terminal emulator.
+    name = "TerminatorFragments"
 
-    terminal_id options:
-    - 'focused': Capture currently focused terminal
-    - 'all': Capture all terminals
-    - 'urn:uuid:...': Capture specific terminal by UUID
-
-    lines: Number of scrollback lines to capture (default 100)
-
-    Returns terminal content wrapped in XML tags."""
-
-    def __call__(
+    def capture(
         self,
-        terminal_id: Optional[str] = "focused",
-        lines: int = 100
+        terminal_id: str = "focused",
+        lines: Optional[int] = None
     ) -> str:
-        """
-        Capture terminal content.
+        """Capture visible content from Terminator terminal emulator.
 
-        Args:
-            terminal_id: Terminal identifier ('focused', 'all', or UUID)
-            lines: Number of lines to capture from scrollback
+        terminal_id options:
+        - 'focused': Capture currently focused terminal
+        - 'all': Capture all terminals
+        - 'urn:uuid:...': Capture specific terminal by UUID
 
-        Returns:
-            Terminal content formatted as XML
-        """
+        lines: Number of scrollback lines to capture (default None = auto-detect visible viewport)
+
+        Returns terminal content wrapped in XML tags."""
         try:
             # Get Terminator sidechat plugin
             plugin = self._get_plugin()
@@ -151,6 +142,7 @@ class TerminatorFragmentTool:
         Returns:
             Formatted XML string
         """
-        return f'''<terminal uuid="{uuid}" title="{title}" cwd="{cwd}">
-{content}
+        # Escape XML special characters to prevent injection
+        return f'''<terminal uuid="{html.escape(uuid)}" title="{html.escape(title)}" cwd="{html.escape(cwd)}">
+{html.escape(content)}
 </terminal>'''
