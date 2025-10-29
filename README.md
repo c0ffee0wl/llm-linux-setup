@@ -450,19 +450,6 @@ You can also use `llm cmd` to suggest a command and leave you to modify and exec
 llm cmd "Find all .sh files below /root"
 ```
 
-**Tab Completion (Zsh only)**:
-
-In addition to AI-powered Ctrl+N, Zsh users also get traditional tab completion for `llm` commands:
-
-```bash
-llm <TAB>          # Shows: chat, code, rag, models, templates, etc.
-llm chat -<TAB>    # Shows all available options
-llm -m <TAB>       # Lists available models dynamically
-llm -t <TAB>       # Lists available templates
-```
-
-This uses a forked version of [llm-zsh-plugin](https://github.com/eliyastein/llm-zsh-plugin) maintained in this repository with custom extensions for `llm code` and `llm rag` subcommands.
-
 ### Attachments & Multi-modal
 
 Some models support images, PDFs, audio, and video as input:
