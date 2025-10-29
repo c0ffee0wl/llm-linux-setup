@@ -474,6 +474,19 @@ else
 fi
 
 #############################################################################
+# Detect Terminator Installation
+#############################################################################
+
+# Check if Terminator is installed (used for conditional sidechat installation)
+TERMINATOR_INSTALLED=false
+if command -v terminator &> /dev/null; then
+    TERMINATOR_INSTALLED=true
+    log "Terminator detected - will install sidechat integration"
+else
+    log "Terminator not found - skipping sidechat components"
+fi
+
+#############################################################################
 # PHASE 1: Install Prerequisites
 #############################################################################
 
@@ -517,6 +530,17 @@ else
 fi
 
 install_apt_package pandoc
+
+# Install PyGObject and build dependencies for Terminator sidechat integration (conditional)
+if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+    # Runtime packages (for system Python)
+    log "Installing PyGObject runtime packages..."
+    sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-vte-2.91
+
+    # Build dependencies (for pip installations in isolated environments)
+    log "Installing PyGObject build dependencies..."
+    sudo apt-get install -y libcairo2-dev libgirepository-2.0-dev # gobject-introspection
+fi
 
 # Install/update uv
 export PATH=$HOME/.local/bin:$PATH
@@ -1042,7 +1066,6 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-templates-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
     "$SCRIPT_DIR/llm-tools-context"
-    "$SCRIPT_DIR/llm-tools-terminator-fragments"
 )
 
 for plugin in "${PLUGINS[@]}"; do
@@ -1065,7 +1088,11 @@ mkdir -p "$TEMPLATES_DIR"
 # Copy templates from repository (with smart update check)
 update_template_file "assistant"
 update_template_file "code"
-update_template_file "terminator-sidechat"
+
+# Conditionally install Terminator sidechat template
+if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+    update_template_file "terminator-sidechat"
+fi
 
 #############################################################################
 # PHASE 5: Shell Integration
@@ -1115,21 +1142,24 @@ mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
-# Install Terminator sidechat plugin
-if command -v terminator &> /dev/null; then
-    log "Installing Terminator sidechat plugin..."
+# Install Terminator sidechat components (conditional)
+if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+    log "Installing Terminator sidechat integration..."
+
+    # Install Terminator sidechat plugin
     mkdir -p "$HOME/.config/terminator/plugins"
     cp "$SCRIPT_DIR/integration/terminator-sidechat-plugin/terminator_sidechat.py" \
        "$HOME/.config/terminator/plugins/terminator_sidechat.py"
     log "Terminator sidechat plugin installed. Enable it in Terminator Preferences > Plugins"
-else
-    warn "Terminator not found. Skipping Terminator sidechat plugin installation."
-fi
 
-# Install llm-terminator-sidechat application
-log "Installing llm-terminator-sidechat..."
-cp "$SCRIPT_DIR/integration/llm-terminator-sidechat" "$HOME/.local/bin/llm-terminator-sidechat"
-chmod +x "$HOME/.local/bin/llm-terminator-sidechat"
+    # Install llm-sidechat application
+    cp "$SCRIPT_DIR/integration/llm-sidechat" "$HOME/.local/bin/llm-sidechat"
+    chmod +x "$HOME/.local/bin/llm-sidechat"
+
+    # Inject dbus-python dependency into llm tool environment
+    log "Injecting dbus-python into llm tool environment..."
+    uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" dbus-python
+fi
 
 #############################################################################
 # PHASE 6: Additional Tools
@@ -1251,7 +1281,7 @@ log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
 # log "  4. Test Claude Code Router: routed-claude"
-log "  4. Test and configure OpenCode: opencode and configure https://opencode.ai/docs/providers"
+# log "  4. Test and configure OpenCode: opencode and configure https://opencode.ai/docs/providers"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"

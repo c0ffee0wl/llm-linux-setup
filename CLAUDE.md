@@ -360,7 +360,7 @@ https://github.com/user/repo  # This fetches HTML, not source code!
 
 ### Terminator Sidechat Integration
 
-The repository includes **llm-terminator-sidechat**, a TmuxAI-inspired terminal assistant for Terminator terminal emulator that provides an interactive AI pair programming experience.
+The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant for Terminator terminal emulator that provides an interactive AI pair programming experience.
 
 **Architecture Overview**:
 - **Python-based**: Uses `llm` library directly (no external AI binaries)
@@ -378,7 +378,7 @@ The repository includes **llm-terminator-sidechat**, a TmuxAI-inspired terminal 
    - Command injection via `vte.feed_child()`
    - Accessed by standalone app via `PluginRegistry`
 
-2. **Standalone Application** (`integration/llm-terminator-sidechat`):
+2. **Standalone Application** (`integration/llm-sidechat`):
    - Python script that imports llm library directly
    - Rich terminal UI with streaming markdown
    - Conversation management with auto-squashing
@@ -397,7 +397,7 @@ The repository includes **llm-terminator-sidechat**, a TmuxAI-inspired terminal 
 
 **User Workflow**:
 ```
-1. Run llm-terminator-sidechat in any Terminator terminal
+1. Run llm-sidechat in any Terminator terminal
 2. Script auto-creates Exec terminal via D-Bus hsplit
 3. Type messages in Chat terminal (where script runs)
 4. AI responds with streaming markdown
@@ -452,7 +452,7 @@ The repository includes **llm-terminator-sidechat**, a TmuxAI-inspired terminal 
 **Installation**:
 - Plugin: Copied to `~/.config/terminator/plugins/` (Phase 5)
 - Enable plugin: Terminator Preferences → Plugins → Check "TerminatorSidechatPlugin"
-- Application: `llm-terminator-sidechat` installed to `~/.local/bin/` (Phase 5)
+- Application: `llm-sidechat` installed to `~/.local/bin/` (Phase 5)
 - LLM Plugin: `llm-tools-terminator-fragments` installed (Phase 3)
 - Template: `terminator-sidechat.yaml` installed (Phase 4)
 
@@ -466,10 +466,10 @@ The repository includes **llm-terminator-sidechat**, a TmuxAI-inspired terminal 
 **Usage Examples**:
 ```bash
 # Launch sidechat in any Terminator terminal
-llm-terminator-sidechat
+llm-sidechat
 
 # Launch with specific model
-llm-terminator-sidechat azure/gpt-4.1
+llm-sidechat azure/gpt-4.1
 
 # Inside sidechat:
 you> why did my docker build fail?
@@ -495,7 +495,7 @@ Watch mode enabled: monitoring all terminals
 
 **File Locations**:
 - Plugin: `integration/terminator-sidechat-plugin/terminator_sidechat.py`
-- Application: `integration/llm-terminator-sidechat`
+- Application: `integration/llm-sidechat`
 - LLM Plugin: `llm-tools-terminator-fragments/`
 - Template: `llm-template/terminator-sidechat.yaml`
 
@@ -740,7 +740,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
 - `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
-- `integration/llm-terminator-sidechat` - Standalone Terminator AI assistant application
+- `integration/llm-sidechat` - Standalone Terminator AI assistant application
 - `integration/terminator-sidechat-plugin/terminator_sidechat.py` - Terminator plugin for VTE content capture
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool

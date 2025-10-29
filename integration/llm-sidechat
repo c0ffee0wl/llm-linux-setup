@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/bin/sh
+''''exec "$HOME/.local/share/uv/tools/llm/bin/python3" "$0" "$@" # '''
 """
-llm-terminator-sidechat - Terminal AI Assistant for Terminator
+llm-sidechat - Terminal AI Assistant for Terminator
 
 A Terminator-integrated AI assistant that provides:
 - Automatic Exec terminal creation
@@ -17,17 +18,24 @@ Author: c0ffee0wl
 License: GPL v2 only
 """
 
+# Add system site-packages to path for Terminator libraries
+import sys
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
+
 import llm
 from llm.cli import load_template
-import sys
 import os
 import re
 import time
 import asyncio
 import threading
 import dbus
+import fcntl
+import signal
+import atexit
 from pathlib import Path
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -75,6 +83,17 @@ class TerminatorSidechatSession:
 
     def __init__(self, model_name: Optional[str] = None):
         self.console = Console()
+
+        # Initialize shutdown state and lock file handle
+        self._shutdown_initiated = False
+        self.lock_file = None
+
+        # Acquire instance lock FIRST (before any other initialization)
+        self._acquire_instance_lock()
+
+        # Register shutdown handlers EARLY (before creating resources)
+        self._register_shutdown_handlers()
+
         self.model_name = model_name or self._get_default_model()
 
         try:
@@ -124,6 +143,145 @@ class TerminatorSidechatSession:
         self.plugin = None
         self.dbus_service = None
 
+    def _acquire_instance_lock(self):
+        """
+        Ensure only one sidechat instance per user session.
+        Uses file locking with automatic cleanup on process exit.
+        """
+        # Use runtime directory for lock file (XDG_RUNTIME_DIR or /tmp)
+        runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
+        lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
+
+        try:
+            # Open lock file (create if doesn't exist)
+            self.lock_file = open(lock_path, 'w')
+
+            # Try to acquire exclusive lock (non-blocking)
+            fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+            # Write PID for debugging (optional but helpful)
+            self.lock_file.write(f"{os.getpid()}\n")
+            self.lock_file.flush()
+
+        except BlockingIOError:
+            # Lock is held by another instance
+            self.console.print("[red]Error: Another sidechat instance is already running[/]")
+            self.console.print("[yellow]Only one sidechat session can run at a time.[/]")
+            self.console.print(f"[yellow]Lock file: {lock_path}[/]")
+
+            # Try to read PID from lock file
+            try:
+                with open(lock_path, 'r') as f:
+                    pid = f.read().strip()
+                    if pid:
+                        self.console.print(f"[yellow]Existing instance PID: {pid}[/]")
+            except:
+                pass
+
+            sys.exit(1)
+
+        except Exception as e:
+            self.console.print(f"[red]Error acquiring lock: {e}[/]")
+            sys.exit(1)
+
+    def _release_instance_lock(self):
+        """Release the instance lock (automatic on process exit, but explicit is better)"""
+        if self.lock_file:
+            try:
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_UN)
+                self.lock_file.close()
+                self.lock_file = None
+            except Exception:
+                pass  # Lock will be released by kernel anyway
+
+    def _register_shutdown_handlers(self):
+        """Register signal handlers and atexit hook for cleanup"""
+        # Register atexit fallback (runs on normal exit)
+        atexit.register(self._shutdown)
+
+        # Register signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self._signal_handler)   # Ctrl+C
+        signal.signal(signal.SIGTERM, self._signal_handler)  # kill command
+        signal.signal(signal.SIGHUP, self._signal_handler)   # Terminal closed
+
+    def _signal_handler(self, signum, frame):
+        """Handle termination signals"""
+        signal_names = {
+            signal.SIGINT: "SIGINT (Ctrl+C)",
+            signal.SIGTERM: "SIGTERM",
+            signal.SIGHUP: "SIGHUP (terminal closed)"
+        }
+        signal_name = signal_names.get(signum, f"signal {signum}")
+
+        self.console.print(f"\n[yellow]Received {signal_name}, shutting down...[/]")
+        self._shutdown()
+        sys.exit(0)  # Exit cleanly
+
+    def _shutdown(self):
+        """
+        Unified shutdown method - called by signal handlers, atexit, or manual exit.
+        Idempotent - safe to call multiple times.
+        """
+        # Prevent double-cleanup
+        if self._shutdown_initiated:
+            return
+        self._shutdown_initiated = True
+
+        try:
+            # STEP 1: Stop watch mode (most critical - prevents new threads)
+            if hasattr(self, 'watch_mode') and self.watch_mode:
+                try:
+                    with self.watch_lock:
+                        self.watch_mode = False
+                        if self.event_loop:
+                            try:
+                                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                            except Exception:
+                                pass
+
+                    # Wait for watch thread to finish (with timeout)
+                    if self.watch_thread and self.watch_thread.is_alive():
+                        self.watch_thread.join(timeout=2.0)
+                except Exception:
+                    # Don't let watch mode cleanup prevent other cleanup
+                    pass
+
+            # STEP 2: Clear plugin cache (if available)
+            if hasattr(self, 'plugin_dbus'):
+                try:
+                    self.plugin_dbus.clear_cache()
+                except Exception:
+                    pass
+
+            # STEP 3: Close D-Bus connections (graceful disconnect)
+            # D-Bus connections don't need explicit cleanup in Python - garbage collected
+            # But we can dereference them to signal intent
+            if hasattr(self, 'dbus_service'):
+                self.dbus_service = None
+            if hasattr(self, 'plugin_dbus'):
+                self.plugin_dbus = None
+
+            # STEP 4: Release instance lock (most important)
+            self._release_instance_lock()
+
+            # STEP 5: Save conversation state (if needed)
+            # llm library auto-saves, but we can explicitly flush here
+            if hasattr(self, 'conversation'):
+                try:
+                    # Force any pending writes to complete
+                    # llm Conversation doesn't have explicit save(), it auto-saves
+                    pass
+                except Exception:
+                    pass
+
+        except Exception as e:
+            # Ensure we log errors but don't prevent shutdown
+            try:
+                self.console.print(f"[yellow]Warning during shutdown: {e}[/]")
+            except:
+                # If console fails, write to stderr
+                print(f"Warning during shutdown: {e}", file=sys.stderr)
+
     def _get_default_model(self) -> str:
         """Get default model from llm configuration"""
         try:
@@ -131,14 +289,29 @@ class TerminatorSidechatSession:
         except Exception:
             return "azure/gpt-4.1-mini"
 
+    def _normalize_uuid(self, uuid_value) -> str:
+        """Normalize UUID to Python string (ensures dbus.String -> str conversion)"""
+        if uuid_value is None or uuid_value == '':
+            return None
+        # Explicitly convert to Python str (handles dbus.String)
+        return str(uuid_value)
+
     def _reconnect_dbus(self) -> bool:
         """Attempt to reconnect to Terminator D-Bus"""
         try:
             bus = dbus.SessionBus()
-            self.dbus_service = bus.get_object(
-                'net.tenshu.Terminator2',
-                '/net/tenshu/Terminator2'
-            )
+
+            # Discover actual Terminator service name (includes UUID suffix)
+            service_name = None
+            for name in bus.list_names():
+                if name.startswith('net.tenshu.Terminator2'):
+                    service_name = name
+                    break
+
+            if not service_name:
+                service_name = 'net.tenshu.Terminator2'  # Fallback for older versions
+
+            self.dbus_service = bus.get_object(service_name, '/net/tenshu/Terminator2')
             return True
         except Exception as e:
             self.console.print(f"[red]D-Bus reconnection failed: {e}[/]")
@@ -154,52 +327,47 @@ class TerminatorSidechatSession:
             return False
 
     def _connect_to_terminator(self):
-        """Connect to Terminator via plugin and D-Bus with retry logic"""
-        # Get plugin via PluginRegistry
-        try:
-            from terminatorlib.plugin import PluginRegistry
-            registry = PluginRegistry()
-            registry.load_plugins()
-            self.plugin = registry.instances.get('TerminatorSidechatPlugin')
-
-            if not self.plugin:
-                self.console.print("[red]Error: TerminatorSidechatPlugin not loaded[/]")
-                self.console.print("Ensure the plugin is installed in ~/.config/terminator/plugins/")
-                self.console.print("and enabled in Terminator Preferences > Plugins")
-                sys.exit(1)
-
-        except ImportError:
-            self.console.print("[red]Error: Could not import Terminator libraries[/]")
-            self.console.print("Ensure this script is run within Terminator terminal")
-            sys.exit(1)
-
-        # Connect to D-Bus for terminal management
+        """Connect to Terminator and plugin via D-Bus"""
+        # Connect to Terminator's main D-Bus service for terminal management
         if not self._reconnect_dbus():
             self.console.print("[red]Error: Could not connect to Terminator D-Bus service[/]")
             self.console.print("Ensure Terminator is running with D-Bus enabled")
             sys.exit(1)
 
-    def _check_plugin_available(self) -> bool:
-        """Verify plugin is still loaded"""
+        # Connect to plugin's D-Bus service for terminal content/commands
+        if not self._connect_to_plugin_dbus():
+            self.console.print("[red]Error: Plugin D-Bus service not available[/]")
+            self.console.print("Ensure TerminatorSidechatPlugin is:")
+            self.console.print("  1. Installed in ~/.config/terminator/plugins/")
+            self.console.print("  2. Enabled in Terminator Preferences > Plugins")
+            self.console.print("  3. Terminator has been restarted after enabling")
+            sys.exit(1)
+
+    def _connect_to_plugin_dbus(self) -> bool:
+        """Connect to plugin's D-Bus service"""
         try:
-            from terminatorlib.plugin import PluginRegistry
-            registry = PluginRegistry()
-            registry.load_plugins()
-            return 'TerminatorSidechatPlugin' in registry.instances
+            bus = dbus.SessionBus()
+            self.plugin_dbus = bus.get_object(
+                'net.tenshu.Terminator2.Sidechat',
+                '/net/tenshu/Terminator2/Sidechat'
+            )
+            return True
+        except Exception as e:
+            self.console.print(f"[yellow]Plugin D-Bus connection failed: {e}[/]")
+            return False
+
+    def _check_plugin_available(self) -> bool:
+        """Verify plugin D-Bus service is available"""
+        try:
+            # Try a simple D-Bus call to check if service is alive
+            self.plugin_dbus.get_focused_terminal_uuid()
+            return True
         except Exception:
             return False
 
     def _reconnect_plugin(self) -> bool:
-        """Attempt to reload plugin"""
-        try:
-            from terminatorlib.plugin import PluginRegistry
-            registry = PluginRegistry()
-            registry.load_plugins()
-            self.plugin = registry.instances.get('TerminatorSidechatPlugin')
-            return self.plugin is not None
-        except Exception as e:
-            self.console.print(f"[red]Plugin reconnection failed: {e}[/]")
-            return False
+        """Attempt to reconnect to plugin D-Bus service"""
+        return self._connect_to_plugin_dbus()
 
     def setup_terminals(self):
         """Auto-create Exec terminal with retry logic"""
@@ -217,16 +385,18 @@ class TerminatorSidechatSession:
                 focused_terminal = self.dbus_service.get_focused_terminal()
                 if not focused_terminal:
                     raise Exception("No terminal is currently focused. Please focus a terminal and try again.")
-                self.chat_terminal_uuid = str(focused_terminal)
+                self.chat_terminal_uuid = self._normalize_uuid(focused_terminal)
 
-                # Split horizontally to create Exec terminal
-                exec_uuid = self.dbus_service.hsplit(
+                # Split vertically to create Exec terminal (to the right)
+                exec_uuid = self.dbus_service.vsplit(
                     self.chat_terminal_uuid,
                     dbus.Dictionary({
                         'title': 'Sidechat: Exec'
                     }, signature='ss')
                 )
-                self.exec_terminal_uuid = str(exec_uuid)
+                if str(exec_uuid).startswith('ERROR'):
+                    raise Exception(f"Failed to split terminal: {exec_uuid}")
+                self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
 
                 self.console.print(f"[green]✓[/] Chat terminal: {self.chat_terminal_uuid[:8]}...")
                 self.console.print(f"[green]✓[/] Exec terminal: {self.exec_terminal_uuid[:8]}...")
@@ -243,9 +413,21 @@ class TerminatorSidechatSession:
     def _verify_exec_terminal(self) -> bool:
         """Check if exec terminal still exists"""
         try:
-            terminals = self.plugin.get_all_terminals_metadata()
-            return any(t['uuid'] == self.exec_terminal_uuid for t in terminals)
-        except Exception:
+            terminals = self.plugin_dbus.get_all_terminals_metadata()
+
+            # DEBUG: Show what we're comparing
+            self.console.print(f"[yellow]DEBUG: Looking for exec UUID:[/] {repr(self.exec_terminal_uuid)} (type: {type(self.exec_terminal_uuid).__name__})")
+            self.console.print(f"[yellow]DEBUG: Plugin returned {len(terminals)} terminals[/]")
+            for t in terminals:
+                self.console.print(f"[yellow]  - {repr(t['uuid'])} (type: {type(t['uuid']).__name__}) | Title: {t.get('title', 'N/A')}[/]")
+                if t['uuid'] == self.exec_terminal_uuid:
+                    self.console.print(f"[green]    ✓ EXACT MATCH![/]")
+
+            # Normalize both sides for comparison
+            exec_uuid_normalized = self._normalize_uuid(self.exec_terminal_uuid)
+            return any(self._normalize_uuid(t['uuid']) == exec_uuid_normalized for t in terminals)
+        except Exception as e:
+            self.console.print(f"[red]DEBUG: Verification error: {e}[/]")
             return False
 
     def _recreate_exec_terminal(self) -> bool:
@@ -259,13 +441,15 @@ class TerminatorSidechatSession:
                 raise Exception("No terminal is currently focused. Cannot recreate Exec terminal.")
             current_uuid = str(focused_terminal)
 
-            # Create new exec terminal
-            exec_uuid = self.dbus_service.hsplit(
+            # Create new exec terminal (split to the right)
+            exec_uuid = self.dbus_service.vsplit(
                 current_uuid,
                 dbus.Dictionary({'title': 'Sidechat: Exec (Restored)'}, signature='ss')
             )
+            if str(exec_uuid).startswith('ERROR'):
+                raise Exception(f"Failed to split terminal: {exec_uuid}")
 
-            self.exec_terminal_uuid = str(exec_uuid)
+            self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
             self.console.print(f"[green]✓[/] Exec terminal restored: {exec_uuid[:8]}...")
             return True
 
@@ -285,7 +469,7 @@ class TerminatorSidechatSession:
             Formatted context string with XML-wrapped terminal content
         """
         try:
-            terminals = self.plugin.get_all_terminals_metadata()
+            terminals = self.plugin_dbus.get_all_terminals_metadata()
             context_parts = []
 
             for term in terminals:
@@ -298,7 +482,7 @@ class TerminatorSidechatSession:
                     continue
 
                 # Capture visible content (auto-detect viewport size)
-                content = self.plugin.capture_terminal_content(term['uuid'])
+                content = self.plugin_dbus.capture_terminal_content(term['uuid'], -1)
 
                 if content and not content.startswith('ERROR'):
                     # Format like tmux-fragments
@@ -428,8 +612,15 @@ Provide a brief but comprehensive summary."""
         while time.time() - start_time < timeout:
             # Capture current exec terminal content
             try:
-                current_output = self.plugin.capture_terminal_content(
-                    self.exec_terminal_uuid
+                # Clear cache to get fresh content
+                try:
+                    self.plugin_dbus.clear_cache()
+                except:
+                    pass  # Ignore if method doesn't exist
+
+                current_output = self.plugin_dbus.capture_terminal_content(
+                    self.exec_terminal_uuid,
+                    500  # Capture 500 lines including scrollback
                 )
 
                 if current_output.startswith('ERROR'):
@@ -492,7 +683,7 @@ Provide a brief but comprehensive summary."""
 
         # Send to Exec terminal
         try:
-            success = self.plugin.send_keys_to_terminal(
+            success = self.plugin_dbus.send_keys_to_terminal(
                 self.exec_terminal_uuid,
                 command,
                 execute=True
@@ -507,16 +698,18 @@ Provide a brief but comprehensive summary."""
 
                 if completed:
                     self.console.print("[green]✓[/] Command completed")
+                    return True, output  # Return the captured output
                 else:
                     self.console.print("[yellow]⚠[/] Command still running or timed out")
+                    return True, output  # Return whatever we captured
 
-                return True
+                return True, ""  # Fallback
             else:
                 self.console.print("[red]✗[/] Failed to send command")
-                return False
+                return False, ""
         except Exception as e:
             self.console.print(f"[red]Error executing command: {e}[/]")
-            return False
+            return False, ""
 
     def _start_watch_mode_thread(self):
         """Start watch mode in a background thread with its own event loop"""
@@ -643,7 +836,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
 
                 # Clear plugin cache
                 if self.plugin:
-                    self.plugin.clear_cache()
+                    self.plugin_dbus.clear_cache()
 
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
@@ -727,6 +920,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
             return True
 
         elif cmd in ["/quit", "/exit"]:
+            self._shutdown()  # Explicit cleanup before exit
             return False
 
         else:
@@ -749,7 +943,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
 Model: [cyan]{self.model_name}[/]
 Type your message or /help for commands
 """,
-            title="llm-terminator-sidechat",
+            title="llm-sidechat",
             border_style="green"
         ))
 
@@ -793,6 +987,12 @@ Type your message or /help for commands
                         break
                     continue
 
+                # Clear plugin cache to ensure fresh capture
+                try:
+                    self.plugin_dbus.clear_cache()
+                except Exception:
+                    pass  # Ignore if clear_cache not available
+
                 # Capture context from terminals
                 context = self.capture_context(include_exec_output=False)
 
@@ -825,15 +1025,14 @@ Type your message or /help for commands
                         else:
                             response = self.conversation.prompt(full_prompt)
 
-                        # Stream the response
-                        # Note: Using print() instead of self.console.print() for streaming
-                        # because Rich Console is not designed for character-by-character output
-                        # Response objects are iterable via __iter__, no .stream() method
-                        for chunk in response:
-                            print(chunk, end='', flush=True)
-                            response_text += chunk
+                        # Stream the response with Rich Live display for proper markdown formatting
+                        # Using Live display to update markdown rendering as chunks arrive
+                        with Live(Markdown(""), console=self.console, refresh_per_second=10) as live:
+                            for chunk in response:
+                                response_text += chunk
+                                live.update(Markdown(response_text))
 
-                    print()  # Newline after streaming
+                    # No need for extra newline - Rich Live handles formatting
                     stream_success = True
 
                 except Exception as e:
@@ -855,13 +1054,20 @@ Type your message or /help for commands
                                 if len(commands) > 1:
                                     self.console.print(f"\n[bold]Command {i}/{len(commands)}[/]")
 
-                                executed = self.execute_command(cmd)
+                                executed, exec_content = self.execute_command(cmd)
 
                                 if executed:
-                                    # Capture exec output for next iteration
-                                    exec_content = self.plugin.capture_terminal_content(
-                                        self.exec_terminal_uuid
-                                    )
+                                    # Use the output captured during wait_for_command_completion
+                                    # No need to capture again - we already have fresh content!
+
+                                    # DEBUG: Show what was captured
+                                    self.console.print(f"\n[yellow]═══ DEBUG: Captured Content ═══[/]")
+                                    self.console.print(f"[yellow]UUID: {self.exec_terminal_uuid}[/]")
+                                    self.console.print(f"[yellow]Length: {len(exec_content)} chars[/]")
+                                    self.console.print(f"[yellow]Is ERROR: {exec_content.startswith('ERROR') if exec_content else 'N/A (empty)'}[/]")
+                                    self.console.print(f"[yellow]First 300 chars:[/]")
+                                    self.console.print(f"[cyan]{exec_content[:300] if exec_content else '(empty)'}[/]")
+                                    self.console.print(f"[yellow]═══════════════════════════════[/]\n")
 
                                     # Build prompt with command execution context
                                     exec_context_prompt = f"""Command executed in Exec terminal:
@@ -883,6 +1089,13 @@ Please analyze the output and provide feedback if needed."""
                                         # Consume response while holding lock
                                         followup_text = followup_response.text()
 
+                                    # DEBUG: Show AI response handling
+                                    self.console.print(f"\n[yellow]═══ DEBUG: AI Response ═══[/]")
+                                    self.console.print(f"[yellow]Length: {len(followup_text)} chars[/]")
+                                    self.console.print(f"[yellow]Stripped lowercase: '{followup_text.strip().lower()[:100]}'[/]")
+                                    self.console.print(f"[yellow]Will be filtered (hidden): {followup_text.strip().lower() in ['ok', 'okay', 'done']}[/]")
+                                    self.console.print(f"[yellow]═══════════════════════════[/]\n")
+
                                     # Display the AI's analysis
                                     if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
                                         self.console.print("\n[bold green]ai[/]")
@@ -892,15 +1105,8 @@ Please analyze the output and provide feedback if needed."""
                         self.console.print(f"\n[red]Command execution error: {e}[/]")
 
         finally:
-            # Cleanup watch mode
-            if self.watch_mode:
-                with self.watch_lock:
-                    self.watch_mode = False
-                    if self.event_loop:
-                        try:
-                            self.event_loop.call_soon_threadsafe(self.event_loop.stop)
-                        except Exception:
-                            pass
+            # Unified cleanup - handles all resources
+            self._shutdown()
 
 
 def main():
