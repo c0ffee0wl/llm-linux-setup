@@ -29,6 +29,9 @@ from dbus.exceptions import DBusException
 PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
 PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Sidechat'
 
+# Plugin version for diagnostics
+PLUGIN_VERSION = "2.0-vadjustment"
+
 AVAILABLE = ['TerminatorSidechatPlugin']
 
 
@@ -114,30 +117,37 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
                     dbg(f'Returning cached content for {terminal_uuid}')
                     return self.content_cache[cache_key]
 
-            # Get cursor position and terminal dimensions
+            # Get terminal dimensions
             try:
-                cursor_pos = vte.get_cursor_position()
-                if isinstance(cursor_pos, tuple) and len(cursor_pos) == 2:
-                    row, col = cursor_pos
-                else:
-                    err(f'Unexpected cursor position format: {cursor_pos}')
-                    return "ERROR: Could not determine cursor position"
-
-                # Get terminal width to capture full lines
                 term_width = vte.get_column_count()
                 term_height = vte.get_row_count()
             except Exception as e:
-                err(f'Error getting cursor position: {e}')
+                err(f'Error getting terminal dimensions: {e}')
                 return "ERROR: Could not access terminal state"
 
-            # Calculate start position (capture 'lines' lines of scrollback)
-            start_row = max(0, row - lines)
-            # Calculate end position (capture up to cursor, not beyond it)
-            end_row = row
+            # Calculate capture range using vertical adjustment (scrollbar position)
+            # This gives us the actual visible viewport in buffer coordinates
+            try:
+                vadj = vte.get_vadjustment()
+                dbg(f'get_vadjustment() returned: {vadj}')
+                if vadj:
+                    scroll_pos = vadj.get_value()
+                    page_size = vadj.get_page_size()
+                    start_row = int(scroll_pos)
+                    end_row = int(scroll_pos + page_size) - 1
+                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, page_size={page_size}')
+                else:
+                    dbg('vadjustment returned None')
+                    raise ValueError("vadjustment not available")
+            except Exception as e:
+                # Fallback: capture entire visible viewport from top of buffer
+                dbg(f'vadjustment failed with exception: {type(e).__name__}: {e}')
+                start_row = 0
+                end_row = term_height - 1
 
             # DEBUG: Log capture parameters
             dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg(f'  Cursor position: row={row}, col={col}')
+            dbg(f'  Capture method: {"vadjustment" if "scroll_pos" in locals() else "fallback"}')
             dbg(f'  Terminal size: width={term_width}, height={term_height}')
             dbg(f'  Requested lines: {lines}')
             dbg(f'  Calculated range: start_row={start_row}, end_row={end_row}')
@@ -282,6 +292,74 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             err(f'Traceback: {traceback.format_exc()}')
             return []
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='aa{ss}')
+    def get_terminals_in_same_window(self, reference_terminal_uuid):
+        """
+        Get metadata for terminals in the same window as the reference terminal.
+
+        Args:
+            reference_terminal_uuid: UUID of reference terminal (e.g., chat terminal)
+
+        Returns:
+            List of dicts with terminal information (same format as get_all_terminals_metadata):
+            - uuid: Terminal UUID (string)
+            - title: Terminal title
+            - focused: "True" or "False" indicating if terminal has focus
+            - cwd: Current working directory
+        """
+        dbg(f'[SIDECHAT-PLUGIN] get_terminals_in_same_window called with UUID: {reference_terminal_uuid}')
+        terminals_info = []
+
+        try:
+            # Find the reference terminal
+            reference_term = self.terminator.find_terminal_by_uuid(reference_terminal_uuid)
+            if not reference_term:
+                err(f'[SIDECHAT-PLUGIN] Reference terminal {reference_terminal_uuid} not found')
+                return []
+
+            # Get the window containing the reference terminal
+            reference_window = reference_term.get_toplevel()
+            if not reference_window:
+                err('[SIDECHAT-PLUGIN] Could not get toplevel window for reference terminal')
+                return []
+
+            dbg(f'[SIDECHAT-PLUGIN] Reference window: {reference_window}')
+            dbg(f'[SIDECHAT-PLUGIN] Total terminals in Terminator instance: {len(self.terminator.terminals)}')
+
+            # Filter terminals to only those in the same window
+            for term in self.terminator.terminals:
+                term_window = term.get_toplevel()
+
+                # Compare window objects (same instance = same window)
+                if term_window is reference_window:
+                    # Get terminal metadata (same code as get_all_terminals_metadata)
+                    title = term.titlebar.get_custom_string()
+                    if not title:
+                        title = term.get_window_title() or 'Terminal'
+
+                    focused = False
+                    vte = term.get_vte()
+                    if vte:
+                        focused = vte.has_focus()
+
+                    cwd = term.get_cwd() or '~'
+
+                    terminals_info.append({
+                        'uuid': term.uuid.urn,
+                        'title': title,
+                        'focused': str(focused),
+                        'cwd': cwd
+                    })
+
+            dbg(f'[SIDECHAT-PLUGIN] Retrieved metadata for {len(terminals_info)} terminals in same window as {reference_terminal_uuid}')
+            return terminals_info
+
+        except Exception as e:
+            import traceback
+            err(f'[SIDECHAT-PLUGIN] Error getting terminals in same window: {e}')
+            err(f'[SIDECHAT-PLUGIN] Traceback: {traceback.format_exc()}')
+            return []
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='s')
     def get_focused_terminal_uuid(self):
         """
@@ -299,6 +377,16 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
         except Exception as e:
             err(f'TerminatorSidechatPlugin: Error getting focused terminal: {e}')
             return ''  # Return empty string instead of None for D-Bus
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='s')
+    def get_plugin_version(self):
+        """
+        Get plugin version for diagnostics.
+
+        Returns:
+            Version string
+        """
+        return PLUGIN_VERSION
 
     def clear_cache(self):
         """Clear content cache (useful when explicitly requested)"""

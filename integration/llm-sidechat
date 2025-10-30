@@ -18,12 +18,14 @@ Author: c0ffee0wl
 License: GPL v2 only
 """
 
-# Add system site-packages to path for Terminator libraries
 import sys
-sys.path.insert(0, '/usr/lib/python3/dist-packages')
 
 import llm
 from llm.cli import load_template
+
+# Add system site-packages to path for dbus and other system-only packages
+# (Must be AFTER llm imports to avoid typing_extensions conflicts)
+sys.path.insert(0, '/usr/lib/python3/dist-packages')
 import os
 import re
 import time
@@ -138,6 +140,17 @@ class TerminatorSidechatSession:
         self.watch_interval = 5  # seconds
         self.watch_lock = threading.Lock()
         self.event_loop = None
+
+        # Intelligent capture timing configuration
+        self.capture_config = {
+            'initial_delay': 0.3,        # Initial wait before first capture (seconds)
+            'poll_interval': 0.2,        # Starting poll interval (seconds)
+            'max_poll_interval': 1.0,    # Maximum poll interval (seconds)
+            'backoff_factor': 1.3,       # Exponential backoff multiplier
+            'stability_checks': 3,       # Consecutive matches needed for stability
+            'max_wait': 3.0,             # Total timeout (seconds)
+            'min_wait_before_stability': 0.5,  # Minimum wait before allowing stability detection
+        }
 
         # Plugin and D-Bus connections
         self.plugin = None
@@ -351,6 +364,18 @@ class TerminatorSidechatSession:
                 'net.tenshu.Terminator2.Sidechat',
                 '/net/tenshu/Terminator2/Sidechat'
             )
+
+            # Check plugin version for diagnostics
+            try:
+                version = self.plugin_dbus.get_plugin_version()
+                self.console.print(f"[dim]Plugin version: {version}[/dim]")
+                if "vadjustment" not in version.lower():
+                    self.console.print("[yellow]⚠ Plugin is outdated! Restart Terminator to load new version.[/yellow]")
+                    self.console.print("[yellow]  Run: killall -9 terminator && terminator &[/yellow]")
+            except Exception:
+                self.console.print("[yellow]⚠ Plugin version check failed (old plugin running)[/yellow]")
+                self.console.print("[yellow]  Restart Terminator: killall -9 terminator && terminator &[/yellow]")
+
             return True
         except Exception as e:
             self.console.print(f"[yellow]Plugin D-Bus connection failed: {e}[/]")
@@ -386,6 +411,44 @@ class TerminatorSidechatSession:
                 if not focused_terminal:
                     raise Exception("No terminal is currently focused. Please focus a terminal and try again.")
                 self.chat_terminal_uuid = self._normalize_uuid(focused_terminal)
+
+                # Check if exactly one other pane exists (besides chat terminal)
+                try:
+                    self.console.print(f"[dim]Checking for existing panes (chat UUID: {self.chat_terminal_uuid[:8]}...)[/dim]")
+                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+                    self.console.print(f"[dim]Found {len(terminals)} terminal(s) in current window[/dim]")
+
+                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
+
+                    # Filter out chat terminal
+                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
+
+                    if len(other_terminals) == 1:
+                        # Exactly one other pane exists - offer to use it
+                        existing_pane = other_terminals[0]
+                        pane_title = existing_pane.get('title', 'Untitled')
+                        self.console.print(f"[yellow]Found existing terminal:[/] {pane_title}")
+
+                        use_existing = Confirm.ask("Use this terminal as Exec pane?", default=True)
+
+                        if use_existing:
+                            self.exec_terminal_uuid = self._normalize_uuid(existing_pane['uuid'])
+                            self.console.print(f"[green]✓[/] Chat terminal: {self.chat_terminal_uuid[:8]}...")
+                            self.console.print(f"[green]✓[/] Exec terminal (existing): {self.exec_terminal_uuid[:8]}...")
+                            return  # Success - using existing terminal
+                except dbus.exceptions.DBusException as e:
+                    # D-Bus specific errors (method not found, connection issues, etc.)
+                    error_msg = str(e)
+                    if 'Unknown method' in error_msg or 'does not exist' in error_msg:
+                        self.console.print("[red]ERROR: Plugin method 'get_terminals_in_same_window' not found![/]")
+                        self.console.print("[red]Please restart Terminator to load the updated plugin.[/red]")
+                    else:
+                        self.console.print(f"[red]D-Bus error enumerating terminals: {e}[/]")
+                    self.console.print("[yellow]Creating new Exec terminal as fallback...[/]")
+                except Exception as e:
+                    # Other unexpected errors
+                    self.console.print(f"[red]Unexpected error ({type(e).__name__}): {e}[/]")
+                    self.console.print("[yellow]Creating new Exec terminal as fallback...[/]")
 
                 # Split vertically to create Exec terminal (to the right)
                 exec_uuid = self.dbus_service.vsplit(
@@ -457,6 +520,109 @@ class TerminatorSidechatSession:
             self.console.print(f"[red]Failed to recreate exec terminal: {e}[/]")
             return False
 
+    def intelligent_capture_with_stability(self, terminal_uuid, max_wait=None):
+        """
+        Capture terminal content with adaptive polling and stability detection.
+        Waits for content to stop changing before returning.
+
+        Args:
+            terminal_uuid: Terminal to capture
+            max_wait: Maximum wait time in seconds (uses config default if None)
+
+        Returns:
+            Tuple of (content, timed_out)
+        """
+        if max_wait is None:
+            max_wait = self.capture_config['max_wait']
+
+        # Get configuration
+        initial_delay = self.capture_config['initial_delay']
+        poll_interval = self.capture_config['poll_interval']
+        max_poll_interval = self.capture_config['max_poll_interval']
+        backoff_factor = self.capture_config['backoff_factor']
+        stability_checks = self.capture_config['stability_checks']
+
+        # Calculate max attempts based on timing
+        max_attempts = int(max_wait / poll_interval) + 5
+
+        # Initial delay for command to start executing
+        time.sleep(initial_delay)
+
+        # Track elapsed time for minimum wait enforcement
+        start_time = time.time()
+
+        previous_content = None
+        stable_count = 0
+        attempt = 0
+        current_interval = poll_interval
+
+        # Spinner animation characters
+        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+
+        while attempt < max_attempts:
+            # Capture current content
+            try:
+                current_content = self.plugin_dbus.capture_terminal_content(
+                    terminal_uuid, -1
+                )
+
+                # DIAGNOSTIC: Log what we're getting
+                if attempt == 0:
+                    dbg_len = len(current_content) if current_content else 0
+                    self.console.print(f"[dim]Initial capture: {dbg_len} chars[/dim]", end="\r")
+
+            except Exception as e:
+                # Plugin error, give up
+                self.console.print(f"[red]Capture error: {e}[/red]")
+                return ("", True)
+
+            # Check for stability with enhanced validation
+            elapsed = time.time() - start_time
+            min_wait = self.capture_config.get('min_wait_before_stability', 0.5)
+
+            if current_content == previous_content:
+                stable_count += 1
+
+                # Apply minimum wait before allowing stability detection
+                if elapsed < min_wait:
+                    # Too early - reset stability even if content matches
+                    stable_count = 0
+                    previous_content = current_content
+                    # Show why we're not accepting stability yet
+                    print(f"\r⏱  Too early for stability ({elapsed:.1f}s < {min_wait}s)   ", end="", flush=True)
+                elif stable_count >= stability_checks:
+                    # Content appears stable - validate with size heuristic
+                    content_len = len(current_content) if current_content else 0
+
+                    # If content is suspiciously small (< 400 chars), require extra confirmation
+                    if content_len < 400 and elapsed < 1.5:
+                        # Content looks incomplete - keep waiting
+                        print(f"\r⚠  Content small ({content_len} chars), waiting longer...   ", end="", flush=True)
+                        stable_count = stability_checks - 1  # Reset to need one more match
+                    else:
+                        # Content is stable and sufficient!
+                        print("\r" + " " * 60 + "\r", end="", flush=True)  # Clear line
+                        return (current_content, False)
+            else:
+                # Content changed, reset stability counter
+                stable_count = 0
+                previous_content = current_content
+
+            # Visual feedback
+            spinner = spinner_chars[attempt % len(spinner_chars)]
+            stability_dots = "●" * stable_count + "○" * (stability_checks - stable_count)
+            elapsed = initial_delay + sum([poll_interval * (backoff_factor ** i) for i in range(attempt)])
+            print(f"\r{spinner} Waiting for output {stability_dots} ({elapsed:.1f}s)", end="", flush=True)
+
+            # Adaptive wait with exponential backoff
+            time.sleep(current_interval)
+            current_interval = min(current_interval * backoff_factor, max_poll_interval)
+            attempt += 1
+
+        # Timeout - clear feedback line, return last content
+        print("\r" + " " * 60 + "\r", end="", flush=True)
+        return (current_content if current_content else "", True)
+
     def capture_context(self, include_exec_output=False) -> str:
         """
         Capture visible content from all terminals (like tmuxai).
@@ -469,7 +635,7 @@ class TerminatorSidechatSession:
             Formatted context string with XML-wrapped terminal content
         """
         try:
-            terminals = self.plugin_dbus.get_all_terminals_metadata()
+            terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
             context_parts = []
 
             for term in terminals:
@@ -489,6 +655,55 @@ class TerminatorSidechatSession:
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
 {content}
 </terminal>''')
+
+            return "\n\n".join(context_parts)
+        except Exception as e:
+            self.console.print(f"[red]Error capturing context: {e}[/]")
+            return ""
+
+    def capture_context_intelligent(self, include_exec_output=False) -> str:
+        """
+        Capture context with intelligent stability detection.
+        Uses adaptive polling to wait for terminal output to stabilize.
+
+        Args:
+            include_exec_output: If True, include exec terminal content
+
+        Returns:
+            Formatted context string with XML-wrapped terminal content
+        """
+        try:
+            terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+            context_parts = []
+            timeout_warnings = []
+
+            for term in terminals:
+                uuid = term.get('uuid')
+
+                # Skip chat terminal (self-awareness)
+                if uuid == self.chat_terminal_uuid:
+                    continue
+
+                # Optionally skip exec terminal
+                if not include_exec_output and uuid == self.exec_terminal_uuid:
+                    continue
+
+                # Intelligent capture with stability detection
+                content, timed_out = self.intelligent_capture_with_stability(uuid)
+
+                if timed_out:
+                    timeout_warnings.append(term.get('title', 'Unknown'))
+
+                if content and not content.startswith('ERROR'):
+                    # Format like tmux-fragments
+                    context_parts.append(f'''<terminal uuid="{uuid}" title="{term['title']}" cwd="{term['cwd']}">
+{content}
+</terminal>''')
+
+            # Show timeout warnings if any
+            if timeout_warnings:
+                warning_msg = ", ".join(timeout_warnings)
+                self.console.print(f"[yellow]⚠ Capture timeout: {warning_msg}[/yellow]")
 
             return "\n\n".join(context_parts)
         except Exception as e:
@@ -599,53 +814,40 @@ Provide a brief but comprehensive summary."""
 
     def wait_for_command_completion(self, timeout=30) -> Tuple[bool, str]:
         """
-        Wait for command to complete by detecting prompt return.
+        Wait for command to complete using intelligent capture with stability detection.
 
         Returns:
             (completed, output): Boolean + captured output
         """
-        start_time = time.time()
-        last_output = ""
-        stable_count = 0
-        poll_interval = 0.2  # 200ms
+        try:
+            # Use intelligent capture with stability detection
+            # This handles timing, polling, and content validation automatically
+            content, timed_out = self.intelligent_capture_with_stability(
+                self.exec_terminal_uuid,
+                max_wait=timeout
+            )
 
-        while time.time() - start_time < timeout:
-            # Capture current exec terminal content
-            try:
-                # Clear cache to get fresh content
-                try:
-                    self.plugin_dbus.clear_cache()
-                except:
-                    pass  # Ignore if method doesn't exist
+            if timed_out:
+                # Timeout occurred, but return whatever we captured
+                return (False, content)
 
-                current_output = self.plugin_dbus.capture_terminal_content(
-                    self.exec_terminal_uuid,
-                    500  # Capture 500 lines including scrollback
-                )
-
-                if current_output.startswith('ERROR'):
-                    return False, current_output
-
-                # Check for prompt
-                if PromptDetector.detect_prompt(current_output):
-                    return True, current_output
-
-                # Check for stable output (no changes)
-                if current_output == last_output:
-                    stable_count += 1
-                    if stable_count >= 5:  # 1 second of no changes
-                        return True, current_output
+            # Content is stable - verify it looks reasonable
+            if content and len(content) > 100:
+                # Sanity check: verify prompt markers are present
+                # This confirms command completed and shell is ready
+                if PromptDetector.detect_prompt(content):
+                    return (True, content)
                 else:
-                    stable_count = 0
-                    last_output = current_output
+                    # Content stable but no clear prompt - might be TUI or long output
+                    # Still consider it successful
+                    return (True, content)
+            else:
+                # Very short content - might be problematic
+                return (False, content)
 
-                time.sleep(poll_interval)
-            except Exception as e:
-                self.console.print(f"[yellow]Warning during wait: {e}[/]")
-                time.sleep(poll_interval)
-
-        # Timeout reached
-        return False, last_output
+        except Exception as e:
+            self.console.print(f"[yellow]Error during command wait: {e}[/]")
+            return (False, "")
 
     def execute_command(self, command: str) -> bool:
         """
@@ -790,6 +992,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
 /help              Show this help message
 /clear             Clear conversation history
 /reset             Clear conversation and reset terminal states
+/refresh           Refresh terminal context (re-capture current state)
 /model [name]      Switch model or list available models
 /info              Show session information
 /watch <goal>      Enable watch mode with goal
@@ -841,6 +1044,46 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
                 self.console.print(f"[red]Error resetting: {e}[/]")
+            return True
+
+        elif cmd == "/refresh":
+            # Re-capture terminal content and show preview
+            self.console.print("[cyan]Refreshing terminal context...[/]")
+
+            # Clear plugin cache
+            try:
+                self.plugin_dbus.clear_cache()
+            except Exception:
+                pass
+
+            # Intelligent capture with stability detection (includes exec terminal)
+            context = self.capture_context_intelligent(include_exec_output=True)
+
+            if context:
+                self.console.print(f"[green]✓[/] Captured {len(context)} characters of context")
+
+                # Show per-terminal breakdown
+                import re
+                terminals = re.findall(r'<terminal uuid="([^"]+)" title="([^"]+)"', context)
+                if terminals:
+                    self.console.print("\n[bold]Terminals captured:[/]")
+                    for uuid_match, title in terminals:
+                        # Extract content for this terminal
+                        term_pattern = rf'<terminal uuid="{re.escape(uuid_match)}"[^>]*>(.*?)</terminal>'
+                        term_match = re.search(term_pattern, context, re.DOTALL)
+                        if term_match:
+                            term_content = term_match.group(1).strip()
+                            lines = len([l for l in term_content.split('\n') if l.strip()])
+                            chars = len(term_content)
+                            self.console.print(f"  • [cyan]{title}[/]: {lines} lines, {chars} chars")
+
+                # Show preview of first terminal
+                self.console.print("\n[dim]First 300 chars of content:[/]")
+                preview = context[:300].replace('\n', ' ')
+                self.console.print(f"[dim]{preview}...[/]")
+            else:
+                self.console.print("[yellow]No context captured[/]")
+
             return True
 
         elif cmd == "/model":
@@ -993,8 +1236,9 @@ Type your message or /help for commands
                 except Exception:
                     pass  # Ignore if clear_cache not available
 
-                # Capture context from terminals
-                context = self.capture_context(include_exec_output=False)
+                # Intelligent capture with stability detection
+                # Polls terminal until content stops changing (adaptive 200ms-3s)
+                context = self.capture_context_intelligent(include_exec_output=False)
 
                 # Build prompt with context
                 if context:
