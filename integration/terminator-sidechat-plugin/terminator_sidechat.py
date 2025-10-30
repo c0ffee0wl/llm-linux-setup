@@ -6,7 +6,8 @@ llm-sidechat. This plugin bridges the standalone sidechat application
 with Terminator's VTE terminals.
 
 Capabilities:
-- Capture visible scrollback content from VTE terminals
+- Capture visible scrollback content from VTE terminals (text)
+- Capture terminal screenshots (PNG) - works with TUI apps (htop, vim, less)
 - Send commands to terminals via feed_child
 - Get terminal metadata (UUIDs, titles, focus state)
 - Content caching for performance
@@ -16,9 +17,13 @@ License: GPL v2 only
 """
 
 import time
+import base64
+import tempfile
+import os
 import gi
 gi.require_version('Vte', '2.91')
-from gi.repository import Vte
+gi.require_version('Gdk', '3.0')
+from gi.repository import Vte, Gdk
 import terminatorlib.plugin as plugin
 from terminatorlib.terminator import Terminator
 from terminatorlib.util import dbg, err
@@ -30,7 +35,7 @@ PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
 PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Sidechat'
 
 # Plugin version for diagnostics
-PLUGIN_VERSION = "2.0-vadjustment"
+PLUGIN_VERSION = "3.0-screenshot-capture"
 
 AVAILABLE = ['TerminatorSidechatPlugin']
 
@@ -125,29 +130,41 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
                 err(f'Error getting terminal dimensions: {e}')
                 return "ERROR: Could not access terminal state"
 
-            # Calculate capture range using vertical adjustment (scrollbar position)
-            # This gives us the actual visible viewport in buffer coordinates
+            # Calculate capture range from current viewport position in buffer
+            # vadjustment tells us where the visible screen is in the buffer coordinates.
+            # This is CRITICAL for alternate screen (TUI apps): the content is at the
+            # buffer position indicated by scroll_pos, not at row 0!
             try:
                 vadj = vte.get_vadjustment()
-                dbg(f'get_vadjustment() returned: {vadj}')
                 if vadj:
                     scroll_pos = vadj.get_value()
-                    page_size = vadj.get_page_size()
+                    # Calculate visible viewport range in buffer coordinates
                     start_row = int(scroll_pos)
-                    end_row = int(scroll_pos + page_size) - 1
-                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, page_size={page_size}')
+                    end_row = int(scroll_pos + term_height) - 1
+                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, viewport range=[{start_row}, {end_row}]')
                 else:
-                    dbg('vadjustment returned None')
-                    raise ValueError("vadjustment not available")
+                    # Fallback if vadjustment returns None
+                    dbg('vadjustment returned None, using fallback')
+                    # Try scrollback position as fallback
+                    try:
+                        scrollback = vte.get_scrollback_lines()
+                        start_row = scrollback
+                        end_row = scrollback + term_height - 1
+                        dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{start_row}, {end_row}]')
+                    except:
+                        # Ultimate fallback: top of buffer
+                        start_row = 0
+                        end_row = term_height - 1
+                        dbg(f'Using ultimate fallback: range=[{start_row}, {end_row}]')
             except Exception as e:
-                # Fallback: capture entire visible viewport from top of buffer
-                dbg(f'vadjustment failed with exception: {type(e).__name__}: {e}')
+                # Exception during vadjustment access
+                dbg(f'vadjustment exception: {type(e).__name__}: {e}')
                 start_row = 0
                 end_row = term_height - 1
 
             # DEBUG: Log capture parameters
             dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg(f'  Capture method: {"vadjustment" if "scroll_pos" in locals() else "fallback"}')
+            dbg(f'  Capture method: vadjustment')
             dbg(f'  Terminal size: width={term_width}, height={term_height}')
             dbg(f'  Requested lines: {lines}')
             dbg(f'  Calculated range: start_row={start_row}, end_row={end_row}')
@@ -200,6 +217,90 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
 
         except Exception as e:
             err(f'TerminatorSidechatPlugin: Error capturing terminal content: {e}')
+            return f"ERROR: {str(e)}"
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')
+    def capture_terminal_screenshot(self, terminal_uuid):
+        """
+        Capture a screenshot of a VTE terminal as a PNG image.
+
+        This method works for ALL terminal content, including TUI applications
+        that use alternate screen buffers (htop, vim, less, etc.).
+
+        Args:
+            terminal_uuid: UUID of terminal to screenshot (string format)
+
+        Returns:
+            Base64-encoded PNG image data, or error message starting with "ERROR:"
+        """
+        try:
+            # Find terminal by UUID
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return f"ERROR: Terminal with UUID {terminal_uuid} not found"
+
+            # Get VTE widget
+            try:
+                vte = terminal.get_vte()
+                if not vte:
+                    err(f'VTE not accessible for terminal {terminal_uuid}')
+                    return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
+            except Exception as e:
+                err(f'Error accessing VTE: {e}')
+                return f"ERROR: VTE access failed: {str(e)}"
+
+            # Get the widget's GdkWindow (the actual rendered window)
+            gdk_window = vte.get_window()
+            if not gdk_window:
+                err(f'GdkWindow not available for terminal {terminal_uuid}')
+                return f"ERROR: Terminal window not realized (widget not visible)"
+
+            # Get widget dimensions
+            width = vte.get_allocated_width()
+            height = vte.get_allocated_height()
+
+            dbg(f'Screenshot capture for {terminal_uuid}: {width}x{height}px')
+
+            # Capture screenshot as pixbuf
+            pixbuf = Gdk.pixbuf_get_from_window(gdk_window, 0, 0, width, height)
+
+            if not pixbuf:
+                err(f'Failed to capture pixbuf from terminal {terminal_uuid}')
+                return f"ERROR: Screenshot capture failed (pixbuf is None)"
+
+            # Save to temporary file
+            try:
+                # Create temp file with .png extension
+                temp_fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='terminator_screenshot_')
+                os.close(temp_fd)  # Close the file descriptor, we'll use the path
+
+                # Save pixbuf to PNG
+                pixbuf.savev(temp_path, "png", [], [])
+
+                dbg(f'Screenshot saved to {temp_path}')
+
+                # Read file and encode as base64
+                with open(temp_path, 'rb') as f:
+                    image_data = f.read()
+
+                base64_data = base64.b64encode(image_data).decode('utf-8')
+
+                # Clean up temp file
+                try:
+                    os.unlink(temp_path)
+                except:
+                    pass  # Ignore cleanup errors
+
+                dbg(f'Screenshot captured: {len(base64_data)} base64 chars ({len(image_data)} bytes PNG)')
+                return base64_data
+
+            except Exception as e:
+                err(f'Error saving screenshot: {e}')
+                return f"ERROR: Failed to save screenshot: {str(e)}"
+
+        except Exception as e:
+            err(f'TerminatorSidechatPlugin: Error capturing screenshot: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ssb', out_signature='b')
@@ -259,6 +360,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
         """
         # Special key mappings to escape sequences
         special_keys = {
+            # Basic navigation and editing
             'Enter': b'\n',
             'Return': b'\n',
             'Escape': b'\x1b',
@@ -275,16 +377,60 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             'Down': b'\x1b[B',
             'Right': b'\x1b[C',
             'Left': b'\x1b[D',
-            # Control keys
+            'Space': b' ',
+
+            # Function keys (F1-F12) - VT sequences
+            'F1': b'\x1bOP',
+            'F2': b'\x1bOQ',
+            'F3': b'\x1bOR',
+            'F4': b'\x1bOS',
+            'F5': b'\x1b[15~',
+            'F6': b'\x1b[17~',
+            'F7': b'\x1b[18~',
+            'F8': b'\x1b[19~',
+            'F9': b'\x1b[20~',
+            'F10': b'\x1b[21~',
+            'F11': b'\x1b[23~',
+            'F12': b'\x1b[24~',
+
+            # Control keys (ASCII control codes)
+            'Ctrl+A': b'\x01',
+            'Ctrl+B': b'\x02',
             'Ctrl+C': b'\x03',
             'Ctrl+D': b'\x04',
-            'Ctrl+Z': b'\x1a',
-            'Ctrl+L': b'\x0c',
-            'Ctrl+A': b'\x01',
             'Ctrl+E': b'\x05',
+            'Ctrl+F': b'\x06',
+            'Ctrl+G': b'\x07',
+            'Ctrl+H': b'\x08',
+            'Ctrl+I': b'\t',   # Same as Tab
+            'Ctrl+J': b'\n',   # Same as Enter
             'Ctrl+K': b'\x0b',
+            'Ctrl+L': b'\x0c',
+            'Ctrl+M': b'\r',   # Carriage return
+            'Ctrl+N': b'\x0e',
+            'Ctrl+O': b'\x0f',
+            'Ctrl+P': b'\x10',
+            'Ctrl+Q': b'\x11',
+            'Ctrl+R': b'\x12',
+            'Ctrl+S': b'\x13',
+            'Ctrl+T': b'\x14',
             'Ctrl+U': b'\x15',
+            'Ctrl+V': b'\x16',
             'Ctrl+W': b'\x17',
+            'Ctrl+X': b'\x18',
+            'Ctrl+Y': b'\x19',
+            'Ctrl+Z': b'\x1a',
+
+            # Alt/Meta combinations (ESC prefix)
+            'Alt+B': b'\x1bb',
+            'Alt+F': b'\x1bf',
+            'Alt+D': b'\x1bd',
+            'Alt+Backspace': b'\x1b\x7f',
+            'Alt+Left': b'\x1b[1;3D',
+            'Alt+Right': b'\x1b[1;3C',
+
+            # Shift combinations
+            'Shift+Tab': b'\x1b[Z',
         }
 
         try:

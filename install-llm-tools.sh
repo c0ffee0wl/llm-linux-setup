@@ -535,7 +535,7 @@ install_apt_package pandoc
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Runtime packages (for system Python)
     log "Installing PyGObject runtime packages..."
-    sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-vte-2.91
+    sudo apt-get install -y python3-gi python3-gi-cairo python3-dbus python3-dev gir1.2-vte-2.91
 
     # Build dependencies (for pip installations in isolated environments)
     log "Installing PyGObject build dependencies..."

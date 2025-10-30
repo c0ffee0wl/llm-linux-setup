@@ -51,8 +51,8 @@ class PromptDetector:
     # Common prompt patterns
     BASH_PROMPT = re.compile(r'[\$#]\s*$')
     ZSH_PROMPT = re.compile(r'[%❯→➜]\s*$')
-    # Kali two-line prompt
-    KALI_PROMPT = re.compile(r'┌──.*\n└─[\$#]\s*$')
+    # Kali two-line prompt (with optional error indicator like "1 ⨯")
+    KALI_PROMPT = re.compile(r'┌──.*\n└─[\$#]\s*(?:\d+\s*[⨯✗×])?\s*$')
     # Generic fallback
     GENERIC_PROMPT = re.compile(r'^[\w@\-]+[:#\$>]\s*$', re.MULTILINE)
 
@@ -98,6 +98,15 @@ TUI_COMMANDS = {
     'cmus', 'ncmpcpp',  # Music players
     'lynx', 'w3m', 'links',  # Web browsers
 }
+
+# Pattern to detect special keys that should be routed to keypress handler
+# Matches function keys, navigation keys, and key combinations
+SPECIAL_KEY_PATTERN = re.compile(
+    r'^(F[1-9]|F1[0-2]|Enter|Return|Escape|Esc|Tab|Backspace|Delete|Insert|'
+    r'Home|End|PageUp|PageDown|Up|Down|Left|Right|Space|'
+    r'Ctrl\+[A-Z]|Alt\+[A-Za-z]+|Shift\+Tab)$',
+    re.IGNORECASE
+)
 
 
 def is_tui_command(command: str) -> bool:
@@ -1012,6 +1021,14 @@ Provide a brief but comprehensive summary."""
         Returns:
             True if executed, False if skipped
         """
+        # Smart detection: Check if this "command" is actually a special key
+        # If so, automatically route to keypress handler instead
+        if SPECIAL_KEY_PATTERN.match(command.strip()):
+            self.console.print("[yellow]ℹ Detected special key in command block, routing to keypress handler[/]")
+            executed = self.execute_keypress(command.strip())
+            # Return tuple to match execute_command's return signature (bool, str)
+            return (executed, "")
+
         self.console.print(Panel(
             Text(command, style="bold cyan"),
             title="[bold]Command to Execute[/]",
@@ -1052,12 +1069,47 @@ Provide a brief but comprehensive summary."""
 
                 # Detect if this is a TUI application
                 if is_tui_command(command):
-                    # TUI detected - use simple snapshot after brief delay
-                    self.console.print("[cyan]TUI application detected - using snapshot capture[/]")
-                    time.sleep(1.0)  # Brief delay for TUI to initialize
-                    output = self.simple_snapshot_capture(self.exec_terminal_uuid)
-                    self.console.print("[green]✓[/] TUI snapshot captured")
-                    return True, output
+                    # TUI detected - use screenshot capture
+                    self.console.print("[cyan]TUI application detected - using screenshot capture[/]")
+                    time.sleep(1.5)  # Give TUI time to fully render
+
+                    try:
+                        # Capture screenshot via plugin
+                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(
+                            self.exec_terminal_uuid
+                        )
+
+                        if screenshot_data.startswith('ERROR'):
+                            # Escape brackets in error message for Rich markup
+                            escaped_error = screenshot_data.replace('[', '[[').replace(']', ']]')
+                            self.console.print(f"[red]{escaped_error}[/]")
+                            return True, f"Screenshot capture failed: {screenshot_data}"
+
+                        # Save screenshot to temporary file
+                        import base64
+                        image_bytes = base64.b64decode(screenshot_data)
+
+                        temp_path = f"/tmp/sidechat_screenshot_{int(time.time())}.png"
+                        with open(temp_path, 'wb') as f:
+                            f.write(image_bytes)
+
+                        self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
+
+                        # Return a message with the screenshot path
+                        # The AI will be able to see this image via attachments
+                        output = f"""TUI application screenshot saved to: {temp_path}
+
+This is an interactive TUI application (like htop, vim, or less). The screenshot shows its current display state.
+
+Screenshot size: {len(image_bytes)} bytes"""
+
+                        return True, (output, temp_path)  # Return both text and image path
+
+                    except Exception as e:
+                        # Escape brackets in exception message for Rich markup
+                        escaped_error = str(e).replace('[', '[[').replace(']', ']]')
+                        self.console.print(f"[red]Screenshot capture error: {escaped_error}[/]")
+                        return True, f"Screenshot capture failed: {e}"
                 else:
                     # Regular command - use prompt-based capture
                     with self.console.status("[cyan]Waiting for command to complete..."):
@@ -1211,7 +1263,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
 /clear             Clear conversation history
 /reset             Clear conversation and reset terminal states
 /refresh           Refresh terminal context (re-capture current state)
-/model [name]      Switch model or list available models
+/model <name>      Switch model or list available models
 /info              Show session information
 /watch <goal>      Enable watch mode with goal
 /watch off         Disable watch mode
@@ -1449,12 +1501,12 @@ Type !fragment <name> [...] to insert fragments
                 try:
                     if in_multi:
                         # Multi-line mode - simple dim prompt
-                        self.console.print("[dim]...[/] ", end="")
-                        user_input = input()
+                        # Use inline ANSI prompt to prevent backspace from deleting it
+                        user_input = input("\033[2m...\033[0m ")
                     else:
                         # Regular mode - cyan > prompt
-                        self.console.print("\n[bold cyan]>[/] ", end="")
-                        user_input = input().strip()
+                        # Use inline ANSI prompt to prevent backspace from deleting it
+                        user_input = input("\n\033[1;36m>\033[0m ").strip()
                 except (KeyboardInterrupt, EOFError):
                     self.console.print("\n[yellow]Exiting...[/]")
                     break
@@ -1575,27 +1627,49 @@ Type !fragment <name> [...] to insert fragments
                                 executed, exec_content = self.execute_command(cmd)
 
                                 if executed:
-                                    # Use the output captured during wait_for_command_completion
-                                    # No need to capture again - we already have fresh content!
+                                    # Handle TUI screenshot vs regular text output
+                                    screenshot_path = None
+                                    if isinstance(exec_content, tuple):
+                                        # TUI command returned (text, image_path)
+                                        exec_text, screenshot_path = exec_content
+                                    else:
+                                        # Regular command returned text only
+                                        exec_text = exec_content
 
                                     # DEBUG: Show what was captured
                                     self.console.print(f"\n[yellow]═══ DEBUG: Captured Content ═══[/]")
                                     self.console.print(f"[yellow]UUID: {self.exec_terminal_uuid}[/]")
-                                    self.console.print(f"[yellow]Length: {len(exec_content)} chars[/]")
-                                    self.console.print(f"[yellow]Is ERROR: {exec_content.startswith('ERROR') if exec_content else 'N/A (empty)'}[/]")
-                                    self.console.print(f"[yellow]First 300 chars:[/]")
-                                    self.console.print(f"[cyan]{exec_content[:300] if exec_content else '(empty)'}[/]")
+                                    if screenshot_path:
+                                        self.console.print(f"[yellow]Type: Screenshot (TUI)[/]")
+                                        self.console.print(f"[yellow]Screenshot path: {screenshot_path}[/]")
+                                        self.console.print(f"[yellow]Description length: {len(exec_text)} chars[/]")
+                                    else:
+                                        self.console.print(f"[yellow]Type: Text output[/]")
+                                        self.console.print(f"[yellow]Length: {len(exec_text)} chars[/]")
+                                        self.console.print(f"[yellow]Is ERROR: {exec_text.startswith('ERROR') if exec_text else 'N/A (empty)'}[/]")
+                                        self.console.print(f"[yellow]First 300 chars:[/]")
+                                        self.console.print(f"[cyan]{exec_text[:300] if exec_text else '(empty)'}[/]")
                                     self.console.print(f"[yellow]═══════════════════════════════[/]\n")
 
                                     # Build prompt with command execution context
-                                    exec_context_prompt = f"""Command executed in Exec terminal:
+                                    if screenshot_path:
+                                        exec_context_prompt = f"""Command executed in Exec terminal:
+```bash
+{cmd}
+```
+
+{exec_text}
+
+Please analyze the screenshot and provide feedback on what you observe."""
+                                    else:
+                                        exec_context_prompt = f"""Command executed in Exec terminal:
 ```bash
 {cmd}
 ```
 
 Output:
 ```
-{exec_content}
+{exec_text}
 ```
 
 Please analyze the output and provide feedback if needed."""
@@ -1603,7 +1677,20 @@ Please analyze the output and provide feedback if needed."""
                                     # Send the exec output to the conversation so AI can see results
                                     # Thread-safe conversation access
                                     with self.watch_lock:
-                                        followup_response = self.conversation.prompt(exec_context_prompt)
+                                        # Prepare attachments (screenshot if available)
+                                        exec_attachments = []
+                                        if screenshot_path:
+                                            try:
+                                                # Use llm's attachment system to attach the image
+                                                exec_attachments.append(llm.Attachment(path=screenshot_path))
+                                                self.console.print(f"[cyan]Sending screenshot to AI via vision model...[/]")
+                                            except Exception as e:
+                                                self.console.print(f"[yellow]Warning: Could not attach screenshot: {e}[/]")
+
+                                        followup_response = self.conversation.prompt(
+                                            exec_context_prompt,
+                                            attachments=exec_attachments if exec_attachments else None
+                                        )
                                         # Consume response while holding lock
                                         followup_text = followup_response.text()
 
