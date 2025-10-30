@@ -240,6 +240,86 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             err(f'TerminatorSidechatPlugin: Error sending keys: {e}')
             return False
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ss', out_signature='b')
+    def send_keypress_to_terminal(self, terminal_uuid, keypress):
+        """
+        Send a keypress to a terminal, with support for special keys.
+        Does NOT automatically execute (no newline appended).
+
+        Args:
+            terminal_uuid: UUID of terminal to send keypress to
+            keypress: Keypress to send (can be text or special key name)
+                     Special keys: Enter, Escape, Tab, Backspace,
+                                   Ctrl+C, Ctrl+D, Ctrl+Z, Ctrl+L,
+                                   Up, Down, Left, Right, Home, End,
+                                   PageUp, PageDown, Delete, Insert
+
+        Returns:
+            True on success, False on error
+        """
+        # Special key mappings to escape sequences
+        special_keys = {
+            'Enter': b'\n',
+            'Return': b'\n',
+            'Escape': b'\x1b',
+            'Esc': b'\x1b',
+            'Tab': b'\t',
+            'Backspace': b'\x7f',
+            'Delete': b'\x1b[3~',
+            'Insert': b'\x1b[2~',
+            'Home': b'\x1b[H',
+            'End': b'\x1b[F',
+            'PageUp': b'\x1b[5~',
+            'PageDown': b'\x1b[6~',
+            'Up': b'\x1b[A',
+            'Down': b'\x1b[B',
+            'Right': b'\x1b[C',
+            'Left': b'\x1b[D',
+            # Control keys
+            'Ctrl+C': b'\x03',
+            'Ctrl+D': b'\x04',
+            'Ctrl+Z': b'\x1a',
+            'Ctrl+L': b'\x0c',
+            'Ctrl+A': b'\x01',
+            'Ctrl+E': b'\x05',
+            'Ctrl+K': b'\x0b',
+            'Ctrl+U': b'\x15',
+            'Ctrl+W': b'\x17',
+        }
+
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return False
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'Could not access VTE for terminal {terminal_uuid}')
+                return False
+
+            # Check if it's a special key (case-insensitive)
+            keypress_bytes = None
+            for special_name, special_seq in special_keys.items():
+                if keypress.lower() == special_name.lower():
+                    keypress_bytes = special_seq
+                    dbg(f'Mapped special key "{keypress}" to escape sequence')
+                    break
+
+            # If not a special key, send as literal text
+            if keypress_bytes is None:
+                keypress_bytes = keypress.encode('utf-8')
+
+            # Feed keypress to VTE (NO automatic newline)
+            vte.feed_child(keypress_bytes)
+
+            dbg(f'Sent keypress "{keypress}" to {terminal_uuid}')
+            return True
+
+        except Exception as e:
+            err(f'TerminatorSidechatPlugin: Error sending keypress: {e}')
+            return False
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='aa{ss}')
     def get_all_terminals_metadata(self):
         """

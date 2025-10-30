@@ -24,6 +24,25 @@ system: |
 
   The user will be prompted to approve execution, and the command will run in the Exec terminal.
 
+  **How to Send Keypresses:**
+  For interactive applications (vim, mysql, python REPL, etc.), you can send individual keypresses:
+
+  [▸] :q
+  [▸] Enter
+  [▸] Escape
+  [▸] print("hello")
+
+  Use keypresses when:
+  - The terminal is running an interactive application (vim, nano, mysql, etc.)
+  - You need to send input without executing it immediately
+  - You want to send special keys like Escape, Ctrl+C, arrow keys
+
+  Available special keys: Enter, Escape, Tab, Backspace, Delete, Up, Down, Left, Right, Home, End, PageUp, PageDown, Ctrl+C, Ctrl+D, Ctrl+Z, Ctrl+L, and other Ctrl combinations.
+
+  **Commands vs Keypresses:**
+  - Use ```bash blocks for shell commands (they execute immediately with Enter)
+  - Use [▸] blocks for keypresses in interactive applications (no automatic Enter)
+
   **Guidelines:**
   - Be concise and actionable in your responses
   - Focus on solving the immediate problem
