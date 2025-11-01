@@ -539,7 +539,7 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
 
     # Build dependencies (for pip installations in isolated environments)
     log "Installing PyGObject build dependencies..."
-    sudo apt-get install -y libcairo2-dev libgirepository-2.0-dev # gobject-introspection
+    sudo apt-get install -y build-essential libdbus-glib-1-dev libcairo2-dev libgirepository-2.0-dev # gobject-introspection
 fi
 
 # Install/update uv
