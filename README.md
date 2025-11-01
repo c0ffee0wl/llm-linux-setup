@@ -412,8 +412,9 @@ A powerful workflow is piping command help output to llm for natural language qu
 # Ask questions about command options
 bat --help | llm "What is the difference between '| bat -p -l md' and '| bat --language=markdown --force-colorization'?"
 
-# Continue asking follow-up questions in a chat
-docker --help | llm chat
+# Continue asking follow-up questions in a chat (don't pipe directly to 'llm chat'!)
+docker --help | llm
+llm chat -c --md
 # > What's the difference between 'docker run' and 'docker exec'?
 # > When should I use '--detach' vs '--interactive'?
 
