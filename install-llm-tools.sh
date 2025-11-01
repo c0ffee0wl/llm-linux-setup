@@ -732,6 +732,43 @@ else
     IS_FIRST_RUN=true
 fi
 
+#############################################################################
+# PHASE 2.5: Install/Update LLM Plugins
+#############################################################################
+
+log "Installing/updating llm plugins..."
+
+PLUGINS=(
+    "llm-gemini"
+    "git+https://github.com/c0ffee0wl/llm-vertex"
+    "llm-openrouter"
+    "llm-anthropic"
+    "git+https://github.com/c0ffee0wl/llm-cmd"
+    "git+https://github.com/c0ffee0wl/llm-cmd-comp"
+    "llm-tools-quickjs"
+    "llm-tools-sqlite"
+    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
+    "git+https://github.com/c0ffee0wl/llm-tools-patch"
+    "llm-fragments-site-text"
+    "llm-fragments-pdf"
+    "llm-fragments-github"
+    "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
+    "llm-fragments-dir"
+    "llm-jq"
+    "git+https://github.com/c0ffee0wl/llm-templates-fabric"
+    "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
+    "$SCRIPT_DIR/llm-tools-context"
+)
+
+for plugin in "${PLUGINS[@]}"; do
+    log "Installing/updating $plugin..."
+    command llm install "$plugin" --upgrade 2>/dev/null || command llm install "$plugin"
+done
+
+#############################################################################
+# PHASE 3: Configuring LLM
+#############################################################################
+
 # Configure Azure OpenAI API
 if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
     # --azure flag was passed - force (re)configuration
@@ -1039,39 +1076,6 @@ EOF
         warn "Run: llm keys set gemini"
     fi
 fi
-
-#############################################################################
-# PHASE 3: Install/Update LLM Plugins
-#############################################################################
-
-log "Installing/updating llm plugins..."
-
-PLUGINS=(
-    "llm-gemini"
-    "git+https://github.com/c0ffee0wl/llm-vertex"
-    "llm-openrouter"
-    "llm-anthropic"
-    "git+https://github.com/c0ffee0wl/llm-cmd"
-    "git+https://github.com/c0ffee0wl/llm-cmd-comp"
-    "llm-tools-quickjs"
-    "llm-tools-sqlite"
-    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
-    "git+https://github.com/c0ffee0wl/llm-tools-patch"
-    "llm-fragments-site-text"
-    "llm-fragments-pdf"
-    "llm-fragments-github"
-    "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
-    "llm-fragments-dir"
-    "llm-jq"
-    "git+https://github.com/c0ffee0wl/llm-templates-fabric"
-    "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
-    "$SCRIPT_DIR/llm-tools-context"
-)
-
-for plugin in "${PLUGINS[@]}"; do
-    log "Installing/updating $plugin..."
-    command llm install "$plugin" --upgrade 2>/dev/null || command llm install "$plugin"
-done
 
 #############################################################################
 # PHASE 4: Install/Update LLM Templates
