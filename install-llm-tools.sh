@@ -709,15 +709,13 @@ npm_install() {
 # Installed via uv tool from git repository with llm-uv-tool bundled
 # llm-uv-tool intercepts `llm install` commands to make plugins persist across LLM upgrades
 
-LLM_SOURCE="git+https://github.com/c0ffee0wl/llm"
-
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
     uv tool upgrade llm
 else
     log "Installing llm with llm-uv-tool for persistent plugin management..."
-    uv tool install --with llm-uv-tool "$LLM_SOURCE"
+    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"
 fi
 
 # Ensure llm is in PATH

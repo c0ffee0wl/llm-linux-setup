@@ -129,21 +129,21 @@ The script is organized into numbered phases:
 
 ### Plugin Persistence with llm-uv-tool
 
-The system uses **llm-uv-tool** (https://github.com/joshuadavidthomas/llm-uv-tool) to make LLM plugins persist across upgrades:
+The system uses **llm-uv-tool** (https://github.com/c0ffee0wl/llm-uv-tool) to make LLM plugins persist across upgrades:
 
 **The Problem**: When LLM is installed via `uv tool install`, plugins installed via `llm install` are stored in that isolated environment. When you run `uv tool upgrade llm`, all plugins are wiped and must be reinstalled.
 
 **The Solution**: llm-uv-tool intercepts `llm install` and `llm uninstall` commands and redirects them through uv's `--with` flag, making plugins persistent across upgrades.
 
 **How It Works**:
-- llm-uv-tool is bundled with llm during installation: `uv tool install --with llm-uv-tool "git+..."`
+- llm-uv-tool is bundled with llm during installation: `uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+..."`
 - Maintains a tracking file: `~/.config/io.datasette.llm/uv-tool-packages.json`
 - Intercepts `llm install <plugin>` and converts to `uv tool install --with <plugin> llm`
 - User-facing commands remain unchanged: `llm install llm-gemini` works as before
 - Plugins automatically persist when llm is upgraded
 
 **Installation**:
-- New installations: `uv tool install --with llm-uv-tool "git+https://github.com/c0ffee0wl/llm"`
+- New installations: `uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"`
 - Upgrades: `uv tool upgrade llm` (llm-uv-tool persists automatically)
 
 **Benefits**:
@@ -803,7 +803,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 
 Note that several packages use **forks** or specific sources:
 - **llm**: Installed from git repository fork: `git+https://github.com/c0ffee0wl/llm` (forked from simonw/llm with markdown markup enhancements)
-- **llm-uv-tool**: Automatically bundled with llm installation via `--with` flag (makes plugins persist across LLM upgrades)
+- **llm-uv-tool**: Installed from git repository fork: `git+https://github.com/c0ffee0wl/llm-uv-tool` (bundled with llm installation via `--with` flag, makes plugins persist across LLM upgrades)
 - **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
 - **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)
