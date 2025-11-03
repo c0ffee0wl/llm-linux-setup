@@ -123,42 +123,50 @@ if [ -n "$VTE_VERSION" ]; then
 fi
 
 # -- Automatic asciinema session recording --
-# Only run if this is an interactive shell and we're not already in asciinema
-# NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
+if command -v asciinema &> /dev/null; then
+  # Only run if this is an interactive shell and we're not already in asciinema
+  # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
 
-# Determine unique session identifier based on multiplexer type
-# NOTE: Only tmux needs special handling due to environment variable inheritance between panes
-# Screen windows are isolated and don't need pane-specific markers
-if [ -n "$TMUX_PANE" ]; then
-  # In tmux, use pane ID (e.g., "%0", "%1", "%2")
-  # Clean it for use in variable name (remove % and other special chars)
-  PANE_ID=$(echo "$TMUX_PANE" | tr -cd '[:alnum:]')
-  SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
-  PANE_SUFFIX="_tmux${PANE_ID}"
-else
-  # Default for regular terminals and screen (no special handling needed)
-  SESSION_MARKER="IN_ASCIINEMA_SESSION"
-  PANE_SUFFIX=""
-fi
-
-# Check if this specific session is already recording
-# Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
-eval "is_recording=\${$SESSION_MARKER}"
-if [[ $- == *i* && -z "$is_recording" ]]; then
-  # Mark this specific session as recording
-  export "$SESSION_MARKER=1"
-
-  # Create log directory and define filename with pane identifier
-  mkdir -p "$SESSION_LOG_DIR"
-  export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
-
-  # Show environment variable export command (unless SESSION_LOG_SILENT is set)
-  if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
-    echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
-    echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
-    echo ""
+  # Determine unique session identifier based on multiplexer type
+  # NOTE: Only tmux needs special handling due to environment variable inheritance between panes
+  # Screen windows are isolated and don't need pane-specific markers
+  if [ -n "$TMUX_PANE" ]; then
+    # In tmux, use pane ID (e.g., "%0", "%1", "%2")
+    # Clean it for use in variable name (remove % and other special chars)
+    PANE_ID=$(echo "$TMUX_PANE" | tr -cd '[:alnum:]')
+    SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
+    PANE_SUFFIX="_tmux${PANE_ID}"
+  else
+    # Default for regular terminals and screen (no special handling needed)
+    SESSION_MARKER="IN_ASCIINEMA_SESSION"
+    PANE_SUFFIX=""
   fi
 
-  # Replace current shell with asciinema process
-  exec asciinema rec "$SESSION_LOG_FILE" --quiet
+  # Check if this specific session is already recording
+  # Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
+  eval "is_recording=\${$SESSION_MARKER}"
+  if [[ $- == *i* && -z "$is_recording" ]]; then
+    # Mark this specific session as recording
+    export "$SESSION_MARKER=1"
+
+    # Create log directory and define filename with pane identifier
+    mkdir -p "$SESSION_LOG_DIR"
+    export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
+
+    # Show environment variable export command (unless SESSION_LOG_SILENT is set)
+    if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+      echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
+      echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
+      echo ""
+    fi
+
+    # Replace current shell with asciinema process
+    exec asciinema rec "$SESSION_LOG_FILE" --quiet
+  fi
+else
+  if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+    echo "Warning: asciinema not found. Session recording disabled." >&2
+    echo "Run the installation script to install asciinema and enable the 'context' tool." >&2
+  fi
+  # Skip recording - asciinema not available
 fi
