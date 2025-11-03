@@ -29,6 +29,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Attachments & Multi-modal](#attachments--multi-modal)
   - [Fragments](#fragments)
   - [Templates](#templates)
+  - [Git and Sorting](#git-and-sorting)
   - [Code Generation](#code-generation)
   - [Tools](#tools)
   - [Context System Usage](#context-system-usage)
@@ -214,6 +215,14 @@ llm -f https://example.com "extract key points"
 llm -t fabric:summarize "..."        # Not the default
 llm -t fabric:analyze_threat_report  # Not the default
 
+# Git workflow - AI-powered commit messages
+llm git-commit                       # Generate commit message from staged changes
+llm git-commit --tracked             # Generate commit message from all tracked changes
+
+# Semantic sorting - sort by meaning, not alphabetically
+cat names.txt | llm sort --query "Which is more suitable for a pet monkey?"
+llm sort --query "Most technical" --top-k 5 topics.txt
+
 # Query your documents with RAG ('llm rag' is an alias for 'aichat --rag')
 llm rag mydocs                    # Open/create RAG collection for documents
 llm rag mydocs --rebuild-rag      # Rebuild index after changes
@@ -299,6 +308,8 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[llm-vertex](https://github.com/c0ffee0wl/llm-vertex)** - Google Vertex AI Gemini models integration
 - **[llm-openrouter](https://github.com/simonw/llm-openrouter)** - OpenRouter API integration
 - **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
+- **[llm-git-commit](https://github.com/ShamanicArts/llm-git-commit)** - AI-powered Git commit message generation with interactive refinement
+- **[llm-sort](https://github.com/vagos/llm-sort)** - Semantic sorting using LLM-based pairwise comparisons
 
 ### LLM Templates
 
@@ -619,6 +630,7 @@ llm -f yt:https://youtu.be/VIDEO_ID "What are the main topics discussed?"
 
 # Analyze video content with fabric pattern
 llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID -t fabric:youtube_summary --md
+llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID -t fabric:summarize_lecture --md
 
 # Compare multiple videos
 llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID_1 \
@@ -778,6 +790,91 @@ llm templates show mytemplate
 ```
 
 For complete template documentation, see the [LLM Templates Guide](https://llm.datasette.io/en/stable/templates.html).
+
+### Git and Sorting
+
+**AI-Powered Commit Messages with llm-git-commit**
+
+Generate conventional commit messages using AI that analyzes your Git diffs:
+
+```bash
+# Generate commit message for staged changes
+llm git-commit
+
+# Generate commit message for all tracked changes
+llm git-commit --tracked
+
+# Interactive workflow:
+# 1. AI analyzes your diff and generates a commit message
+# 2. Review the suggested message
+# 3. Press Ctrl+I to refine the message via chat
+# 4. Use /apply to accept or /cancel to discard
+# 5. Confirm before committing
+# 6. Optionally push after commit
+```
+
+**Features:**
+- **Conventional commit format**: Follows industry-standard commit message conventions
+- **Interactive refinement**: Press `Ctrl+I` to chat with AI and improve the message
+- **Safe workflow**: Always shows preview and requires confirmation before committing
+- **Context-aware**: Analyzes actual code changes to generate meaningful messages
+
+**Example session:**
+
+```bash
+$ git add src/api.py
+$ llm git-commit
+
+Analyzing changes...
+Suggested commit message:
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+feat: add user authentication endpoint
+
+- Implement JWT token generation
+- Add password hashing with bcrypt
+- Create /api/login route with validation
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+[A]ccept, [E]dit, [R]egenerate, or [C]ancel? a
+Committing...
+[main 1a2b3c4] feat: add user authentication endpoint
+ 1 file changed, 45 insertions(+)
+
+Push changes? [y/N]
+```
+
+**Semantic Sorting with llm-sort**
+
+Sort items by meaning rather than alphabetically using LLM-powered semantic comparisons:
+
+```bash
+# Sort items by semantic criteria
+llm sort --query "Which is more suitable for a pet monkey?" names.txt
+
+# Sort with piped input
+cat programming_languages.txt | llm sort --query "Which is better for web development?"
+
+# Use a different method, limit the output to the top 5 lines, and specify a custom model and prompt:
+llm sort --query "Rank these slogans" --method sliding --top-k 5 --model gpt-4.1 \
+  --prompt 'Decide which line is more compelling. Answer with "Line A" or "Line B" Query: {query} Lines: {docA} {docB}.' quotes.txt
+```
+
+**Use Cases:**
+- **Prioritization**: "Which task is more urgent?" "Which feature provides more value?"
+- **Recommendations**: "Which book should I read to learn Python?" "Which tool is better for this task?"
+- **Categorization**: "Which item is more technical?" "Which concept is more advanced?"
+- **Quality ranking**: "Which code solution is cleaner?" "Which explanation is clearer?"
+
+**How it works:**
+
+llm-sort uses pairwise LLM comparisons to determine semantic ordering. Unlike alphabetical sorting, it understands context and meaning, making it ideal for subjective or context-dependent sorting tasks.
+
+**Options:**
+- `--query`: The semantic criterion for sorting (required)
+- `--method`: Ranking approach (`sorting` or `sliding`, default: `sorting`)
+- `--top-k`: Limit output to top N results
+- `--model`: Specify which LLM model to use
+- `--prompt`: Custom comparison prompt template
 
 ### Code Generation
 
@@ -1494,7 +1591,6 @@ aichat --role %functions% what is the weather in Paris?
 - **Automation**: Create tools that interact with databases, cloud services, or local applications
 
 For complete documentation, see the [llm-functions repository](https://github.com/sigoden/llm-functions/).
-
 
 ### Micro Text Editor Integration
 

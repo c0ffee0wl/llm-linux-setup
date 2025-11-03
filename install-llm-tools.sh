@@ -761,6 +761,8 @@ PLUGINS=(
     "llm-jq"
     "git+https://github.com/c0ffee0wl/llm-templates-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
+    "llm-git-commit"
+    "llm-sort"
     "$SCRIPT_DIR/llm-tools-context"
 )
 

@@ -27,7 +27,8 @@ llm() {
         "collections" "embed" "embed-models" "embed-multi" "similar"
         "aliases" "logs" "install" "uninstall"
         "openai" "gemini" "openrouter" "vertex"
-        "cmd" "cmdcomp" "jq" "rag"
+        "cmd" "cmdcomp" "jq"
+        "rag" "git-commit" "sort"
     )
 
     # Check if first argument is an excluded subcommand
