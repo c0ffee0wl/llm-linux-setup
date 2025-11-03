@@ -120,12 +120,40 @@ The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
-2. **LLM Core**: Install/upgrade llm, configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat
-3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
+2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat
+3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (llm-uv-tool intercepts for persistence; includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
+
+### Plugin Persistence with llm-uv-tool
+
+The system uses **llm-uv-tool** (https://github.com/joshuadavidthomas/llm-uv-tool) to make LLM plugins persist across upgrades:
+
+**The Problem**: When LLM is installed via `uv tool install`, plugins installed via `llm install` are stored in that isolated environment. When you run `uv tool upgrade llm`, all plugins are wiped and must be reinstalled.
+
+**The Solution**: llm-uv-tool intercepts `llm install` and `llm uninstall` commands and redirects them through uv's `--with` flag, making plugins persistent across upgrades.
+
+**How It Works**:
+- llm-uv-tool is bundled with llm during installation: `uv tool install --with llm-uv-tool "git+..."`
+- Maintains a tracking file: `~/.config/io.datasette.llm/uv-tool-packages.json`
+- Intercepts `llm install <plugin>` and converts to `uv tool install --with <plugin> llm`
+- User-facing commands remain unchanged: `llm install llm-gemini` works as before
+- Plugins automatically persist when llm is upgraded
+
+**Installation**:
+- New installations: `uv tool install --with llm-uv-tool "git+https://github.com/c0ffee0wl/llm"`
+- Upgrades: `uv tool upgrade llm` (llm-uv-tool persists automatically)
+
+**Benefits**:
+- ✅ Plugins persist across LLM upgrades automatically
+- ✅ Faster script execution (plugins don't need reinstallation every run)
+- ✅ More robust upgrade process
+- ✅ No changes to user-facing commands
+- ✅ Compatible with Python 3.10+
+
+**Plugin Dependencies**: All plugin dependencies (like yt-dlp for YouTube transcripts) are automatically installed by pip when the plugin is installed. No manual installation required.
 
 ### Helper Functions (Code Reusability)
 
@@ -152,11 +180,13 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Auto-updates if user hasn't modified the file (installed checksum = stored checksum)
   - Prompts user if local modifications detected (installed checksum ≠ stored checksum)
   - Used in Phase 4 for assistant.yaml and code.yaml templates
-- **`install_or_upgrade_cargo_tool(tool_name, [git_url])`**: Unified cargo tool installation/upgrade (used in Phase 6)
-  - For crates.io packages: Checks if installed, provides feedback, runs `cargo install`
-  - For git-based packages: Always force reinstall with `--locked --force --git` flags
-  - Provides clear logging for user visibility
-  - Used for aichat; asciinema kept separate due to specialized commit-hash tracking
+- **`install_or_upgrade_cargo_tool(tool_name)`**: Install/upgrade cargo tools from crates.io (used in Phase 6)
+  - Checks if installed, provides feedback, runs `cargo install`
+  - Used for aichat, argc (crates.io packages only)
+- **`install_or_upgrade_cargo_git_tool(tool_name, git_url)`**: Install/upgrade cargo tools from git with commit-hash tracking (used in Phase 6)
+  - Stores commit hash in `~/.config/llm-tools/{tool}-commit`
+  - Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
+  - Used for asciinema, yek (git packages that change frequently)
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -771,6 +801,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 
 Note that several packages use **forks** or specific sources:
 - **llm**: Installed from git repository fork: `git+https://github.com/c0ffee0wl/llm` (forked from simonw/llm with markdown markup enhancements)
+- **llm-uv-tool**: Automatically bundled with llm installation via `--with` flag (makes plugins persist across LLM upgrades)
 - **llm-cmd**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd`
 - **llm-cmd-comp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-cmd-comp`
 - **llm-tools-llm-functions**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-llm-functions` (bridge for optional llm-functions integration)

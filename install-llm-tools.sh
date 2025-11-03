@@ -371,28 +371,22 @@ update_template_file() {
     fi
 }
 
-# Install or upgrade a Rust/Cargo tool
-# Usage: install_or_upgrade_cargo_tool tool_name [git_url]
+# Install or upgrade a Rust/Cargo tool from crates.io
+# For git-based packages, use install_or_upgrade_cargo_git_tool instead
+# Usage: install_or_upgrade_cargo_tool tool_name
 # Examples:
 #   install_or_upgrade_cargo_tool aichat
-#   install_or_upgrade_cargo_tool asciinema https://github.com/asciinema/asciinema
+#   install_or_upgrade_cargo_tool argc
 install_or_upgrade_cargo_tool() {
     local tool_name="$1"
-    local git_source="$2"
 
-    if [ -n "$git_source" ]; then
-        # Installing from git repository (always force to get latest commit)
-        log "Installing/updating $tool_name from git..."
-        cargo install --locked --force --git "$git_source"
+    # Installing from crates.io
+    if ! command -v "$tool_name" &> /dev/null; then
+        log "Installing $tool_name via cargo..."
+        cargo install "$tool_name"
     else
-        # Installing from crates.io
-        if ! command -v "$tool_name" &> /dev/null; then
-            log "Installing $tool_name via cargo..."
-            cargo install "$tool_name"
-        else
-            log "$tool_name is already installed, checking for updates..."
-            cargo install "$tool_name"
-        fi
+        log "$tool_name is already installed, checking for updates..."
+        cargo install "$tool_name"
     fi
 }
 
@@ -710,11 +704,21 @@ npm_install() {
 # PHASE 2: Install/Update LLM Core
 #############################################################################
 
-# Install/upgrade llm from fork
+# Install/upgrade llm from fork with llm-uv-tool for persistent plugin management
 # Using c0ffee0wl/llm fork which includes markdown markup enhancements
-# Installed via uv tool from git repository
-# Note: is_git_package=true ensures migration from PyPI to git fork works correctly
-install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm" true
+# Installed via uv tool from git repository with llm-uv-tool bundled
+# llm-uv-tool intercepts `llm install` commands to make plugins persist across LLM upgrades
+
+LLM_SOURCE="git+https://github.com/c0ffee0wl/llm"
+
+# Check if llm is already installed
+if uv tool list 2>/dev/null | grep -q "^llm "; then
+    log "Upgrading llm (with llm-uv-tool)..."
+    uv tool upgrade llm
+else
+    log "Installing llm with llm-uv-tool for persistent plugin management..."
+    uv tool install --with llm-uv-tool "$LLM_SOURCE"
+fi
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
