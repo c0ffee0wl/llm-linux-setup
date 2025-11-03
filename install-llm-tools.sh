@@ -1190,6 +1190,26 @@ install_or_upgrade_cargo_tool argc
 # Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
 install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
 
+# Install clipboard tooling
+install_apt_package xclip
+
+# Install Micro text editor
+install_apt_package micro
+
+# Install llm-micro plugin
+log "Installing llm-micro plugin..."
+MICRO_PLUGIN_DIR="$HOME/.config/micro/plug"
+mkdir -p "$MICRO_PLUGIN_DIR"
+
+if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
+    log "Cloning llm-micro plugin..."
+    git clone https://github.com/shamanicvocalarts/llm-micro "$MICRO_PLUGIN_DIR/llm"
+    log "llm-micro plugin installed to $MICRO_PLUGIN_DIR/llm"
+else
+    log "llm-micro plugin already installed, checking for updates..."
+    (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
+fi
+
 #############################################################################
 # PHASE 7: Claude Code & OpenCode
 #############################################################################
@@ -1274,6 +1294,7 @@ log "  - aichat (All-in-one LLM CLI with RAG functionality)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 # log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
 log "  - OpenCode (AI coding agent for terminal)"
+log "  - micro (modern terminal text editor with llm-micro plugin for AI integration)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
 log "  - files-to-prompt (file content formatter)"

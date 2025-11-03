@@ -35,6 +35,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [RAG (Document Querying)](#rag-document-querying)
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
+  - [Micro Text Editor Integration](#micro-text-editor-integration)
   - [Managing Models](#managing-models)
   - [Model-Specific Parameters](#model-specific-parameters)
   - [Managing API Keys](#managing-api-keys)
@@ -311,6 +312,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
+- **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 
 ### Shell Integration
 
@@ -1493,6 +1495,97 @@ aichat --role %functions% what is the weather in Paris?
 
 For complete documentation, see the [llm-functions repository](https://github.com/sigoden/llm-functions/).
 
+
+### Micro Text Editor Integration
+
+The repository installs **Micro** (https://github.com/zyedidia/micro), a modern terminal-based text editor, along with **llm-micro** (https://github.com/ShamanicArts/llm-micro), a plugin that integrates Simon Willison's LLM CLI directly into the editor for AI-powered text generation and modification.
+
+**Architecture Overview**:
+- **Micro Editor**: Modern, intuitive terminal editor designed as a successor to nano
+- **Single Binary**: No external dependencies (just libc6)
+- **Lua Plugin System**: Extensible via Lua-based plugins
+
+**Usage Modes**:
+
+1. **Generate Mode** (no text selection):
+   - Cursor positioned where you want output
+   - Press `Ctrl+E`, type: `llm write a python function to parse JSON`
+   - AI output inserted at cursor position
+   - Context: Sends surrounding lines for better results
+
+2. **Modify Mode** (with text selection):
+   - Select text to modify
+   - Press `Ctrl+E`, type: `llm fix this code`
+   - AI analyzes selection and replaces it with modified version
+   - Context: Sends selected text plus surrounding lines
+
+**Command Syntax**:
+```
+llm [options] <request>
+
+Options:
+  -t <template>, --template <template>    Use specific LLM template
+  -s "<prompt>", --system "<prompt>"      Custom system prompt
+
+Examples:
+  llm write a bash function to list files
+  llm -t code implement binary search in python
+  llm --system "you are a python expert" optimize this loop
+  llm fix the syntax error in this code
+```
+
+**Template Commands**:
+```
+llm_template <name>              # Open/edit template YAML
+llm_template_default <name>      # Set default template
+llm_template_default --clear     # Remove default template
+llm_template_default --show      # Show current default
+```
+
+**Configuration** (`~/.config/micro/settings.json`):
+```json
+{
+    "llm.default_template": "assistant",
+    "llm.context_lines": 100
+}
+```
+
+**Settings**:
+- `llm.default_template` (string, default: ""): Default template for LLM operations
+- `llm.context_lines` (number, default: 100): Lines of context before/after cursor; 0 to disable
+
+**Automatic Features**:
+- **Markdown Extraction**: Automatically appends `-x` flag to extract text from code blocks
+- **Progress Messages**: Shows status in Micro's infobar during generation
+- **Context Awareness**: Sends surrounding code for better AI understanding
+
+**Workflow Examples**:
+
+```bash
+# Launch Micro
+micro myfile.py
+
+# Generate new code (no selection)
+# Position cursor, press Ctrl+E
+llm write a function to calculate fibonacci
+
+# Modify existing code (with selection)
+# Select code block, press Ctrl+E
+llm add error handling to this function
+
+# Use specific template
+llm -t code implement quicksort in python
+
+# Custom system prompt
+llm -s "you are a security expert" review this code for vulnerabilities
+```
+
+**Tips**:
+- Set `llm.default_template` to your most-used template for faster workflow
+- Use `-t code` template for clean, executable code without explanations
+- Adjust `llm.context_lines` based on your needs (more context = better understanding, but slower)
+- View plugin logs: Press `Ctrl+E`, type `log` to see debug output
+
 ### Managing Models
 
 **List Available Models**
@@ -2167,7 +2260,7 @@ For issues, questions, or suggestions:
 ### LLM Plugins & Extensions
 
 - [Daniel Turkel](https://github.com/daturkel) - llm-fragments-pdf, llm-fragments-site-text
-- [ Ryan Patterson ](https://github.com/CGamesPlay) - llm-cmd-comp plugin
+- [Ryan Patterson ](https://github.com/CGamesPlay) - llm-cmd-comp plugin
 - [Dan Mackinlay](https://github.com/danmackinlay) - files-to-prompt (fork)
 - [Damon McMinn](https://github.com/damonmcminn) - llm-templates-fabric (fork)
 - [Daniel Miessler](https://github.com/danielmiessler) - Original Fabric prompt patterns
@@ -2178,6 +2271,8 @@ For issues, questions, or suggestions:
 - [stedolan/jq](https://github.com/stedolan/jq) - Command-line JSON processor
 - [Asciinema](https://github.com/asciinema/asciinema) - Terminal session recorder
 - [Coderamp Labs](https://github.com/coderamp-labs/gitingest) - gitingest repository analyzer
+- [Zachary Yedidia](https://github.com/zyedidia/micro) - Micro modern terminal text editor
+- [ShamanicArts](https://github.com/ShamanicArts/llm-micro) - llm-micro plugin for in-editor AI assistance
 
 ## License
 

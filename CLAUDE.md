@@ -761,6 +761,8 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template checksums for smart updates
 - `~/.config/terminator/plugins/terminator_sidechat.py` - Terminator sidechat plugin
+- `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
+- `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 - `~/.local/share/aichat/rags/` - RAG collections and vector databases
 
