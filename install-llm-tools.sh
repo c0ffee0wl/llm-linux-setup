@@ -286,6 +286,99 @@ configure_gemini() {
     GEMINI_CONFIGURED=true
 }
 
+# Configure Codex CLI with Azure OpenAI credentials
+configure_codex_cli() {
+    log "Configuring Codex CLI with Azure OpenAI..."
+
+    # Extract api_base from extra-openai-models.yaml
+    local EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+
+    if [ -z "$api_base" ]; then
+        log "WARNING: Could not extract Azure API base from llm config"
+        return 1
+    fi
+
+    # Retrieve API key from llm keys storage
+    local api_key=$(command llm keys get azure 2>/dev/null || echo "")
+
+    if [ -z "$api_key" ]; then
+        log "WARNING: Could not retrieve Azure API key from llm keys storage"
+        return 1
+    fi
+
+    # Create ~/.codex directory if needed
+    mkdir -p ~/.codex
+
+    # Generate config.toml
+    cat > ~/.codex/config.toml <<EOF
+[model]
+name = "gpt-5-codex"
+model_provider = "azure"
+
+[model_providers.azure]
+base_url = "${api_base}"
+env_key = "AZURE_OPENAI_API_KEY"
+EOF
+
+    log "Codex CLI configuration created at ~/.codex/config.toml"
+}
+
+# Export Azure environment variables to ~/.profile
+export_azure_env_vars() {
+    log "Exporting Azure environment variables to ~/.profile..."
+
+    # Extract api_base and resource name
+    local EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+
+    if [ -z "$api_base" ]; then
+        log "WARNING: Could not extract Azure API base for environment variables"
+        return 1
+    fi
+
+    # Extract resource name from URL (e.g., https://your-resource.openai.azure.com/... -> your-resource)
+    local resource_name=$(echo "$api_base" | sed 's|https://\([^.]*\)\..*|\1|')
+
+    # Retrieve API key
+    local api_key=$(command llm keys get azure 2>/dev/null || echo "")
+
+    if [ -z "$api_key" ]; then
+        log "WARNING: Could not retrieve Azure API key for environment variables"
+        return 1
+    fi
+
+    # Create ~/.profile if it doesn't exist
+    touch ~/.profile
+
+    # Add or update AZURE_OPENAI_API_KEY export (idempotent)
+    if grep -q "^export AZURE_OPENAI_API_KEY=" ~/.profile; then
+        # Update existing export
+        sed -i "s|^export AZURE_OPENAI_API_KEY=.*|export AZURE_OPENAI_API_KEY=\"${api_key}\"|" ~/.profile
+        log "Updated AZURE_OPENAI_API_KEY in ~/.profile"
+    else
+        # Add new export
+        echo "" >> ~/.profile
+        echo "# Azure OpenAI configuration (added by llm-linux-setup)" >> ~/.profile
+        echo "export AZURE_OPENAI_API_KEY=\"${api_key}\"" >> ~/.profile
+        log "Added AZURE_OPENAI_API_KEY to ~/.profile"
+    fi
+
+    # Add or update AZURE_RESOURCE_NAME export (idempotent)
+    if grep -q "^export AZURE_RESOURCE_NAME=" ~/.profile; then
+        # Update existing export
+        sed -i "s|^export AZURE_RESOURCE_NAME=.*|export AZURE_RESOURCE_NAME=\"${resource_name}\"|" ~/.profile
+        log "Updated AZURE_RESOURCE_NAME in ~/.profile"
+    else
+        # Add new export
+        echo "export AZURE_RESOURCE_NAME=\"${resource_name}\"" >> ~/.profile
+        log "Added AZURE_RESOURCE_NAME to ~/.profile"
+    fi
+
+    log "Azure environment variables configured in ~/.profile"
+    log "Note: Run 'source ~/.profile' to load them in current session"
+}
+
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
@@ -1211,7 +1304,7 @@ else
 fi
 
 #############################################################################
-# PHASE 7: Claude Code & OpenCode
+# PHASE 7: Agentic CLI (coding) tools
 #############################################################################
 
 # Install/update Claude Code
@@ -1277,6 +1370,22 @@ npm_install install -g @anthropic-ai/claude-code
 # Install/update OpenCode
 log "Installing/updating OpenCode..."
 npm_install install -g opencode-ai@latest
+
+# Install/update Codex CLI if Azure is configured
+if [ "$AZURE_CONFIGURED" = true ]; then
+    log "Installing/updating Codex CLI..."
+    npm_install install -g @openai/codex
+
+    # Configure Codex CLI with Azure OpenAI credentials
+    configure_codex_cli
+
+    # Export Azure environment variables to ~/.profile
+    export_azure_env_vars
+
+    log "Codex CLI installed and configured with Azure OpenAI"
+else
+    log "Skipping Codex CLI installation (Azure OpenAI not configured)"
+fi
 
 #############################################################################
 # COMPLETE

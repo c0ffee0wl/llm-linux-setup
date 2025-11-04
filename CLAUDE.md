@@ -546,6 +546,7 @@ Watch mode enabled: monitoring all terminals
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
 - **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
+- **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
 ## Common Commands
 
@@ -752,12 +753,83 @@ bash -c "source integration/llm-integration.bash && bind -P | grep llm"
 zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ```
 
+## Azure MCP and Codex CLI
+
+The repository includes comprehensive support for **Codex CLI** (OpenAI's coding agent) and **Model Context Protocol (MCP)** servers for enhanced AI-powered development workflows.
+
+### Automatic Codex CLI Installation
+
+When Azure OpenAI is configured, the installation script automatically:
+- Installs Codex CLI via npm (Phase 7)
+- Creates `~/.codex/config.toml` with Azure OpenAI credentials
+- Exports environment variables to `~/.profile`:
+  - `AZURE_OPENAI_API_KEY`
+  - `AZURE_RESOURCE_NAME`
+
+**To use Codex CLI:**
+```bash
+# Load environment variables (if not already loaded)
+source ~/.profile
+
+# Start Codex
+codex
+```
+
+### VS Code Extension
+
+Codex is also available as a **Visual Studio Code extension**, providing IDE-integrated AI coding assistance:
+- Search for "Codex" in VS Code Extensions marketplace
+- Supports VS Code, VS Code Insiders, Cursor, and Windsurf
+- Features: inline suggestions, delegate tasks to cloud agent, review diffs, create PRs
+
+### MCP Server Integration
+
+The system supports integration with three official Microsoft MCP servers:
+
+1. **Azure MCP Server**: Connect to 40+ Azure services (Storage, Compute, AI Services, Communication, etc.)
+2. **Lokka**: Microsoft 365 and Microsoft Graph integration for tenant management
+3. **Microsoft Learn MCP**: Access to trusted Microsoft documentation and code samples
+
+**Comprehensive Setup Guide**: See [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md) for:
+- Codex quickstart guide and VS Code extension installation
+- MCP server configuration in Codex (`codex mcp add`)
+- Azure authentication with `az login`
+- Service principal and certificate-based authentication
+- App registration for Microsoft 365 access
+- Testing and troubleshooting steps
+
+**Quick Start:**
+```bash
+# Install Azure MCP (optional - not automatic)
+npm install -g @azure/mcp
+
+# Authenticate to Azure
+az login
+
+# Configure MCP server in Codex
+codex mcp add azure -- npx -y @azure/mcp@latest server start
+
+# Configure Lokka (Microsoft 365)
+codex mcp add lokka -- npx -y @merill/lokka
+
+# Configure Microsoft Learn MCP
+npm install -g mcp-remote
+codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/api/mcp
+```
+
+**References:**
+- Codex Quickstart: https://developers.openai.com/codex/quickstart
+- Codex MCP Guide: https://developers.openai.com/codex/mcp/
+- Detailed Setup: [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md)
+
 ## Important File Locations
 
 ### Configuration Files
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions for llm
 - `~/.config/io.datasette.llm/templates/{assistant,code,terminator-sidechat}.yaml` - Custom LLM templates
 - `~/.config/aichat/config.yaml` - aichat configuration with Azure OpenAI and RAG settings
+- `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
+- `~/.profile` - Environment variables for Azure OpenAI (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template checksums for smart updates
 - `~/.config/terminator/plugins/terminator_sidechat.py` - Terminator sidechat plugin
@@ -778,6 +850,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-tools-terminator-fragments/` - LLM plugin exposing Terminator terminal content as tool
 - `llm-template/{assistant,code,terminator-sidechat}.yaml` - Template sources installed to user config
+- `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
 
 ## Key Constraints & Design Decisions
