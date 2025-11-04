@@ -1374,7 +1374,9 @@ if [ "$AZURE_CONFIGURED" = true ]; then
     log "Installing/updating Codex CLI..."
 
     # Configure Codex CLI with Azure OpenAI credentials
-    configure_codex_cli
+    if [ ! -f "$HOME/.codex/config.toml" ]; then
+        configure_codex_cli
+    fi
 
     # Export Azure environment variables to ~/.profile
     export_azure_env_vars
