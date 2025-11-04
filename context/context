@@ -128,6 +128,74 @@ def detect_prompts(text):
     return adjusted_prompt_lines
 
 
+def should_exclude_block(block):
+    """
+    Check if a prompt block should be excluded from output.
+
+    Excludes blocks where the command starts with:
+    - context (with space or end of string)
+    - llm (with space)
+    - aichat (with space or end of string)
+    - llm-sidechat (with space or end of string)
+
+    Args:
+        block: Text block containing prompt + command + output
+
+    Returns:
+        True if block should be excluded, False otherwise
+    """
+    if not block:
+        return False
+
+    # Split into non-empty lines
+    lines = [line for line in block.split('\n') if line.strip()]
+
+    if not lines:
+        return False
+
+    # Check if this is a Kali-style two-line prompt
+    kali_header_pattern = r'^[┌╭]──.*[\])]$'
+    command_line_idx = 0
+
+    if len(lines) >= 2 and re.search(kali_header_pattern, lines[0]):
+        # Skip the decorative header, use second line
+        command_line_idx = 1
+
+    if command_line_idx >= len(lines):
+        return False
+
+    command_line = lines[command_line_idx]
+
+    # Extract the command after the prompt character
+    # Prompt patterns: $ # % ❯ → ➜
+    prompt_chars = r'[$#%❯→➜]'
+    match = re.search(f'{prompt_chars}\\s+(.+)', command_line)
+
+    if not match:
+        # No command found (just a prompt), don't exclude
+        return False
+
+    # Get the command and strip leading/trailing whitespace
+    command = match.group(1).strip().lower()
+
+    # Check if command starts with any of our filtered patterns
+    filtered_patterns = [
+        'context ',  # context with space
+        'context',   # context at end of line (no args)
+        'llm ',      # llm with space (all subcommands)
+        'aichat ',   # aichat with space
+        'aichat',    # aichat at end of line
+        'llm-sidechat ',  # llm-sidechat with space
+        'llm-sidechat',   # llm-sidechat at end of line
+    ]
+
+    for pattern in filtered_patterns:
+        if command.startswith(pattern):
+            return True
+
+    return False
+
+
 def extract_prompt_blocks(text, count=1):
     """
     Extract prompt blocks (prompt + command + output) from the converted text.
@@ -161,7 +229,9 @@ def extract_prompt_blocks(text, count=1):
         block_lines = lines[start_line:end_line]
         block = '\n'.join(block_lines).rstrip()
 
-        blocks.append(block)
+        # Only append if this block should not be excluded (filter AI commands)
+        if not should_exclude_block(block):
+            blocks.append(block)
 
     # Exclude the last block if it's just an empty current prompt
     # or if it's a self-referential context command with no output yet
