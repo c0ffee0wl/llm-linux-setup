@@ -1,6 +1,85 @@
-# Azure MCP and Codex CLI Setup Guide
+# Microsoft MCP and Codex CLI Setup Guide
 
 This guide covers the installation and configuration of Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP for enhanced AI-powered development workflows.
+
+## Prerequisites and Permissions
+
+### Azure RBAC Roles for MCP Servers
+
+Before configuring MCP servers, ensure proper Azure role assignments for secure, read-only access.
+
+#### Azure MCP Server Required Roles
+
+**Minimum Required Role:**
+- **`Reader`**: Provides read-only access to Azure resources (subscriptions, resource groups, services)
+
+**Enhanced Security Monitoring:**
+- **`Security Reader`**: Provides read access to security-related information and recommendations
+
+**⚠️ SECURITY WARNING:**
+- **NEVER assign roles with write privileges** (e.g., `Contributor`, `Owner`, or any `*.Write*` roles)
+- MCP connections should be read-only for safety
+- Write access creates security risks if the AI agent is compromised
+
+**Role Assignment Commands:**
+
+```bash
+# Assign Reader role at subscription level (replace placeholders)
+az role assignment create \
+  --assignee <your-email@domain.com> \
+  --role "Reader" \
+  --scope "/subscriptions/<your-subscription-id>"
+
+# Assign Security Reader role for enhanced security queries
+az role assignment create \
+  --assignee <your-email@domain.com> \
+  --role "Security Reader" \
+  --scope "/subscriptions/<your-subscription-id>"
+
+# Verify role assignments
+az role assignment list --assignee <your-email@domain.com> --output table
+```
+
+**Scoping Options:**
+- **Subscription level**: `--scope "/subscriptions/<subscription-id>"` (broadest)
+- **Resource group level**: `--scope "/subscriptions/<subscription-id>/resourceGroups/<rg-name>"` (recommended)
+- **Resource level**: `--scope "/subscriptions/<subscription-id>/resourceGroups/<rg-name>/providers/<resource-type>/<resource-name>"` (most restrictive)
+
+#### Lokka (Microsoft 365) Permissions
+
+**Interactive Authentication:**
+- Uses your personal Microsoft 365 credentials
+- Inherits your existing Graph API permissions
+- No additional setup required for personal use
+
+**App-Only Authentication (Production):**
+- Requires app registration in Microsoft Entra ID
+- Must explicitly grant Microsoft Graph API permissions
+
+**Recommended Graph API Permissions (Read-Only):**
+
+| Permission | Type | Purpose |
+|------------|------|---------|
+| `User.Read.All` | Application | Read all users |
+| `Group.Read.All` | Application | Read all groups |
+| `Device.Read.All` | Application | Read all devices |
+| `Policy.Read.All` | Application | Read conditional access policies |
+| `DeviceManagementConfiguration.Read.All` | Application | Read Intune configurations |
+| `AuditLog.Read.All` | Application | Read audit logs |
+
+**⚠️ SECURITY WARNING:**
+- **AVOID granting write permissions** (e.g., `.ReadWrite.All`) unless absolutely necessary
+- Read-only permissions are sufficient for monitoring and queries
+- Write permissions allow the AI to modify your M365 tenant
+
+**To assign permissions:**
+1. Go to [Azure Portal](https://portal.azure.com) → Microsoft Entra ID → App registrations
+2. Select your app → API permissions → Add a permission → Microsoft Graph
+3. Choose "Application permissions" (not Delegated)
+4. Search for and add the permissions above
+5. Click "Grant admin consent" (requires admin privileges)
+
+---
 
 ## Quick Start Guide
 
@@ -80,7 +159,7 @@ You should see all three servers listed:
 - `lokka`
 - `microsoft-learn`
 
-### Step 7: Test in Codex
+### Step 7: Test in Codex and Learn Effective Prompting
 
 ```bash
 # Load Azure environment variables (if not already loaded)
@@ -88,12 +167,71 @@ source ~/.profile
 
 # Start Codex
 codex
-
-# Try example prompts:
-# - "List my Azure resource groups"
-# - "Show my Microsoft 365 users"
-# - "Find documentation on Azure Functions"
 ```
+
+Now you can interact with Codex using natural language prompts that leverage your configured MCP servers. Here's how to effectively prompt each server:
+
+#### Azure MCP Server Prompting
+
+Use natural language to query your Azure infrastructure. Be specific with resource names when you know them.
+
+**Example Prompts:**
+```
+"What indexes do I have in my Azure AI Search service 'mysvc'?"
+"List all websites in my subscription"
+"Show me the storage containers in resource group 'my-rg'"
+"What is the status of my App Services?"
+"List the databases in my subscription"
+```
+
+**Tips:**
+- Frame as direct questions about your infrastructure
+- Be specific with resource names for faster results
+- Queries respect your Azure RBAC permissions (Reader, Security Reader)
+
+#### Lokka (Microsoft 365) MCP Prompting
+
+Use conversational language for Microsoft 365 administrative queries.
+
+**Example Prompts:**
+```
+"Find all conditional access policies in my tenant"
+"Show me users in the Marketing security group"
+"List all Intune device compliance policies"
+"What are the current license assignments?"
+"Show me inactive user accounts"
+```
+
+**Tips:**
+- Use natural, conversational language
+- Queries respect your Microsoft Graph API permissions
+- Great for security, compliance, and administrative tasks
+
+#### Microsoft Learn MCP Prompting
+
+Request current Microsoft documentation and best practices.
+
+**Example Prompts:**
+```
+"How do I create an Azure storage account using az cli?"
+"Show me the latest documentation on Azure Functions"
+"What's the best practice for configuring Azure App Service?"
+"Explain Azure Key Vault secret management"
+"How do I set up Azure Application Insights?"
+```
+
+**Tips:**
+- Mention specific Microsoft products/services in your query
+- Request "current" or "detailed" information beyond training data
+- Useful for setup guides, configuration, and best practices
+
+#### General Best Practices
+
+- **Be explicit and specific**: Clear requests get better responses
+- **Use natural language**: Conversational queries work better than technical syntax
+- **One task per prompt**: Focus on a single primary action
+- **Iterate if needed**: Refine prompts based on initial responses
+- **Check server status**: Use `codex mcp list` to verify enabled servers
 
 ### Troubleshooting
 
@@ -129,6 +267,7 @@ source ~/.profile
 
 ## Table of Contents
 
+- [Prerequisites and Permissions](#prerequisites-and-permissions)
 - [Quick Start Guide](#quick-start-guide)
 - [Codex CLI](#codex-cli)
   - [Overview](#overview)

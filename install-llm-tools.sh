@@ -312,13 +312,15 @@ configure_codex_cli() {
 
     # Generate config.toml
     cat > ~/.codex/config.toml <<EOF
-[model]
-name = "gpt-5-codex"
+model = "gpt-5-codex"
 model_provider = "azure"
+model_reasoning_effort = "medium"
 
 [model_providers.azure]
+name = "Azure OpenAI"
 base_url = "${api_base}"
 env_key = "AZURE_OPENAI_API_KEY"
+wire_api = "responses"
 EOF
 
     log "Codex CLI configuration created at ~/.codex/config.toml"
@@ -1367,14 +1369,9 @@ npm_install install -g @anthropic-ai/claude-code
 
 # log "Claude Code Router installed. Configure manually in $CCR_CONFIG_FILE if needed."
 
-# Install/update OpenCode
-log "Installing/updating OpenCode..."
-npm_install install -g opencode-ai@latest
-
 # Install/update Codex CLI if Azure is configured
 if [ "$AZURE_CONFIGURED" = true ]; then
     log "Installing/updating Codex CLI..."
-    npm_install install -g @openai/codex
 
     # Configure Codex CLI with Azure OpenAI credentials
     configure_codex_cli
@@ -1382,10 +1379,14 @@ if [ "$AZURE_CONFIGURED" = true ]; then
     # Export Azure environment variables to ~/.profile
     export_azure_env_vars
 
+    npm_install install -g @openai/codex
+
     log "Codex CLI installed and configured with Azure OpenAI"
-else
-    log "Skipping Codex CLI installation (Azure OpenAI not configured)"
 fi
+
+# Install/update OpenCode
+log "Installing/updating OpenCode..."
+npm_install install -g opencode-ai@latest
 
 #############################################################################
 # COMPLETE
