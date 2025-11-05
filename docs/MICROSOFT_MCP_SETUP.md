@@ -117,7 +117,28 @@ az account show
 
 You should see your Azure subscription details.
 
-### Step 3: Configure Azure MCP in Codex
+### Step 3: Install MCP Server Packages
+
+Install all MCP server packages globally for better performance and offline availability.
+
+```bash
+# Install Azure MCP globally
+sudo npm install -g @azure/mcp
+
+# Install Lokka globally (for Microsoft 365)
+sudo npm install -g @merill/lokka
+
+# Install mcp-remote proxy (for Microsoft Learn MCP)
+sudo npm install -g mcp-remote
+```
+
+**Why install globally first:**
+- Packages are cached and immediately available
+- Faster MCP server startup (no download on first use)
+- Works better in offline or restricted network environments
+- Avoids npm permission issues with npx
+
+### Step 4: Configure Azure MCP in Codex
 
 ```bash
 codex mcp add azure -- npx -y @azure/mcp@latest server start
@@ -125,7 +146,7 @@ codex mcp add azure -- npx -y @azure/mcp@latest server start
 
 This enables access to 40+ Azure services directly from Codex.
 
-### Step 4: Configure Lokka (Microsoft 365 MCP) in Codex
+### Step 5: Configure Lokka (Microsoft 365 MCP) in Codex
 
 **Interactive authentication (simplest):**
 ```bash
@@ -136,19 +157,16 @@ When you first use Lokka in Codex, it will open your browser to authenticate wit
 
 **For production use with Entra ID app registration**, see the [App Registration Guide](#app-registration-guide) section below.
 
-### Step 5: Configure Microsoft Learn MCP in Codex
+### Step 6: Configure Microsoft Learn MCP in Codex
 
 ```bash
-# Install mcp-remote proxy
-npm install -g mcp-remote
-
-# Add Microsoft Learn MCP
+# Add Microsoft Learn MCP (mcp-remote already installed in Step 3)
 codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/api/mcp
 ```
 
 This provides Codex with access to trusted Microsoft documentation.
 
-### Step 6: Verify MCP Servers
+### Step 7: Verify MCP Servers
 
 ```bash
 codex mcp list
@@ -159,7 +177,7 @@ You should see all three servers listed:
 - `lokka`
 - `microsoft-learn`
 
-### Step 7: Test in Codex and Learn Effective Prompting
+### Step 8: Test in Codex and Learn Effective Prompting
 
 ```bash
 # Load Azure environment variables (if not already loaded)
