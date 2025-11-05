@@ -83,12 +83,14 @@ az role assignment list --assignee <your-email@domain.com> --output table
 
 ## Quick Start Guide
 
-Follow these steps to quickly set up all three MCP servers in Codex CLI.
+Follow these steps to quickly set up all three MCP servers in Codex CLI or OpenCode.
+
+**Note**: This guide focuses on Codex CLI configuration. For OpenCode MCP configuration, see the [OpenCode](#opencode) section below.
 
 ### Prerequisites
 
 - ✅ Run `./install-llm-tools.sh` with Azure OpenAI configured
-- ✅ Codex CLI automatically installed and configured
+- ✅ Codex CLI and OpenCode automatically installed and configured
 - ✅ Azure OpenAI credentials set in `~/.profile`
 
 ### Step 1: Install Azure CLI
@@ -292,6 +294,12 @@ source ~/.profile
   - [Installation](#installation)
   - [Configuration](#configuration)
   - [VS Code Extension](#vs-code-extension)
+- [OpenCode](#opencode)
+  - [Overview](#overview-1)
+  - [Installation](#installation-1)
+  - [Azure OpenAI Configuration](#azure-openai-configuration)
+  - [Usage](#usage)
+  - [Manual MCP Server Configuration](#manual-mcp-server-configuration)
 - [Configuring MCP Servers in Codex](#configuring-mcp-servers-in-codex)
   - [Configuration Methods](#configuration-methods)
   - [Configuration File Structure](#configuration-file-structure)
@@ -405,6 +413,342 @@ Codex is also available as a **Visual Studio Code extension**, providing IDE-int
 - Create PRs directly from the IDE
 
 **Pro Tip:** Create git checkpoints before and after each Codex task to easily revert if needed.
+
+---
+
+## OpenCode
+
+### Overview
+
+**OpenCode** is an open-source AI coding agent for terminals built by SST, providing terminal-based AI coding assistance with multi-provider support including Azure OpenAI.
+
+**Key Features:**
+- Provider-agnostic (Anthropic, OpenAI, Google, local models)
+- Terminal user interface (TUI) with streaming responses
+- Multi-file editing with context awareness
+- MCP server integration for enhanced capabilities
+- Session management and conversation history
+- MIT licensed, 100% open source
+
+**Repository**: https://github.com/sst/opencode
+
+**Official Documentation**: https://opencode.ai/docs/
+
+**Current Version**: v1.0.25 (actively maintained)
+
+**Prerequisites:**
+- Node.js 20+ (already ensured by llm-linux-setup)
+- Terminal with UTF-8 support
+- API key for chosen provider (Azure OpenAI already configured)
+
+### Installation
+
+OpenCode is **automatically installed** by llm-linux-setup when Azure OpenAI is configured.
+
+**Manual installation methods:**
+
+```bash
+# Via install script (recommended)
+curl -fsSL https://opencode.ai/install | bash
+
+# Via npm (global)
+npm install -g opencode-ai@latest
+
+# Via Homebrew (macOS)
+brew install opencode
+```
+
+**Verify installation:**
+```bash
+opencode --version
+```
+
+### Azure OpenAI Configuration
+
+When Azure OpenAI is configured, llm-linux-setup automatically exports required environment variables to `~/.profile`:
+
+```bash
+export AZURE_OPENAI_API_KEY="your-api-key"
+export AZURE_RESOURCE_NAME="your-resource-name"
+```
+
+**One-Time Authentication Setup:**
+
+After installation, authenticate OpenCode with Azure:
+
+```bash
+# Load environment variables (if not already loaded)
+source ~/.profile
+
+# Run authentication command
+opencode auth login
+```
+
+When prompted:
+1. Select **Azure** as your provider
+2. Enter your API key (use value from `echo $AZURE_OPENAI_API_KEY`)
+
+**Launch OpenCode:**
+
+```bash
+# With environment variable already set in ~/.profile
+opencode
+
+# Or set explicitly for this session
+AZURE_RESOURCE_NAME=your-resource-name opencode
+```
+
+**⚠️ IMPORTANT - Deployment Name Requirement:**
+
+When deploying models in Azure AI Foundry, **the deployment name MUST match the model name exactly** for OpenCode to work properly.
+
+**Example:**
+- ✅ Model: `gpt-4.1-mini` → Deployment: `gpt-4.1-mini`
+- ❌ Model: `gpt-4.1-mini` → Deployment: `my-gpt4-deployment`
+
+**Select Your Model:**
+
+After launching OpenCode, use the `/models` command to select your Azure deployment:
+
+```
+/models
+```
+
+Choose your deployed model from the list (e.g., `gpt-4.1-mini`).
+
+### Usage
+
+**Basic Commands:**
+
+- **Launch interactive TUI**: `opencode`
+- **Show version**: `opencode --version`
+- **Show help**: `opencode --help`
+
+**In-Session Commands:**
+
+- `/models` - Switch between available models
+- `/help` - Show available commands
+- `/clear` - Clear conversation history
+- `/exit` - Exit OpenCode
+
+**Example Workflow:**
+
+```bash
+# Start OpenCode
+opencode
+
+# Inside OpenCode:
+> /models
+[Select your Azure model]
+
+> help me refactor this authentication function to use async/await
+[OpenCode analyzes context and provides suggestions]
+
+> apply the changes
+[OpenCode modifies files with streaming updates]
+```
+
+**Tips:**
+- OpenCode automatically detects files in your current directory
+- Use natural language to describe tasks
+- Review proposed changes before accepting
+- Use `/clear` to start fresh conversations
+
+### Manual MCP Server Configuration
+
+OpenCode supports MCP servers through manual configuration in `~/.opencode/opencode.jsonc` (or `$XDG_CONFIG_HOME/opencode/opencode.jsonc`).
+
+**Configuration File Location:**
+
+Create or edit the configuration file:
+
+```bash
+# Create config directory if needed
+mkdir -p ~/.opencode
+
+# Edit configuration
+nano ~/.opencode/opencode.jsonc
+```
+
+**Configuration Format:**
+
+The configuration file uses JSONC (JSON with comments) format with a schema for validation:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "server-name": {
+      "type": "local" or "remote",
+      "enabled": true
+    }
+  }
+}
+```
+
+#### Local MCP Servers (STDIO)
+
+For locally-hosted servers, use `"type": "local"` with a command array:
+
+**Required fields:**
+- `type`: Must be `"local"`
+- `command`: Array containing the startup command and arguments
+
+**Optional fields:**
+- `environment`: Object for environment variables
+- `enabled`: Boolean to enable/disable on startup (default: true)
+- `timeout`: Milliseconds for tool fetching (default: 5000ms)
+
+**Example - Azure MCP Server:**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "azure": {
+      "type": "local",
+      "command": ["npx", "-y", "@azure/mcp@latest", "server", "start"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Example - Lokka (Microsoft 365) with Interactive Auth:**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "lokka": {
+      "type": "local",
+      "command": ["npx", "-y", "@merill/lokka"],
+      "enabled": true
+    }
+  }
+}
+```
+
+**Example - Lokka with App Registration (Client Credentials):**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "lokka": {
+      "type": "local",
+      "command": ["npx", "-y", "@merill/lokka"],
+      "environment": {
+        "TENANT_ID": "your-tenant-id",
+        "CLIENT_ID": "your-client-id",
+        "CLIENT_SECRET": "your-client-secret"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+**Using Environment Variables:**
+
+Reference system environment variables using `"{env:VARIABLE_NAME}"` syntax:
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "lokka": {
+      "type": "local",
+      "command": ["npx", "-y", "@merill/lokka"],
+      "environment": {
+        "TENANT_ID": "{env:TENANT_ID}",
+        "CLIENT_ID": "{env:CLIENT_ID}",
+        "CLIENT_SECRET": "{env:CLIENT_SECRET}"
+      },
+      "enabled": true
+    }
+  }
+}
+```
+
+#### Remote MCP Servers (HTTP)
+
+For remote HTTP servers, use `"type": "remote"`:
+
+**Required fields:**
+- `type`: Must be `"remote"`
+- `url`: The remote server endpoint
+
+**Optional fields:**
+- `headers`: Authentication headers (e.g., bearer tokens)
+- `enabled`: Boolean toggle (default: true)
+- `timeout`: Milliseconds for tool fetching (default: 5000ms)
+
+**Example - Microsoft Learn MCP:**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "microsoft-learn": {
+      "type": "remote",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+#### Complete Configuration Example
+
+**All Three Microsoft MCP Servers:**
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "azure": {
+      "type": "local",
+      "command": ["npx", "-y", "@azure/mcp@latest", "server", "start"],
+      "enabled": true
+    },
+    "lokka": {
+      "type": "local",
+      "command": ["npx", "-y", "@merill/lokka"],
+      "environment": {
+        "TENANT_ID": "{env:TENANT_ID}",
+        "CLIENT_ID": "{env:CLIENT_ID}",
+        "CLIENT_SECRET": "{env:CLIENT_SECRET}"
+      },
+      "enabled": true
+    },
+    "microsoft-learn": {
+      "type": "remote",
+      "url": "https://learn.microsoft.com/api/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+**Verification:**
+
+After configuring MCP servers, restart OpenCode and verify they're loaded:
+
+```bash
+opencode
+```
+
+In the OpenCode TUI, try prompts that would use MCP tools:
+- "List my Azure resource groups" (Azure MCP)
+- "Show my Microsoft 365 users" (Lokka)
+- "Find documentation on Azure Functions" (Microsoft Learn MCP)
+
+**Troubleshooting:**
+
+- **Servers not loading**: Check `~/.opencode/opencode.jsonc` syntax with a JSON validator
+- **Authentication fails**: Verify `az login` for Azure MCP, or check Lokka credentials
+- **Environment variables not working**: Ensure variables are exported in your shell session
 
 ---
 
@@ -939,13 +1283,14 @@ codex
 
 ## Integration with llm-linux-setup
 
-### Automatic Codex CLI Configuration
+### Automatic Codex CLI and OpenCode Configuration
 
 When Azure OpenAI is configured in llm-linux-setup, the installation script automatically:
 
-1. **Installs Codex CLI** via npm (Phase 6)
-2. **Creates `~/.codex/config.toml`** with Azure OpenAI settings
-3. **Exports environment variables** to `~/.profile`:
+1. **Installs Codex CLI** via npm (Phase 7)
+2. **Installs OpenCode** via npm (Phase 7)
+3. **Creates `~/.codex/config.toml`** with Azure OpenAI settings (Codex only)
+4. **Exports environment variables** to `~/.profile`:
    - `AZURE_OPENAI_API_KEY`
    - `AZURE_RESOURCE_NAME`
 
@@ -966,61 +1311,27 @@ source ~/.profile
 - **llm CLI**: Uses `extra-openai-models.yaml` for model configuration
 - **aichat**: Uses `~/.config/aichat/config.yaml` for RAG and chat
 - **Codex CLI**: Uses `~/.codex/config.toml` + environment variables
-- **All three tools** share the same Azure OpenAI credentials (managed via `llm keys`)
+- **OpenCode**: Uses `opencode auth login` for authentication + environment variables
+- **All four tools** share the same Azure OpenAI credentials (managed via `llm keys`)
 
-### Claude Code Router Integration
+### OpenCode Additional Setup
 
-If you're using Claude Code Router (installed in Phase 7), you can also configure it with Azure OpenAI:
+While OpenCode is automatically installed, it requires one-time authentication:
 
-```json
-{
-  "providers": [
-    {
-      "name": "azure",
-      "type": "azure-openai",
-      "endpoint": "https://your-resource.openai.azure.com",
-      "apiKey": "your-api-key",
-      "deployments": {
-        "gpt-4.1": "gpt-4.1",
-        "gpt-4.1-mini": "gpt-4.1-mini"
-      }
-    }
-  ]
-}
+```bash
+# Load environment variables
+source ~/.profile
+
+# Authenticate with Azure
+opencode auth login
+# Select Azure provider
+# Enter API key from $AZURE_OPENAI_API_KEY
+
+# Launch OpenCode
+opencode
 ```
 
----
-
-## Additional MCP Client Configurations
-
-While this guide focuses on Codex CLI, MCP servers can be used with other compatible clients:
-
-### Claude Desktop Configuration
-
-Add to `~/.config/Claude/claude_desktop_config.json` (Linux):
-
-```json
-{
-  "mcpServers": {
-    "azure": {
-      "command": "npx",
-      "args": ["-y", "@azure/mcp@latest", "server", "start"]
-    },
-    "lokka": {
-      "command": "npx",
-      "args": ["-y", "@merill/lokka"]
-    },
-    "microsoft-learn": {
-      "command": "npx",
-      "args": ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]
-    }
-  }
-}
-```
-
-### Other MCP Clients
-
-Any MCP-compatible client can use these servers by following the appropriate configuration format (STDIO or HTTP).
+**Optional MCP Configuration**: To use MCP servers with OpenCode, manually create `~/.opencode/opencode.jsonc` as described in the [OpenCode MCP Configuration](#manual-mcp-server-configuration) section.
 
 ---
 
@@ -1029,22 +1340,33 @@ Any MCP-compatible client can use these servers by following the appropriate con
 This guide covered:
 
 - ✅ **Codex CLI**: Automatic installation and Azure OpenAI configuration
-- ✅ **VS Code Extension**: IDE-integrated AI coding assistance
-- ✅ **MCP Configuration**: CLI commands and manual TOML editing
+- ✅ **OpenCode**: Automatic installation with manual Azure authentication setup
+- ✅ **VS Code Extension**: IDE-integrated AI coding assistance (Codex)
+- ✅ **MCP Configuration**: CLI commands and manual file editing (Codex TOML, OpenCode JSONC)
 - ✅ **Azure MCP Server**: 40+ Azure services integration with authentication
 - ✅ **Lokka**: Microsoft 365 management with multiple auth methods
 - ✅ **Microsoft Learn MCP**: Access to trusted Microsoft documentation
 - ✅ **Integration**: Seamless integration with llm-linux-setup
 
 **Next Steps:**
+
+**For Codex CLI:**
 1. Ensure Azure is configured: Run `./install-llm-tools.sh`
 2. Authenticate to Azure: `az login`
 3. Configure MCP servers: `codex mcp add <server> -- <command>`
 4. Test in Codex: `codex` and try MCP-powered prompts
 
+**For OpenCode:**
+1. Ensure Azure is configured: Run `./install-llm-tools.sh`
+2. Authenticate OpenCode: `opencode auth login` (select Azure, enter API key)
+3. Configure MCP servers: Edit `~/.opencode/opencode.jsonc` (optional)
+4. Test in OpenCode: `opencode` and try natural language prompts
+
 **Resources:**
 - Codex Quickstart: https://developers.openai.com/codex/quickstart
 - Codex MCP Guide: https://developers.openai.com/codex/mcp/
+- OpenCode Repository: https://github.com/sst/opencode
+- OpenCode Documentation: https://opencode.ai/docs/
 - Azure MCP: https://github.com/microsoft/mcp/tree/main/servers/Azure.Mcp.Server
 - Lokka: https://github.com/merill/lokka
 - Microsoft Learn MCP: https://github.com/microsoftdocs/mcp
