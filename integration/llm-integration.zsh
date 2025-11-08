@@ -38,15 +38,16 @@ __llm_cmdcomp() {
     # If a command is returned successfully and is not empty:
     BUFFER=$result         # Replace the current buffer with the suggested command
     CURSOR=${#BUFFER}      # Move cursor to the end of the new command
-    zle accept-line        # Execute the command immediately
+    #zle accept-line        # Execute the command immediately
   else
     # If no command is returned, or an error occurred:
-    #BUFFER=$old_cmd        # Restore the original buffer content
-    #CURSOR=$cursor_pos     # Restore the original cursor position
-    BUFFER=""              # Clear the buffer completely
-    CURSOR=0               # Reset cursor to the beginning
-    zle reset-prompt       # Refresh the prompt to show the original command
+    BUFFER=$old_cmd        # Restore the original buffer content
+    CURSOR=$cursor_pos     # Restore the original cursor position
+    #BUFFER=""              # Clear the buffer completely
+    #CURSOR=0               # Reset cursor to the beginning
+    #zle reset-prompt       # Refresh the prompt to show the original command
   fi
+  zle reset-prompt       # Refresh the prompt to show the original command
 }
 
 # Register the widget
