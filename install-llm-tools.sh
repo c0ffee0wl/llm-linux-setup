@@ -453,13 +453,11 @@ update_ccr_config() {
     # Create directories
     mkdir -p "$plugin_dir"
 
-    # Check actual key existence to determine provider configuration
-    # This ensures we generate the correct config even if flags are inconsistent
-    local has_azure_key=false
+    # Check provider availability
+    # Azure: use AZURE_CONFIGURED (ensures YAML file exists)
+    # Gemini: check key store directly (no file dependency)
+    local has_azure_key="$AZURE_CONFIGURED"
     local has_gemini_key=false
-    if command llm keys get azure &>/dev/null; then
-        has_azure_key=true
-    fi
     if command llm keys get gemini &>/dev/null; then
         has_gemini_key=true
     fi
@@ -1166,12 +1164,12 @@ if uv tool list 2>/dev/null | grep -q "^llm "; then
     uv tool upgrade llm
 else
     log "Installing llm with llm-uv-tool for persistent plugin management..."
-    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" --with pymupdf_layout "git+https://github.com/c0ffee0wl/llm"
+    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"
 fi
 
 # Install pymupdf_layout (for improved PDF processing with llm-fragments-pdf)
-log "Installing pymupdf_layout for improved PDF processing..."
-command llm install pymupdf_layout 2>/dev/null || command llm install pymupdf_layout
+log "Installing/updating pymupdf_layout for improved PDF processing..."
+command llm install pymupdf_layout --upgrade 2>/dev/null || command llm install pymupdf_layout
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
@@ -1696,7 +1694,7 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
     fi
 
     # Export environment variables for providers with keys
-    if command llm keys get azure &>/dev/null; then
+    if [ "$AZURE_CONFIGURED" = "true" ]; then
         export_azure_env_vars
     fi
 
@@ -1708,7 +1706,6 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
     update_ccr_config
 
     log "Claude Code Router installed"
-    log "Note: Run 'source ~/.profile' to load environment variables in current session"
 else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi
