@@ -1085,11 +1085,66 @@ fi
 
 # Wrapper function for npm global installs
 npm_install() {
-    if [ "$NPM_NEEDS_SUDO" = "true" ]; then
-        sudo npm "$@"
-    else
-        npm "$@"
-    fi
+    local max_attempts=3
+    local attempt=1
+    local npm_stderr
+    local npm_exit_code
+
+    while [ $attempt -le $max_attempts ]; do
+        # Create temp file for stderr
+        npm_stderr=$(mktemp)
+
+        # Disable exit-on-error to capture npm failures
+        set +e
+        # Run npm and capture stderr
+        if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+            sudo npm "$@" 2>"$npm_stderr"
+            npm_exit_code=$?
+        else
+            npm "$@" 2>"$npm_stderr"
+            npm_exit_code=$?
+        fi
+        set -e  # Re-enable exit-on-error
+
+        # Success - clean up and return
+        if [ $npm_exit_code -eq 0 ]; then
+            rm -f "$npm_stderr"
+            return 0
+        fi
+
+        # Check for ENOTEMPTY error
+        if grep -q "ENOTEMPTY" "$npm_stderr"; then
+            # Extract the path from error message
+            # Format: "ENOTEMPTY: directory not empty, rename '/path/to/dir' -> ..."
+            local failed_path
+            failed_path=$(grep "ENOTEMPTY" "$npm_stderr" | sed -n "s/.*rename '\([^']*\)'.*/\1/p" | head -1)
+
+            if [ -n "$failed_path" ] && [ -d "$failed_path" ]; then
+                warn "Detected ENOTEMPTY error for: $failed_path"
+                warn "Cleaning up directory before retry..."
+
+                if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+                    sudo rm -rf "$failed_path"
+                else
+                    rm -rf "$failed_path"
+                fi
+            fi
+        fi
+
+        # Show stderr to user
+        cat "$npm_stderr" >&2
+        rm -f "$npm_stderr"
+
+        # Retry logic
+        if [ $attempt -lt $max_attempts ]; then
+            warn "npm install failed (attempt $attempt/$max_attempts), retrying in 2 seconds..."
+            sleep 2
+        fi
+        attempt=$((attempt + 1))
+    done
+
+    warn "npm install failed after $max_attempts attempts"
+    return 1
 }
 
 #############################################################################
