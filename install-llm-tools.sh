@@ -319,7 +319,7 @@ configure_codex_cli() {
     log "Configuring Codex CLI with Azure OpenAI..."
 
     # Extract api_base from extra-openai-models.yaml
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
 
     if [ -z "$api_base" ]; then
@@ -359,7 +359,7 @@ export_azure_env_vars() {
     log "Exporting Azure environment variables to ~/.profile..."
 
     # Extract api_base and resource name
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
 
     if [ -z "$api_base" ]; then
@@ -498,7 +498,7 @@ EOF
 
         # Extract Azure API base
         local azure_api_base=""
-        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
+        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
         if [ -f "$EXTRA_MODELS_FILE" ]; then
             azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
         fi
@@ -681,7 +681,7 @@ EOF
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
-    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/default_model.txt"
+    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/default_model.txt"
 
     if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
         log "Setting default model to ${new_default}..."
@@ -1108,17 +1108,17 @@ GEMINI_CONFIGURED=false
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
-    uv tool upgrade llm
+    uv tool upgrade llm --with pymupdf_layout
 else
     log "Installing llm with llm-uv-tool for persistent plugin management..."
-    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"
+    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" --with pymupdf_layout "git+https://github.com/c0ffee0wl/llm"
 fi
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
 
 # Define the extra models file path early so we can check/preserve existing config
-LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | xargs dirname)"
+LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)"
 if [ -z "$LLM_CONFIG_DIR" ] || [ ! -d "$LLM_CONFIG_DIR" ]; then
     error "Failed to get llm configuration directory. Is llm installed correctly?"
 fi
@@ -1344,7 +1344,7 @@ mkdir -p "$aichat_config_dir"
 
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     # Configure aichat with Azure OpenAI
-    llm_config_dir="$(command llm logs path 2>/dev/null | xargs dirname)"
+    llm_config_dir="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)"
     extra_models_file="$llm_config_dir/extra-openai-models.yaml"
 
     # Extract API base from llm config
@@ -1490,7 +1490,7 @@ fi
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(command llm logs path 2>/dev/null | xargs dirname)/templates"
+TEMPLATES_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
