@@ -272,7 +272,25 @@ configure_azure_openai() {
     log "Configuring Azure OpenAI API..."
     echo ""
     read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+
+    # Validate URL is not empty and starts with https://
+    if [ -z "$AZURE_API_BASE" ]; then
+        error "Azure API base URL cannot be empty"
+    fi
+    if [[ ! "$AZURE_API_BASE" =~ ^https:// ]]; then
+        error "Azure API base URL must start with https://"
+    fi
+
+    # Set the API key
     command llm keys set azure
+
+    # Verify the key was actually set
+    if ! command llm keys get azure &>/dev/null; then
+        warn "Azure API key was not set successfully"
+        AZURE_CONFIGURED=false
+        return 1
+    fi
+
     AZURE_CONFIGURED=true
 }
 
@@ -282,7 +300,17 @@ configure_gemini() {
     echo ""
     echo "Get your free API key from: https://ai.google.dev/gemini-api/docs/api-key"
     echo ""
+
+    # Set the API key
     command llm keys set gemini
+
+    # Verify the key was actually set
+    if ! command llm keys get gemini &>/dev/null; then
+        warn "Gemini API key was not set successfully"
+        GEMINI_CONFIGURED=false
+        return 1
+    fi
+
     GEMINI_CONFIGURED=true
 }
 
@@ -291,7 +319,7 @@ configure_codex_cli() {
     log "Configuring Codex CLI with Azure OpenAI..."
 
     # Extract api_base from extra-openai-models.yaml
-    local EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
 
     if [ -z "$api_base" ]; then
@@ -331,7 +359,7 @@ export_azure_env_vars() {
     log "Exporting Azure environment variables to ~/.profile..."
 
     # Extract api_base and resource name
-    local EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
 
     if [ -z "$api_base" ]; then
@@ -425,10 +453,21 @@ update_ccr_config() {
     # Create directories
     mkdir -p "$plugin_dir"
 
-    # Generate config based on available providers (use global configuration variables)
+    # Check actual key existence to determine provider configuration
+    # This ensures we generate the correct config even if flags are inconsistent
+    local has_azure_key=false
+    local has_gemini_key=false
+    if command llm keys get azure &>/dev/null; then
+        has_azure_key=true
+    fi
+    if command llm keys get gemini &>/dev/null; then
+        has_gemini_key=true
+    fi
+
+    # Generate config based on available providers (use actual key existence)
     local config_content
 
-    if [[ "$AZURE_CONFIGURED" == "true" && "$GEMINI_CONFIGURED" == "true" ]]; then
+    if [ "$has_azure_key" = "true" ] && [ "$has_gemini_key" = "true" ]; then
         # Dual-provider config: Azure primary + Gemini web search
         log "Generating dual-provider config (Azure primary, Gemini web search)"
 
@@ -543,7 +582,7 @@ EOF
 EOF
 )
 
-    elif [[ "$GEMINI_CONFIGURED" == "true" ]]; then
+    elif [ "$has_gemini_key" = "true" ]; then
         # Gemini-only config
         log "Generating Gemini-only config"
 
@@ -642,7 +681,7 @@ EOF
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
-    local DEFAULT_MODEL_FILE="$(command llm logs path | xargs dirname)/default_model.txt"
+    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/default_model.txt"
 
     if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
         log "Setting default model to ${new_default}..."
@@ -1057,6 +1096,10 @@ npm_install() {
 # PHASE 2: Install/Update LLM Core
 #############################################################################
 
+# Initialize configuration state variables (used throughout Phase 2-7)
+AZURE_CONFIGURED=false
+GEMINI_CONFIGURED=false
+
 # Install/upgrade llm from fork with llm-uv-tool for persistent plugin management
 # Using c0ffee0wl/llm fork which includes markdown markup enhancements
 # Installed via uv tool from git repository with llm-uv-tool bundled
@@ -1075,7 +1118,11 @@ fi
 export PATH=$HOME/.local/bin:$PATH
 
 # Define the extra models file path early so we can check/preserve existing config
-EXTRA_MODELS_FILE="$(command llm logs path | xargs dirname)/extra-openai-models.yaml"
+LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | xargs dirname)"
+if [ -z "$LLM_CONFIG_DIR" ] || [ ! -d "$LLM_CONFIG_DIR" ]; then
+    error "Failed to get llm configuration directory. Is llm installed correctly?"
+fi
+EXTRA_MODELS_FILE="$LLM_CONFIG_DIR/extra-openai-models.yaml"
 
 # Detect if this is the first run
 # Check for: new flag, OR YAML config exists, OR shell integration already present
@@ -1269,8 +1316,10 @@ else
     if command llm keys get gemini &>/dev/null; then
         log "Google Gemini was previously configured, preserving existing configuration"
         GEMINI_CONFIGURED=true
-        # If Gemini is configured, Azure should not be (mutually exclusive)
-        AZURE_CONFIGURED=false
+        # Only set AZURE_CONFIGURED=false if Azure wasn't configured earlier in this run
+        if [ "$FORCE_AZURE_CONFIG" != "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
+            AZURE_CONFIGURED=false
+        fi
     else
         log "Google Gemini not configured (skipped during initial setup)"
         GEMINI_CONFIGURED=false
@@ -1295,7 +1344,7 @@ mkdir -p "$aichat_config_dir"
 
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     # Configure aichat with Azure OpenAI
-    llm_config_dir="$(command llm logs path | xargs dirname)"
+    llm_config_dir="$(command llm logs path 2>/dev/null | xargs dirname)"
     extra_models_file="$llm_config_dir/extra-openai-models.yaml"
 
     # Extract API base from llm config
@@ -1441,7 +1490,7 @@ fi
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(command llm logs path | xargs dirname)/templates"
+TEMPLATES_DIR="$(command llm logs path 2>/dev/null | xargs dirname)/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
@@ -1572,13 +1621,14 @@ log "Installing/updating Claude Code..."
 npm_install install -g @anthropic-ai/claude-code
 
 # Install/update Claude Code Router with flexible provider support
-# Only install CCR if at least one provider is configured
-if [ "$AZURE_CONFIGURED" = true ] || [ "$GEMINI_CONFIGURED" = true ]; then
+# Only install CCR if at least one provider key exists
+if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
     log "Installing/updating Claude Code Router..."
     npm_install install -g @musistudio/claude-code-router
 
     # If Azure configured but Gemini key doesn't exist, configure Gemini for web search
-    if [ "$AZURE_CONFIGURED" = true ] && ! command llm keys get gemini &>/dev/null; then
+    # Skip if user is forcing Gemini-only configuration
+    if [ "$AZURE_CONFIGURED" = "true" ] && [ "$FORCE_GEMINI_CONFIG" != "true" ] && ! command llm keys get gemini &>/dev/null; then
         echo ""
         log "Azure OpenAI is configured as primary provider"
         log "Gemini is needed for web search routing (Azure doesn't support web search)"
@@ -1605,7 +1655,7 @@ else
 fi
 
 # Install/update Codex CLI if Azure is configured
-if [ "$AZURE_CONFIGURED" = true ]; then
+if [ "$AZURE_CONFIGURED" = "true" ]; then
     log "Installing/updating Codex CLI..."
     npm_install install -g @openai/codex
 
@@ -1613,9 +1663,6 @@ if [ "$AZURE_CONFIGURED" = true ]; then
     if [ ! -f "$HOME/.codex/config.toml" ]; then
         configure_codex_cli
     fi
-
-    # Export Azure environment variables to ~/.profile
-    export_azure_env_vars
 
     log "Codex CLI installed and configured with Azure OpenAI"
 else
