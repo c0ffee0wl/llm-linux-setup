@@ -1108,11 +1108,15 @@ GEMINI_CONFIGURED=false
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
-    uv tool upgrade llm --with pymupdf_layout
+    uv tool upgrade llm
 else
     log "Installing llm with llm-uv-tool for persistent plugin management..."
     uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" --with pymupdf_layout "git+https://github.com/c0ffee0wl/llm"
 fi
+
+# Install pymupdf_layout (for improved PDF processing with llm-fragments-pdf)
+log "Installing pymupdf_layout for improved PDF processing..."
+command llm install pymupdf_layout 2>/dev/null || command llm install pymupdf_layout
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
