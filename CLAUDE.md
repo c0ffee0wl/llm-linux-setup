@@ -125,7 +125,7 @@ The script is organized into numbered phases:
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
-7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config)
+7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
 
 ### Plugin Persistence with llm-uv-tool
 
@@ -308,6 +308,75 @@ The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclu
 - **`configure_gemini()`**: Prompts for Gemini API key with link to get free key
 
 **When adding new models**: Follow the appropriate provider's format (Azure or Gemini).
+
+### Claude Code Router: Flexible Provider Support
+
+Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provider configurations**:
+
+**Supported Configurations:**
+1. **Dual-Provider (Azure + Gemini)**: Azure primary for all tasks, Gemini for web search
+2. **Gemini-Only**: Single provider for all routing (default, background, think, longContext, webSearch)
+
+**Architecture:**
+- Configuration file: `~/.claude-code-router/config.json`
+- Transformer plugin: `~/.claude-code-router/plugins/strip-reasoning.js` (Azure configs only)
+- LOG_LEVEL: Always set to `"warn"` (not `"debug"`)
+
+**Installation Logic (Phase 7):**
+- **Independent of configuration flags**: Checks actual key store (`llm keys get azure/gemini`)
+- If Azure key exists but Gemini doesn't → Prompts to configure Gemini for web search
+- Exports provider keys to `~/.profile` (`AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`)
+- Only installs CCR if at least one provider is configured
+- Generates appropriate config based on available providers
+
+**Configuration Management:**
+- Uses **checksum tracking** (like templates) to preserve user modifications
+- Auto-updates if config hasn't been modified by user
+- Prompts before overwriting if local modifications detected
+- Creates timestamped backups when overwriting: `config.json.backup-YYYYMMDD-HHMMSS`
+- Checksum stored in: `~/.config/llm-tools/template-checksums` (entry: `ccr-config`)
+
+**Dynamic Configuration:**
+- Azure API base extracted from `extra-openai-models.yaml` (same source as llm CLI)
+- Environment variables use placeholders: `$AZURE_OPENAI_API_KEY`, `$GEMINI_API_KEY`
+- `$HOME` dynamically expanded to actual path (e.g., `/home/kali`)
+- Config auto-adapts based on which providers have keys configured
+
+**Key Features:**
+- ✅ Flexible provider support (dual or single)
+- ✅ Specialized routing when using Azure + Gemini
+- ✅ Configuration survives provider flag changes (`--azure`/`--gemini`)
+- ✅ User modifications preserved via checksum tracking
+- ✅ Auto-disables Claude Code updater (`DISABLE_AUTOUPDATER=1` in `llm-common.sh`)
+
+**Environment Variables:**
+- Must run `source ~/.profile` to load in current session
+- Automatically available in new login shells
+- Provider keys exported based on availability (not tied to AIChat configuration)
+
+**Routing Configurations:**
+
+*Dual-Provider (Azure + Gemini):*
+```json
+"Router": {
+  "default": "azure-codex,gpt-5-codex",
+  "background": "azure-gpt4,gpt-4.1-mini",
+  "think": "azure-codex,gpt-5-codex",
+  "longContext": "azure-codex,gpt-5-codex",
+  "webSearch": "gemini,gemini-2.5-flash"
+}
+```
+
+*Gemini-Only:*
+```json
+"Router": {
+  "default": "gemini,gemini-2.5-pro",
+  "background": "gemini,gemini-2.5-flash",
+  "think": "gemini,gemini-2.5-pro",
+  "longContext": "gemini,gemini-2.5-pro",
+  "webSearch": "gemini,gemini-2.5-flash"
+}
+```
 
 ### RAG Integration with aichat
 
@@ -828,9 +897,11 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.config/io.datasette.llm/templates/{assistant,code,terminator-sidechat}.yaml` - Custom LLM templates
 - `~/.config/aichat/config.yaml` - aichat configuration with Azure OpenAI and RAG settings
 - `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
-- `~/.profile` - Environment variables for Azure OpenAI (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME)
+- `~/.claude-code-router/config.json` - Claude Code Router dual-provider configuration (auto-generated with checksum tracking)
+- `~/.claude-code-router/plugins/strip-reasoning.js` - CCR transformer plugin for reasoning token handling
+- `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
-- `~/.config/llm-tools/template-checksums` - Tracks template checksums for smart updates
+- `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
 - `~/.config/terminator/plugins/terminator_sidechat.py` - Terminator sidechat plugin
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
@@ -854,7 +925,11 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 
 ## Key Constraints & Design Decisions
 
-1. **Provider Choice: EITHER Azure OR Gemini**: Users must choose one provider for AIChat configuration (mutually exclusive). The script validates flags and exits with error if both `--azure` and `--gemini` are specified. Both providers can be used with `llm` CLI, but AIChat supports only one at a time.
+1. **Provider Configuration Patterns**:
+   - **AIChat: EITHER Azure OR Gemini** (mutually exclusive) - The script validates flags and exits with error if both `--azure` and `--gemini` are specified
+   - **Claude Code Router: Flexible** - Supports dual-provider (Azure + Gemini) OR Gemini-only configurations. When both keys exist: Azure serves as primary, Gemini handles web search. When only Gemini exists: all routing uses Gemini
+   - **llm CLI: BOTH providers supported** - Can use both providers via different model IDs
+   - CCR checks actual key store (`llm keys get`) independent of configuration flags, auto-adapting config based on available providers
 2. **Azure Foundry Format**: When using Azure, all model configs use Azure format with `azure/` prefix (NOT standard OpenAI API)
 3. **Debian/Ubuntu/Kali**: Uses `apt-get` for system packages; would need modification for RHEL/Arch
 4. **Interactive Prompts on First Run**: The script prompts for provider choice (Azure or Gemini) on first run only; subsequent runs preserve existing configuration automatically

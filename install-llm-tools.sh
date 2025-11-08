@@ -381,6 +381,264 @@ export_azure_env_vars() {
     log "Note: Run 'source ~/.profile' to load them in current session"
 }
 
+# Export Gemini environment variables to ~/.profile
+export_gemini_env_vars() {
+    log "Exporting Gemini environment variables to ~/.profile..."
+
+    # Retrieve API key
+    local api_key=$(command llm keys get gemini 2>/dev/null || echo "")
+
+    if [ -z "$api_key" ]; then
+        log "WARNING: Could not retrieve Gemini API key for environment variables"
+        return 1
+    fi
+
+    # Create ~/.profile if it doesn't exist
+    touch ~/.profile
+
+    # Add or update GEMINI_API_KEY export (idempotent)
+    if grep -q "^export GEMINI_API_KEY=" ~/.profile; then
+        # Update existing export
+        sed -i "s|^export GEMINI_API_KEY=.*|export GEMINI_API_KEY=\"${api_key}\"|" ~/.profile
+        log "Updated GEMINI_API_KEY in ~/.profile"
+    else
+        # Add new export
+        echo "" >> ~/.profile
+        echo "# Gemini API configuration (added by llm-linux-setup)" >> ~/.profile
+        echo "export GEMINI_API_KEY=\"${api_key}\"" >> ~/.profile
+        log "Added GEMINI_API_KEY to ~/.profile"
+    fi
+
+    log "Gemini environment variables configured in ~/.profile"
+    log "Note: Run 'source ~/.profile' to load them in current session"
+}
+
+# Update Claude Code Router configuration with checksum tracking
+update_ccr_config() {
+    local ccr_dir="$HOME/.claude-code-router"
+    local plugin_dir="$ccr_dir/plugins"
+    local config_file="$ccr_dir/config.json"
+    local plugin_file="$plugin_dir/strip-reasoning.js"
+
+    log "Configuring Claude Code Router..."
+
+    # Create directories
+    mkdir -p "$plugin_dir"
+
+    # Generate config based on available providers (use global configuration variables)
+    local config_content
+
+    if [[ "$AZURE_CONFIGURED" == "true" && "$GEMINI_CONFIGURED" == "true" ]]; then
+        # Dual-provider config: Azure primary + Gemini web search
+        log "Generating dual-provider config (Azure primary, Gemini web search)"
+
+        # Create strip-reasoning.js plugin for Azure
+        cat > "$plugin_file" <<'EOF'
+class StripReasoningTransformer {
+  name = "strip-reasoning";
+
+  constructor(options) {
+    this.options = options || {};
+  }
+
+  async transformRequestIn(request, provider) {
+    delete request.reasoning;
+
+    return request;
+  }
+
+  // Optional: transformResponseOut if needed for response transformation
+  async transformResponseOut(response, provider) {
+    return response;
+  }
+}
+
+module.exports = StripReasoningTransformer;
+EOF
+        log "Created strip-reasoning.js transformer plugin"
+
+        # Extract Azure API base
+        local azure_api_base=""
+        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | xargs dirname)/extra-openai-models.yaml"
+        if [ -f "$EXTRA_MODELS_FILE" ]; then
+            azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+        fi
+
+        # Strip trailing slash if present
+        azure_api_base="${azure_api_base%/}"
+
+        config_content=$(cat <<EOF
+{
+  "LOG": true,
+  "LOG_LEVEL": "warn",
+  "Providers": [
+    {
+      "name": "azure-gpt4",
+      "api_base_url": "${azure_api_base}/openai/v1/chat/completions",
+      "api_key": "\$AZURE_OPENAI_API_KEY",
+      "models": [
+        "gpt-4.1",
+        "gpt-4.1-mini"
+      ]
+    },
+    {
+      "name": "azure-gpt5",
+      "api_base_url": "${azure_api_base}/openai/v1/chat/completions",
+      "api_key": "\$AZURE_OPENAI_API_KEY",
+      "models": [
+        "gpt-5",
+        "gpt-5-mini",
+        "gpt-5-nano"
+      ],
+      "transformer": {
+        "use": [
+          "maxcompletiontokens",
+          "strip-reasoning"
+        ]
+      }
+    },
+    {
+      "name": "azure-codex",
+      "api_base_url": "${azure_api_base}/openai/v1/responses",
+      "api_key": "\$AZURE_OPENAI_API_KEY",
+      "models": [
+        "gpt-5-codex"
+      ],
+      "transformer": {
+        "use": [
+          "openai-responses",
+          "strip-reasoning"
+        ]
+      }
+    },
+    {
+      "name": "gemini",
+      "api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/",
+      "api_key": "\$GEMINI_API_KEY",
+      "models": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro"
+      ],
+      "transformer": {
+        "use": [
+          "gemini"
+        ]
+      }
+    }
+  ],
+  "transformers": [
+    {
+      "path": "${HOME}/.claude-code-router/plugins/strip-reasoning.js"
+    }
+  ],
+  "Router": {
+    "default": "azure-codex,gpt-5-codex",
+    "background": "azure-gpt4,gpt-4.1-mini",
+    "think": "azure-codex,gpt-5-codex",
+    "longContext": "azure-codex,gpt-5-codex",
+    "webSearch": "gemini,gemini-2.5-flash"
+  },
+  "NON_INTERACTIVE_MODE": false
+}
+EOF
+)
+
+    elif [[ "$GEMINI_CONFIGURED" == "true" ]]; then
+        # Gemini-only config
+        log "Generating Gemini-only config"
+
+        config_content=$(cat <<EOF
+{
+  "LOG": true,
+  "LOG_LEVEL": "warn",
+  "Providers": [
+    {
+      "name": "gemini",
+      "api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/",
+      "api_key": "\$GEMINI_API_KEY",
+      "models": [
+        "gemini-2.5-flash",
+        "gemini-2.5-pro"
+      ],
+      "transformer": {
+        "use": [
+          "gemini"
+        ]
+      }
+    }
+  ],
+  "Router": {
+    "default": "gemini,gemini-2.5-pro",
+    "background": "gemini,gemini-2.5-flash",
+    "think": "gemini,gemini-2.5-pro",
+    "longContext": "gemini,gemini-2.5-pro",
+    "webSearch": "gemini,gemini-2.5-flash"
+  },
+  "NON_INTERACTIVE_MODE": false
+}
+EOF
+)
+
+    else
+        log "ERROR: No providers configured for Claude Code Router"
+        return 1
+    fi
+
+    # Calculate checksum of new config
+    local new_checksum=$(echo "$config_content" | sha256sum | awk '{print $1}')
+
+    # Check if config exists
+    if [ ! -f "$config_file" ]; then
+        # No existing config - create it
+        echo "$config_content" > "$config_file"
+        store_checksum "ccr-config" "$config_file"
+        log "Created Claude Code Router config.json"
+        return
+    fi
+
+    # Calculate installed file checksum
+    local installed_checksum=$(sha256sum "$config_file" | awk '{print $1}')
+
+    # Check if already up to date
+    if [ "$installed_checksum" = "$new_checksum" ]; then
+        log "Claude Code Router config.json is up to date"
+        store_checksum "ccr-config" "$config_file"
+        return
+    fi
+
+    # Get stored checksum (what we last installed)
+    local stored_checksum=$(get_stored_checksum "ccr-config")
+
+    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
+        # User hasn't modified the file - auto-update silently
+        log "Updating Claude Code Router config.json (no local modifications detected)"
+        echo "$config_content" > "$config_file"
+        store_checksum "ccr-config" "$config_file"
+    else
+        # User has modified the file OR no stored checksum - prompt
+        log "Claude Code Router config.json has changed"
+        if [ -z "$stored_checksum" ]; then
+            log "Cannot determine if you have local modifications (legacy installation)"
+        else
+            log "Local modifications detected in config.json"
+        fi
+        echo ""
+        read -p "Update Claude Code Router config.json? This will overwrite your version. (y/N): " UPDATE_CCR
+        if [[ "$UPDATE_CCR" =~ ^[Yy]$ ]]; then
+            # Backup existing config
+            cp "$config_file" "$config_file.backup-$(date +%Y%m%d-%H%M%S)"
+            log "Backed up existing config to $config_file.backup-$(date +%Y%m%d-%H%M%S)"
+            echo "$config_content" > "$config_file"
+            store_checksum "ccr-config" "$config_file"
+            log "Claude Code Router config.json updated"
+        else
+            log "Keeping existing Claude Code Router config.json"
+            # Update stored checksum to current installed version to avoid prompting next time
+            store_checksum "ccr-config" "$config_file"
+        fi
+    fi
+}
+
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
@@ -1313,65 +1571,43 @@ fi
 log "Installing/updating Claude Code..."
 npm_install install -g @anthropic-ai/claude-code
 
-# # Install/update Claude Code Router
-# log "Installing/updating Claude Code Router..."
-# npm_install install -g @musistudio/claude-code-router
+# Install/update Claude Code Router with flexible provider support
+# Only install CCR if at least one provider is configured
+if [ "$AZURE_CONFIGURED" = true ] || [ "$GEMINI_CONFIGURED" = true ]; then
+    log "Installing/updating Claude Code Router..."
+    npm_install install -g @musistudio/claude-code-router
 
-# # Configure Claude Code Router for Azure OpenAI
-# CCR_CONFIG_DIR="$HOME/.claude-code-router"
-# CCR_CONFIG_FILE="$CCR_CONFIG_DIR/config.json"
+    # If Azure configured but Gemini key doesn't exist, configure Gemini for web search
+    if [ "$AZURE_CONFIGURED" = true ] && ! command llm keys get gemini &>/dev/null; then
+        echo ""
+        log "Azure OpenAI is configured as primary provider"
+        log "Gemini is needed for web search routing (Azure doesn't support web search)"
+        echo ""
+        configure_gemini
+    fi
 
-# Commented out: Claude Code Router configuration (configure manually if needed)
+    # Export environment variables for providers with keys
+    if command llm keys get azure &>/dev/null; then
+        export_azure_env_vars
+    fi
 
-# mkdir -p "$CCR_CONFIG_DIR"
-# 
-# if [ -f "$CCR_CONFIG_FILE" ]; then
-#     log "Claude Code Router config already exists"
-#     read -p "Do you want to reconfigure Claude Code Router for Azure? (y/N): " RECONFIG_CCR
-#     if [[ ! "$RECONFIG_CCR" =~ ^[Yy]$ ]]; then
-#         log "Skipping Claude Code Router configuration"
-#         # Skip to the next phase
-#         CCR_CONFIGURED=1
-#     fi
-# fi
-# 
-# if [ -z "$CCR_CONFIGURED" ]; then
-#     log "Configuring Claude Code Router for Azure OpenAI..."
-#     echo ""
-#     read -p "Enter your Azure OpenAI endpoint for Claude Code (e.g., https://YOUR-RESOURCE.openai.azure.com): " CCR_AZURE_ENDPOINT
-#     read -p "Enter your Azure OpenAI API key for Claude Code: " CCR_AZURE_API_KEY
-#     read -p "Enter your deployment name (e.g., gpt-4o, claude-sonnet-4): " CCR_DEPLOYMENT_NAME
-#     read -p "Enter API version [2024-10-21]: " CCR_API_VERSION
-#     CCR_API_VERSION=${CCR_API_VERSION:-2024-10-21}
-#
-#     # Construct the full API base URL
-#     CCR_API_BASE_URL="${CCR_AZURE_ENDPOINT}/openai/deployments/${CCR_DEPLOYMENT_NAME}/chat/completions?api-version=${CCR_API_VERSION}"
-#
-#     # Create config.json
-#     cat > "$CCR_CONFIG_FILE" <<EOF
-# {
-#   "Providers": [
-#     {
-#       "name": "azure",
-#       "api_base_url": "${CCR_API_BASE_URL}",
-#       "api_key": "${CCR_AZURE_API_KEY}",
-#       "models": ["${CCR_DEPLOYMENT_NAME}"]
-#     }
-#   ],
-#   "Router": {
-#     "default": "azure,${CCR_DEPLOYMENT_NAME}"
-#   }
-# }
-# EOF
-#
-#     log "Claude Code Router configuration created at $CCR_CONFIG_FILE"
-# fi
+    if command llm keys get gemini &>/dev/null; then
+        export_gemini_env_vars
+    fi
 
-# log "Claude Code Router installed. Configure manually in $CCR_CONFIG_FILE if needed."
+    # Generate CCR configuration (auto-adapts based on AZURE_CONFIGURED/GEMINI_CONFIGURED)
+    update_ccr_config
+
+    log "Claude Code Router installed"
+    log "Note: Run 'source ~/.profile' to load environment variables in current session"
+else
+    log "Skipping Claude Code Router installation (no providers configured)"
+fi
 
 # Install/update Codex CLI if Azure is configured
 if [ "$AZURE_CONFIGURED" = true ]; then
     log "Installing/updating Codex CLI..."
+    npm_install install -g @openai/codex
 
     # Configure Codex CLI with Azure OpenAI credentials
     if [ ! -f "$HOME/.codex/config.toml" ]; then
@@ -1381,9 +1617,9 @@ if [ "$AZURE_CONFIGURED" = true ]; then
     # Export Azure environment variables to ~/.profile
     export_azure_env_vars
 
-    npm_install install -g @openai/codex
-
     log "Codex CLI installed and configured with Azure OpenAI"
+else
+    log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
 
 #############################################################################
@@ -1400,7 +1636,7 @@ log "  - llm (Simon Willison's CLI tool)"
 log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, fragments, jq, fabric templates, context, llm-functions bridge)"
 log "  - aichat (All-in-one LLM CLI with RAG functionality)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
-# log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
+log "  - Claude Code Router (proxy for Claude Code)"
 log "  - micro (modern terminal text editor with llm-micro plugin for AI integration)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
@@ -1416,7 +1652,7 @@ log "Next steps:"
 log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
-# log "  4. Test Claude Code Router: routed-claude"
+log "  4. Test Claude Code Router: routed-claude"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"

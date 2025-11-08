@@ -3,14 +3,11 @@
 # Common LLM Configuration
 # Shared settings for both Bash and Zsh
 
-# Ensure llm tools are in PATH
-#export PATH="$HOME/.local/bin:$PATH"
-
-# Ensure cargo/rust tools are in PATH
-#export PATH="$HOME/.cargo/bin:$PATH"
-
 # Configure terminal session log directory (can be overridden before sourcing this file)
 export SESSION_LOG_DIR="${SESSION_LOG_DIR:-/tmp/session_logs/asciinema}"
+
+# Disable Claude Code auto-update checker
+export DISABLE_AUTOUPDATER=1
 
 # Custom llm wrapper function to set default template
 llm() {
