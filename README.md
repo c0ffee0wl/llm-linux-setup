@@ -263,7 +263,6 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
 - [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
 - [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
-- [OpenCode Documentation](https://opencode.ai/docs)
 
 ## What Gets Installed
 
@@ -272,7 +271,6 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[llm](https://github.com/c0ffee0wl/llm)** - LLM CLI tool (fork with markdown markup enhancements, originally by Simon Willison - [Documentation](https://llm.datasette.io/))
 - **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
-- **[OpenCode](https://github.com/sst/opencode)** - AI coding agent for terminal
 
 ### Necessary Prerequisites
 
@@ -2245,7 +2243,7 @@ rustc --version
 
 ### Node.js version issues
 
-**Problem**: npm or node commands fail, or Claude Code/OpenCode won't install
+**Problem**: npm or node commands fail, or Claude Code won't install
 
 **Solution**: The script requires Node.js 20+. If you have an older version:
 
@@ -2348,7 +2346,6 @@ For issues, questions, or suggestions:
 - [c0ffee0wl](https://github.com/c0ffee0wl) - llm fork with markdown markup enhancements
 - [sigoden](https://github.com/sigoden) - AIChat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
 - [Anthropic](https://www.anthropic.com/) - Claude Code agentic coding CLI
-- [SST](https://sst.dev/) - OpenCode agentic coding CLI
 - [Astral](https://astral.sh/) - uv Python package manager
 - [Rust Foundation](https://foundation.rust-lang.org/) - Rust programming language and Cargo
 - [Node.js Foundation](https://nodejs.org/) - Node.js JavaScript runtime

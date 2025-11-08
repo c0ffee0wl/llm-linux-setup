@@ -125,7 +125,7 @@ The script is organized into numbered phases:
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
-7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config), and OpenCode
+7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with Azure config)
 
 ### Plugin Persistence with llm-uv-tool
 
@@ -234,7 +234,7 @@ The script uses **intelligent version detection** similar to the Rust approach:
 
 **Version Detection Pattern:**
 1. Check repository Node.js version via `apt-cache policy nodejs`
-2. Extract and compare version (minimum required: 20 for Claude Code/OpenCode)
+2. Extract and compare version (minimum required: 20 for Claude Code)
 3. Choose installation method based on availability and current state
 
 **Installation Logic:**
@@ -258,7 +258,7 @@ The script uses **intelligent version detection** similar to the Rust approach:
 - Automatically uses sudo for npm global installs if needed
 - Provides `npm_install()` wrapper function that adapts based on permissions
 
-**Why This Matters:** Claude Code and OpenCode require Node.js 20+ for modern JavaScript features and APIs.
+**Why This Matters:** Claude Code requires Node.js 20+ for modern JavaScript features and APIs.
 
 ### Provider Configuration: Azure OpenAI OR Google Gemini
 
@@ -729,7 +729,6 @@ The script automatically upgrades tools on re-run:
 - `asciinema`: `install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema` (with commit-hash tracking)
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
-- OpenCode: `npm install -g opencode-ai@latest`
 
 **Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `install_or_upgrade_uv_tool` with `is_git_package=true` which intelligently detects the current installation source:
 - **If already from the fork**: Uses `uv tool upgrade` (efficient, checks for new commits)

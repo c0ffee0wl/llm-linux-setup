@@ -1386,10 +1386,6 @@ if [ "$AZURE_CONFIGURED" = true ]; then
     log "Codex CLI installed and configured with Azure OpenAI"
 fi
 
-# Install/update OpenCode
-log "Installing/updating OpenCode..."
-npm_install install -g opencode-ai@latest
-
 #############################################################################
 # COMPLETE
 #############################################################################
@@ -1405,7 +1401,6 @@ log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, fragments, jq, 
 log "  - aichat (All-in-one LLM CLI with RAG functionality)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 # log "  - Claude Code Router (proxy for Claude Code with Azure OpenAI)"
-log "  - OpenCode (AI coding agent for terminal)"
 log "  - micro (modern terminal text editor with llm-micro plugin for AI integration)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
@@ -1422,7 +1417,6 @@ log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
 # log "  4. Test Claude Code Router: routed-claude"
-# log "  4. Test and configure OpenCode: opencode and configure https://opencode.ai/docs/providers"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"
