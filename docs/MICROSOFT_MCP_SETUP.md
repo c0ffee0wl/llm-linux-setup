@@ -1,6 +1,8 @@
-# Microsoft MCP and Codex CLI Setup Guide
+# Microsoft MCP and Claude Code Setup Guide
 
-This guide covers the installation and configuration of Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP for enhanced AI-powered development workflows.
+This guide covers the installation and configuration of Claude Code (primary) and Codex CLI (alternative) with Microsoft MCP servers: Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP for enhanced AI-powered development workflows.
+
+**Claude Code** is positioned as the primary method due to its native HTTP support, OAuth 2.0 authentication, team-sharable project configurations, and superior developer experience. **Codex CLI** is provided as an alternative for users preferring TOML-based configuration.
 
 ## Prerequisites and Permissions
 
@@ -83,14 +85,14 @@ az role assignment list --assignee <your-email@domain.com> --output table
 
 ## Quick Start Guide
 
-Follow these steps to quickly set up all three MCP servers in Codex CLI or OpenCode.
+Follow these steps to quickly set up all three MCP servers in **Claude Code** (primary method).
 
-**Note**: This guide focuses on Codex CLI configuration. For OpenCode MCP configuration, see the [OpenCode](#opencode) section below.
+**Note**: This guide focuses on Claude Code configuration, which provides native HTTP support, OAuth 2.0, and team-sharable project configurations. For Codex CLI configuration (alternative method), see the [Codex CLI](#codex-cli-alternative-method) section below.
 
 ### Prerequisites
 
 - ✅ Run `./install-llm-tools.sh` with Azure OpenAI configured
-- ✅ Codex CLI and OpenCode automatically installed and configured
+- ✅ Claude Code and Codex CLI automatically installed and configured
 - ✅ Azure OpenAI credentials set in `~/.profile`
 
 ### Step 1: Install Azure CLI
@@ -129,9 +131,6 @@ sudo npm install -g @azure/mcp
 
 # Install Lokka globally (for Microsoft 365)
 sudo npm install -g @merill/lokka
-
-# Install mcp-remote proxy (for Microsoft Learn MCP)
-sudo npm install -g mcp-remote
 ```
 
 **Why install globally first:**
@@ -140,38 +139,40 @@ sudo npm install -g mcp-remote
 - Works better in offline or restricted network environments
 - Avoids npm permission issues with npx
 
-### Step 4: Configure Azure MCP in Codex
+**Note**: Microsoft Learn MCP does not require installation as Claude Code supports native HTTP connections to remote MCP servers.
+
+### Step 4: Configure Azure MCP in Claude Code
 
 ```bash
-codex mcp add azure -- npx -y @azure/mcp@latest server start
+claude mcp add --transport stdio azure -- npx -y @azure/mcp@latest server start
 ```
 
-This enables access to 40+ Azure services directly from Codex.
+This enables access to 40+ Azure services directly from Claude Code.
 
-### Step 5: Configure Lokka (Microsoft 365 MCP) in Codex
+### Step 5: Configure Lokka (Microsoft 365 MCP) in Claude Code
 
 **Interactive authentication (simplest):**
 ```bash
-codex mcp add lokka -- npx -y @merill/lokka
+claude mcp add --transport stdio lokka -- npx -y @merill/lokka
 ```
 
-When you first use Lokka in Codex, it will open your browser to authenticate with Microsoft 365.
+When you first use Lokka in Claude Code, it will open your browser to authenticate with Microsoft 365.
 
 **For production use with Entra ID app registration**, see the [App Registration Guide](#app-registration-guide) section below.
 
-### Step 6: Configure Microsoft Learn MCP in Codex
+### Step 6: Configure Microsoft Learn MCP in Claude Code
 
+**Native HTTP method (recommended):**
 ```bash
-# Add Microsoft Learn MCP (mcp-remote already installed in Step 3)
-codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/api/mcp
+claude mcp add --transport http microsoft-learn https://learn.microsoft.com/api/mcp
 ```
 
-This provides Codex with access to trusted Microsoft documentation.
+This provides Claude Code with access to trusted Microsoft documentation using native HTTP transport (no proxy required).
 
 ### Step 7: Verify MCP Servers
 
 ```bash
-codex mcp list
+claude mcp list
 ```
 
 You should see all three servers listed:
@@ -179,17 +180,19 @@ You should see all three servers listed:
 - `lokka`
 - `microsoft-learn`
 
-### Step 8: Test in Codex and Learn Effective Prompting
+You can also check server status and authentication within Claude Code using the `/mcp` command in the interactive interface.
+
+### Step 8: Test in Claude Code and Learn Effective Prompting
 
 ```bash
 # Load Azure environment variables (if not already loaded)
 source ~/.profile
 
-# Start Codex
-codex
+# Start Claude Code
+claude
 ```
 
-Now you can interact with Codex using natural language prompts that leverage your configured MCP servers. Here's how to effectively prompt each server:
+Now you can interact with Claude Code using natural language prompts and **@ mentions** to leverage your configured MCP servers. Here's how to effectively use each server:
 
 #### Azure MCP Server Prompting
 
@@ -249,9 +252,10 @@ Request current Microsoft documentation and best practices.
 
 - **Be explicit and specific**: Clear requests get better responses
 - **Use natural language**: Conversational queries work better than technical syntax
+- **Use @ mentions**: Reference MCP resources directly (e.g., `@azure:resource-groups`, `@lokka:users`)
 - **One task per prompt**: Focus on a single primary action
 - **Iterate if needed**: Refine prompts based on initial responses
-- **Check server status**: Use `codex mcp list` to verify enabled servers
+- **Check server status**: Use `claude mcp list` or `/mcp` command to verify enabled servers
 
 ### Troubleshooting
 
@@ -270,8 +274,13 @@ az login
 npx -y @azure/mcp@latest server start  # Should show server info
 npx -y @merill/lokka                   # Should show Lokka info
 
-# Check Codex logs for errors
-codex mcp test azure
+# Check server details and status
+claude mcp get azure
+claude mcp get lokka
+claude mcp get microsoft-learn
+
+# Check authentication status in Claude Code
+# Use /mcp command in the interactive interface
 ```
 
 **Environment variables not loaded:**
@@ -283,49 +292,268 @@ grep AZURE ~/.profile
 source ~/.profile
 ```
 
+### Alternative: Using Codex CLI
+
+If you prefer using Codex CLI instead of Claude Code, follow the same steps but use `codex mcp add` instead of `claude mcp add`. Note that Codex CLI:
+- Uses TOML configuration instead of JSON
+- Requires `mcp-remote` proxy for Microsoft Learn MCP (no native HTTP support)
+- Stores configuration in `~/.codex/config.toml` instead of `.mcp.json`
+- Does not support OAuth 2.0 or team-sharable project configurations
+
+See the [Codex CLI](#codex-cli-alternative-method) section for detailed instructions.
+
 ---
 
 ## Table of Contents
 
 - [Prerequisites and Permissions](#prerequisites-and-permissions)
 - [Quick Start Guide](#quick-start-guide)
-- [Codex CLI](#codex-cli)
-  - [Overview](#overview)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-  - [VS Code Extension](#vs-code-extension)
-- [OpenCode](#opencode)
-  - [Overview](#overview-1)
-  - [Installation](#installation-1)
-  - [Azure OpenAI Configuration](#azure-openai-configuration)
-  - [Usage](#usage)
-  - [Manual MCP Server Configuration](#manual-mcp-server-configuration)
-- [Configuring MCP Servers in Codex](#configuring-mcp-servers-in-codex)
-  - [Configuration Methods](#configuration-methods)
-  - [Configuration File Structure](#configuration-file-structure)
+- [Claude Code (Primary Method)](#claude-code-primary-method)
+  - [Overview](#claude-code-overview)
+  - [Installation](#claude-code-installation)
+  - [MCP Configuration](#claude-code-mcp-configuration)
+  - [Configuration File Structure](#claude-code-configuration-file-structure)
+  - [VS Code Extension](#claude-code-vs-code-extension)
+- [Codex CLI (Alternative Method)](#codex-cli-alternative-method)
+  - [Overview](#codex-overview)
+  - [Installation](#codex-installation)
+  - [Configuration](#codex-configuration)
+  - [VS Code Extension](#codex-vs-code-extension)
+- [Configuring MCP Servers](#configuring-mcp-servers)
+  - [Claude Code Configuration Methods](#claude-code-configuration-methods)
+  - [Codex CLI Configuration Methods](#codex-cli-configuration-methods)
 - [Azure MCP Server](#azure-mcp-server)
   - [Overview](#azure-mcp-overview)
   - [Installation](#azure-mcp-installation)
   - [Authentication](#azure-mcp-authentication)
+  - [Claude Code Configuration](#azure-mcp-claude-code-configuration)
   - [Codex CLI Configuration](#azure-mcp-codex-configuration)
 - [Lokka (Microsoft 365 MCP)](#lokka-microsoft-365-mcp)
   - [Overview](#lokka-overview)
   - [Authentication Methods](#lokka-authentication-methods)
+  - [Claude Code Configuration](#lokka-claude-code-configuration)
   - [Codex CLI Configuration](#lokka-codex-configuration)
   - [App Registration Guide](#app-registration-guide)
 - [Microsoft Learn MCP](#microsoft-learn-mcp)
   - [Overview](#microsoft-learn-overview)
+  - [Claude Code Configuration](#microsoft-learn-claude-code-configuration)
   - [Codex CLI Configuration](#microsoft-learn-codex-configuration)
 - [Testing and Verification](#testing-and-verification)
 - [Integration with llm-linux-setup](#integration-with-llm-linux-setup)
 
 ---
 
-## Codex CLI
+## Claude Code (Primary Method)
 
-### Overview
+### Overview {#claude-code-overview}
+
+**Claude Code** is Anthropic's official AI coding agent that runs locally in your terminal. It provides advanced terminal-based AI coding assistance with native Model Context Protocol (MCP) support.
+
+**Key Features:**
+- Native HTTP and STDIO MCP transport support
+- OAuth 2.0 authentication for third-party services
+- Team-sharable project configurations (`.mcp.json`)
+- Environment variable expansion with defaults (`${VAR:-default}`)
+- @ mentions for MCP resources
+- Cross-platform support (macOS, Windows, Linux)
+- Enterprise-ready with managed configuration policies
+
+**Official Documentation:**
+- **Main Site**: https://code.claude.com/
+- **MCP Integration**: https://code.claude.com/docs/en/mcp
+
+**Prerequisites:**
+- Node.js 20+ (already ensured by llm-linux-setup)
+- Minimum: 4GB RAM (8GB recommended)
+- Platform: macOS 12+, Windows 11+, Ubuntu 20.04+, Debian 10+
+
+### Installation {#claude-code-installation}
+
+Claude Code is **automatically installed** by llm-linux-setup when Azure OpenAI is configured.
+
+**Installation method:**
+- Installed via npm in Phase 7: `npm install -g @anthropic-ai/claude-code`
+- Uses Azure OpenAI credentials from `~/.profile`
+
+**Verify installation:**
+```bash
+claude --version
+```
+
+### MCP Configuration {#claude-code-mcp-configuration}
+
+Claude Code supports multiple MCP server configuration approaches with superior flexibility compared to alternatives.
+
+**CLI Commands (Recommended):**
+
+```bash
+# STDIO servers (local processes)
+claude mcp add --transport stdio <name> --env KEY=value -- <command> [args]
+
+# HTTP servers (remote endpoints)
+claude mcp add --transport http <name> <url>
+
+# HTTP with authentication
+claude mcp add --transport http <name> <url> --header "Authorization: Bearer token"
+
+# Server management
+claude mcp list              # List all configured servers
+claude mcp get <name>        # Get server details
+claude mcp remove <name>     # Remove a server
+```
+
+**Example - Azure MCP Server:**
+```bash
+claude mcp add --transport stdio azure -- npx -y @azure/mcp@latest server start
+```
+
+**Example - Lokka with environment variables:**
+```bash
+claude mcp add --transport stdio lokka \
+  --env TENANT_ID=your-tenant-id \
+  --env CLIENT_ID=your-client-id \
+  --env CLIENT_SECRET=your-client-secret \
+  -- npx -y @merill/lokka
+```
+
+**Example - Microsoft Learn MCP (native HTTP):**
+```bash
+claude mcp add --transport http microsoft-learn https://learn.microsoft.com/api/mcp
+```
+
+**Scope System:**
+- **Local**: User-specific, private configuration (default)
+- **Project**: `.mcp.json` at repository root, version-controlled, team-shared
+- **User**: Cross-project availability on your machine
+- **Enterprise**: System-level `managed-mcp.json` with policy controls
+
+**In-App Management:**
+- Use `/mcp` command in Claude Code to check status and manage authentication
+- OAuth 2.0 flows handled automatically for supported services
+
+### Configuration File Structure {#claude-code-configuration-file-structure}
+
+Claude Code uses JSON configuration (`.mcp.json`) with support for environment variable expansion.
+
+**Basic Structure:**
+
+```json
+{
+  "mcpServers": {
+    "server-name": {
+      "type": "stdio|http|sse",
+      "command": "executable-path",
+      "args": ["arg1", "arg2"],
+      "env": {
+        "VAR_NAME": "value",
+        "API_KEY": "${API_KEY}",
+        "BASE_URL": "${API_BASE:-https://default.com}"
+      }
+    }
+  }
+}
+```
+
+**STDIO Server Example (Azure MCP):**
+
+```json
+{
+  "mcpServers": {
+    "azure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"]
+    }
+  }
+}
+```
+
+**HTTP Server Example (Microsoft Learn MCP):**
+
+```json
+{
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    }
+  }
+}
+```
+
+**Environment Variable Expansion:**
+- `${VAR}` - Uses environment variable value
+- `${VAR:-default}` - Falls back to default if unset
+- Supported in: `command`, `args`, `env`, `url`, `headers`
+
+**Complete Example (All Three Microsoft MCP Servers):**
+
+```json
+{
+  "mcpServers": {
+    "azure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"]
+    },
+    "lokka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@merill/lokka"],
+      "env": {
+        "TENANT_ID": "${TENANT_ID}",
+        "CLIENT_ID": "${CLIENT_ID}",
+        "CLIENT_SECRET": "${CLIENT_SECRET}"
+      }
+    },
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    }
+  }
+}
+```
+
+**Windows-Specific Note:**
+STDIO servers on Windows require `cmd /c` wrapper:
+```bash
+claude mcp add --transport stdio my-server -- cmd /c npx -y @some/package
+```
+
+### VS Code Extension {#claude-code-vs-code-extension}
+
+Claude Code is also available as a **Visual Studio Code extension** (note: this is the same extension as Codex).
+
+**Installation:**
+1. Open VS Code
+2. Go to Extensions (Ctrl+Shift+X or Cmd+Shift+X)
+3. Search for "Claude Code" or "Codex"
+4. Click Install
+
+**Supported IDEs:**
+- Visual Studio Code
+- VS Code Insiders
+- Cursor
+- Windsurf
+
+**Features:**
+- Inline AI suggestions
+- Delegate tasks to cloud agent
+- Review proposed changes as diffs
+- Create PRs directly from the IDE
+- MCP integration (if configured)
+
+**Pro Tip:** Create git checkpoints before and after each Claude Code task to easily revert if needed.
+
+---
+
+## Codex CLI (Alternative Method)
+
+### Overview {#codex-overview}
 
 **Codex CLI** is an open-source AI coding agent built by OpenAI that runs locally in your terminal. It provides terminal-based AI coding assistance with support for Azure OpenAI.
+
+**Note**: This section describes Codex CLI as an alternative to Claude Code for users preferring TOML-based configuration.
 
 **Key Features:**
 - Automatically creates pull requests
@@ -345,7 +573,7 @@ source ~/.profile
 - Platform: macOS 12+, Ubuntu 20.04+, Debian 10+, or Windows 11 via WSL2
 - ChatGPT Plus/Pro/Business/Edu/Enterprise account OR OpenAI API key
 
-### Installation
+### Installation {#codex-installation}
 
 Codex CLI is **automatically installed** by llm-linux-setup when Azure OpenAI is configured.
 
@@ -364,7 +592,7 @@ brew install codex
 codex --version
 ```
 
-### Configuration
+### Configuration {#codex-configuration}
 
 When Azure OpenAI is configured, llm-linux-setup automatically creates `~/.codex/config.toml`:
 
@@ -390,7 +618,7 @@ export AZURE_RESOURCE_NAME="your-resource-name"
 source ~/.profile
 ```
 
-### VS Code Extension
+### VS Code Extension {#codex-vs-code-extension}
 
 Codex is also available as a **Visual Studio Code extension**, providing IDE-integrated AI assistance.
 
@@ -416,349 +644,83 @@ Codex is also available as a **Visual Studio Code extension**, providing IDE-int
 
 ---
 
-## OpenCode
 
-### Overview
+## Configuring MCP Servers
 
-**OpenCode** is an open-source AI coding agent for terminals built by SST, providing terminal-based AI coding assistance with multi-provider support including Azure OpenAI.
+The Model Context Protocol (MCP) allows AI coding agents to connect to external tools and services for enhanced capabilities.
 
-**Key Features:**
-- Provider-agnostic (Anthropic, OpenAI, Google, local models)
-- Terminal user interface (TUI) with streaming responses
-- Multi-file editing with context awareness
-- MCP server integration for enhanced capabilities
-- Session management and conversation history
-- MIT licensed, 100% open source
+This section covers MCP configuration for both Claude Code (primary) and Codex CLI (alternative).
 
-**Repository**: https://github.com/sst/opencode
+### Claude Code Configuration Methods {#claude-code-configuration-methods}
 
-**Official Documentation**: https://opencode.ai/docs/
+**Claude Code** provides superior MCP configuration with native HTTP support, OAuth 2.0, and team-sharable configurations.
 
-**Current Version**: v1.0.25 (actively maintained)
+**Official Documentation**: https://code.claude.com/docs/en/mcp
 
-**Prerequisites:**
-- Node.js 20+ (already ensured by llm-linux-setup)
-- Terminal with UTF-8 support
-- API key for chosen provider (Azure OpenAI already configured)
+#### Configuration Approaches
 
-### Installation
+Claude Code supports three configuration approaches:
 
-OpenCode is **automatically installed** by llm-linux-setup when Azure OpenAI is configured.
+**1. CLI Commands (Recommended)**
 
-**Manual installation methods:**
+Use `claude mcp add` commands for streamlined setup:
 
 ```bash
-# Via install script (recommended)
-curl -fsSL https://opencode.ai/install | bash
+# STDIO servers
+claude mcp add --transport stdio <name> --env KEY=value -- <command> [args]
 
-# Via npm (global)
-npm install -g opencode-ai@latest
+# HTTP servers
+claude mcp add --transport http <name> <url>
 
-# Via Homebrew (macOS)
-brew install opencode
+# HTTP with authentication
+claude mcp add --transport http <name> <url> --header "Authorization: Bearer token"
 ```
 
-**Verify installation:**
-```bash
-opencode --version
-```
+**2. Manual .mcp.json Editing**
 
-### Azure OpenAI Configuration
+Create or edit `.mcp.json` in your project root for team-shared configuration:
 
-When Azure OpenAI is configured, llm-linux-setup automatically exports required environment variables to `~/.profile`:
-
-```bash
-export AZURE_OPENAI_API_KEY="your-api-key"
-export AZURE_RESOURCE_NAME="your-resource-name"
-```
-
-**One-Time Authentication Setup:**
-
-After installation, authenticate OpenCode with Azure:
-
-```bash
-# Load environment variables (if not already loaded)
-source ~/.profile
-
-# Run authentication command
-opencode auth login
-```
-
-When prompted:
-1. Select **Azure** as your provider
-2. Enter your API key (use value from `echo $AZURE_OPENAI_API_KEY`)
-
-**Launch OpenCode:**
-
-```bash
-# With environment variable already set in ~/.profile
-opencode
-
-# Or set explicitly for this session
-AZURE_RESOURCE_NAME=your-resource-name opencode
-```
-
-**⚠️ IMPORTANT - Deployment Name Requirement:**
-
-When deploying models in Azure AI Foundry, **the deployment name MUST match the model name exactly** for OpenCode to work properly.
-
-**Example:**
-- ✅ Model: `gpt-4.1-mini` → Deployment: `gpt-4.1-mini`
-- ❌ Model: `gpt-4.1-mini` → Deployment: `my-gpt4-deployment`
-
-**Select Your Model:**
-
-After launching OpenCode, use the `/models` command to select your Azure deployment:
-
-```
-/models
-```
-
-Choose your deployed model from the list (e.g., `gpt-4.1-mini`).
-
-### Usage
-
-**Basic Commands:**
-
-- **Launch interactive TUI**: `opencode`
-- **Show version**: `opencode --version`
-- **Show help**: `opencode --help`
-
-**In-Session Commands:**
-
-- `/models` - Switch between available models
-- `/help` - Show available commands
-- `/clear` - Clear conversation history
-- `/exit` - Exit OpenCode
-
-**Example Workflow:**
-
-```bash
-# Start OpenCode
-opencode
-
-# Inside OpenCode:
-> /models
-[Select your Azure model]
-
-> help me refactor this authentication function to use async/await
-[OpenCode analyzes context and provides suggestions]
-
-> apply the changes
-[OpenCode modifies files with streaming updates]
-```
-
-**Tips:**
-- OpenCode automatically detects files in your current directory
-- Use natural language to describe tasks
-- Review proposed changes before accepting
-- Use `/clear` to start fresh conversations
-
-### Manual MCP Server Configuration
-
-OpenCode supports MCP servers through manual configuration in `~/.opencode/opencode.jsonc` (or `$XDG_CONFIG_HOME/opencode/opencode.jsonc`).
-
-**Configuration File Location:**
-
-Create or edit the configuration file:
-
-```bash
-# Create config directory if needed
-mkdir -p ~/.opencode
-
-# Edit configuration
-nano ~/.opencode/opencode.jsonc
-```
-
-**Configuration Format:**
-
-The configuration file uses JSONC (JSON with comments) format with a schema for validation:
-
-```jsonc
+```json
 {
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
+  "mcpServers": {
     "server-name": {
-      "type": "local" or "remote",
-      "enabled": true
+      "type": "stdio|http",
+      "command": "path/to/command",
+      "args": ["arg1", "arg2"],
+      "env": {
+        "VAR": "${VAR:-default}"
+      }
     }
   }
 }
 ```
 
-#### Local MCP Servers (STDIO)
+**3. In-App Management**
 
-For locally-hosted servers, use `"type": "local"` with a command array:
+Use `/mcp` command within Claude Code to:
+- Check server status
+- Manage OAuth authentication
+- Troubleshoot connection issues
 
-**Required fields:**
-- `type`: Must be `"local"`
-- `command`: Array containing the startup command and arguments
+#### Key Features
 
-**Optional fields:**
-- `environment`: Object for environment variables
-- `enabled`: Boolean to enable/disable on startup (default: true)
-- `timeout`: Milliseconds for tool fetching (default: 5000ms)
+- **Native HTTP support**: No proxy needed for remote MCP servers
+- **Environment variable expansion**: `${VAR:-default}` syntax
+- **OAuth 2.0**: Built-in authentication for supported services
+- **Scope system**: Local, project, user, and enterprise configurations
+- **Team sharing**: `.mcp.json` can be version-controlled
 
-**Example - Azure MCP Server:**
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "azure": {
-      "type": "local",
-      "command": ["npx", "-y", "@azure/mcp@latest", "server", "start"],
-      "enabled": true
-    }
-  }
-}
-```
-
-**Example - Lokka (Microsoft 365) with Interactive Auth:**
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "lokka": {
-      "type": "local",
-      "command": ["npx", "-y", "@merill/lokka"],
-      "enabled": true
-    }
-  }
-}
-```
-
-**Example - Lokka with App Registration (Client Credentials):**
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "lokka": {
-      "type": "local",
-      "command": ["npx", "-y", "@merill/lokka"],
-      "environment": {
-        "TENANT_ID": "your-tenant-id",
-        "CLIENT_ID": "your-client-id",
-        "CLIENT_SECRET": "your-client-secret"
-      },
-      "enabled": true
-    }
-  }
-}
-```
-
-**Using Environment Variables:**
-
-Reference system environment variables using `"{env:VARIABLE_NAME}"` syntax:
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "lokka": {
-      "type": "local",
-      "command": ["npx", "-y", "@merill/lokka"],
-      "environment": {
-        "TENANT_ID": "{env:TENANT_ID}",
-        "CLIENT_ID": "{env:CLIENT_ID}",
-        "CLIENT_SECRET": "{env:CLIENT_SECRET}"
-      },
-      "enabled": true
-    }
-  }
-}
-```
-
-#### Remote MCP Servers (HTTP)
-
-For remote HTTP servers, use `"type": "remote"`:
-
-**Required fields:**
-- `type`: Must be `"remote"`
-- `url`: The remote server endpoint
-
-**Optional fields:**
-- `headers`: Authentication headers (e.g., bearer tokens)
-- `enabled`: Boolean toggle (default: true)
-- `timeout`: Milliseconds for tool fetching (default: 5000ms)
-
-**Example - Microsoft Learn MCP:**
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "microsoft-learn": {
-      "type": "remote",
-      "url": "https://learn.microsoft.com/api/mcp",
-      "enabled": true
-    }
-  }
-}
-```
-
-#### Complete Configuration Example
-
-**All Three Microsoft MCP Servers:**
-
-```jsonc
-{
-  "$schema": "https://opencode.ai/config.json",
-  "mcp": {
-    "azure": {
-      "type": "local",
-      "command": ["npx", "-y", "@azure/mcp@latest", "server", "start"],
-      "enabled": true
-    },
-    "lokka": {
-      "type": "local",
-      "command": ["npx", "-y", "@merill/lokka"],
-      "environment": {
-        "TENANT_ID": "{env:TENANT_ID}",
-        "CLIENT_ID": "{env:CLIENT_ID}",
-        "CLIENT_SECRET": "{env:CLIENT_SECRET}"
-      },
-      "enabled": true
-    },
-    "microsoft-learn": {
-      "type": "remote",
-      "url": "https://learn.microsoft.com/api/mcp",
-      "enabled": true
-    }
-  }
-}
-```
-
-**Verification:**
-
-After configuring MCP servers, restart OpenCode and verify they're loaded:
-
-```bash
-opencode
-```
-
-In the OpenCode TUI, try prompts that would use MCP tools:
-- "List my Azure resource groups" (Azure MCP)
-- "Show my Microsoft 365 users" (Lokka)
-- "Find documentation on Azure Functions" (Microsoft Learn MCP)
-
-**Troubleshooting:**
-
-- **Servers not loading**: Check `~/.opencode/opencode.jsonc` syntax with a JSON validator
-- **Authentication fails**: Verify `az login` for Azure MCP, or check Lokka credentials
-- **Environment variables not working**: Ensure variables are exported in your shell session
+For detailed configuration examples, see the [Claude Code](#claude-code-primary-method) section above.
 
 ---
 
-## Configuring MCP Servers in Codex
+### Codex CLI Configuration Methods {#codex-cli-configuration-methods}
 
-The Model Context Protocol (MCP) allows Codex to connect to external tools and services for enhanced capabilities.
+**Codex CLI** provides TOML-based MCP configuration as an alternative for users preferring that format.
 
 **Official Documentation**: https://developers.openai.com/codex/mcp/
 
-### Configuration Methods
+#### Configuration Approaches
 
 Codex supports two approaches for MCP server setup:
 
@@ -908,7 +870,83 @@ az ad sp create-for-rbac --name "MyMCPServicePrincipal" --role Contributor
 
 Available when running within Azure (VMs, App Service, etc.). No additional configuration needed.
 
-### Azure MCP Codex Configuration
+### Azure MCP Claude Code Configuration {#azure-mcp-claude-code-configuration}
+
+**Recommended**: Use Claude Code for Azure MCP configuration to benefit from native features and superior developer experience.
+
+#### Option 1: CLI Command (with Azure CLI auth)
+
+```bash
+claude mcp add --transport stdio azure -- npx -y @azure/mcp@latest server start
+```
+
+This is the simplest method - uses your existing `az login` credentials automatically.
+
+#### Option 2: Manual .mcp.json (with Azure CLI auth)
+
+Create or edit `.mcp.json` in your project root:
+
+```json
+{
+  "mcpServers": {
+    "azure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"]
+    }
+  }
+}
+```
+
+#### Option 3: CLI Command (with Service Principal)
+
+```bash
+claude mcp add --transport stdio azure \
+  --env AZURE_TENANT_ID=your-tenant-id \
+  --env AZURE_CLIENT_ID=your-client-id \
+  --env AZURE_CLIENT_SECRET=your-client-secret \
+  -- npx -y @azure/mcp@latest server start
+```
+
+#### Option 4: Manual .mcp.json (with Service Principal and variable expansion)
+
+```json
+{
+  "mcpServers": {
+    "azure": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "env": {
+        "AZURE_TENANT_ID": "${AZURE_TENANT_ID}",
+        "CLIENT_ID": "${AZURE_CLIENT_ID}",
+        "AZURE_CLIENT_SECRET": "${AZURE_CLIENT_SECRET}"
+      }
+    }
+  }
+}
+```
+
+**Verification:**
+```bash
+# Test Azure authentication
+az account show
+
+# List MCP servers in Claude Code
+claude mcp list
+
+# Get server details
+claude mcp get azure
+
+# Check status in Claude Code interface
+# Use /mcp command
+```
+
+---
+
+### Azure MCP Codex Configuration {#azure-mcp-codex-configuration}
+
+**Alternative**: Use Codex CLI if you prefer TOML-based configuration.
 
 #### Option 1: CLI Command (with Azure CLI auth)
 
@@ -998,7 +1036,132 @@ Uses PEM-encoded certificate for enhanced security.
 
 External token management for advanced scenarios.
 
-### Lokka Codex Configuration
+### Lokka Claude Code Configuration {#lokka-claude-code-configuration}
+
+**Recommended**: Use Claude Code for Lokka configuration to benefit from environment variable expansion and superior developer experience.
+
+#### Option 1: Interactive Auth (Simplest)
+
+**CLI Command:**
+```bash
+claude mcp add --transport stdio lokka -- npx -y @merill/lokka
+```
+
+When you first use Lokka in Claude Code, it will open your browser to authenticate with Microsoft 365.
+
+**Manual .mcp.json:**
+```json
+{
+  "mcpServers": {
+    "lokka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@merill/lokka"]
+    }
+  }
+}
+```
+
+#### Option 2: Client Credentials (App-Only)
+
+**CLI Command:**
+```bash
+claude mcp add --transport stdio lokka \
+  --env TENANT_ID=your-tenant-id \
+  --env CLIENT_ID=your-client-id \
+  --env CLIENT_SECRET=your-client-secret \
+  -- npx -y @merill/lokka
+```
+
+**Manual .mcp.json (with variable expansion):**
+```json
+{
+  "mcpServers": {
+    "lokka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@merill/lokka"],
+      "env": {
+        "TENANT_ID": "${TENANT_ID}",
+        "CLIENT_ID": "${CLIENT_ID}",
+        "CLIENT_SECRET": "${CLIENT_SECRET}"
+      }
+    }
+  }
+}
+```
+
+#### Option 3: Certificate-Based Auth
+
+**CLI Command:**
+```bash
+claude mcp add --transport stdio lokka \
+  --env TENANT_ID=your-tenant-id \
+  --env CLIENT_ID=your-client-id \
+  --env CERTIFICATE_PATH=/path/to/cert.pem \
+  -- npx -y @merill/lokka
+```
+
+**Manual .mcp.json (with variable expansion):**
+```json
+{
+  "mcpServers": {
+    "lokka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@merill/lokka"],
+      "env": {
+        "TENANT_ID": "${TENANT_ID}",
+        "CLIENT_ID": "${CLIENT_ID}",
+        "CERTIFICATE_PATH": "${CERTIFICATE_PATH:-/path/to/cert.pem}"
+      }
+    }
+  }
+}
+```
+
+#### Option 4: Token-Based Auth
+
+**CLI Command:**
+```bash
+claude mcp add --transport stdio lokka \
+  --env USE_CLIENT_TOKEN=true \
+  -- npx -y @merill/lokka
+```
+
+**Manual .mcp.json:**
+```json
+{
+  "mcpServers": {
+    "lokka": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@merill/lokka"],
+      "env": {
+        "USE_CLIENT_TOKEN": "true"
+      }
+    }
+  }
+}
+```
+
+**Verification:**
+```bash
+# List MCP servers
+claude mcp list
+
+# Get server details
+claude mcp get lokka
+
+# Check authentication status in Claude Code
+# Use /mcp command to manage OAuth if needed
+```
+
+---
+
+### Lokka Codex Configuration {#lokka-codex-configuration}
+
+**Alternative**: Use Codex CLI if you prefer TOML-based configuration.
 
 #### Option 1: Interactive Auth (Simplest)
 
@@ -1180,9 +1343,76 @@ The **Microsoft Learn MCP Server** is an official Microsoft remote MCP server pr
 - Incremental updates per content change
 - Complete refresh once daily
 
-### Microsoft Learn Codex Configuration
+### Microsoft Learn Claude Code Configuration {#microsoft-learn-claude-code-configuration}
 
-Microsoft Learn MCP is an **HTTP server**, not a STDIO server, so configuration differs slightly.
+**Recommended**: Claude Code provides **native HTTP support**, eliminating the need for proxy tools.
+
+#### Native HTTP Method (Recommended)
+
+**CLI Command:**
+```bash
+claude mcp add --transport http microsoft-learn https://learn.microsoft.com/api/mcp
+```
+
+This is the simplest and most efficient method - no proxy required!
+
+**Manual .mcp.json:**
+```json
+{
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    }
+  }
+}
+```
+
+#### Alternative: STDIO via mcp-remote Proxy
+
+If you prefer using the mcp-remote proxy (not recommended):
+
+**CLI Command:**
+```bash
+claude mcp add --transport stdio microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/api/mcp
+```
+
+**Manual .mcp.json:**
+```json
+{
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "mcp-remote", "https://learn.microsoft.com/api/mcp"]
+    }
+  }
+}
+```
+
+**Verification:**
+```bash
+# List MCP servers
+claude mcp list
+
+# Get server details
+claude mcp get microsoft-learn
+
+# The endpoint is designed for MCP clients using Streamable HTTP
+# Direct browser access will return 405 Method Not Allowed
+```
+
+**Why Native HTTP is Better:**
+- ✅ No additional dependencies (no mcp-remote needed)
+- ✅ Direct connection to remote server
+- ✅ Faster and more reliable
+- ✅ Simpler configuration
+
+---
+
+### Microsoft Learn Codex Configuration {#microsoft-learn-codex-configuration}
+
+**Alternative**: Codex CLI requires either manual TOML editing or the mcp-remote proxy since it has limited native HTTP support.
 
 #### Option 1: Direct TOML Edit (Native Remote Support)
 
@@ -1231,7 +1461,51 @@ codex mcp list
 
 ## Testing and Verification
 
-### Test MCP Server Configuration
+### Claude Code Testing (Primary)
+
+**List configured servers:**
+```bash
+claude mcp list
+```
+
+**Get server details:**
+```bash
+claude mcp get <server-name>
+
+# Examples:
+claude mcp get azure
+claude mcp get lokka
+claude mcp get microsoft-learn
+```
+
+**Check status in Claude Code interface:**
+- Launch Claude Code: `claude`
+- Use `/mcp` command to check server status and authentication
+- Use @ mentions to test MCP resources: `@azure:resource-groups`, `@lokka:users`
+
+**Test individual components:**
+```bash
+# Test Azure MCP directly
+npx -y @azure/mcp@latest server start
+
+# Test Lokka directly
+npx -y @merill/lokka
+```
+
+**Example Claude Code prompts:**
+```bash
+claude
+
+# In Claude Code:
+> List my Azure resource groups
+> @azure:subscriptions
+> Find all conditional access policies in my M365 tenant
+> @microsoft-learn:azure-functions
+```
+
+---
+
+### Codex CLI Testing (Alternative)
 
 **List configured servers:**
 ```bash
@@ -1243,33 +1517,12 @@ codex mcp list
 codex mcp test <server-name>
 ```
 
-### Check Logs
-
-If a server fails to start, check Codex logs for errors:
-
+**Check configuration:**
 ```bash
-# Check Codex config
 cat ~/.codex/config.toml
-
-# Test individual components
-npx -y @azure/mcp@latest server start  # Test Azure MCP
-npx -y @merill/lokka                   # Test Lokka
 ```
 
-### Verify Azure Authentication
-
-```bash
-# Check Azure login status
-az account show
-
-# List available Azure resources (test Azure MCP access)
-az account list
-```
-
-### Use MCP Servers in Codex
-
-Start a Codex session and reference MCP tools:
-
+**Example Codex prompts:**
 ```bash
 codex
 
@@ -1281,18 +1534,34 @@ codex
 
 ---
 
+### Verify Azure Authentication
+
+This applies to both Claude Code and Codex CLI:
+
+```bash
+# Check Azure login status
+az account show
+
+# List available Azure resources (test Azure MCP access)
+az account list
+```
+
+---
+
 ## Integration with llm-linux-setup
 
-### Automatic Codex CLI and OpenCode Configuration
+### Automatic Claude Code and Codex CLI Configuration
 
 When Azure OpenAI is configured in llm-linux-setup, the installation script automatically:
 
-1. **Installs Codex CLI** via npm (Phase 7)
-2. **Installs OpenCode** via npm (Phase 7)
+1. **Installs Claude Code** via npm (Phase 7): `npm install -g @anthropic-ai/claude-code`
+2. **Installs Codex CLI** via npm (Phase 7): `npm install -g @openai/codex`
 3. **Creates `~/.codex/config.toml`** with Azure OpenAI settings (Codex only)
 4. **Exports environment variables** to `~/.profile`:
    - `AZURE_OPENAI_API_KEY`
    - `AZURE_RESOURCE_NAME`
+
+**Note**: Claude Code and Codex CLI are both automatically installed when you run `./install-llm-tools.sh` with Azure OpenAI configured. No manual installation is required.
 
 ### Environment Variables
 
@@ -1310,28 +1579,17 @@ source ~/.profile
 
 - **llm CLI**: Uses `extra-openai-models.yaml` for model configuration
 - **aichat**: Uses `~/.config/aichat/config.yaml` for RAG and chat
+- **Claude Code**: Uses Azure OpenAI credentials from `~/.profile` environment variables
 - **Codex CLI**: Uses `~/.codex/config.toml` + environment variables
-- **OpenCode**: Uses `opencode auth login` for authentication + environment variables
-- **All four tools** share the same Azure OpenAI credentials (managed via `llm keys`)
+- **All tools** share the same Azure OpenAI credentials (managed via `llm keys`)
 
-### OpenCode Additional Setup
+### MCP Server Configuration
 
-While OpenCode is automatically installed, it requires one-time authentication:
+MCP server configuration is done post-installation:
+- **Claude Code**: Use `claude mcp add` CLI commands or create `.mcp.json` files
+- **Codex CLI**: Use `codex mcp add` CLI commands or edit `~/.codex/config.toml`
 
-```bash
-# Load environment variables
-source ~/.profile
-
-# Authenticate with Azure
-opencode auth login
-# Select Azure provider
-# Enter API key from $AZURE_OPENAI_API_KEY
-
-# Launch OpenCode
-opencode
-```
-
-**Optional MCP Configuration**: To use MCP servers with OpenCode, manually create `~/.opencode/opencode.jsonc` as described in the [OpenCode MCP Configuration](#manual-mcp-server-configuration) section.
+See the respective configuration sections above for detailed instructions.
 
 ---
 
@@ -1339,10 +1597,12 @@ opencode
 
 This guide covered:
 
-- ✅ **Codex CLI**: Automatic installation and Azure OpenAI configuration
-- ✅ **OpenCode**: Automatic installation with manual Azure authentication setup
-- ✅ **VS Code Extension**: IDE-integrated AI coding assistance (Codex)
-- ✅ **MCP Configuration**: CLI commands and manual file editing (Codex TOML, OpenCode JSONC)
+- ✅ **Claude Code**: Primary MCP method with native HTTP support, OAuth 2.0, and team-sharable configurations
+- ✅ **Codex CLI**: Alternative TOML-based configuration for users preferring that approach
+- ✅ **Automatic Installation**: Both tools installed by llm-linux-setup
+- ✅ **Shared Credentials**: Both use Azure OpenAI credentials from `~/.profile`
+- ✅ **VS Code Extension**: IDE-integrated AI coding assistance (shared between Claude Code and Codex)
+- ✅ **MCP Configuration**: CLI commands and manual file editing (Claude Code JSON, Codex TOML)
 - ✅ **Azure MCP Server**: 40+ Azure services integration with authentication
 - ✅ **Lokka**: Microsoft 365 management with multiple auth methods
 - ✅ **Microsoft Learn MCP**: Access to trusted Microsoft documentation
@@ -1350,23 +1610,38 @@ This guide covered:
 
 **Next Steps:**
 
-**For Codex CLI:**
-1. Ensure Azure is configured: Run `./install-llm-tools.sh`
-2. Authenticate to Azure: `az login`
-3. Configure MCP servers: `codex mcp add <server> -- <command>`
-4. Test in Codex: `codex` and try MCP-powered prompts
+**For Claude Code (Recommended):**
+1. Verify installation: `claude --version`
+2. Load environment: `source ~/.profile`
+3. Authenticate to Azure: `az login`
+4. Configure MCP servers:
+   - Azure MCP: `claude mcp add --transport stdio azure -- npx -y @azure/mcp@latest server start`
+   - Lokka: `claude mcp add --transport stdio lokka -- npx -y @merill/lokka`
+   - Microsoft Learn: `claude mcp add --transport http microsoft-learn https://learn.microsoft.com/api/mcp`
+5. Verify: `claude mcp list`
+6. Test: `claude` and use @ mentions for MCP resources (`@azure:subscriptions`, `@lokka:users`)
 
-**For OpenCode:**
-1. Ensure Azure is configured: Run `./install-llm-tools.sh`
-2. Authenticate OpenCode: `opencode auth login` (select Azure, enter API key)
-3. Configure MCP servers: Edit `~/.opencode/opencode.jsonc` (optional)
-4. Test in OpenCode: `opencode` and try natural language prompts
+**For Codex CLI (Alternative):**
+1. Verify installation: `codex --version`
+2. Load environment: `source ~/.profile`
+3. Authenticate to Azure: `az login`
+4. Configure MCP servers: `codex mcp add <server> -- <command>` (see Codex CLI sections for examples)
+5. Verify: `codex mcp list`
+6. Test: `codex` and use natural language queries
+
+**Key Advantages of Claude Code:**
+- ✅ Native HTTP support (no proxy needed for Microsoft Learn MCP)
+- ✅ OAuth 2.0 authentication for third-party services
+- ✅ Team-sharable project configurations (`.mcp.json` in version control)
+- ✅ Environment variable expansion with defaults (`${VAR:-default}`)
+- ✅ @ mentions for MCP resources
+- ✅ `/mcp` command for status and authentication management
 
 **Resources:**
+- Claude Code: https://code.claude.com/
+- Claude Code MCP Guide: https://code.claude.com/docs/en/mcp
 - Codex Quickstart: https://developers.openai.com/codex/quickstart
 - Codex MCP Guide: https://developers.openai.com/codex/mcp/
-- OpenCode Repository: https://github.com/sst/opencode
-- OpenCode Documentation: https://opencode.ai/docs/
 - Azure MCP: https://github.com/microsoft/mcp/tree/main/servers/Azure.Mcp.Server
 - Lokka: https://github.com/merill/lokka
 - Microsoft Learn MCP: https://github.com/microsoftdocs/mcp
