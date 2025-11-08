@@ -513,7 +513,7 @@ EOF
   "Providers": [
     {
       "name": "azure-gpt4",
-      "api_base_url": "${azure_api_base}/openai/v1/chat/completions",
+      "api_base_url": "${azure_api_base}/chat/completions",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
         "gpt-4.1",
@@ -522,7 +522,7 @@ EOF
     },
     {
       "name": "azure-gpt5",
-      "api_base_url": "${azure_api_base}/openai/v1/chat/completions",
+      "api_base_url": "${azure_api_base}/chat/completions",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
         "gpt-5",
@@ -538,7 +538,7 @@ EOF
     },
     {
       "name": "azure-codex",
-      "api_base_url": "${azure_api_base}/openai/v1/responses",
+      "api_base_url": "${azure_api_base}/responses",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
         "gpt-5-codex"
