@@ -1555,6 +1555,7 @@ mkdir -p "$TEMPLATES_DIR"
 # Copy templates from repository (with smart update check)
 update_template_file "assistant"
 update_template_file "code"
+update_template_file "wut"
 
 # Conditionally install Terminator sidechat template
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then

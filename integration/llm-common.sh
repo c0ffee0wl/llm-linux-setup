@@ -100,6 +100,24 @@ llm() {
     fi
 }
 
+# wut function - Explains terminal command output using context tool
+# Usage: wut                          -> Explains last command output
+#        wut "how do I fix this?"     -> Answers specific question about last command
+wut() {
+    if ! command -v llm &> /dev/null; then
+        echo "Error: llm is not installed. Install it with the installation script." >&2
+        return 1
+    fi
+
+    # If no arguments provided, ask for explanation of last command
+    if [ $# -eq 0 ]; then
+        command llm -t wut "Explain the output of my last command" --md
+    else
+        # Pass user's question to llm with context tool
+        command llm -t wut "$*" --md
+    fi
+}
+
 # Alias for Claude Code Router
 alias routed-claude='ccr code'
 

@@ -32,8 +32,8 @@ import argparse
 
 
 # Compiled regex for filtering AI-related commands
-# Matches commands starting with: context, llm, aichat, or llm-sidechat
-FILTERED_COMMANDS = re.compile(r'^(context|llm|aichat|llm-sidechat)(\s|$)', re.IGNORECASE)
+# Matches commands starting with: context, llm, aichat, llm-sidechat, or wut
+FILTERED_COMMANDS = re.compile(r'^(context|llm|aichat|llm-sidechat|wut)(\s|$)', re.IGNORECASE)
 
 
 def find_cast_file():

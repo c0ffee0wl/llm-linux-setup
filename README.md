@@ -25,6 +25,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - [Usage](#usage)
   - [Getting Started](#getting-started)
   - [Basic Prompts](#basic-prompts)
+  - [Understanding Command Output (wut)](#understanding-command-output-wut)
   - [Command Completion](#command-completion)
   - [Attachments & Multi-modal](#attachments--multi-modal)
   - [Fragments](#fragments)
@@ -228,6 +229,10 @@ llm rag mydocs                    # Open/create RAG collection for documents
 llm rag mydocs --rebuild-rag      # Rebuild index after changes
 aichat --rag projectdocs          # Direct aichat usage
 
+# Understand command output
+wut                                  # Explain what just happened
+wut "why did this fail?"             # Ask specific question about last command
+
 # Query terminal history (context tool is built into assistant template!)
 llm "what was the error in my last command?"   # Uses context tool automatically in default template
 command llm -T context "..."                   # Explicit tool call (for non-assistant templates)
@@ -313,6 +318,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 
 - **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
 - **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
+- **[wut.yaml](llm-template/wut.yaml)** - Command-line assistant for explaining terminal output and troubleshooting (concise 5-sentence responses, uses `context` tool automatically)
 
 ### Additional Tools
 
@@ -435,6 +441,67 @@ llm -c "Now explain the difference between rebase and merge"
 ```
 
 The `-c` (continue) flag lets you maintain context and ask follow-up questions without re-sending the help text.
+
+### Understanding Command Output (wut)
+
+The `wut` command is a command-line assistant that explains terminal output and helps troubleshoot issues. It automatically accesses your terminal history to understand what went wrong and provides expert analysis with actionable fixes.
+
+**Basic Usage:**
+
+```bash
+# Run a command that produces output or errors
+docker build -t myapp .
+# Error: failed to solve with frontend dockerfile.v0
+
+# Ask what happened (automatic explanation)
+wut
+# AI explains the docker build error, identifies the root cause, and suggests a fix
+
+# Ask a specific question
+npm install
+# Warning: deprecated packages...
+
+wut "are these deprecation warnings a security issue?"
+# AI analyzes the warnings and provides security context
+
+# Interactive troubleshooting mode
+wut
+# Then continue with follow-up questions using: llm chat -c
+```
+
+**How It Works:**
+
+- **Automatic context**: Uses the `context` tool to access your terminal history automatically
+- **Concise responses**: Maximum 5 sentences unless the issue is complex
+- **Expert analysis**: Applies security/IT best practices to recommendations
+- **Two modes**:
+  - **Explain mode**: `wut` (no arguments) explains what happened with your last command
+  - **Answer mode**: `wut "question"` answers your specific question about the output
+
+**Use Cases:**
+
+```bash
+# Debug failed builds
+cargo build
+# Error: cannot find crate...
+wut "how do I fix this dependency issue?"
+
+# Understand API errors
+curl https://api.example.com/endpoint
+# HTTP 403 Forbidden
+wut
+
+# Analyze logs
+journalctl -xe | tail -20
+wut "what caused this service to crash?"
+
+# Diagnose permission issues
+mkdir /var/myapp
+# Permission denied
+wut "how do I create this directory properly?"
+```
+
+💡 **Pro tip**: The `wut` command uses the same expert assistant template as `llm chat`, so it understands your technical environment (Linux, security tools, development workflow).
 
 ### Command Completion
 
