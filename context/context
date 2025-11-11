@@ -336,6 +336,11 @@ def main():
         # Validate count is a number
         try:
             count = int(args.count)
+            # Convert negative to positive with a note
+            if count < 0:
+                count = abs(count)
+                print(f"#c# context usage note: Using {count} (converted from negative value)", file=sys.stderr)
+            # Still validate that it's not zero
             if count < 1:
                 raise ValueError()
         except (ValueError, TypeError):
