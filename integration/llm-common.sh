@@ -162,22 +162,30 @@ if command -v asciinema &> /dev/null; then
   # Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
   eval "is_recording=\${$SESSION_MARKER}"
   if [[ $- == *i* && -z "$is_recording" ]]; then
-    # Mark this specific session as recording
-    export "$SESSION_MARKER=1"
+    # Test if asciinema can actually record in this environment
+    # This prevents shell initialization failures in chroot/rescue environments
+    if asciinema rec -c "true" /dev/null --quiet 2>/dev/null; then
+      # Success - asciinema works, set up recording
+      export "$SESSION_MARKER=1"
 
-    # Create log directory and define filename with pane identifier
-    mkdir -p "$SESSION_LOG_DIR"
-    export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
+      # Create log directory and define filename with pane identifier
+      mkdir -p "$SESSION_LOG_DIR"
+      export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
 
-    # Show environment variable export command (unless SESSION_LOG_SILENT is set)
-    if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
-      echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
-      echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
-      echo ""
+      # Show environment variable export command (unless SESSION_LOG_SILENT is set)
+      if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+        echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
+        echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
+        echo ""
+      fi
+
+      # Replace current shell with asciinema process
+      exec asciinema rec "$SESSION_LOG_FILE" --quiet
+    else
+      # Failure - cannot create pty in this environment (chroot/rescue/restricted)
+      # Always show warning (ignore SESSION_LOG_SILENT for errors)
+      echo "Warning: Session recording disabled (cannot create pty in this environment)" >&2
     fi
-
-    # Replace current shell with asciinema process
-    exec asciinema rec "$SESSION_LOG_FILE" --quiet
   fi
 else
   if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then

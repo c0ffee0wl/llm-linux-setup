@@ -79,6 +79,14 @@ The repository includes an **automatic session recording and context extraction 
 - Session filenames include pane identifiers in tmux: `2025-10-05_14-30-45-123_12345_tmux0.cast`
 - This design allows each tmux pane to maintain its own independent recording session
 
+**Resilience in Restricted Environments (chroot/rescue)**:
+- **Test-before-exec pattern**: Before replacing the shell with asciinema, tests if pty creation actually works
+- **Graceful degradation**: If asciinema cannot create a pty (common in chroot without proper mounts), shell initialization continues normally
+- **Always warns on failure**: Displays "Warning: Session recording disabled (cannot create pty in this environment)" to stderr (ignores `SESSION_LOG_SILENT`)
+- **Use case**: Enables shell usage in Hetzner rescue systems, minimal chroots, containers, and other restricted environments
+- **Test command**: `asciinema rec -c "true" /dev/null --quiet` - lightweight silent test that exits immediately
+- **Tradeoff**: ~100ms startup overhead in normal environments (acceptable for robustness)
+
 ### Shell Integration Architecture
 
 The shell integration uses a **three-file pattern** located in the `integration/` subdirectory:
