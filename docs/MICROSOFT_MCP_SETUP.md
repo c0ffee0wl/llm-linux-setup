@@ -598,7 +598,7 @@ When Azure OpenAI is configured, llm-linux-setup automatically creates `~/.codex
 
 ```toml
 [model]
-name = "gpt-5-codex"
+name = "gpt-5.1-codex"
 model_provider = "azure"
 
 [model_providers.azure]

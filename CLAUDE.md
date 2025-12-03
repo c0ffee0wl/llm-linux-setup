@@ -367,10 +367,10 @@ Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provi
 *Dual-Provider (Azure + Gemini):*
 ```json
 "Router": {
-  "default": "azure-codex,gpt-5-codex",
+  "default": "azure-codex,gpt-5.1-codex",
   "background": "azure-gpt4,gpt-4.1-mini",
-  "think": "azure-codex,gpt-5-codex",
-  "longContext": "azure-codex,gpt-5-codex",
+  "think": "azure-codex,gpt-5.1-codex",
+  "longContext": "azure-codex,gpt-5.1-codex",
   "webSearch": "gemini,gemini-2.5-flash"
 }
 ```

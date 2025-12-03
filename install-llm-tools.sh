@@ -340,7 +340,7 @@ configure_codex_cli() {
 
     # Generate config.toml
     cat > ~/.codex/config.toml <<EOF
-model = "gpt-5-codex"
+model = "gpt-5.1-codex"
 model_provider = "azure"
 model_reasoning_effort = "medium"
 
@@ -539,7 +539,7 @@ EOF
       "api_base_url": "${azure_api_base}/responses",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
-        "gpt-5-codex"
+        "gpt-5.1-codex"
       ],
       "transformer": {
         "use": [
@@ -569,10 +569,10 @@ EOF
     }
   ],
   "Router": {
-    "default": "azure-codex,gpt-5-codex",
+    "default": "azure-codex,gpt-5.1-codex",
     "background": "azure-gpt4,gpt-4.1-mini",
-    "think": "azure-codex,gpt-5-codex",
-    "longContext": "azure-codex,gpt-5-codex",
+    "think": "azure-codex,gpt-5.1-codex",
+    "longContext": "azure-codex,gpt-5.1-codex",
     "webSearch": "gemini,gemini-2.5-flash"
   },
   "NON_INTERACTIVE_MODE": false
@@ -1725,6 +1725,10 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
 else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
+
+# Clean up uv cache to reclaim disk space
+log "Cleaning uv cache..."
+uv cache clean
 
 #############################################################################
 # COMPLETE
