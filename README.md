@@ -132,8 +132,9 @@ This step is **optional** but recommended for the most complete setup.
 ### Quick Start
 
 ```bash
-git clone https://github.com/c0ffee0wl/llm-linux-setup.git
-cd llm-linux-setup
+sudo git clone https://github.com/c0ffee0wl/llm-linux-setup.git /opt/llm-linux-setup
+sudo chown -R $(whoami):$(whoami) /opt/llm-linux-setup
+cd /opt/llm-linux-setup
 ./install-llm-tools.sh
 ```
 
@@ -151,7 +152,7 @@ During first-time installation, you'll be prompted for:
 Simply re-run the installation script:
 
 ```bash
-cd llm-linux-setup
+cd /opt/llm-linux-setup
 ./install-llm-tools.sh
 ```
 
@@ -2216,7 +2217,7 @@ This error occurs when your local git branch has diverged from the remote (both 
 
 ```bash
 # Option 1: Discard local changes and match remote (recommended)
-cd llm-linux-setup
+cd /opt/llm-linux-setup
 git reset --hard origin/main
 ./install-llm-tools.sh
 
@@ -2224,9 +2225,10 @@ git reset --hard origin/main
 git pull --rebase
 
 # Option 3: Nuclear option - delete and re-clone
-rm -rf llm-linux-setup
-git clone https://github.com/c0ffee0wl/llm-linux-setup
-cd llm-linux-setup
+sudo rm -rf /opt/llm-linux-setup
+sudo git clone https://github.com/c0ffee0wl/llm-linux-setup.git /opt/llm-linux-setup
+sudo chown -R $(whoami):$(whoami) /opt/llm-linux-setup
+cd /opt/llm-linux-setup
 ./install-llm-tools.sh
 ```
 
