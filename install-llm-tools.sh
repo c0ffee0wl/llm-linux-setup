@@ -525,7 +525,8 @@ EOF
       "models": [
         "gpt-5",
         "gpt-5-mini",
-        "gpt-5-nano"
+        "gpt-5-nano",
+        "gpt-5.1"
       ],
       "transformer": {
         "use": [
@@ -1325,6 +1326,14 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
   supports_schema: true
   vision: true
 
+- model_id: azure/gpt-5.1
+  model_name: gpt-5.1
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+  supports_tools: true
+  supports_schema: true
+  vision: true
+
 - model_id: azure/o4-mini
   model_name: o4-mini
   api_base: ${AZURE_API_BASE}
@@ -1462,6 +1471,10 @@ clients:
         supports_vision: true
         supports_function_calling: true
       - name: gpt-5-nano
+        max_input_tokens: 272000
+        supports_vision: true
+        supports_function_calling: true
+      - name: gpt-5.1
         max_input_tokens: 272000
         supports_vision: true
         supports_function_calling: true
