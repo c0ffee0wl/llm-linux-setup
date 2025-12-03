@@ -596,7 +596,8 @@ EOF
       "api_key": "\$GEMINI_API_KEY",
       "models": [
         "gemini-2.5-flash",
-        "gemini-2.5-pro"
+        "gemini-2.5-pro",
+        "gemini-3-pro-preview"
       ],
       "transformer": {
         "use": [
@@ -606,10 +607,10 @@ EOF
     }
   ],
   "Router": {
-    "default": "gemini,gemini-2.5-pro",
+    "default": "gemini,gemini-3-pro-preview",
     "background": "gemini,gemini-2.5-flash",
-    "think": "gemini,gemini-2.5-pro",
-    "longContext": "gemini,gemini-2.5-pro",
+    "think": "gemini,gemini-3-pro-preview",
+    "longContext": "gemini,gemini-3-pro-preview",
     "webSearch": "gemini,gemini-2.5-flash"
   },
   "NON_INTERACTIVE_MODE": false
