@@ -215,7 +215,7 @@ llm -f pdf:document.pdf "summarize"
 llm -f yt:https://youtube.com/watch?v=VIDEO_ID "summarize video"
 llm -f https://example.com "extract key points"
 
-# Use -t when you want a DIFFERENT template that the default assistant template
+# Use -t when you want a DIFFERENT template than the default assistant template
 llm -t fabric:summarize "..."        # Not the default
 llm -t fabric:analyze_threat_report  # Not the default
 
@@ -559,42 +559,7 @@ cat poster.pdf | llm 'describe image' -a -
 
 **Note**: The `-a -` flag reads attachment data from stdin.
 
-**⚠️ Azure OpenAI Limitation**
-
-Azure OpenAI models configured in this setup **support image attachments but NOT PDF attachments**. When trying to use PDFs with the `-a`/`--attachment` parameter, you will receive this error:
-
-```
-Error: Error code: 400 - {'error': {'message': "Invalid Value: 'file'.
-This model does not support file content types.", 'type': 'invalid_request_error'}}
-```
-
-**Image attachments work:**
-
-```bash
-# ✅ Images work with Azure OpenAI vision models
-llm -m azure/gpt-4.1 "describe this image" -a image.jpg
-llm -m azure/gpt-4.1 "extract text from this screenshot" -a screenshot.png
-```
-
-**Workarounds for PDF attachments**:
-
-1. **For text extraction from PDFs**: Use the `pdf:` fragment to extract text content (not visual analysis):
-
-   ```bash
-   # Extract text from PDF (not visual analysis!)
-   llm -f pdf:poster.pdf "summarize the text"
-   ```
-
-2. **For PDF visual analysis**: Switch to OpenAI, Gemini, or Anthropic models that support PDF attachments:
-
-   ```bash
-   # Use non-Azure models for PDF attachments
-   llm -m gpt-4o "analyze this PDF" -a document.pdf
-   llm -m gemini-2.5-flash "describe" -a poster.pdf
-   llm -m claude-4-5-sonnet "analyze" -a document.pdf
-   ```
-
-See [Azure OpenAI vision documentation](https://learn.microsoft.com/en-us/azure/ai-foundry/openai/how-to/gpt-with-vision) for current limitations.
+**⚠️ Azure OpenAI Limitation**: Azure models support image attachments but **NOT PDF attachments**. See [Azure-Specific Limitations](#azure-specific-limitations) for workarounds.
 
 ### Fragments
 
@@ -1098,7 +1063,7 @@ llm code -m openai/o4-mini \
   -o reasoning_effort high
 
 # Generate a fragments plugin using reference code
-llm -m claude-4-5-sonnet \
+llm -m claude-sonnet-4.5 \
   -f https://raw.githubusercontent.com/simonw/llm-hacker-news/refs/heads/main/llm_hacker_news.py \
   -f https://raw.githubusercontent.com/simonw/tools/refs/heads/main/github-issue-to-markdown.html \
   -s 'Write a new fragments plugin in Python that registers issue:org/repo/123 which fetches
@@ -1112,7 +1077,7 @@ Use fragments to provide existing code as context for transformations:
 
 ```bash
 # Convert setup.py to modern pyproject.toml
-llm code -f setup.py "convert to pyproject.toml" -m claude-4.5-sonnet | tee pyproject.toml
+llm code -f setup.py "convert to pyproject.toml" -m claude-sonnet-4.5 | tee pyproject.toml
 ```
 
 **Using Multiple Fragments for Complex Tasks**
@@ -2022,7 +1987,7 @@ llm -m gemini-2.5-flash -o temperature 0.9 "creative story prompt"
 llm -m azure/gpt-4.1 -o max_tokens 500 "brief summary needed"
 
 # Combine multiple options
-llm -m claude-3-5-sonnet \
+llm -m claude-sonnet-4.5 \
   -o temperature 0.3 \
   -o max_tokens 2000 \
   "technical documentation request"
@@ -2264,7 +2229,7 @@ This model does not support file content types.", 'type': 'invalid_request_error
    ```bash
    llm -m gpt-4o "analyze this PDF" -a document.pdf
    llm -m gemini-2.5-flash "describe" -a poster.pdf
-   llm -m claude-4-5-sonnet "analyze" -a document.pdf
+   llm -m claude-sonnet-4.5 "analyze" -a document.pdf
    ```
 
 ### Why Azure OpenAI?
@@ -2310,7 +2275,7 @@ To switch from Azure to Gemini or vice versa:
 
 The script will backup your existing AIChat configuration and reconfigure for the selected provider.
 
-**Temperature Note:** Gemini supports temperature values in the range `[0, 2)`, unlike most models that use `[0, 1]`. Be mindful when setting temperature values.
+**Temperature Note:** Gemini supports temperature values from 0 to 2.0, while most models use 0 to 1.0. Be mindful when setting temperature values.
 
 ## Configuration
 
@@ -2569,6 +2534,10 @@ For issues, questions, or suggestions:
 - [Dan Mackinlay](https://github.com/danmackinlay) - files-to-prompt (fork)
 - [Damon McMinn](https://github.com/damonmcminn) - llm-templates-fabric (fork)
 - [Daniel Miessler](https://github.com/danielmiessler) - Original Fabric prompt patterns
+- [ShamanicArts](https://github.com/ShamanicArts) - llm-git-commit AI-powered commit messages
+- [vagos](https://github.com/vagos) - llm-sort semantic sorting
+- [irthomasthomas](https://github.com/irthomasthomas) - llm-classify text classification, llm-consortium multi-model orchestration
+- [RKeelan](https://github.com/RKeelan) - llm-fragments-dir directory fragment loader
 
 ### Additional Tools
 
@@ -2578,6 +2547,8 @@ For issues, questions, or suggestions:
 - [Coderamp Labs](https://github.com/coderamp-labs/gitingest) - gitingest repository analyzer
 - [Zachary Yedidia](https://github.com/zyedidia/micro) - Micro modern terminal text editor
 - [ShamanicArts](https://github.com/ShamanicArts/llm-micro) - llm-micro plugin for in-editor AI assistance
+- [bodo-run](https://github.com/bodo-run/yek) - yek fast repository converter
+- [Softcatala](https://github.com/Softcatala/whisper-ctranslate2) - whisper-ctranslate2 speech-to-text
 
 ## License
 
