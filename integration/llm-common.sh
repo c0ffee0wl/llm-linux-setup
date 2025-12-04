@@ -53,6 +53,26 @@ llm() {
         return $?
     fi
 
+    # Special handling for chat-google-search (Google Search grounding)
+    if [ "$first_arg" = "chat-google-search" ]; then
+        shift  # Remove 'chat-google-search' from arguments
+        local keys_file="$HOME/.config/io.datasette.llm/keys.json"
+        if [ -f "$keys_file" ]; then
+            local model=""
+            if grep -q '"vertex"' "$keys_file" 2>/dev/null; then
+                model="vertex/gemini-2.5-flash"
+            elif grep -q '"gemini"' "$keys_file" 2>/dev/null; then
+                model="gemini-2.5-flash"
+            fi
+            if [ -n "$model" ]; then
+                command llm chat -m "$model" -o google_search 1 --md "$@"
+                return $?
+            fi
+        fi
+        echo "Error: chat-google-search requires Gemini or Vertex to be configured" >&2
+        return 1
+    fi
+
     for cmd in "${exclude_commands[@]}"; do
         if [ "$first_arg" = "$cmd" ]; then
             # Pass through directly without template
@@ -79,14 +99,45 @@ llm() {
         return 1  # Add template
     }
 
+    # Helper function to check if google_search option is present (incompatible with non-search tools)
+    has_google_search() {
+        local skip_next=false
+        for arg in "$@"; do
+            if $skip_next; then
+                if [[ "$arg" == *"google_search"* ]]; then
+                    return 0  # google_search found
+                fi
+                skip_next=false
+                continue
+            fi
+            case "$arg" in
+                -o|--option)
+                    skip_next=true
+                    ;;
+                -o*google_search*|--option*google_search*)
+                    return 0  # google_search found (combined flag format)
+                    ;;
+            esac
+        done
+        return 1  # no google_search
+    }
+
     # For prompt commands (prompt, chat, code) or default prompt
     # apply the appropriate template unless user specified their own
+    # Default tools (context, sandboxed_shell) are added only when:
+    # 1. Using default assistant template (no -t, -s, -c flags)
+    # 2. AND google_search option is not present (incompatible with non-search tools)
     if [ "$1" = "chat" ]; then
         shift
         if should_skip_template "$@"; then
+            # User specified -t, -s, or -c: no default template, no default tools
             command llm chat --cl 15 "$@"
-        else
+        elif has_google_search "$@"; then
+            # google_search incompatible with non-search tools: template only, no tools
             command llm chat -t assistant --cl 15 "$@"
+        else
+            # Default: apply assistant template with default tools
+            command llm chat -t assistant --cl 15 --tool context --tool sandboxed_shell "$@"
         fi
     elif [ "$1" = "code" ]; then
         shift
@@ -94,8 +145,10 @@ llm() {
     else
         if should_skip_template "$@"; then
             command llm --cl 15 "$@"
-        else
+        elif has_google_search "$@"; then
             command llm -t assistant --cl 15 "$@"
+        else
+            command llm -t assistant --cl 15 --tool context --tool sandboxed_shell "$@"
         fi
     fi
 }

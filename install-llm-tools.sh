@@ -1251,6 +1251,31 @@ npm_install() {
     return 1
 }
 
+# Install or upgrade npm global package only if newer version available
+# Usage: install_or_upgrade_npm_global package_name
+install_or_upgrade_npm_global() {
+    local package="$1"
+    local installed_version latest_version
+
+    # Get installed version (empty if not installed)
+    installed_version=$(npm list -g "$package" --depth=0 2>/dev/null | grep -oP "$package@\K[0-9.]+") || installed_version=""
+
+    if [ -z "$installed_version" ]; then
+        log "Installing $package..."
+        npm_install install -g "$package"
+    else
+        # Get latest version from npm registry
+        latest_version=$(npm view "$package" version 2>/dev/null) || latest_version=""
+
+        if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
+            log "Upgrading $package: $installed_version -> $latest_version"
+            npm_install install -g "$package"
+        else
+            log "$package is up to date ($installed_version)"
+        fi
+    fi
+}
+
 #############################################################################
 # PHASE 2: Install/Update LLM Core
 #############################################################################
@@ -1824,13 +1849,13 @@ fi
 
 # Install/update Claude Code
 log "Installing/updating Claude Code..."
-npm_install install -g @anthropic-ai/claude-code
+install_or_upgrade_npm_global @anthropic-ai/claude-code
 
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
 if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
     log "Installing/updating Claude Code Router..."
-    npm_install install -g @musistudio/claude-code-router
+    install_or_upgrade_npm_global @musistudio/claude-code-router
 
     # If Azure configured but Gemini key doesn't exist, configure Gemini for web search
     # Skip if user is forcing Gemini-only configuration
@@ -1862,7 +1887,7 @@ fi
 # Install/update Codex CLI if Azure is configured
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     log "Installing/updating Codex CLI..."
-    npm_install install -g @openai/codex
+    install_or_upgrade_npm_global @openai/codex
 
     # Configure Codex CLI with Azure OpenAI credentials
     if [ ! -f "$HOME/.codex/config.toml" ]; then

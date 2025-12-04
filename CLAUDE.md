@@ -101,7 +101,24 @@ The shell integration uses a **three-file pattern** located in the `integration/
 - **`llm rag`** → routes to `aichat --rag` for RAG functionality (special handling)
 - **Default prompts** → adds `-t assistant` unless user specifies template/system prompt/continuation
 - **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, rag, etc.
-- When modifying wrapper logic, update the `exclude_commands` array and `should_skip_template()` function
+- When modifying wrapper logic, update the `exclude_commands` array, `should_skip_template()`, and `has_google_search()` functions
+
+**Default Tools Handling**:
+- Default tools (`context`, `sandboxed_shell`) are added by the wrapper, NOT the template
+- Tools are added via `--tool context --tool sandboxed_shell` flags when using the default assistant template
+- **`has_google_search()`** function detects if `-o google_search` option is present
+- **Tool skipping conditions**:
+  - When user specifies custom template (`-t`), system prompt (`-s`), or continuation (`-c`) → no tools (user in control)
+  - When `google_search` option is detected → no tools (incompatible with non-search tools on Vertex/Gemini)
+- **Why**: Vertex/Gemini API requires that when multiple tools are present, they must ALL be search tools. Non-search tools (context, sandboxed_shell) conflict with Google Search.
+
+| Command | Template | Tools |
+|---------|----------|-------|
+| `llm chat` | assistant | context, sandboxed_shell |
+| `llm chat -o google_search 1` | assistant | (none) |
+| `llm -o google_search 1 "prompt"` | assistant | (none) |
+| `llm chat -t custom` | custom | (none) |
+| `llm chat -s "system"` | (none) | (none) |
 
 **Command Completion (Ctrl+N)**:
 - Uses `llm cmdcomp` command from **llm-cmd-comp** plugin (git: `c0ffee0wl/llm-cmd-comp`)

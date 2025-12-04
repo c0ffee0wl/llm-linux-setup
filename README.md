@@ -236,6 +236,9 @@ aichat --rag projectdocs          # Direct aichat usage
 wut                                  # Explain what just happened
 wut "why did this fail?"             # Ask specific question about last command
 
+# Web search with Google (requires Gemini/Vertex)
+llm chat-google-search               # Interactive chat with Google Search grounding
+
 # Query terminal history (context tool is built into assistant template!)
 llm "what was the error in my last command?"   # Uses context tool automatically in default template
 command llm -T context "..."                   # Explicit tool call (for non-assistant templates)
