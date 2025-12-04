@@ -1352,6 +1352,8 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
     "llm-git-commit"
     "llm-sort"
+    "llm-classify"
+    "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
 )
 

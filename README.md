@@ -320,6 +320,8 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[llm-anthropic](https://github.com/simonw/llm-anthropic)** - Anthropic Claude models integration
 - **[llm-git-commit](https://github.com/ShamanicArts/llm-git-commit)** - AI-powered Git commit message generation with interactive refinement
 - **[llm-sort](https://github.com/vagos/llm-sort)** - Semantic sorting using LLM-based pairwise comparisons
+- **[llm-classify](https://github.com/irthomasthomas/llm-classify)** - Text classification with confidence scoring using logprobs
+- **[llm-consortium](https://github.com/irthomasthomas/llm-consortium)** - Multi-model orchestration for consensus-based problem solving
 
 ### LLM Templates
 
@@ -949,6 +951,70 @@ llm-sort uses pairwise LLM comparisons to determine semantic ordering. Unlike al
 - `--top-k`: Limit output to top N results
 - `--model`: Specify which LLM model to use
 - `--prompt`: Custom comparison prompt template
+
+**Text Classification with llm-classify**
+
+Classify text into user-defined categories with confidence scores using LLM logprobs:
+
+```bash
+# Basic sentiment classification
+echo "This is exciting news!" | llm classify -c positive -c negative -c neutral
+
+# Multi-item classification
+llm classify "I love this" "This is terrible" -c positive -c negative -c neutral
+
+# Few-shot learning with examples
+llm classify "Stock market crashed" -c economic -c political -c environmental \
+  -e "Trade deal:economic" -e "Election:political"
+
+# Custom model
+llm classify "Analyze this" -c spam -c ham -m gpt-4o
+```
+
+**Output Format:**
+Results are returned as JSON arrays with `class`, `score` (0-1 confidence), and `content`.
+
+**Use Cases:**
+- **Content moderation**: Classify user content as appropriate/inappropriate
+- **Sentiment analysis**: Categorize reviews as positive/negative/neutral
+- **Topic routing**: Route support tickets to appropriate departments
+- **Intent detection**: Classify user queries by intent type
+
+**Multi-Model Consensus with llm-consortium**
+
+Orchestrate multiple language models to collaboratively solve problems through parallel reasoning. Based on Karpathy's concept that asking all models and getting them to reach consensus produces optimal performance on complex problems:
+
+```bash
+# Simple query with default models
+llm consortium "Your complex question here"
+
+# Advanced: multiple model instances with custom arbiter
+llm consortium "Analyze this security vulnerability" \
+  -m o3-mini:1 -m gpt-4o:2 \
+  --arbiter claude-3-opus-20240229 \
+  --confidence-threshold 0.9 \
+  --max-iterations 4
+
+# Save configuration for reuse
+llm consortium "Query" --save my-consortium
+llm -m my-consortium "Use saved config"
+
+# Continue conversations
+llm -m my-consortium "Initial prompt"
+llm -c "Follow-up question"
+```
+
+**Key Options:**
+- `--arbiter`: Judge model for evaluating responses (default: claude-3-opus)
+- `--confidence-threshold`: Target confidence level 0.0-1.0 (default: 0.8)
+- `--max-iterations`: Maximum refinement rounds (default: 3)
+- `-m model:count`: Specify model with instance count (e.g., `gpt-4o:2`)
+
+**Use Cases:**
+- **Complex reasoning**: Math proofs, logic puzzles, code review
+- **High-stakes decisions**: Security analysis, legal review
+- **Verification-heavy tasks**: Fact-checking, data validation
+- **Research synthesis**: Combining perspectives from multiple models
 
 ### Code Generation
 
