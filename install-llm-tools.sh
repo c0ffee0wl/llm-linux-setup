@@ -826,6 +826,37 @@ install_or_upgrade_cargo_git_tool() {
     fi
 }
 
+# Install Go if not present or version is insufficient
+# Returns 0 if Go is available (>= MIN_GO_VERSION), 1 otherwise
+# Only installs from apt - warns and skips if repo version is insufficient
+install_go() {
+    local MIN_GO_VERSION="1.22"
+
+    # Check if already installed with sufficient version
+    if command -v go &> /dev/null; then
+        local current_version=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
+        if [ "$(printf '%s\n' "$MIN_GO_VERSION" "$current_version" | sort -V | head -n1)" = "$MIN_GO_VERSION" ]; then
+            log "Go $current_version is already installed (>= $MIN_GO_VERSION)"
+            return 0
+        else
+            warn "Go $current_version installed but >= $MIN_GO_VERSION required for imagemage"
+            return 1
+        fi
+    fi
+
+    # Check apt repository version
+    local repo_version=$(apt-cache policy golang-go 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+\.[0-9]+' | head -1)
+    if [ -n "$repo_version" ] && [ "$(printf '%s\n' "$MIN_GO_VERSION" "$repo_version" | sort -V | head -n1)" = "$MIN_GO_VERSION" ]; then
+        log "Installing Go $repo_version from apt..."
+        sudo apt-get install -y golang-go
+        return 0
+    else
+        warn "Go >= $MIN_GO_VERSION not available from apt (found: ${repo_version:-none})"
+        warn "imagemage will be skipped. Install Go manually if needed."
+        return 1
+    fi
+}
+
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -1652,6 +1683,19 @@ log "Installing/updating additional tools..."
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
 
+# Install/update whisper-ctranslate2 (faster-whisper CLI for speech-to-text)
+install_or_upgrade_uv_tool whisper-ctranslate2
+
+# Install transcribe wrapper script
+log "Installing transcribe script..."
+if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
+    cp "$SCRIPT_DIR/scripts/transcribe" "$HOME/.local/bin/transcribe"
+    chmod +x "$HOME/.local/bin/transcribe"
+    log "transcribe script installed to ~/.local/bin/transcribe"
+else
+    warn "transcribe script not found at $SCRIPT_DIR/scripts/transcribe"
+fi
+
 # Install/update files-to-prompt (from fork)
 install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true
 
@@ -1682,6 +1726,21 @@ if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
 else
     log "llm-micro plugin already installed, checking for updates..."
     (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
+fi
+
+# Install imagemage - Gemini image generation CLI (only if Gemini configured)
+if command llm keys get gemini &>/dev/null; then
+    if install_go; then
+        log "Installing imagemage (Gemini image generation CLI)..."
+        IMAGEMAGE_DIR="/tmp/imagemage-build"
+        rm -rf "$IMAGEMAGE_DIR"
+        git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
+        (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
+        rm -rf "$IMAGEMAGE_DIR"
+        log "imagemage installed to ~/.local/bin/imagemage"
+    fi
+else
+    log "Skipping imagemage: Gemini not configured"
 fi
 
 #############################################################################
@@ -1765,6 +1824,7 @@ log "  - yek (fast repository to LLM-friendly text converter)"
 log "  - files-to-prompt (file content formatter)"
 log "  - argc (Bash CLI framework, enables optional llm-functions)"
 log "  - asciinema (terminal session recorder)"
+log "  - transcribe (speech-to-text using faster-whisper, 99+ languages)"
 log ""
 log "Shell integration files created in: $SCRIPT_DIR/integration"
 log "  - integration/llm-integration.bash (for Bash)"

@@ -35,6 +35,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Tools](#tools)
   - [Context System Usage](#context-system-usage)
   - [RAG (Document Querying)](#rag-document-querying)
+  - [Image Generation (imagemage)](#image-generation-imagemage)
+  - [Speech-to-Text Transcription](#speech-to-text-transcription)
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Micro Text Editor Integration](#micro-text-editor-integration)
@@ -284,6 +286,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[uv](https://docs.astral.sh/uv/)** - Modern Python package installer
 - **[Node.js](https://nodejs.org/)** - JavaScript runtime (v20+, from repositories or nvm)
 - **[Rust/Cargo](https://www.rust-lang.org/)** - Rust toolchain (v1.85+, from repositories or rustup)
+- **[Go](https://go.dev/)** - Go toolchain (v1.22+, optional, for imagemage)
 - **[argc](https://github.com/sigoden/argc)** - Bash CLI framework and command runner (enables optional llm-functions integration)
 - **[bubblewrap](https://github.com/containers/bubblewrap)** - Sandboxing tool for llm-tools-sandboxed-shell
 - **[poppler-utils](https://poppler.freedesktop.org/)** - PDF utilities (pdftotext for RAG)
@@ -329,6 +332,8 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
+- **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
+- **[whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2)** - Fast speech-to-text transcription (99+ languages, CPU-optimized)
 
 ### Shell Integration
 
@@ -1464,6 +1469,75 @@ The `git:` prefix explicitly triggers the gitingest document loader, which:
 - Rebuild the index with `--rebuild-rag` after significant document changes
 - RAG collections are stored in `~/.local/share/aichat/rags/`
 - Use `.set` in REPL to adjust settings like `rag_top_k` (number of results)
+
+### Image Generation (imagemage)
+
+Generate images using Google's Gemini models (aka "Nano Banana") with the [imagemage](https://github.com/quinnypig/imagemage) CLI. Only installed when Gemini is configured.
+
+**Available Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `generate` | Create images from text descriptions |
+| `edit` | Modify existing images or compose multiple images |
+| `restore` | Enhance degraded photographs |
+| `icon` | Generate application icons in multiple sizes |
+| `pattern` | Create seamless textures and patterns |
+| `story` | Produce sequential images for visual narratives |
+| `diagram` | Generate technical flowcharts and diagrams |
+
+**Quick Start:**
+
+```bash
+# Basic image generation
+imagemage generate "watercolor painting of a fox in snowy forest"
+
+# Generate multiple variations
+imagemage generate "mountain landscape" --count=3
+
+# Edit an existing image
+imagemage edit photo.png "make it black and white"
+
+# Use cost-effective model (Gemini 2.5 Flash instead of Gemini 3 Pro)
+imagemage generate "concept art" --frugal
+
+# Specify aspect ratio (1:1, 16:9, 9:16, 4:3, 3:4, etc.)
+imagemage generate "banner image" --aspect=16:9
+
+# Generate app icons in multiple sizes
+imagemage icon "minimalist cloud logo"
+```
+
+**Configuration:**
+
+imagemage uses `GEMINI_API_KEY` (automatically exported by this installation script to `~/.profile`).
+
+**For full documentation**, see the [imagemage repository](https://github.com/quinnypig/imagemage).
+
+### Speech-to-Text Transcription
+
+Transcribe audio and video files using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the `transcribe` wrapper script:
+
+```bash
+# Basic transcription (outputs to <filename>.txt)
+transcribe recording.mp3
+
+# Generate SRT subtitles from video
+transcribe video.mp4 -f srt
+
+# Force language detection (e.g., German)
+transcribe podcast.wav -l de -o german.txt
+```
+
+**Features:**
+- 99+ languages with automatic detection
+- Supports mp3, mp4, wav, m4a, flac, ogg, webm
+- CPU-optimized (INT8 quantization, batched inference)
+- Output formats: txt, srt, vtt, json, tsv
+
+**Default model:** `medium` (~1.5GB, good quality). Use `--model large-v3-turbo` for faster/better quality if you have 6GB+ RAM. Models auto-download on first use.
+
+For detailed documentation, see [CLAUDE.md - Speech-to-Text Transcription](CLAUDE.md#speech-to-text-transcription).
 
 ### Integration with Other Tools
 

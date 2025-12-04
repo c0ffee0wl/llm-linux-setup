@@ -195,6 +195,10 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Stores commit hash in `~/.config/llm-tools/{tool}-commit`
   - Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
   - Used for asciinema, yek (git packages that change frequently)
+- **`install_go()`**: Install Go if not present or version is insufficient (used in Phase 6)
+  - Returns 0 if Go >= 1.22 is available, 1 otherwise
+  - Only installs from apt - warns and skips if repo version insufficient
+  - Called lazily only when Gemini is configured (for imagemage)
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -267,6 +271,24 @@ The script uses **intelligent version detection** similar to the Rust approach:
 - Provides `npm_install()` wrapper function that adapts based on permissions
 
 **Why This Matters:** Claude Code requires Node.js 20+ for modern JavaScript features and APIs.
+
+### Go Installation Strategy
+
+The script uses a **simple apt-only approach** for Go installation:
+
+**Version Detection Pattern:**
+1. Check if Go is already installed and version >= 1.22
+2. Check repository Go version via `apt-cache policy golang-go`
+3. Install from apt if version sufficient, otherwise warn and skip
+
+**Installation Logic:**
+- **If Go already installed >= 1.22:** Use existing installation
+- **If Go not installed and repo version >= 1.22:** Install from apt
+- **If Go version insufficient:** Warn and skip imagemage installation
+
+**No Manual Download:** Unlike Rust (rustup) or Node.js (nvm), Go is not downloaded from external sources. If the apt version is insufficient, imagemage is simply skipped with a warning.
+
+**Why This Matters:** imagemage (Gemini image generation CLI) requires Go 1.22+. The tool is optional, so skipping it on older systems is acceptable.
 
 ### Provider Configuration: Azure OpenAI OR Google Gemini
 
@@ -613,6 +635,61 @@ Watch mode enabled: monitoring all terminals
 - **No terminals captured**: Enable plugin in Terminator Preferences → Plugins
 - **Watch mode not working**: Check asyncio compatibility, ensure Python 3.8+
 
+### Speech-to-Text Transcription
+
+The repository includes a **speech-to-text transcription tool** using faster-whisper:
+
+**Components**:
+- **whisper-ctranslate2**: CLI tool installed via `uv tool install` (faster-whisper with CTranslate2 backend)
+- **transcribe**: Wrapper script with sensible defaults for CPU transcription
+
+**Features**:
+- **99+ languages** with automatic language detection
+- **Direct format support**: mp3, mp4, wav, m4a, flac, ogg, webm (via bundled PyAV/FFmpeg)
+- **CPU optimized**: Uses INT8 quantization and batched inference
+- **Multiple output formats**: txt, srt, vtt, json, tsv
+
+**Default Settings** (in `transcribe` wrapper):
+- Model: `medium` (~1.5GB, ~3-4GB RAM, good balance of quality and resource usage)
+- Compute type: `int8` (best CPU performance)
+- Batched inference: enabled (2-4x speed increase)
+
+**Usage**:
+```bash
+# Basic transcription (outputs to <filename>.txt)
+transcribe recording.mp3
+
+# Generate SRT subtitles
+transcribe video.mp4 -f srt
+
+# Force German language, custom output
+transcribe podcast.wav -l de -o german.txt
+
+# Use smaller/faster model
+transcribe meeting.m4a --model medium
+```
+
+**Direct whisper-ctranslate2 Usage** (without wrapper):
+```bash
+whisper-ctranslate2 file.mp3 --model large-v3-turbo --compute_type int8 --batched True
+```
+
+**Available Models**:
+| Model | Size | Speed | Quality |
+|-------|------|-------|---------|
+| tiny | ~75MB | Fastest | Basic |
+| base | ~150MB | Very fast | Good |
+| small | ~500MB | Fast | Better |
+| medium | ~1.5GB | Moderate | High (default) |
+| large-v3 | ~3GB | Slow | Highest |
+| large-v3-turbo | ~800MB | Fast | High |
+
+**Note**: Models are automatically downloaded on first use and cached in `~/.cache/huggingface/`.
+
+**Limitations**:
+- `large-v3-turbo` does NOT support translation (only transcription)
+- For speech translation (non-English → English), use `large-v3` model
+
 ## Key Files & Components
 
 - **`install-llm-tools.sh`**: Main installation/update script with self-update logic
@@ -623,6 +700,7 @@ Watch mode enabled: monitoring all terminals
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
 - **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
+- **`scripts/transcribe`**: Speech-to-text wrapper script using faster-whisper (whisper-ctranslate2)
 - **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
 ## Common Commands
@@ -806,6 +884,7 @@ The script automatically upgrades tools on re-run:
 - `asciinema`: `install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema` (with commit-hash tracking)
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
+- `imagemage`: Clone and build from source (only if Gemini configured, Go 1.22+ available)
 
 **Important Note on llm Upgrades**: Since llm is installed from a git repository fork (`git+https://github.com/c0ffee0wl/llm`), the script uses `install_or_upgrade_uv_tool` with `is_git_package=true` which intelligently detects the current installation source:
 - **If already from the fork**: Uses `uv tool upgrade` (efficient, checks for new commits)
@@ -951,8 +1030,9 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 12. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
 13. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
 14. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
-15. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
-16. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
+15. **Go Optional**: Go 1.22+ is required for imagemage but installation is apt-only; if repo version is insufficient, imagemage is skipped with a warning
+16. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
+17. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
 
 ## Special Packages & Forks
 
@@ -974,3 +1054,4 @@ Note that several packages use **forks** or specific sources:
 - **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 - **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
+- **imagemage**: Installed from Go package: `github.com/quinnypig/imagemage@latest` (only when Gemini is configured and Go 1.22+ available)
