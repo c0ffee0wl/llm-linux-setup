@@ -65,7 +65,7 @@ llm() {
                 model="gemini-2.5-flash"
             fi
             if [ -n "$model" ]; then
-                command llm chat -m "$model" -o google_search 1 --md "$@"
+                command llm chat -t assistant --cl 15 -m "$model" -o google_search 1 --md "$@"
                 return $?
             fi
         fi
