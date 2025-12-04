@@ -826,6 +826,79 @@ install_or_upgrade_cargo_git_tool() {
     fi
 }
 
+# Extract normalized plugin name from various source formats
+# Examples:
+#   "git+https://github.com/c0ffee0wl/llm-vertex" -> "llm-vertex"
+#   "/opt/llm-linux-setup/llm-tools-context" -> "llm-tools-context"
+#   "llm-gemini" -> "llm-gemini"
+extract_plugin_name() {
+    local source="$1"
+
+    # Git URL: git+https://github.com/user/llm-foo -> llm-foo
+    # Note: Use [+] not \+ for ERE compatibility in bash
+    if [[ "$source" =~ ^git[+]https:// ]]; then
+        # Extract last path component, strip optional .git suffix
+        echo "$source" | sed 's|.*/||; s|\.git$||'
+        return
+    fi
+
+    # Local path: /path/to/llm-foo -> llm-foo
+    if [[ "$source" =~ ^/ ]]; then
+        basename "$source"
+        return
+    fi
+
+    # PyPI name: llm-foo -> llm-foo
+    echo "$source"
+}
+
+# Install or upgrade an LLM plugin with intelligent skip logic
+# Skips already-installed plugins unless:
+#   - Plugin is not installed (missing from llm plugins output)
+#   - Plugin is local/editable (always reinstall, may have changed)
+#   - Plugin needs source migration (git URL not in uv-tool-packages.json)
+# Usage: install_or_upgrade_llm_plugin "plugin_source"
+install_or_upgrade_llm_plugin() {
+    local plugin_source="$1"
+    local plugin_name
+    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
+
+    plugin_name=$(extract_plugin_name "$plugin_source")
+
+    # Check if plugin is loaded (uses cached result from INSTALLED_PLUGINS)
+    local is_installed=false
+    if echo "$INSTALLED_PLUGINS" | grep -q "^${plugin_name}$"; then
+        is_installed=true
+    fi
+
+    # Check if exact source is tracked in uv-tool-packages.json
+    local source_tracked=false
+    if [ -f "$uv_packages_file" ] && grep -q "\"${plugin_source}\"" "$uv_packages_file" 2>/dev/null; then
+        source_tracked=true
+    fi
+
+    # Decision logic
+    if [ "$is_installed" = "false" ]; then
+        # Not installed -> install
+        log "Installing $plugin_name..."
+        command llm install "$plugin_source" 2>/dev/null || command llm install "$plugin_source"
+
+    elif [[ "$plugin_source" =~ ^/ ]]; then
+        # Local/editable package -> always reinstall
+        log "Reinstalling local plugin $plugin_name..."
+        command llm install "$plugin_source" 2>/dev/null || true
+
+    elif [[ "$plugin_source" =~ ^git[+] ]] && [ "$source_tracked" = "false" ]; then
+        # Git source but URL not tracked -> migration needed
+        log "Migrating $plugin_name to git source..."
+        command llm install "$plugin_source" --upgrade 2>/dev/null || command llm install "$plugin_source"
+
+    else
+        # Already installed with correct source -> skip
+        log "$plugin_name is already installed"
+    fi
+}
+
 # Install Go if not present or version is insufficient
 # Returns 0 if Go is available (>= MIN_GO_VERSION), 1 otherwise
 # Only installs from apt - warns and skips if repo version is insufficient
@@ -1228,7 +1301,10 @@ fi
 # PHASE 2.5: Install/Update LLM Plugins
 #############################################################################
 
-log "Installing/updating llm plugins..."
+log "Checking llm plugins..."
+
+# Cache installed plugins list once (avoid calling llm plugins 20+ times)
+INSTALLED_PLUGINS=$(command llm plugins 2>/dev/null | grep -o '"name": *"[^"]*"' | sed 's/"name": *"//;s/"$//' || echo "")
 
 PLUGINS=(
     "llm-gemini"
@@ -1255,8 +1331,7 @@ PLUGINS=(
 )
 
 for plugin in "${PLUGINS[@]}"; do
-    log "Installing/updating $plugin..."
-    command llm install "$plugin" --upgrade 2>/dev/null || command llm install "$plugin"
+    install_or_upgrade_llm_plugin "$plugin"
 done
 
 #############################################################################

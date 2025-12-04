@@ -199,6 +199,19 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Returns 0 if Go >= 1.22 is available, 1 otherwise
   - Only installs from apt - warns and skips if repo version insufficient
   - Called lazily only when Gemini is configured (for imagemage)
+- **`extract_plugin_name(source)`**: Extract normalized plugin name from various source formats (used in Phase 2.5)
+  - Git URLs: `git+https://github.com/user/llm-foo` → `llm-foo`
+  - Local paths: `/path/to/llm-foo` → `llm-foo`
+  - PyPI names: `llm-foo` → `llm-foo` (passthrough)
+- **`install_or_upgrade_llm_plugin(plugin_source)`**: Smart LLM plugin installation with skip logic (used in Phase 2.5)
+  - Caches `llm plugins` output once (via `INSTALLED_PLUGINS` variable) to avoid 20+ subprocess calls
+  - Checks `uv-tool-packages.json` for exact source tracking (detects PyPI→git migrations)
+  - **Decision logic**:
+    - Not installed → install
+    - Local path (`/path/to/...`) → always reinstall (may have changed via git pull)
+    - Git URL not in uv-packages.json → migration needed, install with --upgrade
+    - Already installed with correct source → skip (logs "X is already installed")
+  - **Performance**: Reduces plugin phase from ~20-40s to ~2-5s on subsequent runs
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
