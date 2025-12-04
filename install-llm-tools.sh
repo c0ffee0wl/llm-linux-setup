@@ -242,17 +242,27 @@ update_shell_rc_file() {
     # Check if SESSION_LOG_DIR export already exists (first-run detection)
     if ! grep -q "export SESSION_LOG_DIR=" "$rc_file"; then
         prompt_for_session_log_dir
+        prompt_for_session_log_silent
         log "Adding session log configuration and llm integration to $shell_name..."
         cat >> "$rc_file" <<EOF
 
 # LLM Session Log Directory
 export SESSION_LOG_DIR="$SESSION_LOG_DIR_VALUE"
 
+# LLM Session Log Silent Mode (1=suppress messages, 0=show messages)
+export SESSION_LOG_SILENT=$SESSION_LOG_SILENT_VALUE
+
 # LLM Tools Integration
 if [ -f "$integration_file" ]; then
     source "$integration_file"
 fi
 EOF
+    elif ! grep -q "export SESSION_LOG_SILENT=" "$rc_file"; then
+        # Existing installation without SESSION_LOG_SILENT - add it
+        prompt_for_session_log_silent
+        log "Adding session log silent configuration to $shell_name..."
+        # Insert SESSION_LOG_SILENT before the integration source line
+        sed -i "/# LLM Tools Integration/i # LLM Session Log Silent Mode (1=suppress messages, 0=show messages)\nexport SESSION_LOG_SILENT=$SESSION_LOG_SILENT_VALUE\n" "$rc_file"
     elif ! grep -q "$(basename "$integration_file")" "$rc_file"; then
         log "Adding llm integration to $shell_name..."
         cat >> "$rc_file" <<EOF
@@ -1772,6 +1782,24 @@ prompt_for_session_log_dir() {
     fi
 }
 
+# Function to prompt for session log silent mode preference (called once for both shells)
+prompt_for_session_log_silent() {
+    # Only prompt if not already set
+    if [ -z "$SESSION_LOG_SILENT_VALUE" ]; then
+        echo ""
+        read -p "Suppress session log messages at shell startup? (y/N): " silent_choice
+        echo ""
+
+        if [ "$silent_choice" = "y" ] || [ "$silent_choice" = "Y" ]; then
+            SESSION_LOG_SILENT_VALUE="1"
+        else
+            SESSION_LOG_SILENT_VALUE="0"
+            echo "You can enable this later by setting SESSION_LOG_SILENT=1 in your .bashrc/.zshrc"
+            echo ""
+        fi
+    fi
+}
+
 # Update shell RC files
 update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
 update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
@@ -1977,8 +2005,3 @@ log "  ./install-llm-tools.sh --azure"
 log ""
 log "To (re)configure Gemini settings:"
 log "  ./install-llm-tools.sh --gemini"
-log ""
-log "Advanced Configuration:"
-log "  - Suppress session log messages at shell startup:"
-log "    Add 'export SESSION_LOG_SILENT=1' to your .bashrc/.zshrc"
-log "    (Place BEFORE the integration source line)"
