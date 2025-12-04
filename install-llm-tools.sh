@@ -1929,6 +1929,9 @@ fi
 # Update Gemini CLI if already installed (no automatic installation)
 upgrade_npm_global_if_installed @google/gemini-cli
 
+# Update OpenCode if already installed (no automatic installation)
+upgrade_npm_global_if_installed opencode-ai
+
 # Clean up uv cache to reclaim disk space
 log "Cleaning uv cache..."
 uv cache clean
