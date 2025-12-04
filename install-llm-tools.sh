@@ -1276,6 +1276,31 @@ install_or_upgrade_npm_global() {
     fi
 }
 
+# Upgrade npm global package only if already installed (no installation)
+# Usage: upgrade_npm_global_if_installed package_name
+upgrade_npm_global_if_installed() {
+    local package="$1"
+    local installed_version latest_version
+
+    # Get installed version (empty if not installed)
+    installed_version=$(npm list -g "$package" --depth=0 2>/dev/null | grep -oP "$package@\K[0-9.]+") || installed_version=""
+
+    if [ -z "$installed_version" ]; then
+        log "Skipping $package update (not installed)"
+        return 0
+    fi
+
+    # Get latest version from npm registry
+    latest_version=$(npm view "$package" version 2>/dev/null) || latest_version=""
+
+    if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
+        log "Upgrading $package: $installed_version -> $latest_version"
+        npm_install install -g "$package"
+    else
+        log "$package is up to date ($installed_version)"
+    fi
+}
+
 #############################################################################
 # PHASE 2: Install/Update LLM Core
 #############################################################################
@@ -1900,6 +1925,9 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
 else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
+
+# Update Gemini CLI if already installed (no automatic installation)
+upgrade_npm_global_if_installed @google/gemini-cli
 
 # Clean up uv cache to reclaim disk space
 log "Cleaning uv cache..."
