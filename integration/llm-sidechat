@@ -31,6 +31,7 @@ import site
 sys.path.insert(0, site.getusersitepackages())
 import os
 import re
+import readline  # Required for \001/\002 prompt markers to work with input()
 import time
 import hashlib
 import tempfile
@@ -2056,12 +2057,14 @@ Type !fragment <name> [...] to insert fragments
                 try:
                     if in_multi:
                         # Multi-line mode - simple dim prompt
-                        # Use inline ANSI prompt to prevent backspace from deleting it
-                        user_input = input("\033[2m...\033[0m ")
+                        # Use \001...\002 to mark non-printable ANSI sequences for readline
+                        # This fixes cursor positioning when input wraps to next line
+                        user_input = input("\001\033[2m\002...\001\033[0m\002 ")
                     else:
                         # Regular mode - cyan > prompt
-                        # Use inline ANSI prompt to prevent backspace from deleting it
-                        user_input = input("\n\033[1;36m>\033[0m ").strip()
+                        # Use \001...\002 to mark non-printable ANSI sequences for readline
+                        # This fixes cursor positioning when input wraps to next line
+                        user_input = input("\n\001\033[1;36m\002>\001\033[0m\002 ").strip()
                 except (KeyboardInterrupt, EOFError):
                     self.console.print("\n[yellow]Exiting...[/]")
                     break
