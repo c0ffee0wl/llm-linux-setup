@@ -2518,7 +2518,8 @@ Type !fragment <name> [...] to insert fragments
                     try:
                         # Process tool calls (structured output from model)
                         if tool_calls:
-                            self.console.print(f"\n[cyan]Processing {len(tool_calls)} tool call(s)[/]")
+                            if self.debug:
+                                self.console.print(f"\n[cyan]Processing {len(tool_calls)} tool call(s)[/]")
 
                             # Collect tool results for sending back to model
                             tool_results = []
@@ -2535,7 +2536,8 @@ Type !fragment <name> [...] to insert fragments
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
                                 iteration += 1
-                                self.console.print(f"\n[dim]Sending {len(tool_results)} tool result(s) to model...[/]")
+                                if self.debug:
+                                    self.console.print(f"\n[dim]Sending {len(tool_results)} tool result(s) to model...[/]")
 
                                 with self.watch_lock:
                                     # Continue conversation with tool results
@@ -2558,7 +2560,8 @@ Type !fragment <name> [...] to insert fragments
                                 if not more_tool_calls:
                                     break
 
-                                self.console.print(f"\n[cyan]Processing {len(more_tool_calls)} additional tool call(s) (round {iteration + 1})[/]")
+                                if self.debug:
+                                    self.console.print(f"\n[cyan]Processing {len(more_tool_calls)} additional tool call(s) (round {iteration + 1})[/]")
                                 tool_results = []
 
                                 for j, tool_call in enumerate(more_tool_calls, 1):
