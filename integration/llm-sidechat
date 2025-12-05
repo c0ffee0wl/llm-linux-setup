@@ -211,6 +211,7 @@ class TerminatorSidechatSession:
         self.watch_mode = False
         self.watch_goal = None
         self.watch_thread = None
+        self.watch_task = None  # Asyncio task for graceful cancellation
         self.watch_interval = 5  # seconds
         self.watch_lock = threading.Lock()
         self.event_loop = None
@@ -350,9 +351,9 @@ class TerminatorSidechatSession:
                 try:
                     with self.watch_lock:
                         self.watch_mode = False
-                        if self.event_loop and not self.event_loop.is_closed():
+                        if self.watch_task and not self.watch_task.done():
                             try:
-                                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                                self.event_loop.call_soon_threadsafe(self.watch_task.cancel)
                             except RuntimeError:
                                 pass  # Loop already closed
 
@@ -1649,10 +1650,14 @@ Screenshot size: {len(image_bytes)} bytes"""
             self.event_loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.event_loop)
             try:
-                self.event_loop.run_until_complete(self.watch_loop())
+                self.watch_task = self.event_loop.create_task(self.watch_loop())
+                self.event_loop.run_until_complete(self.watch_task)
+            except asyncio.CancelledError:
+                pass  # Expected when watch mode is disabled
             except Exception as e:
                 self.console.print(f"[red]Watch mode error: {e}[/]")
             finally:
+                self.watch_task = None
                 self.event_loop.close()
 
         self.watch_thread = threading.Thread(target=watch_thread_target, daemon=True)
@@ -1931,10 +1936,10 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                         # Reset state for next enable
                         self.previous_watch_context_hash = None
                         self.previous_watch_iteration_count = 0
-                        if self.event_loop and not self.event_loop.is_closed():
-                            # Stop the loop gracefully
+                        if self.watch_task and not self.watch_task.done():
+                            # Cancel the task gracefully (interrupts asyncio.sleep)
                             try:
-                                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                                self.event_loop.call_soon_threadsafe(self.watch_task.cancel)
                             except RuntimeError:
                                 pass  # Loop already closed
                     # Wait for watch thread to finish (prevents multiple threads)
@@ -1958,9 +1963,9 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 with self.watch_lock:
                     if self.watch_thread and self.watch_thread.is_alive():
                         self.watch_mode = False
-                        if self.event_loop and not self.event_loop.is_closed():
+                        if self.watch_task and not self.watch_task.done():
                             try:
-                                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                                self.event_loop.call_soon_threadsafe(self.watch_task.cancel)
                             except RuntimeError:
                                 pass  # Loop already closed
                         thread_to_join = self.watch_thread
