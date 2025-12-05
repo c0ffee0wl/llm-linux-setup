@@ -1542,21 +1542,38 @@ elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
         log "Skipping Google Gemini configuration"
         GEMINI_CONFIGURED=false
     fi
-elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" = "true" ]; then
-    # First run but Azure was configured - skip Gemini (mutually exclusive)
-    log "Skipping Google Gemini (Azure OpenAI configured)"
-    GEMINI_CONFIGURED=false
-else
-    # Subsequent run - check if Gemini key exists
+elif [ "$AZURE_CONFIGURED" = "true" ]; then
+    # Azure is configured - check if Gemini is already configured
     if command llm keys get gemini &>/dev/null; then
         log "Google Gemini was previously configured, preserving existing configuration"
         GEMINI_CONFIGURED=true
-        # Only set AZURE_CONFIGURED=false if Azure wasn't configured earlier in this run
-        if [ "$FORCE_AZURE_CONFIG" != "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
-            AZURE_CONFIGURED=false
-        fi
     else
-        log "Google Gemini not configured (skipped during initial setup)"
+        # Azure configured but no Gemini - always ask for Gemini as secondary
+        log "Google Gemini as Secondary Provider (Optional)"
+        echo ""
+        echo "Azure OpenAI is configured as your primary provider."
+        echo "Gemini can be added as a secondary provider for:"
+        echo "  - Claude Code Router web search (Azure doesn't support web search)"
+        echo "  - imagemage (Gemini image generation CLI)"
+        echo ""
+        read -p "Would you like to configure Gemini as a secondary provider? (y/N): " CONFIG_GEMINI_SECONDARY
+        CONFIG_GEMINI_SECONDARY=${CONFIG_GEMINI_SECONDARY:-N}
+
+        if [[ "$CONFIG_GEMINI_SECONDARY" =~ ^[Yy]$ ]]; then
+            configure_gemini
+            # Note: AZURE_CONFIGURED stays true - Gemini is secondary, not replacement
+        else
+            log "Skipping Gemini configuration (secondary provider declined)"
+            GEMINI_CONFIGURED=false
+        fi
+    fi
+else
+    # Azure not configured - check if Gemini key exists
+    if command llm keys get gemini &>/dev/null; then
+        log "Google Gemini was previously configured, preserving existing configuration"
+        GEMINI_CONFIGURED=true
+    else
+        log "Google Gemini not configured"
         GEMINI_CONFIGURED=false
     fi
 fi
@@ -1917,16 +1934,6 @@ install_or_upgrade_npm_global @anthropic-ai/claude-code
 if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
     log "Installing/updating Claude Code Router..."
     install_or_upgrade_npm_global @musistudio/claude-code-router
-
-    # If Azure configured but Gemini key doesn't exist, configure Gemini for web search
-    # Skip if user is forcing Gemini-only configuration
-    if [ "$AZURE_CONFIGURED" = "true" ] && [ "$FORCE_GEMINI_CONFIG" != "true" ] && ! command llm keys get gemini &>/dev/null; then
-        echo ""
-        log "Azure OpenAI is configured as primary provider"
-        log "Gemini is needed for web search routing (Azure doesn't support web search)"
-        echo ""
-        configure_gemini
-    fi
 
     # Export environment variables for providers with keys
     if [ "$AZURE_CONFIGURED" = "true" ]; then
