@@ -269,8 +269,7 @@ llm sidechat azure/gpt-4.1       # Launch with specific model
 #   /quit                           # Exit
 
 # Claude Code Router (multi-provider routing)
-routed-claude                    # Launch Claude Code through router
-routed-claude code               # Explicit code mode
+routed-claude                    # Launch Claude Code through router (alias for 'ccr code')
 ```
 
 ## Documentation
@@ -1958,9 +1957,6 @@ Watch mode enabled: monitoring all terminals
 ```bash
 # Launch Claude Code through the router
 routed-claude
-
-# Explicit code mode
-routed-claude code
 ```
 
 **Provider Configurations:**
