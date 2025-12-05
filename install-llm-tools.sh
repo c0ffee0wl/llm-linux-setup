@@ -1554,7 +1554,8 @@ elif [ "$AZURE_CONFIGURED" = "true" ]; then
         echo "Azure OpenAI is configured as your primary provider."
         echo "Gemini can be added as a secondary provider for:"
         echo "  - Claude Code Router web search (Azure doesn't support web search)"
-        echo "  - imagemage (Gemini image generation CLI)"
+        echo "  - llm chat-google-search (or -o google_search 1)"
+        echo "  - imagemage (Gemini 'Nano Banana' Pro image generation CLI)"
         echo ""
         read -p "Would you like to configure Gemini as a secondary provider? (y/N): " CONFIG_GEMINI_SECONDARY
         CONFIG_GEMINI_SECONDARY=${CONFIG_GEMINI_SECONDARY:-N}

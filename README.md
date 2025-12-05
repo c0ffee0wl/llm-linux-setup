@@ -40,6 +40,8 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Micro Text Editor Integration](#micro-text-editor-integration)
+  - [Terminator Sidechat](#terminator-sidechat)
+  - [Claude Code Router](#claude-code-router)
   - [Managing Models](#managing-models)
   - [Model-Specific Parameters](#model-specific-parameters)
   - [Managing API Keys](#managing-api-keys)
@@ -92,6 +94,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
 - ✅ **RAG document querying** - Query your documents with `llm rag` using AIChat's built-in vector database
+- ✅ **Terminator Sidechat** - AI pair programming assistant with command execution (Terminator only)
 
 ## System Requirements
 
@@ -256,6 +259,18 @@ command llm -T sandboxed_shell "..."    # Explicit tool call (for non-assistant 
 llm -T Patch "Read config.yaml" --ta                           # Read files
 llm -T Patch "Create hello.py with a hello world program" --ta # Create files
 llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
+
+# Terminator Sidechat (AI terminal assistant)
+llm sidechat                     # Launch AI assistant in Terminator
+llm sidechat azure/gpt-4.1       # Launch with specific model
+# Inside sidechat:
+#   /watch detect security issues  # Enable proactive monitoring
+#   /help                           # Show commands
+#   /quit                           # Exit
+
+# Claude Code Router (multi-provider routing)
+routed-claude                    # Launch Claude Code through router
+routed-claude code               # Explicit code mode
 ```
 
 ## Documentation
@@ -282,6 +297,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[llm](https://github.com/c0ffee0wl/llm)** - LLM CLI tool (fork with markdown markup enhancements, originally by Simon Willison - [Documentation](https://llm.datasette.io/))
 - **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
+- **[Claude Code Router](https://github.com/musistudio/claude-code-router)** - Multi-provider routing proxy for Claude Code (Azure + Gemini dual-provider or Gemini-only)
 
 ### Necessary Prerequisites
 
@@ -339,6 +355,7 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 - **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
 - **[whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2)** - Fast speech-to-text transcription (99+ languages, CPU-optimized)
+- **[llm-sidechat](integration/llm-sidechat)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
 
 ### Shell Integration
 
@@ -1855,6 +1872,123 @@ llm -s "you are a security expert" review this code for vulnerabilities
 - Use `-t code` template for clean, executable code without explanations
 - Adjust `llm.context_lines` based on your needs (more context = better understanding, but slower)
 - View plugin logs: Press `Ctrl+E`, type `log` to see debug output
+
+### Terminator Sidechat
+
+The repository includes **llm-sidechat**, a TmuxAI-inspired terminal AI assistant for [Terminator](https://gnome-terminator.org/) terminal emulator that provides an interactive AI pair programming experience.
+
+**Key Features:**
+
+- **Automatic Exec terminal**: Auto-creates split terminal for command execution
+- **Smart context**: Captures all terminals except its own (self-aware)
+- **Watch mode**: Proactive monitoring with user-defined goals
+- **Command execution**: AI suggests commands, you approve, they run in Exec terminal
+- **Streaming responses**: Rich markdown rendering with streaming output
+
+**Quick Start:**
+
+```bash
+# Launch sidechat in any Terminator terminal
+llm sidechat
+
+# Launch with specific model
+llm sidechat azure/gpt-4.1
+
+# Direct invocation also works
+llm-sidechat
+```
+
+**Workflow:**
+
+1. Run `llm sidechat` in any Terminator terminal
+2. Script auto-creates Exec terminal via D-Bus hsplit
+3. Type messages in Chat terminal (where script runs)
+4. AI responds with streaming markdown
+5. If AI suggests commands (`<EXECUTE>` tags), prompted: "Execute? [y/n/e]"
+6. Approved commands run in Exec terminal
+7. Command output captured for next AI iteration
+
+**Slash Commands:**
+
+| Command | Description |
+|---------|-------------|
+| `/help` | Show available commands |
+| `/clear` | Clear conversation history |
+| `/reset` | Full reset: clear history and remove squash summaries |
+| `/model [name]` | Switch AI model or list available models |
+| `/info` | Show session info (conversation ID, context size, model) |
+| `/watch <goal>` | Enable watch mode (e.g., `/watch detect security issues`) |
+| `/watch off` | Disable watch mode |
+| `/squash` | Manually compress conversation context |
+| `/quit` | Exit sidechat |
+
+**Input Modes:**
+
+- `!multi` - Enter multi-line input mode (finish with `!end`)
+- `!fragment <name>` - Attach an llm fragment to the conversation
+
+**Watch Mode Example:**
+
+```bash
+you> /watch detect inefficient commands
+Watch mode enabled: monitoring all terminals
+# AI now monitors all terminals and provides proactive suggestions
+```
+
+**Requirements:**
+
+- Terminator terminal emulator
+- Plugin enabled: Terminator Preferences -> Plugins -> Check "TerminatorSidechat"
+
+**For detailed documentation**, see [`integration/CLAUDE.md`](integration/CLAUDE.md).
+
+### Claude Code Router
+
+**Claude Code Router (CCR)** is an intelligent proxy that routes Claude Code requests to different LLM providers based on task type. It enables multi-provider setups that regular Claude Code doesn't support.
+
+**Key Features:**
+
+- **Dual-provider support**: Azure OpenAI for main tasks + Gemini for web search
+- **Gemini-only mode**: All tasks routed to Google Gemini
+- **Task-aware routing**: Different models for different task types
+- **Automatic configuration**: Detects available providers and configures accordingly
+
+**Quick Start:**
+
+```bash
+# Launch Claude Code through the router
+routed-claude
+
+# Explicit code mode
+routed-claude code
+```
+
+**Provider Configurations:**
+
+| Mode | Primary Provider | Web Search | Use Case |
+|------|-----------------|------------|----------|
+| Dual-Provider | Azure OpenAI | Gemini | Enterprise with Azure + free Gemini |
+| Gemini-Only | Gemini | Gemini | Free tier or Gemini preference |
+
+**Routing Options:**
+
+| Route Type | Purpose |
+|-----------|---------|
+| `default` | Main code generation tasks |
+| `background` | Analysis with cost optimization |
+| `think` | Complex reasoning (uses best model) |
+| `longContext` | Large file/project handling |
+| `webSearch` | Web-dependent research |
+
+**Configuration:**
+
+- Config file: `~/.claude-code-router/config.json`
+- Auto-generated based on available provider keys
+- User modifications preserved via checksum tracking
+
+**Note**: Unlike AIChat (which uses EITHER Azure OR Gemini), CCR can use **both providers simultaneously** in dual-provider mode.
+
+**For technical details**, see [CLAUDE.md](CLAUDE.md#claude-code-router-flexible-provider-support).
 
 ### Managing Models
 
