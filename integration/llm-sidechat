@@ -144,6 +144,13 @@ EXTERNAL_TOOLS = {
     and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
 }
 
+# Display configuration for external tools: tool_name -> (param_name, action_verb)
+# Tools not in this dict will use generic "Calling {tool_name}..." message
+EXTERNAL_TOOL_DISPLAY = {
+    'google_search': ('query', 'Searching'),
+    'web_fetch': ('url', 'Fetching'),
+}
+
 
 def is_tui_command(command: str) -> bool:
     """
@@ -2222,7 +2229,18 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
         elif tool_name in EXTERNAL_TOOLS:
             # Generic auto-dispatch for external tools (google_search, web_fetch, etc.)
             impl = EXTERNAL_TOOLS[tool_name]
-            self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+
+            # Display primary parameter if configured, otherwise generic message
+            if tool_name in EXTERNAL_TOOL_DISPLAY:
+                param_name, action_verb = EXTERNAL_TOOL_DISPLAY[tool_name]
+                param_value = tool_args.get(param_name, '')
+                if param_value:
+                    self.console.print(f"\n[cyan]{action_verb}: {param_value}[/]")
+                else:
+                    self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+            else:
+                self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+
             try:
                 result = impl(**tool_args)
                 self.console.print(f"[green]✓[/] {tool_name} completed")
