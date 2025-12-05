@@ -58,6 +58,10 @@ Use these XML tags ONLY when you want IMMEDIATE EXECUTION (user will be prompted
 <CAPTURE>all</CAPTURE>    Capture screenshots of all terminals
 <REFRESH/>                Refresh terminal context
 
+IMPORTANT: Use exact tag syntax with NO spaces inside brackets.
+- Correct: <PRESSKEY>q</PRESSKEY>
+- WRONG: < PRESSKEY >q< /PRESSKEY >
+
 Examples:
 <EXECUTE>ls -la</EXECUTE>
 <EXECUTE>docker ps</EXECUTE>

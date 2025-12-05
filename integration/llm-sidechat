@@ -101,6 +101,16 @@ TUI_COMMANDS = {
 SCREENSHOT_REQUEST_PATTERN = re.compile(r'<CAPTURE(?:\s*/\s*>|>(all)?</CAPTURE>)', re.IGNORECASE)
 # <REFRESH/> - request context refresh
 CONTEXT_REFRESH_PATTERN = re.compile(r'<REFRESH\s*/?\s*>', re.IGNORECASE)
+# <EXECUTE>...</EXECUTE> - command execution
+EXECUTE_PATTERN = re.compile(
+    r'<\s*EXECUTE\s*>(.*?)<\s*/\s*EXECUTE\s*>',
+    re.DOTALL | re.IGNORECASE
+)
+# <PRESSKEY>...</PRESSKEY> - keypress
+PRESSKEY_PATTERN = re.compile(
+    r'<\s*PRESSKEY\s*>(.*?)<\s*/\s*PRESSKEY\s*>',
+    re.DOTALL | re.IGNORECASE
+)
 
 
 def is_tui_command(command: str) -> bool:
@@ -1222,8 +1232,7 @@ Provide a brief but comprehensive summary."""
         Each <EXECUTE> tag contains one command to execute.
         Multi-line content within a single tag is split into separate commands.
         """
-        pattern = r'<EXECUTE>(.*?)</EXECUTE>'
-        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+        matches = EXECUTE_PATTERN.findall(text)
 
         commands = []
         for block in matches:
@@ -1244,8 +1253,8 @@ Provide a brief but comprehensive summary."""
         <PRESSKEY>q</PRESSKEY> → `q`
         """
         # Replace content tags with backtick-wrapped content
-        text = re.sub(r'<EXECUTE>(.*?)</EXECUTE>', r'`\1`', text, flags=re.DOTALL|re.IGNORECASE)
-        text = re.sub(r'<PRESSKEY>(.*?)</PRESSKEY>', r'`\1`', text, flags=re.DOTALL|re.IGNORECASE)
+        text = EXECUTE_PATTERN.sub(r'`\1`', text)
+        text = PRESSKEY_PATTERN.sub(r'`\1`', text)
         # Replace self-closing tags with placeholder
         text = re.sub(r'<CAPTURE(?:>.*?</CAPTURE>|/?>)', '`[capture]`', text, flags=re.IGNORECASE)
         text = re.sub(r'<REFRESH/?>', '`[refresh]`', text, flags=re.IGNORECASE)
@@ -1257,8 +1266,7 @@ Provide a brief but comprehensive summary."""
         Each <PRESSKEY> tag contains one keypress to send.
         Examples: <PRESSKEY>Ctrl+C</PRESSKEY>, <PRESSKEY>:wq</PRESSKEY>, <PRESSKEY>Enter</PRESSKEY>
         """
-        pattern = r'<PRESSKEY>(.*?)</PRESSKEY>'
-        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+        matches = PRESSKEY_PATTERN.findall(text)
         return [kp.strip() for kp in matches if kp.strip()]
 
     def extract_screenshot_requests(self, text: str) -> List[str]:

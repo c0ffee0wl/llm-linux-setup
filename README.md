@@ -912,7 +912,7 @@ llm sort --query "Which is more suitable for a pet monkey?" names.txt
 cat programming_languages.txt | llm sort --query "Which is better for web development?"
 
 # Use a different method, limit the output to the top 5 lines, and specify a custom model and prompt:
-llm sort --query "Rank these slogans" --method sliding --top-k 5 --model gpt-4.1 \
+llm sort --query "Rank these slogans" --method sliding --top-k 5 --model azure/gpt-4.1 \
   --prompt 'Decide which line is more compelling. Answer with "Line A" or "Line B" Query: {query} Lines: {docA} {docB}.' quotes.txt
 ```
 
