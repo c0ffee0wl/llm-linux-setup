@@ -250,6 +250,11 @@ The installation script uses **helper functions** to eliminate code duplication 
     - Git URL not in uv-packages.json → migration needed, install with --upgrade
     - Already installed with correct source → skip (logs "X is already installed")
   - **Performance**: Reduces plugin phase from ~20-40s to ~2-5s on subsequent runs
+- **`cleanup_stale_local_plugin_paths()`**: Remove stale local plugin paths from tracking files (used in Phase 2)
+  - Handles migration from local plugins to git repositories
+  - Cleans **two files**: `uv-tool-packages.json` (llm-uv-tool) and `uv-receipt.toml` (uv internal)
+  - Scans for local paths (`/path/to/...`) that no longer exist on disk
+  - Removes stale entries before llm upgrade to prevent failures
 - **`npm_install(package_name)`**: NPM global installation with retry logic (used in Phase 7)
   - 3 attempts with 2-second delay between retries
   - Handles ENOTEMPTY errors by detecting and removing conflicting directories
@@ -973,7 +978,8 @@ Note that several packages use **forks** or specific sources:
 - **aichat**: Installed via cargo from crates.io: `cargo install aichat`
 - **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
-- **llm-tools-google-search**: Installed from local directory: `$SCRIPT_DIR/llm-tools-google-search` (Google Search tool using Vertex/Gemini as backend)
+- **llm-tools-google-search**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-google-search` (Google Search tool using Vertex/Gemini as backend)
+- **llm-tools-web-fetch**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-web-fetch` (Web fetch tool for retrieving URL content)
 - **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
 - **imagemage**: Installed from Go package: `github.com/quinnypig/imagemage@latest` (only when Gemini is configured and Go 1.22+ available)
 - **llm-anthropic**: Anthropic API plugin (PyPI)

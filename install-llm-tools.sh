@@ -909,6 +909,69 @@ install_or_upgrade_llm_plugin() {
     fi
 }
 
+# Clean up stale local paths from both tracking files:
+# 1. uv-tool-packages.json - llm-uv-tool's tracking (for llm install interception)
+# 2. uv-receipt.toml - uv's internal tracking (for uv tool upgrade)
+# Must be called BEFORE llm upgrade, otherwise uv tries to reinstall missing local paths
+cleanup_stale_local_plugin_paths() {
+    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
+    local uv_receipt_file="$HOME/.local/share/uv/tools/llm/uv-receipt.toml"
+
+    # Clean up uv-tool-packages.json (llm-uv-tool tracking)
+    if [ -f "$uv_packages_file" ]; then
+        local stale_paths=()
+        while IFS= read -r entry; do
+            # Check if it's a local path (starts with /)
+            if [[ "$entry" =~ ^/ ]]; then
+                if [ ! -d "$entry" ]; then
+                    stale_paths+=("$entry")
+                    log "Removing stale local path from uv-tool-packages.json: $entry"
+                fi
+            fi
+        done < <(jq -r '.[]' "$uv_packages_file" 2>/dev/null)
+
+        # Remove stale entries from JSON (both path and derived plugin name)
+        for path in "${stale_paths[@]}"; do
+            # Extract plugin name from path (basename)
+            local plugin_name
+            plugin_name=$(basename "$path")
+
+            # Remove both the path and the name from JSON
+            jq --arg path "$path" --arg name "$plugin_name" \
+                'map(select(. != $path and . != $name))' \
+                "$uv_packages_file" > "${uv_packages_file}.tmp" && \
+                mv "${uv_packages_file}.tmp" "$uv_packages_file"
+
+            log "Also removing plugin name from tracking: $plugin_name"
+        done
+    fi
+
+    # Clean up uv-receipt.toml (uv's internal tracking)
+    if [ -f "$uv_receipt_file" ]; then
+        local temp_file="${uv_receipt_file}.tmp"
+        local modified=false
+
+        while IFS= read -r line; do
+            # Check if line contains a directory reference
+            if [[ "$line" =~ directory\ =\ \"([^\"]+)\" ]]; then
+                local dir_path="${BASH_REMATCH[1]}"
+                if [ ! -d "$dir_path" ]; then
+                    log "Removing stale local path from uv-receipt.toml: $dir_path"
+                    modified=true
+                    continue  # Skip this line
+                fi
+            fi
+            echo "$line"
+        done < "$uv_receipt_file" > "$temp_file"
+
+        if [ "$modified" = true ]; then
+            mv "$temp_file" "$uv_receipt_file"
+        else
+            rm -f "$temp_file"
+        fi
+    fi
+}
+
 # Install Go if not present or version is insufficient
 # Returns 0 if Go is available (>= MIN_GO_VERSION), 1 otherwise
 # Only installs from apt - warns and skips if repo version is insufficient
@@ -1324,6 +1387,9 @@ GEMINI_CONFIGURED=false
 # Installed via uv tool from git repository with llm-uv-tool bundled
 # llm-uv-tool intercepts `llm install` commands to make plugins persist across LLM upgrades
 
+# Clean up stale local plugin paths before upgrade (handles migration from local to git)
+cleanup_stale_local_plugin_paths
+
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
@@ -1391,7 +1457,8 @@ PLUGINS=(
     "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
     "$SCRIPT_DIR/llm-tools-sidechat"
-    "$SCRIPT_DIR/llm-tools-google-search"
+    "git+https://github.com/c0ffee0wl/llm-tools-google-search"
+    "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
 )
 
 for plugin in "${PLUGINS[@]}"; do
