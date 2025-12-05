@@ -56,13 +56,13 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Storage Configuration](#storage-configuration)
 - [Understanding Azure OpenAI Setup](#understanding-azure-openai-setup)
   - [Architecture Overview](#architecture-overview)
-  - [Configuration Files](#configuration-files)
+  - [Azure Configuration Files](#azure-configuration-files)
   - [Azure-Specific Limitations](#azure-specific-limitations)
   - [Why Azure OpenAI?](#why-azure-openai)
 - [Alternative: Gemini for Private Use](#alternative-gemini-for-private-use)
   - [Switching Providers](#switching-providers)
 - [Configuration](#configuration)
-  - [Configuration Files](#configuration-files-1)
+  - [Configuration Files](#configuration-files)
   - [Shell Integration Files](#shell-integration-files)
 - [Troubleshooting](#troubleshooting)
   - [Update fails](#update-fails)
@@ -287,7 +287,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - [AIChat Wiki](https://github.com/sigoden/aichat/wiki)
 - [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
 - [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
-- [Claude Code Documentation](https://docs.claude.com/en/docs/claude-code/overview)
+- [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code/overview)
 
 ## What Gets Installed
 
@@ -295,7 +295,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 
 - **[llm](https://github.com/c0ffee0wl/llm)** - LLM CLI tool (fork with markdown markup enhancements, originally by Simon Willison - [Documentation](https://llm.datasette.io/))
 - **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
-- **[Claude Code](https://docs.claude.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
+- **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[Claude Code Router](https://github.com/musistudio/claude-code-router)** - Multi-provider routing proxy for Claude Code (Azure + Gemini dual-provider or Gemini-only)
 
 ### Necessary Prerequisites
@@ -343,6 +343,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
 - **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
 - **[wut.yaml](llm-template/wut.yaml)** - Command-line assistant for explaining terminal output and troubleshooting (concise 5-sentence responses, uses `context` tool automatically)
+- **[terminator-sidechat.yaml](llm-template/terminator-sidechat.yaml)** - AI pair programming template for Terminator terminal (provides intelligent debugging, command suggestions, and automatic execution in split panes)
 
 ### Additional Tools
 
@@ -2312,7 +2313,7 @@ If you choose **Azure OpenAI** (default choice for enterprise/workplace use), th
 - Requires separate API key (`azure` not `openai`)
 - API base URL points to your Azure resource (e.g., `https://your-resource.openai.azure.com`)
 
-### Configuration Files
+### Azure Configuration Files
 
 **LLM Configuration:**
 
