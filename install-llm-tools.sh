@@ -947,27 +947,47 @@ cleanup_stale_local_plugin_paths() {
     fi
 
     # Clean up uv-receipt.toml (uv's internal tracking)
+    # Two-pass approach: first identify stale plugins, then remove ALL their entries
     if [ -f "$uv_receipt_file" ]; then
-        local temp_file="${uv_receipt_file}.tmp"
-        local modified=false
+        local stale_plugins=()
 
+        # Pass 1: Find plugins with stale local paths
         while IFS= read -r line; do
-            # Check if line contains a directory reference
-            if [[ "$line" =~ directory\ =\ \"([^\"]+)\" ]]; then
+            # Check if line contains a directory reference (flexible spacing)
+            if [[ "$line" =~ directory[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
                 local dir_path="${BASH_REMATCH[1]}"
                 if [ ! -d "$dir_path" ]; then
-                    log "Removing stale local path from uv-receipt.toml: $dir_path"
-                    modified=true
-                    continue  # Skip this line
+                    # Extract plugin name from same line
+                    if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+                        local plugin_name="${BASH_REMATCH[1]}"
+                        log "Found stale local path for $plugin_name: $dir_path"
+                        stale_plugins+=("$plugin_name")
+                    fi
                 fi
             fi
-            echo "$line"
-        done < "$uv_receipt_file" > "$temp_file"
+        done < "$uv_receipt_file"
 
-        if [ "$modified" = true ]; then
+        # Pass 2: Remove ALL entries for stale plugins (not just the directory entry)
+        if [ ${#stale_plugins[@]} -gt 0 ]; then
+            local temp_file="${uv_receipt_file}.tmp"
+
+            while IFS= read -r line; do
+                local skip_line=false
+                for plugin in "${stale_plugins[@]}"; do
+                    # Match any line containing this plugin name
+                    if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"${plugin}\" ]]; then
+                        log "Removing entry for stale plugin from uv-receipt.toml: $plugin"
+                        skip_line=true
+                        break
+                    fi
+                done
+                if [ "$skip_line" = false ]; then
+                    echo "$line"
+                fi
+            done < "$uv_receipt_file" > "$temp_file"
+
             mv "$temp_file" "$uv_receipt_file"
-        else
-            rm -f "$temp_file"
+            log "Cleaned ${#stale_plugins[@]} stale plugin(s) from uv-receipt.toml"
         fi
     fi
 }

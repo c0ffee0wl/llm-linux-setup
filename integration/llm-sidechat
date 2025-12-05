@@ -122,26 +122,27 @@ PRESSKEY_PATTERN = re.compile(
 # =============================================================================
 # Tool Setup
 # =============================================================================
-# Get tools from the plugin system, filtered by plugin name.
-# This auto-includes any tools from 'sidechat' and 'google_search' plugins.
+# External tool plugins that sidechat can dispatch (easy to extend)
+# Just add the plugin name here to enable a new external tool
+EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch')
 
 _all_tools = llm.get_tools()
 
-# Build SIDECHAT_TOOLS from plugins - auto-includes new tools when added
+# Build SIDECHAT_TOOLS from plugins - includes core sidechat tools + external tools
 SIDECHAT_TOOLS = [
     tool for tool in _all_tools.values()
-    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('sidechat', 'google_search', 'web_fetch')
+    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('sidechat',) + EXTERNAL_TOOL_PLUGINS
 ]
 
-# Get google_search for the handler
-_google_search_tool = _all_tools.get('google_search')
-GOOGLE_SEARCH_AVAILABLE = _google_search_tool is not None
-google_search = _google_search_tool.implementation if _google_search_tool else None
-
-# Get web_fetch for the handler
-_web_fetch_tool = _all_tools.get('web_fetch')
-WEB_FETCH_AVAILABLE = _web_fetch_tool is not None
-web_fetch = _web_fetch_tool.implementation if _web_fetch_tool else None
+# Build dict of external tool implementations for auto-dispatch
+# These are tools with real implementations (not sidechat stubs)
+EXTERNAL_TOOLS = {
+    name: tool.implementation
+    for name, tool in _all_tools.items()
+    if isinstance(tool, Tool)
+    and hasattr(tool, 'implementation') and tool.implementation is not None
+    and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
+}
 
 
 def is_tui_command(command: str) -> bool:
@@ -2032,7 +2033,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
     def _process_tool_call(self, tool_call) -> ToolResult:
         """Process a single tool call and return the result.
 
-        Handles: execute_in_terminal, send_keypress, capture_terminal, refresh_context, google_search, web_fetch
+        Handles: execute_in_terminal, send_keypress, capture_terminal, refresh_context, + EXTERNAL_TOOLS
         Includes type validation for arguments and scope validation.
         """
         # Extract and normalize tool info (fixes case sensitivity issue)
@@ -2218,82 +2219,23 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                     tool_call_id=tool_call_id
                 )
 
-        elif tool_name == "google_search":
-            query = get_str("query")
-            max_results = tool_args.get("max_results", 5)
-            if isinstance(max_results, str):
-                try:
-                    max_results = int(max_results)
-                except ValueError:
-                    max_results = 5
-
-            if not query:
+        elif tool_name in EXTERNAL_TOOLS:
+            # Generic auto-dispatch for external tools (google_search, web_fetch, etc.)
+            impl = EXTERNAL_TOOLS[tool_name]
+            self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+            try:
+                result = impl(**tool_args)
+                self.console.print(f"[green]✓[/] {tool_name} completed")
                 return ToolResult(
                     name=tool_call.name,
-                    output="Error: No search query provided",
+                    output=result,
                     tool_call_id=tool_call_id
                 )
-
-            self.console.print(f"\n[cyan]Searching: {query}[/]")
-
-            if GOOGLE_SEARCH_AVAILABLE and google_search:
-                try:
-                    result = google_search(query, max_results)
-                    self.console.print("[green]✓[/] Search completed")
-                    return ToolResult(
-                        name=tool_call.name,
-                        output=result,
-                        tool_call_id=tool_call_id
-                    )
-                except Exception as e:
-                    self.console.print(f"[red]Search error: {e}[/]")
-                    return ToolResult(
-                        name=tool_call.name,
-                        output=f"Search error: {e}",
-                        tool_call_id=tool_call_id
-                    )
-            else:
+            except Exception as e:
+                self.console.print(f"[red]{tool_name} error: {e}[/]")
                 return ToolResult(
                     name=tool_call.name,
-                    output="Error: google_search tool not available. Install llm-tools-google-search plugin.",
-                    tool_call_id=tool_call_id
-                )
-
-        elif tool_name == "web_fetch":
-            url = get_str("url")
-            include_links = tool_args.get("include_links", False)
-            include_images = tool_args.get("include_images", False)
-            include_metadata = tool_args.get("include_metadata", True)
-
-            if not url:
-                return ToolResult(
-                    name=tool_call.name,
-                    output="Error: No URL provided",
-                    tool_call_id=tool_call_id
-                )
-
-            self.console.print(f"\n[cyan]Fetching: {url}[/]")
-
-            if WEB_FETCH_AVAILABLE and web_fetch:
-                try:
-                    result = web_fetch(url, include_links, include_images, include_metadata)
-                    self.console.print("[green]✓[/] Fetch completed")
-                    return ToolResult(
-                        name=tool_call.name,
-                        output=result,
-                        tool_call_id=tool_call_id
-                    )
-                except Exception as e:
-                    self.console.print(f"[red]Fetch error: {e}[/]")
-                    return ToolResult(
-                        name=tool_call.name,
-                        output=f"Fetch error: {e}",
-                        tool_call_id=tool_call_id
-                    )
-            else:
-                return ToolResult(
-                    name=tool_call.name,
-                    output="Error: web_fetch tool not available. Install llm-tools-web-fetch plugin.",
+                    output=f"Error calling {tool_name}: {e}",
                     tool_call_id=tool_call_id
                 )
 

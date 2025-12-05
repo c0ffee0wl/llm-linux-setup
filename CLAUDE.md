@@ -54,7 +54,7 @@ The repository includes an **automatic session recording and context extraction 
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
 
-5. **Google Search Tool** (`llm-tools-google-search/`): LLM plugin for web search
+5. **Google Search Tool** (`llm-tools-google-search`): LLM plugin for web search (installed from git)
    - Uses Vertex/Gemini with `google_search` grounding as backend
    - Enables any model to perform Google Search by calling the tool
    - Prefers Vertex if configured, falls back to standard Gemini API
@@ -930,7 +930,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `integration/llm-sidechat`, `integration/terminator-sidechat-plugin/` - Sidechat components (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
-- `llm-tools-google-search/` - LLM plugin for Google Search via Vertex/Gemini
+- `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)
 - `llm-template/{assistant,code,terminator-sidechat}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
