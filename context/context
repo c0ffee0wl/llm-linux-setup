@@ -28,6 +28,13 @@ import sys
 import subprocess
 import tempfile
 import re
+
+# Import shared prompt detection module
+try:
+    from llm_tools.prompt_detection import PromptDetector
+except ImportError:
+    # Fallback for development - import from same directory
+    from prompt_detection import PromptDetector
 import argparse
 
 
@@ -88,56 +95,9 @@ def detect_prompts(text_or_lines):
     Detect command prompts in the text.
     Returns list of (line_number, line_content) tuples for lines that are prompts.
 
-    Args:
-        text_or_lines: Either a text string or a list of lines
-
-    Detects various prompt formats:
-    - Lines ending with $ or # (standard bash/sh prompts)
-    - Lines containing user@host patterns
-    - Lines with common zsh theme markers (%, ❯, →, etc.)
+    This is a wrapper around PromptDetector.find_all_prompts() for backwards compatibility.
     """
-    # Accept either a string or a list of lines
-    if isinstance(text_or_lines, str):
-        lines = text_or_lines.split('\n')
-    else:
-        lines = text_or_lines
-    prompt_lines = []
-
-    # Common prompt patterns
-    prompt_patterns = [
-        r'.*[$#]\s*$',           # Ends with $ or # (standard bash/sh)
-        r'.*[$#]\s+\S+',          # $ or # followed by command
-        r'(?<!\d)[%❯→➜]\s*$',     # Zsh themes (%, ❯, →, ➜) - not after digit
-        r'(?<!\d)[%❯→➜]\s+\S+',   # Zsh themes followed by command - not after digit
-        r'^\S+@\S+.*[$#%]',       # user@host pattern with prompt char
-    ]
-
-    for i, line in enumerate(lines):
-        # Skip empty lines
-        if not line.strip():
-            continue
-
-        # Check against patterns
-        for pattern in prompt_patterns:
-            if re.search(pattern, line):
-                prompt_lines.append((i, line))
-                break
-
-    # Handle Kali/fancy two-line prompts (header line + prompt line)
-    # Example: ┌──(kali㉿kali)-[~/dir]
-    #          └─$ command
-    adjusted_prompt_lines = []
-    kali_header_pattern = r'^[┌╭]──.*[\])]$'
-
-    for line_num, line_content in prompt_lines:
-        # Check if previous line is a Kali-style header
-        if line_num > 0 and re.search(kali_header_pattern, lines[line_num - 1]):
-            # Start block at header line instead
-            adjusted_prompt_lines.append((line_num - 1, lines[line_num - 1]))
-        else:
-            adjusted_prompt_lines.append((line_num, line_content))
-
-    return adjusted_prompt_lines
+    return PromptDetector.find_all_prompts(text_or_lines)
 
 
 def should_exclude_block(block):

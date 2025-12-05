@@ -20,6 +20,7 @@ import time
 import base64
 import tempfile
 import os
+import math
 import gi
 gi.require_version('Vte', '2.91')
 gi.require_version('Gdk', '3.0')
@@ -29,6 +30,13 @@ from terminatorlib.terminator import Terminator
 from terminatorlib.util import dbg, err
 import dbus.service
 from dbus.exceptions import DBusException
+
+# Import prompt detection for TUI heuristic (shell prompt = not TUI)
+try:
+    from llm_tools.prompt_detection import PromptDetector
+    PROMPT_DETECTOR_AVAILABLE = True
+except ImportError:
+    PROMPT_DETECTOR_AVAILABLE = False
 
 # D-Bus service constants
 PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
@@ -75,6 +83,11 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         self.content_cache = {}  # uuid -> content
         self.last_capture = {}   # uuid -> timestamp
         self.cache_ttl = 0.5     # Cache valid for 0.5 seconds
+
+        # TUI detection caching (separate from content cache for efficiency)
+        self.tui_cache = {}      # uuid -> is_tui (bool)
+        self.tui_cache_time = {} # uuid -> timestamp
+        self.tui_cache_ttl = 0.5 # TUI detection cache valid for 0.5 seconds
 
         dbg('TerminatorSidechat initialized')
 
@@ -139,8 +152,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 if vadj:
                     scroll_pos = vadj.get_value()
                     # Calculate visible viewport range in buffer coordinates
-                    start_row = int(scroll_pos)
-                    end_row = int(scroll_pos + term_height) - 1
+                    # Use math.floor consistently to ensure proper row alignment
+                    start_row = math.floor(scroll_pos)
+                    end_row = math.floor(scroll_pos + term_height) - 1
                     dbg(f'Using vadjustment: scroll_pos={scroll_pos}, viewport range=[{start_row}, {end_row}]')
                 else:
                     # Fallback if vadjustment returns None
@@ -151,7 +165,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                         start_row = scrollback
                         end_row = scrollback + term_height - 1
                         dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{start_row}, {end_row}]')
-                    except:
+                    except Exception:
                         # Ultimate fallback: top of buffer
                         start_row = 0
                         end_row = term_height - 1
@@ -184,22 +198,34 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                         end_row, term_width - 1     # end row, end col (full width)
                     )
                     # Verify it's a tuple and extract text
-                    if isinstance(result, tuple) and len(result) > 0:
-                        content = result[0]
+                    # Handle edge cases: None, empty tuple, or direct string
+                    if isinstance(result, tuple):
+                        content = result[0] if result else ''
+                    elif result is None:
+                        content = ''
                     else:
-                        content = str(result)  # Fallback to string conversion
+                        content = str(result)
                 except Exception as e:
                     err(f'VTE 72+ capture failed: {e}')
                     return f"ERROR: Content capture failed: {str(e)}"
             else:
                 # Older VTE: use get_text_range with lambda
+                # Returns tuple (text, attributes) - must extract [0]
                 dbg(f'Using get_text_range (VTE {vte_version})')
                 try:
-                    content = vte.get_text_range(
+                    result = vte.get_text_range(
                         start_row, 0,           # start row, start col
                         end_row, term_width - 1,    # end row, end col (full width)
                         lambda *a: True  # Include all cells
                     )
+                    # Extract text from tuple (same pattern as logger.py, remote.py)
+                    # Handle edge cases: None, empty tuple, or direct string
+                    if isinstance(result, tuple):
+                        content = result[0] if result else ''
+                    elif result is None:
+                        content = ''
+                    else:
+                        content = str(result) if result else ''
                 except Exception as e:
                     err(f'VTE legacy capture failed: {e}')
                     return f"ERROR: Content capture failed: {str(e)}"
@@ -270,6 +296,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 return f"ERROR: Screenshot capture failed (pixbuf is None)"
 
             # Save to temporary file
+            temp_path = None
             try:
                 # Create temp file with .png extension
                 temp_fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='terminator_screenshot_')
@@ -286,18 +313,19 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
                 base64_data = base64.b64encode(image_data).decode('utf-8')
 
-                # Clean up temp file
-                try:
-                    os.unlink(temp_path)
-                except:
-                    pass  # Ignore cleanup errors
-
                 dbg(f'Screenshot captured: {len(base64_data)} base64 chars ({len(image_data)} bytes PNG)')
                 return base64_data
 
             except Exception as e:
                 err(f'Error saving screenshot: {e}')
                 return f"ERROR: Failed to save screenshot: {str(e)}"
+            finally:
+                # Guaranteed cleanup of temp file
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass  # Ignore cleanup errors (file may not exist)
 
         except Exception as e:
             err(f'TerminatorSidechat: Error capturing screenshot: {e}')
@@ -518,10 +546,43 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             err(f'Traceback: {traceback.format_exc()}')
             return []
 
+    def _get_tab_container(self, terminal):
+        """Get the root container for the tab containing this terminal.
+
+        Walks up the widget hierarchy until finding a Notebook (tab container).
+        Returns the widget that is the direct child of the Notebook (the tab's root).
+
+        Args:
+            terminal: A Terminator terminal widget
+
+        Returns:
+            The tab root container widget. For single-tab windows (no Notebook),
+            returns the toplevel window, which is correct since all terminals
+            in a single-tab window are effectively in the same "tab".
+        """
+        widget = terminal
+        parent = widget.get_parent()
+
+        while parent is not None:
+            # Check if parent is a Notebook (Gtk.Notebook for tabs)
+            # Notebook has get_n_pages method that containers don't have
+            if hasattr(parent, 'get_n_pages'):
+                dbg(f'_get_tab_container: found Notebook, returning tab container {widget}')
+                return widget  # widget is the tab's root container
+            widget = parent
+            parent = widget.get_parent()
+
+        # No notebook found - single tab or no tabs, return toplevel as fallback.
+        # This is correct behavior: in single-tab windows, all terminals share
+        # the same toplevel, so they're all considered to be in the same "tab".
+        toplevel = terminal.get_toplevel()
+        dbg(f'_get_tab_container: no Notebook found (single-tab window), using toplevel {toplevel}')
+        return toplevel
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='aa{ss}')
     def get_terminals_in_same_window(self, reference_terminal_uuid):
         """
-        Get metadata for terminals in the same window as the reference terminal.
+        Get metadata for terminals in the same TAB as the reference terminal.
 
         Args:
             reference_terminal_uuid: UUID of reference terminal (e.g., chat terminal)
@@ -543,21 +604,21 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 err(f'[SIDECHAT-PLUGIN] Reference terminal {reference_terminal_uuid} not found')
                 return []
 
-            # Get the window containing the reference terminal
-            reference_window = reference_term.get_toplevel()
-            if not reference_window:
-                err('[SIDECHAT-PLUGIN] Could not get toplevel window for reference terminal')
+            # Get the tab container for the reference terminal
+            reference_tab = self._get_tab_container(reference_term)
+            if not reference_tab:
+                err('[SIDECHAT-PLUGIN] Could not get tab container for reference terminal')
                 return []
 
-            dbg(f'[SIDECHAT-PLUGIN] Reference window: {reference_window}')
+            dbg(f'[SIDECHAT-PLUGIN] Reference tab container: {reference_tab}')
             dbg(f'[SIDECHAT-PLUGIN] Total terminals in Terminator instance: {len(self.terminator.terminals)}')
 
-            # Filter terminals to only those in the same window
+            # Filter terminals to only those in the same TAB
             for term in self.terminator.terminals:
-                term_window = term.get_toplevel()
+                term_tab = self._get_tab_container(term)
 
-                # Compare window objects (same instance = same window)
-                if term_window is reference_window:
+                # Compare tab container objects (same instance = same tab)
+                if term_tab is reference_tab:
                     # Get terminal metadata (same code as get_all_terminals_metadata)
                     title = term.titlebar.get_custom_string()
                     if not title:
@@ -577,7 +638,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                         'cwd': cwd
                     })
 
-            dbg(f'[SIDECHAT-PLUGIN] Retrieved metadata for {len(terminals_info)} terminals in same window as {reference_terminal_uuid}')
+            dbg(f'[SIDECHAT-PLUGIN] Retrieved metadata for {len(terminals_info)} terminals in same tab as {reference_terminal_uuid}')
             return terminals_info
 
         except Exception as e:
@@ -619,9 +680,10 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         """
         Heuristic detection of whether a TUI is active in the terminal.
 
-        Uses vadjustment to detect alternate screen buffer characteristics:
-        - TUI apps typically have minimal scrollback (alternate screen)
-        - Shell output has growing scrollback
+        Detection strategy:
+        1. Check TUI detection cache first (0.5s TTL for performance)
+        2. If shell prompt visible at end of content -> NOT a TUI (early exit)
+        3. Fall back to vadjustment heuristic for alternate screen detection
 
         Args:
             terminal_uuid: UUID of terminal to check
@@ -630,6 +692,12 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             True if terminal likely has TUI active, False otherwise
         """
         try:
+            # Check TUI detection cache first (avoids expensive capture calls)
+            if terminal_uuid in self.tui_cache:
+                if time.time() - self.tui_cache_time.get(terminal_uuid, 0) < self.tui_cache_ttl:
+                    dbg(f'TUI detection for {terminal_uuid}: using cached result')
+                    return self.tui_cache[terminal_uuid]
+
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
             if not terminal:
                 return False
@@ -638,6 +706,22 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             if not vte:
                 return False
 
+            # First check: If shell prompt is visible, definitely not a TUI
+            # This prevents false positives on empty terminals
+            if PROMPT_DETECTOR_AVAILABLE:
+                content = self.capture_terminal_content(terminal_uuid, -1)
+                if content and not content.startswith('ERROR'):
+                    if PromptDetector.detect_prompt_at_end(content):
+                        dbg(f'TUI detection for {terminal_uuid}: shell prompt found, not TUI')
+                        # Invalidate TUI cache when prompt detected (TUI just exited)
+                        # Delete cache entry entirely to force re-evaluation on next call
+                        if terminal_uuid in self.tui_cache:
+                            dbg(f'TUI detection: invalidating stale cache for {terminal_uuid}')
+                            del self.tui_cache[terminal_uuid]
+                            del self.tui_cache_time[terminal_uuid]
+                        return False  # Don't re-cache result - let next call rebuild
+
+            # Fallback: vadjustment heuristic for alternate screen detection
             vadj = vte.get_vadjustment()
             if not vadj:
                 return False
@@ -653,21 +737,42 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             is_near_top = scroll_pos < 5
             has_minimal_scrollback = scrollback_rows < 10
 
-            dbg(f'TUI detection for {terminal_uuid}: scroll_pos={scroll_pos}, scrollback={scrollback_rows}, likely_tui={is_near_top and has_minimal_scrollback}')
-            return is_near_top and has_minimal_scrollback
+            result = is_near_top and has_minimal_scrollback
+            dbg(f'TUI detection for {terminal_uuid}: scroll_pos={scroll_pos}, scrollback={scrollback_rows}, likely_tui={result}')
+            self._cache_tui_result(terminal_uuid, result)
+            return result
 
         except Exception as e:
             err(f'TerminatorSidechat: Error detecting TUI state: {e}')
             return False
 
+    def _cache_tui_result(self, terminal_uuid, is_tui):
+        """Cache TUI detection result for performance."""
+        self.tui_cache[terminal_uuid] = is_tui
+        self.tui_cache_time[terminal_uuid] = time.time()
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='')
     def clear_cache(self):
-        """Clear content cache (useful when explicitly requested)"""
+        """Clear all caches (content and TUI detection)"""
         self.content_cache.clear()
         self.last_capture.clear()
-        dbg('Content cache cleared')
+        self.tui_cache.clear()
+        self.tui_cache_time.clear()
+        dbg('All caches cleared (content + TUI detection)')
 
     def unload(self):
         """Clean up when plugin is unloaded"""
         self.clear_cache()
+
+        # Release D-Bus service if we acquired it
+        if self.bus_name:
+            try:
+                # Note: dbus-python doesn't have an explicit release method,
+                # but the BusName will be released when the object is garbage collected.
+                # Setting to None helps ensure this happens promptly.
+                self.bus_name = None
+                dbg('D-Bus service name reference released')
+            except Exception as e:
+                dbg(f'Could not release D-Bus service: {e}')
+
         dbg('TerminatorSidechat unloaded')

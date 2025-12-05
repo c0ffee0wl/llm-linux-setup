@@ -1810,6 +1810,12 @@ mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
+# Install shared Python module for prompt detection (PEP 420 namespace package)
+log "Installing shared prompt detection module..."
+PYTHON_USER_SITE=$(python3 -m site --user-site)
+mkdir -p "$PYTHON_USER_SITE/llm_tools"
+cp "$SCRIPT_DIR/context/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
+
 # Install Terminator sidechat components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Installing Terminator sidechat integration..."

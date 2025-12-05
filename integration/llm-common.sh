@@ -25,8 +25,7 @@ llm() {
         "aliases" "logs" "install" "uninstall"
         "openai" "gemini" "openrouter" "vertex"
         "cmd" "cmdcomp" "jq"
-        "rag" "git-commit" "sort"
-        "consortium" "classify"
+        "rag" "git-commit" "sort" "consortium" "classify"
     )
 
     # Check if first argument is an excluded subcommand

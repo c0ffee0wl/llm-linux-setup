@@ -26,9 +26,13 @@ from llm.cli import load_template, resolve_fragments, FragmentNotFound
 # Add system site-packages to path for dbus and other system-only packages
 # (Must be AFTER llm imports to avoid typing_extensions conflicts)
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
+# Add user site-packages for llm_tools module (uv's isolated env doesn't include it)
+import site
+sys.path.insert(0, site.getusersitepackages())
 import os
 import re
 import time
+import tempfile
 import asyncio
 import threading
 import dbus
@@ -44,40 +48,13 @@ from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from typing import List, Optional, Tuple, Dict
 
-
-class PromptDetector:
-    """Detect shell prompts to determine command completion"""
-
-    # Common prompt patterns
-    BASH_PROMPT = re.compile(r'[\$#]\s*$')
-    ZSH_PROMPT = re.compile(r'[%❯→➜]\s*$')
-    # Kali two-line prompt (with optional error indicator like "1 ⨯")
-    KALI_PROMPT = re.compile(r'┌──.*\n└─[\$#]\s*(?:\d+\s*[⨯✗×])?\s*$')
-    # Generic fallback
-    GENERIC_PROMPT = re.compile(r'^[\w@\-]+[:#\$>]\s*$', re.MULTILINE)
-
-    @staticmethod
-    def detect_prompt(text: str) -> bool:
-        """Check if text ends with a shell prompt"""
-        if not text or len(text.strip()) == 0:
-            return False
-
-        # Get last few lines
-        lines = text.strip().split('\n')
-        last_line = lines[-1] if lines else ""
-        last_two = '\n'.join(lines[-2:]) if len(lines) >= 2 else last_line
-
-        # Check patterns
-        if PromptDetector.BASH_PROMPT.search(last_line):
-            return True
-        if PromptDetector.ZSH_PROMPT.search(last_line):
-            return True
-        if PromptDetector.KALI_PROMPT.search(last_two):
-            return True
-        if PromptDetector.GENERIC_PROMPT.search(last_line):
-            return True
-
-        return False
+# Import shared prompt detection module
+try:
+    from llm_tools.prompt_detection import PromptDetector
+except ImportError:
+    # Fallback for development - import from context directory
+    sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'context'))
+    from prompt_detection import PromptDetector
 
 
 # Common TUI applications that use screenshot capture instead of text
@@ -119,20 +96,11 @@ TUI_COMMANDS = {
     'calcurse', 'khal',
 }
 
-# Pattern to detect special keys that should be routed to keypress handler
-# Matches function keys, navigation keys, and key combinations
-SPECIAL_KEY_PATTERN = re.compile(
-    r'^(F[1-9]|F1[0-2]|Enter|Return|Escape|Esc|Tab|Backspace|Delete|Insert|'
-    r'Home|End|PageUp|PageDown|Up|Down|Left|Right|Space|'
-    r'Ctrl\+[A-Z]|Alt\+[A-Za-z]+|Shift\+Tab)$',
-    re.IGNORECASE
-)
-
-# Patterns for AI-requested captures
-# [📷] or [📷 all] - request screenshot
-SCREENSHOT_REQUEST_PATTERN = re.compile(r'\[📷(?:\s+(all))?\]', re.IGNORECASE)
-# [🔄] - request context refresh
-CONTEXT_REFRESH_PATTERN = re.compile(r'\[🔄\]')
+# Patterns for AI-requested captures (XML tags)
+# <CAPTURE/> or <CAPTURE>all</CAPTURE> - request screenshot
+SCREENSHOT_REQUEST_PATTERN = re.compile(r'<CAPTURE(?:\s*/\s*>|>(all)?</CAPTURE>)', re.IGNORECASE)
+# <REFRESH/> - request context refresh
+CONTEXT_REFRESH_PATTERN = re.compile(r'<REFRESH\s*/?\s*>', re.IGNORECASE)
 
 
 def is_tui_command(command: str) -> bool:
@@ -210,7 +178,7 @@ class TerminatorSidechatSession:
         except Exception as e:
             self.console.print(f"[yellow]⚠ Could not load terminator-sidechat template: {e}[/]")
             self.console.print("[yellow]Using basic system prompt. Install template with: ./install-llm-tools.sh[/]")
-            self.system_prompt = "You are an AI terminal assistant. Provide commands in ```bash blocks."
+            self.system_prompt = "You are an AI terminal assistant. Provide commands in <EXECUTE>command</EXECUTE> XML tags."
 
         # Store original system prompt for context squashing
         # This prevents infinite growth when squashing multiple times
@@ -223,6 +191,10 @@ class TerminatorSidechatSession:
         # Context management (like tmuxai)
         self.max_context_size = 100000  # tokens
         self.context_squash_threshold = 0.8  # 80%
+
+        # Token count cache (avoids O(n) recalculation on every input)
+        self._cached_token_count = 0
+        self._cached_response_count = 0
 
         # Watch mode (thread-safe)
         self.watch_mode = False
@@ -243,8 +215,7 @@ class TerminatorSidechatSession:
             'min_wait_before_stability': 0.5,  # Minimum wait before allowing stability detection
         }
 
-        # Plugin and D-Bus connections
-        self.plugin = None
+        # D-Bus connections
         self.dbus_service = None
 
         # Track screenshot files for cleanup
@@ -301,7 +272,7 @@ class TerminatorSidechatSession:
                     pid = f.read().strip()
                     if pid:
                         self.console.print(f"[yellow]Existing instance PID: {pid}[/]")
-            except:
+            except Exception:
                 pass
 
             sys.exit(1)
@@ -414,7 +385,7 @@ class TerminatorSidechatSession:
             # Ensure we log errors but don't prevent shutdown
             try:
                 self.console.print(f"[yellow]Warning during shutdown: {e}[/]")
-            except:
+            except Exception:
                 # If console fails, write to stderr
                 print(f"Warning during shutdown: {e}", file=sys.stderr)
 
@@ -430,7 +401,7 @@ class TerminatorSidechatSession:
         if self.debug:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
 
-    def _normalize_uuid(self, uuid_value) -> str:
+    def _normalize_uuid(self, uuid_value) -> Optional[str]:
         """Normalize UUID to Python string (ensures dbus.String -> str conversion)"""
         if uuid_value is None or uuid_value == '':
             return None
@@ -690,6 +661,7 @@ class TerminatorSidechatSession:
         stable_count = 0
         attempt = 0
         current_interval = poll_interval
+        current_content = ""  # Initialize to avoid NameError if loop doesn't execute
 
         # Spinner animation characters
         spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
@@ -720,17 +692,17 @@ class TerminatorSidechatSession:
             min_wait = self.capture_config.get('min_wait_before_stability', 0.5)
 
             if current_content == previous_content:
-                stable_count += 1
-
                 # Apply minimum wait before allowing stability detection
                 if elapsed < min_wait:
-                    # Too early - reset stability even if content matches
-                    stable_count = 0
-                    previous_content = current_content
+                    # Too early - don't count toward stability yet
                     # Show why we're not accepting stability yet
                     sys.stdout.write(f"\r⏱  Too early for stability ({elapsed:.1f}s < {min_wait}s)   ")
                     sys.stdout.flush()
-                elif stable_count >= stability_checks:
+                else:
+                    # Time constraint met, count this as a stable match
+                    stable_count += 1
+
+                if stable_count >= stability_checks:
                     # Content appears stable - validate with size heuristic
                     content_len = len(current_content) if current_content else 0
 
@@ -790,16 +762,17 @@ class TerminatorSidechatSession:
             self.console.print(f"[red]Snapshot capture error: {e}[/]")
             return ""
 
-    def wait_for_tui_render(self, terminal_uuid, max_wait=2.0) -> bool:
+    def wait_for_tui_render(self, terminal_uuid, max_wait=2.0, initial_content=None) -> bool:
         """
         Wait for TUI application to finish rendering by detecting content stability.
 
-        Uses polling to detect when two consecutive captures are identical,
-        indicating the TUI has finished its initial render.
+        First waits for content to CHANGE from initial state (TUI starting),
+        then waits for stability (TUI finished rendering).
 
         Args:
             terminal_uuid: Terminal to monitor
             max_wait: Maximum wait time in seconds (default: 2.0)
+            initial_content: Terminal content before command was sent (for change detection)
 
         Returns:
             True if content stabilized, False if timed out
@@ -808,11 +781,22 @@ class TerminatorSidechatSession:
         poll_interval = 0.15
         previous_content = None
         stable_count = 0
+        content_changed = initial_content is None  # Skip change detection if no initial
 
         while time.time() - start_time < max_wait:
             try:
                 current_content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
+                # First, wait for content to change from initial state
+                if not content_changed:
+                    if current_content != initial_content:
+                        content_changed = True
+                        self._debug(f"TUI content changed after {time.time() - start_time:.2f}s")
+                        previous_content = current_content
+                    time.sleep(poll_interval)
+                    continue
+
+                # Then check for stability
                 if current_content == previous_content:
                     stable_count += 1
                     if stable_count >= 2:  # Stable for 2 consecutive polls
@@ -830,11 +814,14 @@ class TerminatorSidechatSession:
         self._debug(f"TUI render wait timed out after {max_wait}s")
         return False  # Timeout - proceed anyway
 
-    def prompt_based_capture(self, terminal_uuid, max_wait=30) -> Tuple[bool, str]:
+    def prompt_based_capture(self, terminal_uuid, max_wait=30, initial_content=None) -> Tuple[bool, str]:
         """
         Capture terminal content using prompt detection instead of stability checks.
 
-        Polls terminal and stops immediately when a shell prompt is detected.
+        Polls terminal and stops when content has changed from initial state AND
+        a shell prompt is detected at the end. This prevents false positives from
+        the old prompt that was visible before the command started.
+
         Falls back to timeout for long-running commands or TUI applications.
 
         This is ideal for:
@@ -845,6 +832,7 @@ class TerminatorSidechatSession:
         Args:
             terminal_uuid: Terminal to capture
             max_wait: Maximum wait time in seconds (default: 30)
+            initial_content: Terminal content before command was sent (for change detection)
 
         Returns:
             Tuple of (prompt_detected, content)
@@ -859,13 +847,21 @@ class TerminatorSidechatSession:
 
         # Spinner animation
         spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        content_changed = initial_content is None  # If no initial content, skip change detection
+        content = ""  # Initialize to avoid NameError if loop doesn't execute
 
         for attempt in range(max_attempts):
             try:
                 content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
-                # Check for prompt immediately
-                if content and PromptDetector.detect_prompt(content):
+                # First, check if content has changed from initial state
+                if not content_changed:
+                    if content != initial_content:
+                        content_changed = True
+                        self._debug("Content changed from initial state")
+
+                # Only check for prompt after content has changed
+                if content_changed and content and PromptDetector.detect_prompt_at_end(content):
                     # Clear spinner and return
                     sys.stdout.write("\r" + " " * 60 + "\r")
                     sys.stdout.flush()
@@ -874,7 +870,8 @@ class TerminatorSidechatSession:
                 # Visual feedback
                 spinner = spinner_chars[attempt % len(spinner_chars)]
                 elapsed = initial_delay + (attempt * poll_interval)
-                sys.stdout.write(f"\r{spinner} Waiting for prompt ({elapsed:.1f}s)")
+                status = "Waiting for output" if not content_changed else "Waiting for prompt"
+                sys.stdout.write(f"\r{spinner} {status} ({elapsed:.1f}s)")
                 sys.stdout.flush()
 
                 time.sleep(poll_interval)
@@ -907,12 +904,14 @@ class TerminatorSidechatSession:
             context_parts = []
 
             for term in terminals:
+                term_uuid = self._normalize_uuid(term['uuid'])
+
                 # Skip chat terminal (self-awareness)
-                if term['uuid'] == self.chat_terminal_uuid:
+                if term_uuid == self.chat_terminal_uuid:
                     continue
 
                 # Optionally skip exec terminal
-                if not include_exec_output and term['uuid'] == self.exec_terminal_uuid:
+                if not include_exec_output and term_uuid == self.exec_terminal_uuid:
                     continue
 
                 # Capture visible content (auto-detect viewport size)
@@ -946,7 +945,7 @@ class TerminatorSidechatSession:
             timeout_warnings = []
 
             for term in terminals:
-                uuid = term.get('uuid')
+                uuid = self._normalize_uuid(term.get('uuid'))
 
                 # Skip chat terminal (self-awareness)
                 if uuid == self.chat_terminal_uuid:
@@ -979,28 +978,73 @@ class TerminatorSidechatSession:
             return ""
 
     def estimate_tokens(self) -> int:
-        """Estimate token count from conversation responses and system prompt"""
-        total_chars = 0
-        try:
-            # Count system prompt
-            total_chars += len(self.system_prompt)
+        """Estimate token count from conversation responses and system prompt.
 
-            # Count all responses (includes prompts and AI responses)
-            for response in self.conversation.responses:
+        Uses incremental caching to avoid O(n) recalculation on every call.
+        Only counts new responses since last cache update.
+        """
+        try:
+            current_response_count = len(self.conversation.responses)
+
+            # If conversation was reset/squashed (fewer responses), reset cache
+            if current_response_count < self._cached_response_count:
+                self._cached_token_count = len(self.system_prompt)
+                self._cached_response_count = 0
+
+            # If no new responses, return cached value
+            if current_response_count == self._cached_response_count:
+                # Ensure system prompt is counted even with no responses
+                if self._cached_token_count == 0:
+                    self._cached_token_count = len(self.system_prompt)
+                return self._cached_token_count // 4
+
+            # Count only NEW responses (incremental update)
+            new_chars = 0
+            for response in self.conversation.responses[self._cached_response_count:]:
                 # Count the prompt
                 if hasattr(response, 'prompt'):
                     prompt_obj = response.prompt
                     if hasattr(prompt_obj, 'prompt'):
-                        total_chars += len(str(prompt_obj.prompt))
+                        new_chars += len(str(prompt_obj.prompt))
                     if hasattr(prompt_obj, 'system') and prompt_obj.system:
-                        total_chars += len(str(prompt_obj.system))
+                        new_chars += len(str(prompt_obj.system))
 
                 # Count the response text
+                # NOTE: Accessing internal llm library attribute '_chunks' for response text.
+                # This is fragile and may break if llm library internals change.
+                # hasattr check provides graceful degradation if attribute is removed.
                 if hasattr(response, '_chunks'):
-                    total_chars += sum(len(chunk) for chunk in response._chunks)
+                    new_chars += sum(len(chunk) for chunk in response._chunks)
+                else:
+                    # Warn about API degradation (only once per session)
+                    if not hasattr(self, '_api_warning_shown'):
+                        self.console.print("[yellow]⚠ Warning: Token estimation using fallback (llm API may have changed)[/]")
+                        self._api_warning_shown = True
+                    # Fallback: use response.text() length
+                    try:
+                        new_chars += len(response.text())
+                    except:
+                        pass  # Silently skip if text() also unavailable
+
+            # Update cache (add system prompt on first count)
+            if self._cached_response_count == 0 and self._cached_token_count == 0:
+                self._cached_token_count = len(self.system_prompt)
+            self._cached_token_count += new_chars
+            self._cached_response_count = current_response_count
+
+            return self._cached_token_count // 4
+
         except Exception as e:
             self.console.print(f"[yellow]Warning: Token estimation failed: {e}[/]")
-        return total_chars // 4
+            # Fallback: estimate from conversation object
+            try:
+                total_chars = len(self.system_prompt)
+                for resp in self.conversation.responses:
+                    total_chars += len(str(resp))
+                return total_chars // 4
+            except:
+                # Ultimate fallback: use fixed estimate
+                return len(self.conversation.responses) * 1000  # ~1000 tokens per exchange
 
     def check_and_squash_context(self):
         """Auto-squash when context reaches threshold (like tmuxai)"""
@@ -1024,14 +1068,34 @@ class TerminatorSidechatSession:
             summary_parts = []
             for i, response in enumerate(responses_to_squash, 1):
                 # Extract prompt text
+                # NOTE: Accessing internal llm library attributes '_prompt' and '_chunks'.
+                # This is fragile and may break if llm library internals change.
                 prompt_text = ""
-                if hasattr(response, 'prompt') and hasattr(response.prompt, '_prompt'):
-                    prompt_text = response.prompt._prompt or ""
+                if hasattr(response, 'prompt'):
+                    if hasattr(response.prompt, '_prompt'):
+                        prompt_text = response.prompt._prompt or ""
+                    elif hasattr(response.prompt, 'prompt'):
+                        # Try public API first
+                        prompt_text = str(response.prompt.prompt) or ""
+                    else:
+                        # Fallback: stringify entire prompt object
+                        try:
+                            prompt_text = str(response.prompt)[:500]  # Limit length
+                        except:
+                            prompt_text = "[prompt unavailable]"
 
                 # Extract response text
                 response_text = ""
                 if hasattr(response, '_chunks'):
                     response_text = "".join(response._chunks)
+                elif hasattr(response, 'text'):
+                    # Fallback to public text() method
+                    try:
+                        response_text = response.text()
+                    except:
+                        response_text = "[response unavailable]"
+                else:
+                    response_text = str(response)[:500]  # Last resort
 
                 if prompt_text:
                     summary_parts.append(f"{i}. User: {prompt_text[:200]}...")
@@ -1074,34 +1138,63 @@ Provide a brief but comprehensive summary."""
             self.console.print(f"[red]Error squashing context: {e}[/]")
 
     def extract_commands(self, text: str) -> List[str]:
-        """Extract bash commands from ```bash code blocks"""
-        # Flexible pattern: allows whitespace after ```bash and optional newline before closing ```
-        pattern = r'```bash\s*\n(.*?)\n?```'
-        matches = re.findall(pattern, text, re.DOTALL)
-        return [cmd.strip() for cmd in matches if cmd.strip()]
+        """Extract commands from <EXECUTE>...</EXECUTE> XML tags.
+
+        Each <EXECUTE> tag contains one command to execute.
+        Multi-line content within a single tag is split into separate commands.
+        """
+        pattern = r'<EXECUTE>(.*?)</EXECUTE>'
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
+
+        commands = []
+        for block in matches:
+            # Split multi-line blocks into individual commands
+            for line in block.split('\n'):
+                line = line.strip()
+                # Skip empty lines and comments
+                if not line or line.startswith('#'):
+                    continue
+                commands.append(line)
+
+        return commands
+
+    def escape_action_tags_for_display(self, text: str) -> str:
+        """Remove XML action tags, show only content in backticks.
+
+        <EXECUTE>cmd</EXECUTE> → `cmd`
+        <PRESSKEY>q</PRESSKEY> → `q`
+        """
+        # Replace content tags with backtick-wrapped content
+        text = re.sub(r'<EXECUTE>(.*?)</EXECUTE>', r'`\1`', text, flags=re.DOTALL|re.IGNORECASE)
+        text = re.sub(r'<PRESSKEY>(.*?)</PRESSKEY>', r'`\1`', text, flags=re.DOTALL|re.IGNORECASE)
+        # Replace self-closing tags with placeholder
+        text = re.sub(r'<CAPTURE(?:>.*?</CAPTURE>|/?>)', '`[capture]`', text, flags=re.IGNORECASE)
+        text = re.sub(r'<REFRESH/?>', '`[refresh]`', text, flags=re.IGNORECASE)
+        return text
 
     def extract_keypresses(self, text: str) -> List[str]:
-        """Extract keypresses from [▸] keypress blocks"""
-        # Pattern: [▸] followed by keypress text (can be special key name or literal text)
-        # Matches: [▸] :q  or  [▸] Enter  or  [▸] print("hello")
-        pattern = r'\[▸\]\s*(.+?)(?=\n|$)'
-        matches = re.findall(pattern, text, re.MULTILINE)
+        """Extract keypresses from <PRESSKEY>...</PRESSKEY> XML tags.
+
+        Each <PRESSKEY> tag contains one keypress to send.
+        Examples: <PRESSKEY>Ctrl+C</PRESSKEY>, <PRESSKEY>:wq</PRESSKEY>, <PRESSKEY>Enter</PRESSKEY>
+        """
+        pattern = r'<PRESSKEY>(.*?)</PRESSKEY>'
+        matches = re.findall(pattern, text, re.DOTALL | re.IGNORECASE)
         return [kp.strip() for kp in matches if kp.strip()]
 
     def extract_screenshot_requests(self, text: str) -> List[str]:
-        """
-        Extract screenshot requests from [📷] blocks.
+        """Extract screenshot requests from <CAPTURE/> XML tags.
 
         Returns list of screenshot types:
-        - 'exec' for [📷] (default - exec terminal only)
-        - 'all' for [📷 all] (all terminals)
+        - 'exec' for <CAPTURE/> (default - exec terminal only)
+        - 'all' for <CAPTURE>all</CAPTURE> (all terminals)
         """
         matches = SCREENSHOT_REQUEST_PATTERN.findall(text)
         # findall returns the capture group (the 'all' part or empty string)
-        return ['all' if m.lower() == 'all' else 'exec' for m in matches] if matches else []
+        return ['all' if m and m.lower() == 'all' else 'exec' for m in matches] if matches else []
 
     def extract_context_refresh_requests(self, text: str) -> bool:
-        """Check if text contains a context refresh request [🔄]"""
+        """Check if text contains a context refresh request <REFRESH/>"""
         return bool(CONTEXT_REFRESH_PATTERN.search(text))
 
     def process_fragments(self, prompt: str):
@@ -1157,7 +1250,7 @@ Provide a brief but comprehensive summary."""
             if content and len(content) > 100:
                 # Sanity check: verify prompt markers are present
                 # This confirms command completed and shell is ready
-                if PromptDetector.detect_prompt(content):
+                if PromptDetector.detect_prompt_at_end(content):
                     return (True, content)
                 else:
                     # Content stable but no clear prompt - might be TUI or long output
@@ -1217,14 +1310,6 @@ Provide a brief but comprehensive summary."""
         Returns:
             Tuple of (executed: bool, output: str or tuple)
         """
-        # Smart detection: Check if this "command" is actually a special key
-        # If so, automatically route to keypress handler instead
-        if SPECIAL_KEY_PATTERN.match(command.strip()):
-            self.console.print("[yellow]ℹ Detected special key in command block, routing to keypress handler[/]")
-            executed = self.execute_keypress(command.strip())
-            # Return tuple to match execute_command's return signature (bool, str)
-            return (executed, "")
-
         self.console.print(Panel(
             Text(command, style="bold cyan"),
             title="[bold]Command to Execute[/]",
@@ -1252,6 +1337,14 @@ Provide a brief but comprehensive summary."""
             if not self._recreate_exec_terminal():
                 return (False, "")
 
+        # Capture terminal content BEFORE sending command (for change detection)
+        try:
+            initial_content = self.plugin_dbus.capture_terminal_content(
+                self.exec_terminal_uuid, -1
+            )
+        except Exception:
+            initial_content = None  # Fallback: skip change detection
+
         # Send to Exec terminal
         try:
             success = self.plugin_dbus.send_keys_to_terminal(
@@ -1270,7 +1363,8 @@ Provide a brief but comprehensive summary."""
                     self.console.print("[cyan]TUI application detected - using screenshot capture[/]")
 
                     # Adaptive wait for TUI to render (replaces fixed 1.5s delay)
-                    self.wait_for_tui_render(self.exec_terminal_uuid, max_wait=2.0)
+                    # Pass initial_content so we wait for content to change first
+                    self.wait_for_tui_render(self.exec_terminal_uuid, max_wait=2.0, initial_content=initial_content)
 
                     try:
                         # Capture screenshot via plugin
@@ -1288,7 +1382,7 @@ Provide a brief but comprehensive summary."""
                         import base64
                         image_bytes = base64.b64decode(screenshot_data)
 
-                        temp_path = f"/tmp/sidechat_screenshot_{int(time.time())}.png"
+                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
                         with open(temp_path, 'wb') as f:
                             f.write(image_bytes)
 
@@ -1316,7 +1410,8 @@ Screenshot size: {len(image_bytes)} bytes"""
                     # Regular command - use prompt-based capture
                     prompt_detected, output = self.prompt_based_capture(
                         self.exec_terminal_uuid,
-                        max_wait=30
+                        max_wait=30,
+                        initial_content=initial_content
                     )
 
                     if prompt_detected:
@@ -1411,10 +1506,22 @@ Screenshot size: {len(image_bytes)} bytes"""
                 # This prevents race conditions with main thread's D-Bus operations
                 context = None
                 response_text = None
+                exec_status = ""
 
                 with self.watch_lock:
                     # Capture all terminal content (including exec output for watch)
                     context = self.capture_context(include_exec_output=True)
+
+                    # Check exec terminal idle state using PromptDetector
+                    try:
+                        exec_content = self.plugin_dbus.capture_terminal_content(
+                            self.exec_terminal_uuid, -1
+                        )
+                        if exec_content:
+                            is_idle = PromptDetector.detect_prompt_at_end(exec_content)
+                            exec_status = "[Exec: idle]" if is_idle else "[Exec: command running]"
+                    except Exception:
+                        exec_status = "[Exec: unknown]"
 
                     if not context.strip():
                         # Release lock and sleep if no context
@@ -1422,6 +1529,7 @@ Screenshot size: {len(image_bytes)} bytes"""
                     else:
                         # Build and send prompt while holding lock
                         prompt = f"""[Watch Mode] Goal: {self.watch_goal}
+{exec_status}
 
 Current terminal state:
 {context}
@@ -1467,7 +1575,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
 
 /help              Show this help message
 /clear             Clear conversation history
-/reset             Clear conversation and reset terminal states
+/reset             Full reset: clear history and remove squash summaries
 /refresh           Refresh terminal context (re-capture current state)
 /model <name>      Switch model or list available models
 /info              Show session information
@@ -1479,7 +1587,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
 
 [bold]Usage:[/]
 - Type messages to chat with AI
-- AI provides commands in ```bash blocks
+- AI provides commands in <EXECUTE> tags
 - Commands are sent to Exec terminal with approval
 """, title="Sidechat Help", border_style="cyan"))
             return True
@@ -1514,7 +1622,7 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
                                 pass
 
                 # Clear plugin cache
-                if self.plugin:
+                if hasattr(self, 'plugin_dbus') and self.plugin_dbus:
                     self.plugin_dbus.clear_cache()
 
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
@@ -1601,7 +1709,16 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
             return True
 
         elif cmd == "/watch":
-            if not args or args.lower() == "off":
+            if not args:
+                # No args: show status with usage hint
+                if self.watch_mode:
+                    self.console.print(f"[green]Watch mode: enabled[/]")
+                    self.console.print(f"Goal: {self.watch_goal}")
+                    self.console.print(f"Interval: {self.watch_interval}s")
+                else:
+                    self.console.print("[yellow]Watch mode: disabled[/]")
+                    self.console.print("[dim]Usage: /watch <goal> to enable[/]")
+            elif args.lower() == "off":
                 # Disable watch mode
                 if self.watch_mode:
                     with self.watch_lock:
@@ -1612,6 +1729,9 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                                 self.event_loop.call_soon_threadsafe(self.event_loop.stop)
                             except Exception:
                                 pass
+                    # Wait for watch thread to finish (prevents multiple threads)
+                    if self.watch_thread and self.watch_thread.is_alive():
+                        self.watch_thread.join(timeout=2.0)
                     self.console.print("[yellow]Watch mode disabled[/]")
                 else:
                     self.console.print("[yellow]Watch mode is already off[/]")
@@ -1625,10 +1745,20 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                     self.console.print("[yellow]Watch mode: disabled[/]")
             else:
                 # Enable watch mode with goal
+                # First stop any existing watch thread to prevent multiple threads
+                if self.watch_thread and self.watch_thread.is_alive():
+                    with self.watch_lock:
+                        self.watch_mode = False
+                        if self.event_loop:
+                            try:
+                                self.event_loop.call_soon_threadsafe(self.event_loop.stop)
+                            except Exception:
+                                pass
+                    self.watch_thread.join(timeout=2.0)
+
                 with self.watch_lock:
                     self.watch_mode = True
                     self.watch_goal = args
-                    # Start watch thread immediately
                     self._start_watch_mode_thread()
                 self.console.print(f"[green]✓[/] Watch mode enabled")
                 self.console.print(f"Goal: {self.watch_goal}")
@@ -1667,8 +1797,6 @@ Type /help for slash commands
 Type 'exit' or 'quit' to exit
 Type !multi to enter multiple lines, then !end to finish
 Type !fragment <name> [...] to insert fragments
-
-[dim]AI will suggest [▸] keypresses for interactive apps[/]
 """,
             title="llm-sidechat",
             border_style="green"
@@ -1756,30 +1884,7 @@ Type !fragment <name> [...] to insert fragments
                         break
                     continue
 
-                # Clear plugin cache to ensure fresh capture
-                try:
-                    self.plugin_dbus.clear_cache()
-                except Exception:
-                    pass  # Ignore if clear_cache not available
-
-                # Simple snapshot capture (no stability detection)
-                # Works better for TUI applications and provides instant feedback
-                context = self.capture_context(include_exec_output=True)
-
-                # Process fragments if present
-                processed_input, fragments = self.process_fragments(user_input)
-
-                # Build prompt with context
-                if context:
-                    full_prompt = f"""{processed_input}
-
-[Current terminal context]
-{context}
-"""
-                else:
-                    full_prompt = processed_input
-
-                # Check if we need to squash context
+                # Check if we need to squash context (before lock to avoid holding it during squash)
                 self.check_and_squash_context()
 
                 # Send to AI with streaming
@@ -1790,8 +1895,32 @@ Type !fragment <name> [...] to insert fragments
                 try:
                     self.console.print("\n[bold green]llm[/]")
 
-                    # Thread-safe conversation access
+                    # Thread-safe context capture AND conversation access
+                    # Extended lock scope fixes race condition with watch mode
                     with self.watch_lock:
+                        # Clear plugin cache inside lock to ensure atomic operation
+                        try:
+                            self.plugin_dbus.clear_cache()
+                        except Exception:
+                            pass  # Ignore if clear_cache not available
+
+                        # Simple snapshot capture (no stability detection)
+                        # Works better for TUI applications and provides instant feedback
+                        context = self.capture_context(include_exec_output=True)
+
+                        # Process fragments if present
+                        processed_input, fragments = self.process_fragments(user_input)
+
+                        # Build prompt with context
+                        if context:
+                            full_prompt = f"""{processed_input}
+
+[Current terminal context]
+{context}
+"""
+                        else:
+                            full_prompt = processed_input
+
                         # Pass system prompt if this is the first interaction
                         # Also pass fragments if any were specified
                         if len(self.conversation.responses) == 0:
@@ -1799,12 +1928,12 @@ Type !fragment <name> [...] to insert fragments
                         else:
                             response = self.conversation.prompt(full_prompt, attachments=fragments)
 
-                        # Stream the response with Rich Live display for proper markdown formatting
-                        # Using Live display to update markdown rendering as chunks arrive
-                        with Live(Markdown(""), console=self.console, refresh_per_second=10) as live:
-                            for chunk in response:
-                                response_text += chunk
-                                live.update(Markdown(response_text))
+                    # Stream the response OUTSIDE lock to avoid blocking watch mode
+                    # Using Live display to update markdown rendering as chunks arrive
+                    with Live(Markdown(""), console=self.console, refresh_per_second=10) as live:
+                        for chunk in response:
+                            response_text += chunk
+                            live.update(Markdown(self.escape_action_tags_for_display(response_text)))
 
                     # No need for extra newline - Rich Live handles formatting
                     stream_success = True
@@ -1937,7 +2066,7 @@ Please analyze the output and provide feedback if needed."""
                                         if not screenshot_data.startswith('ERROR'):
                                             import base64
                                             image_bytes = base64.b64decode(screenshot_data)
-                                            temp_path = f"/tmp/sidechat_screenshot_{term['uuid'][:8]}_{int(time.time())}.png"
+                                            temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{term['uuid'][:8]}_{int(time.time())}.png")
                                             with open(temp_path, 'wb') as f:
                                                 f.write(image_bytes)
                                             self.screenshot_files.append(temp_path)
@@ -1959,7 +2088,7 @@ Please analyze the output and provide feedback if needed."""
                                     else:
                                         import base64
                                         image_bytes = base64.b64decode(screenshot_data)
-                                        temp_path = f"/tmp/sidechat_screenshot_{int(time.time())}.png"
+                                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
                                         with open(temp_path, 'wb') as f:
                                             f.write(image_bytes)
                                         self.screenshot_files.append(temp_path)

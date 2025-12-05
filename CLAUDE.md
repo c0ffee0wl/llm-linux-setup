@@ -43,7 +43,13 @@ The repository includes an **automatic session recording and context extraction 
    - Filters out previous `context` command outputs (lines starting with `#c#`) to avoid recursion
    - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
 
-3. **LLM Integration** (`llm-tools-context/`): LLM plugin exposing context as a tool
+3. **Prompt Detection Module** (`context/prompt_detection.py`): Shared Python module
+   - PromptDetector class used by both context tool and llm-sidechat
+   - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
+   - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
+   - Installed to Python user site-packages (`python3 -m site --user-site`)/llm_tools/ in Phase 5
+
+4. **LLM Integration** (`llm-tools-context/`): LLM plugin exposing context as a tool
    - Registered as a tool that LLMs can call during conversations
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
@@ -133,6 +139,12 @@ The shell integration uses a **three-file pattern** located in the `integration/
 - **Coexistence**: Tab completion (plugin) and Ctrl+N (AI cmdcomp) serve different purposes - both work together
 - Only active in Zsh; Bash users can use Ctrl+N for AI-powered command suggestions
 
+**`wut` Function** (`integration/llm-common.sh`):
+- Explains the output of the last command using the context tool
+- Usage: `wut` (no arguments needed)
+- Uses `-t wut` template for structured explanations
+- Captures terminal context and sends to LLM for analysis
+
 **When adding new shell features**:
 - Shell-agnostic → `integration/llm-common.sh`
 - Bash-specific (readline bindings) → `integration/llm-integration.bash`
@@ -145,7 +157,7 @@ The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
-2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat
+2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat, install pymupdf_layout for enhanced PDF processing
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (llm-uv-tool intercepts for persistence; includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
@@ -229,6 +241,14 @@ The installation script uses **helper functions** to eliminate code duplication 
     - Git URL not in uv-packages.json → migration needed, install with --upgrade
     - Already installed with correct source → skip (logs "X is already installed")
   - **Performance**: Reduces plugin phase from ~20-40s to ~2-5s on subsequent runs
+- **`npm_install(package_name)`**: NPM global installation with retry logic (used in Phase 7)
+  - 3 attempts with 2-second delay between retries
+  - Handles ENOTEMPTY errors by detecting and removing conflicting directories
+  - Auto-detects if sudo is required based on write permissions
+- **`install_or_upgrade_npm_global(package_name)`**: Version-aware npm package management (used in Phase 7)
+- **`upgrade_npm_global_if_installed(package_name)`**: Conditional upgrade only if package already installed
+- **`prompt_for_session_log_dir()`**: Interactive first-run prompt for session log storage preference (used in Phase 5)
+- **`prompt_for_session_log_silent()`**: Interactive first-run prompt for silent mode preference (used in Phase 5)
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -409,6 +429,11 @@ Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provi
 - ✅ User modifications preserved via checksum tracking
 - ✅ Auto-disables Claude Code updater (`DISABLE_AUTOUPDATER=1` in `llm-common.sh`)
 
+**Dual-Provider Auto-Configuration:**
+- When Azure is configured but Gemini is not, Phase 7 prompts to configure Gemini for web search
+- Enables the dual-provider routing (Azure primary + Gemini web search) automatically
+- This allows Claude Code Router to use Azure for all tasks except web search, which uses Gemini
+
 **Environment Variables:**
 - Must run `source ~/.profile` to load in current session
 - Automatically available in new login shells
@@ -586,6 +611,7 @@ whisper-ctranslate2 file.mp3 --model large-v3-turbo --compute_type int8 --batche
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
 - **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
+- **`llm-template/wut.yaml`**: Template for explaining terminal command output (used by `wut` function)
 - **`scripts/transcribe`**: Speech-to-text wrapper script using faster-whisper (whisper-ctranslate2)
 - **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
@@ -939,3 +965,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 - **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
 - **imagemage**: Installed from Go package: `github.com/quinnypig/imagemage@latest` (only when Gemini is configured and Go 1.22+ available)
+- **llm-anthropic**: Anthropic API plugin (PyPI)
+- **llm-openrouter**: OpenRouter API plugin (PyPI)
+- **llm-tools-quickjs**: QuickJS runtime for llm (PyPI)
+- **llm-tools-sqlite**: SQLite query tool (PyPI)
