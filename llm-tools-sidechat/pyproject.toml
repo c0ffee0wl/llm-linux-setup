@@ -1,0 +1,23 @@
+[project]
+name = "llm-tools-sidechat"
+version = "0.1.0"
+description = "LLM tools for terminal control in sidechat - provides structured tool calling for command execution"
+readme = "README.md"
+authors = [{name = "c0ffee0wl"}]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License"
+]
+dependencies = [
+    "llm"
+]
+
+[project.urls]
+Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
+
+[project.entry-points.llm]
+sidechat = "llm_tools_sidechat"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

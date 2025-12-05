@@ -19,8 +19,12 @@ License: GPL v2 only
 """
 
 import sys
+import json
+import base64
+import uuid
 
 import llm
+from llm import Tool, ToolResult, Attachment
 from llm.cli import load_template, resolve_fragments, FragmentNotFound
 
 # Add system site-packages to path for dbus and other system-only packages
@@ -113,6 +117,128 @@ PRESSKEY_PATTERN = re.compile(
     r'<\s*PRESSKEY\s*>(.*?)<\s*/\s*PRESSKEY\s*>',
     re.DOTALL | re.IGNORECASE
 )
+
+
+# =============================================================================
+# Tool Definitions for Structured Output
+# =============================================================================
+# These tools provide structured interfaces for terminal operations.
+# They are "stub" tools - they return structured JSON to indicate intent,
+# but the actual execution is handled by the sidechat main loop.
+# This approach provides schema validation at the model level.
+
+def execute_in_terminal(command: str) -> str:
+    """
+    Execute a shell command in the Exec terminal.
+
+    Use this tool to run commands in the designated execution terminal.
+    The command will be sent to the terminal and its output captured.
+
+    Always explain your reasoning before using this tool - describe what
+    you're about to do and why.
+
+    Args:
+        command: The shell command to execute (e.g., "ls -la", "git status")
+
+    Returns:
+        JSON indicating the command has been queued for execution.
+        Actual execution is handled by sidechat with user approval.
+    """
+    return json.dumps({
+        "action": "execute",
+        "command": command,
+        "status": "queued"
+    })
+
+
+def send_keypress(keypress: str) -> str:
+    """
+    Send a keypress or key sequence to the Exec terminal.
+
+    Use this for interactive applications (TUIs) that need keyboard input,
+    such as vim, less, htop, or any application expecting keypresses.
+
+    Supported special keys:
+    - Enter, Escape, Tab, Space, Backspace, Delete
+    - Ctrl+<key> (e.g., "Ctrl+C", "Ctrl+D", "Ctrl+Z")
+    - Alt+<key> (e.g., "Alt+F", "Alt+B")
+    - Arrow keys: Up, Down, Left, Right
+    - Function keys: F1-F12
+    - Page keys: PageUp, PageDown, Home, End
+
+    For regular text input, just use the characters directly (e.g., ":wq" for vim).
+
+    Always explain your reasoning before using this tool.
+
+    Args:
+        keypress: The key or key sequence to send (e.g., "Enter", "Ctrl+C", ":wq", "q")
+
+    Returns:
+        JSON indicating the keypress has been queued.
+        Actual execution is handled by sidechat with user approval.
+    """
+    return json.dumps({
+        "action": "keypress",
+        "key": keypress,
+        "status": "queued"
+    })
+
+
+def capture_terminal(scope: str = "exec") -> str:
+    """
+    Capture terminal content or screenshot.
+
+    Use this to see the current state of the terminal(s). For TUI applications
+    (vim, htop, etc.), this captures a screenshot. For regular command output,
+    it captures the text content.
+
+    Args:
+        scope: Which terminals to capture:
+               - "exec": Only the Exec terminal (default)
+               - "all": All visible terminals
+
+    Returns:
+        JSON indicating capture has been queued.
+        The captured content will be provided in the next context.
+    """
+    valid_scopes = ["exec", "all"]
+    if scope not in valid_scopes:
+        scope = "exec"
+
+    return json.dumps({
+        "action": "capture",
+        "scope": scope,
+        "status": "queued"
+    })
+
+
+def refresh_context() -> str:
+    """
+    Refresh the terminal context before continuing.
+
+    Use this when you need updated terminal content before deciding
+    what to do next. This is useful when:
+    - You're waiting for a long-running command to complete
+    - You want to see the current state without executing anything
+    - The terminal content may have changed since your last observation
+
+    Returns:
+        JSON indicating refresh has been queued.
+        Updated context will be provided in the next message.
+    """
+    return json.dumps({
+        "action": "refresh",
+        "status": "queued"
+    })
+
+
+# Create Tool objects from the functions
+SIDECHAT_TOOLS = [
+    Tool.function(execute_in_terminal),
+    Tool.function(send_keypress),
+    Tool.function(capture_terminal),
+    Tool.function(refresh_context),
+]
 
 
 def is_tui_command(command: str) -> bool:
@@ -2000,6 +2126,204 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
             self.console.print("Type /help for available commands")
             return True
 
+    def _process_tool_call(self, tool_call) -> ToolResult:
+        """Process a single tool call and return the result.
+
+        Handles: execute_in_terminal, send_keypress, capture_terminal, refresh_context
+        Includes type validation for arguments and scope validation.
+        """
+        # Extract and normalize tool info (fixes case sensitivity issue)
+        tool_name = (tool_call.name or "").lower().strip()
+        tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
+        tool_call_id = tool_call.tool_call_id
+
+        # Helper for type-safe string extraction (fixes type validation issue)
+        def get_str(key: str, default: str = "") -> str:
+            val = tool_args.get(key, default)
+            if not isinstance(val, str):
+                return str(val) if val else default
+            return val
+
+        # Handle each tool type
+        if tool_name == "execute_in_terminal":
+            cmd = get_str("command")
+            if not cmd:
+                return ToolResult(
+                    name=tool_call.name,  # Preserve original name for model
+                    output="Error: No command provided",
+                    tool_call_id=tool_call_id
+                )
+
+            executed, exec_content = self.execute_command(cmd)
+
+            if executed:
+                # Handle TUI screenshot vs regular text output
+                screenshot_path = None
+                result_attachments = []
+                if isinstance(exec_content, tuple):
+                    exec_text, screenshot_path = exec_content
+                    if screenshot_path:
+                        result_attachments.append(Attachment(path=screenshot_path))
+                else:
+                    exec_text = exec_content
+
+                # Debug output
+                self._debug("═══ Captured Content ═══")
+                self._debug(f"UUID: {self.exec_terminal_uuid}")
+                if screenshot_path:
+                    self._debug("Type: Screenshot (TUI)")
+                    self._debug(f"Screenshot path: {screenshot_path}")
+                else:
+                    self._debug("Type: Text output")
+                    self._debug(f"Length: {len(exec_text)} chars")
+                self._debug("═══════════════════════════════")
+
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Command executed: {cmd}\n\nOutput:\n{exec_text}",
+                    attachments=result_attachments,
+                    tool_call_id=tool_call_id
+                )
+            else:
+                # User declined
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"User declined to execute command: {cmd}",
+                    tool_call_id=tool_call_id
+                )
+
+        elif tool_name == "send_keypress":
+            kp = get_str("keypress")
+            if not kp:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No keypress provided",
+                    tool_call_id=tool_call_id
+                )
+
+            # execute_keypress returns True if executed, False if declined
+            executed = self.execute_keypress(kp)
+
+            if executed:
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Keypress sent: {kp}",
+                    tool_call_id=tool_call_id
+                )
+            else:
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"User declined to send keypress: {kp}",
+                    tool_call_id=tool_call_id
+                )
+
+        elif tool_name == "capture_terminal":
+            scope = get_str("scope", "exec")
+            # Validate scope (fixes scope validation inconsistency)
+            if scope not in {"exec", "all"}:
+                scope = "exec"
+
+            self.console.print(f"\n[cyan]Capturing screenshot ({scope})...[/]")
+
+            try:
+                result_attachments = []
+                captured_info = []
+
+                if scope == 'all':
+                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
+                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
+
+                    for term in other_terminals:
+                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
+                        if screenshot_data and not screenshot_data.startswith('ERROR'):
+                            image_bytes = base64.b64decode(screenshot_data)
+                            temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{uuid.uuid4().hex[:12]}.png")
+                            with open(temp_path, 'wb') as f:
+                                f.write(image_bytes)
+                            self.screenshot_files.append(temp_path)
+                            result_attachments.append(Attachment(path=temp_path))
+                            captured_info.append(term.get('title', 'Terminal'))
+                            self.console.print(f"[green]✓[/] Screenshot: {term.get('title', 'Terminal')}")
+                else:
+                    screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
+                    if not screenshot_data or screenshot_data.startswith('ERROR'):
+                        error_msg = screenshot_data if screenshot_data else "No data returned"
+                        self.console.print(f"[red]Screenshot failed: {error_msg}[/]")
+                        captured_info.append(f"Error: {error_msg}")
+                    else:
+                        image_bytes = base64.b64decode(screenshot_data)
+                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{uuid.uuid4().hex[:12]}.png")
+                        with open(temp_path, 'wb') as f:
+                            f.write(image_bytes)
+                        self.screenshot_files.append(temp_path)
+                        result_attachments.append(Attachment(path=temp_path))
+                        captured_info.append("Exec terminal")
+                        self.console.print(f"[green]✓[/] Screenshot captured")
+
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Captured screenshots: {', '.join(captured_info)}" if captured_info else "No screenshots captured",
+                    attachments=result_attachments,
+                    tool_call_id=tool_call_id
+                )
+            except Exception as e:
+                self.console.print(f"[red]Screenshot error: {e}[/]")
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Screenshot error: {e}",
+                    tool_call_id=tool_call_id
+                )
+
+        elif tool_name == "refresh_context":
+            self.console.print("\n[cyan]Refreshing terminal context...[/]")
+            try:
+                # Clear cache to get fresh content
+                try:
+                    self.plugin_dbus.clear_cache()
+                except Exception:
+                    pass
+
+                # Capture fresh context
+                context_text, tui_attachments_refresh = self.capture_context(include_exec_output=True)
+                result_attachments = []
+                if tui_attachments_refresh:
+                    result_attachments.extend(tui_attachments_refresh)
+
+                if context_text or tui_attachments_refresh:
+                    tui_info = f" + {len(tui_attachments_refresh)} TUI screenshot(s)" if tui_attachments_refresh else ""
+                    self.console.print(f"[green]✓[/] Context refreshed ({len(context_text)} chars{tui_info})")
+
+                    return ToolResult(
+                        name=tool_call.name,
+                        output=f"Refreshed terminal context:\n\n{context_text}",
+                        attachments=result_attachments,
+                        tool_call_id=tool_call_id
+                    )
+                else:
+                    self.console.print("[yellow]No terminal content captured[/]")
+                    return ToolResult(
+                        name=tool_call.name,
+                        output="No terminal content captured",
+                        tool_call_id=tool_call_id
+                    )
+            except Exception as e:
+                self.console.print(f"[red]Context refresh error: {e}[/]")
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Context refresh error: {e}",
+                    tool_call_id=tool_call_id
+                )
+
+        else:
+            # Unknown tool - shouldn't happen with our defined tools
+            self.console.print(f"[yellow]Unknown tool: {tool_call.name}[/]")
+            return ToolResult(
+                name=tool_call.name,
+                output=f"Unknown tool: {tool_call.name}",
+                tool_call_id=tool_call_id
+            )
+
     def run(self):
         """Main REPL loop with health checks"""
         # Connect to Terminator
@@ -2151,10 +2475,20 @@ Type !fragment <name> [...] to insert fragments
 
                         # Pass system prompt if this is the first interaction
                         # Also pass attachments (user fragments + TUI screenshots)
+                        # Include tools for structured output (schema validation)
                         if len(self.conversation.responses) == 0:
-                            response = self.conversation.prompt(full_prompt, system=self.system_prompt, attachments=all_attachments)
+                            response = self.conversation.prompt(
+                                full_prompt,
+                                system=self.system_prompt,
+                                attachments=all_attachments,
+                                tools=SIDECHAT_TOOLS
+                            )
                         else:
-                            response = self.conversation.prompt(full_prompt, attachments=all_attachments)
+                            response = self.conversation.prompt(
+                                full_prompt,
+                                attachments=all_attachments,
+                                tools=SIDECHAT_TOOLS
+                            )
 
                         # Consume response INSIDE lock to prevent race condition with watch mode
                         # This trades streaming display for thread safety - response shows all at once
@@ -2162,8 +2496,13 @@ Type !fragment <name> [...] to insert fragments
                         # watch thread calls conversation.prompt() while we're iterating
                         response_text = response.text()
 
+                        # Extract tool calls from the response (structured output)
+                        tool_calls = list(response.tool_calls())
+
                     # Display the response OUTSIDE lock (already consumed)
-                    self.console.print(Markdown(self.escape_action_tags_for_display(response_text)))
+                    # Note: With tool calling, the model's text output is separate from tool calls
+                    if response_text.strip():
+                        self.console.print(Markdown(response_text))
 
                     stream_success = True
 
@@ -2174,198 +2513,65 @@ Type !fragment <name> [...] to insert fragments
                     # Don't process commands or update conversation on stream failure
                     continue
 
-                # Only process commands and keypresses if streaming succeeded
+                # Only process tool calls if streaming succeeded
                 if stream_success:
                     try:
-                        # Extract and execute commands
-                        commands = self.extract_commands(response_text)
-                        keypresses = self.extract_keypresses(response_text)
+                        # Process tool calls (structured output from model)
+                        if tool_calls:
+                            self.console.print(f"\n[cyan]Processing {len(tool_calls)} tool call(s)[/]")
 
-                        if commands:
-                            self.console.print(f"\n[cyan]Found {len(commands)} command(s)[/]")
+                            # Collect tool results for sending back to model
+                            tool_results = []
 
-                            for i, cmd in enumerate(commands, 1):
-                                if len(commands) > 1:
-                                    self.console.print(f"\n[bold]Command {i}/{len(commands)}[/]")
+                            for i, tool_call in enumerate(tool_calls, 1):
+                                if len(tool_calls) > 1:
+                                    self.console.print(f"\n[bold]Tool {i}/{len(tool_calls)}: {tool_call.name}[/]")
+                                tool_results.append(self._process_tool_call(tool_call))
 
-                                executed, exec_content = self.execute_command(cmd)
+                            # After processing all tool calls, send results back to model
+                            # Loop to handle multi-round tool calling (max 5 iterations for safety)
+                            MAX_TOOL_ITERATIONS = 5
+                            iteration = 0
 
-                                if executed:
-                                    # Handle TUI screenshot vs regular text output
-                                    screenshot_path = None
-                                    if isinstance(exec_content, tuple):
-                                        # TUI command returned (text, image_path)
-                                        exec_text, screenshot_path = exec_content
-                                    else:
-                                        # Regular command returned text only
-                                        exec_text = exec_content
+                            while tool_results and iteration < MAX_TOOL_ITERATIONS:
+                                iteration += 1
+                                self.console.print(f"\n[dim]Sending {len(tool_results)} tool result(s) to model...[/]")
 
-                                    # Debug output for captured content
-                                    self._debug("═══ Captured Content ═══")
-                                    self._debug(f"UUID: {self.exec_terminal_uuid}")
-                                    if screenshot_path:
-                                        self._debug("Type: Screenshot (TUI)")
-                                        self._debug(f"Screenshot path: {screenshot_path}")
-                                        self._debug(f"Description length: {len(exec_text)} chars")
-                                    else:
-                                        self._debug("Type: Text output")
-                                        self._debug(f"Length: {len(exec_text)} chars")
-                                        self._debug(f"Is ERROR: {exec_text.startswith('ERROR') if exec_text else 'N/A (empty)'}")
-                                        self._debug(f"First 300 chars: {exec_text[:300] if exec_text else '(empty)'}")
-                                    self._debug("═══════════════════════════════")
+                                with self.watch_lock:
+                                    # Continue conversation with tool results
+                                    followup_response = self.conversation.prompt(
+                                        "",  # Empty prompt - tool results drive the continuation
+                                        tools=SIDECHAT_TOOLS,
+                                        tool_results=tool_results
+                                    )
+                                    followup_text = followup_response.text()
 
-                                    # Build prompt with command execution context
-                                    if screenshot_path:
-                                        exec_context_prompt = f"""Command executed in Exec terminal:
-```bash
-{cmd}
-```
+                                    # Check if the model made more tool calls
+                                    more_tool_calls = list(followup_response.tool_calls())
 
-{exec_text}
+                                # Display the AI's response
+                                if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
+                                    self.console.print("\n[bold green]llm[/]")
+                                    self.console.print(Markdown(followup_text))
 
-Please analyze the screenshot and provide feedback on what you observe."""
-                                    else:
-                                        exec_context_prompt = f"""Command executed in Exec terminal:
-```bash
-{cmd}
-```
+                                # Process additional tool calls if any
+                                if not more_tool_calls:
+                                    break
 
-Output:
-```
-{exec_text}
-```
+                                self.console.print(f"\n[cyan]Processing {len(more_tool_calls)} additional tool call(s) (round {iteration + 1})[/]")
+                                tool_results = []
 
-Please analyze the output and provide feedback if needed."""
+                                for j, tool_call in enumerate(more_tool_calls, 1):
+                                    if len(more_tool_calls) > 1:
+                                        self.console.print(f"\n[bold]Tool {j}/{len(more_tool_calls)}: {tool_call.name}[/]")
+                                    tool_results.append(self._process_tool_call(tool_call))
 
-                                    # Send the exec output to the conversation so AI can see results
-                                    # Thread-safe conversation access
-                                    with self.watch_lock:
-                                        # Prepare attachments (screenshot if available)
-                                        exec_attachments = []
-                                        if screenshot_path:
-                                            try:
-                                                # Use llm's attachment system to attach the image
-                                                exec_attachments.append(llm.Attachment(path=screenshot_path))
-                                                self.console.print(f"[cyan]Sending screenshot to AI via vision model...[/]")
-                                            except Exception as e:
-                                                self.console.print(f"[yellow]Warning: Could not attach screenshot: {e}[/]")
-
-                                        followup_response = self.conversation.prompt(
-                                            exec_context_prompt,
-                                            attachments=exec_attachments if exec_attachments else None
-                                        )
-                                        # Consume response while holding lock
-                                        followup_text = followup_response.text()
-
-                                    # Debug output for AI response handling
-                                    self._debug("═══ AI Response ═══")
-                                    self._debug(f"Length: {len(followup_text)} chars")
-                                    self._debug(f"Stripped lowercase: '{followup_text.strip().lower()[:100]}'")
-                                    self._debug(f"Will be filtered (hidden): {followup_text.strip().lower() in ['ok', 'okay', 'done']}")
-                                    self._debug("═══════════════════════════")
-
-                                    # Display the AI's analysis
-                                    if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
-                                        self.console.print("\n[bold green]llm[/]")
-                                        self.console.print(Markdown(followup_text))
-
-                        # Extract and execute keypresses
-                        if keypresses:
-                            self.console.print(f"\n[magenta]Found {len(keypresses)} keypress(es)[/]")
-
-                            for i, kp in enumerate(keypresses, 1):
-                                if len(keypresses) > 1:
-                                    self.console.print(f"\n[bold]Keypress {i}/{len(keypresses)}[/]")
-
-                                self.execute_keypress(kp)
-
-                        # Handle screenshot requests [📷]
-                        screenshot_requests = self.extract_screenshot_requests(response_text)
-                        for screenshot_type in screenshot_requests:
-                            self.console.print(f"\n[cyan]Capturing screenshot ({screenshot_type})...[/]")
-                            try:
-                                if screenshot_type == 'all':
-                                    # Capture all terminals
-                                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
-                                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
-                                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
-
-                                    for term in other_terminals:
-                                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
-                                        if not screenshot_data.startswith('ERROR'):
-                                            import base64
-                                            image_bytes = base64.b64decode(screenshot_data)
-                                            temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{term['uuid'][:8]}_{int(time.time())}.png")
-                                            with open(temp_path, 'wb') as f:
-                                                f.write(image_bytes)
-                                            self.screenshot_files.append(temp_path)
-
-                                            # Send to AI
-                                            with self.watch_lock:
-                                                self.console.print(f"[green]✓[/] Screenshot: {term.get('title', 'Terminal')}")
-                                                followup = self.conversation.prompt(
-                                                    f"Screenshot of terminal '{term.get('title', 'Terminal')}':",
-                                                    attachments=[llm.Attachment(path=temp_path)]
-                                                )
-                                                self.console.print("\n[bold green]llm[/]")
-                                                self.console.print(Markdown(followup.text()))
-                                else:
-                                    # Capture exec terminal only
-                                    screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
-                                    if screenshot_data.startswith('ERROR'):
-                                        self.console.print(f"[red]Screenshot failed: {screenshot_data}[/]")
-                                    else:
-                                        import base64
-                                        image_bytes = base64.b64decode(screenshot_data)
-                                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
-                                        with open(temp_path, 'wb') as f:
-                                            f.write(image_bytes)
-                                        self.screenshot_files.append(temp_path)
-                                        self.console.print(f"[green]✓[/] Screenshot captured: {temp_path}")
-
-                                        # Send to AI for analysis
-                                        with self.watch_lock:
-                                            followup = self.conversation.prompt(
-                                                "Here is the screenshot you requested. Please analyze it:",
-                                                attachments=[llm.Attachment(path=temp_path)]
-                                            )
-                                            self.console.print("\n[bold green]llm[/]")
-                                            self.console.print(Markdown(followup.text()))
-                            except Exception as e:
-                                self.console.print(f"[red]Screenshot error: {e}[/]")
-
-                        # Handle context refresh requests [🔄]
-                        if self.extract_context_refresh_requests(response_text):
-                            self.console.print("\n[cyan]Refreshing terminal context...[/]")
-                            try:
-                                # Clear cache to get fresh content
-                                try:
-                                    self.plugin_dbus.clear_cache()
-                                except Exception:
-                                    pass
-
-                                # Capture fresh context
-                                # Returns (context_text, tui_attachments) tuple for TUI screenshot support
-                                context, tui_attachments = self.capture_context(include_exec_output=True)
-                                if context or tui_attachments:
-                                    tui_info = f" + {len(tui_attachments)} TUI screenshot(s)" if tui_attachments else ""
-                                    self.console.print(f"[green]✓[/] Context refreshed ({len(context)} chars{tui_info})")
-
-                                    # Send to AI with TUI screenshots if any
-                                    with self.watch_lock:
-                                        followup = self.conversation.prompt(
-                                            f"Here is the refreshed terminal context:\n\n{context}\n\nPlease analyze the current state:",
-                                            attachments=tui_attachments if tui_attachments else None
-                                        )
-                                        self.console.print("\n[bold green]llm[/]")
-                                        self.console.print(Markdown(followup.text()))
-                                else:
-                                    self.console.print("[yellow]No terminal content captured[/]")
-                            except Exception as e:
-                                self.console.print(f"[red]Context refresh error: {e}[/]")
+                            # Warn if max iterations reached and model still wants more
+                            if iteration >= MAX_TOOL_ITERATIONS and more_tool_calls:
+                                self.console.print(f"\n[yellow]Max tool iterations ({MAX_TOOL_ITERATIONS}) reached. Model requested {len(more_tool_calls)} more tool call(s). Please continue the conversation.[/]")
 
                     except Exception as e:
-                        self.console.print(f"\n[red]Command/keypress execution error: {e}[/]")
+                        self.console.print(f"\n[red]Tool execution error: {e}[/]")
 
         finally:
             # Unified cleanup - handles all resources

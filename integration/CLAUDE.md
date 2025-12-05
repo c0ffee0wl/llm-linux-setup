@@ -29,13 +29,18 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
    - Python script that imports llm library directly
    - Rich terminal UI with streaming markdown
    - Conversation management with auto-squashing
-   - Command extraction from `<EXECUTE>` XML tags
+   - Tool-based command execution with structured output
    - Asyncio-based watch mode
 
 3. **Sidechat Template** (`llm-template/terminator-sidechat.yaml`):
    - System prompt optimized for Terminator environment
-   - Instructs AI on command formatting
+   - Instructs AI on tool usage for terminal interaction
    - Explains context awareness and watch mode
+
+4. **Sidechat Tools Plugin** (`llm-tools-sidechat/`):
+   - Provides structured tool definitions for terminal control
+   - Tools: execute_in_terminal, send_keypress, capture_terminal, refresh_context
+   - Schema validation at model level prevents malformed commands
 
 ## User Workflow
 
@@ -44,7 +49,7 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
 2. Script auto-creates Exec terminal via D-Bus hsplit
 3. Type messages in Chat terminal (where script runs)
 4. AI responds with streaming markdown
-5. If AI suggests commands (<EXECUTE> tags), prompted: "Execute? [y/n/e]"
+5. If AI uses tools (execute_in_terminal, etc.), prompted: "Execute? [y/n/e]"
 6. Approved commands run in Exec terminal
 7. Command output captured for next AI iteration
 ```
@@ -108,13 +113,15 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `!multi` - Enter multi-line input mode (finish with `!end`)
 - `!fragment <name>` - Attach an llm fragment to the conversation
 
-## AI Command Syntax
+## AI Tool Interface
 
-The AI uses XML action tags to interact with terminals. See the `terminator-sidechat.yaml` template for full documentation:
-- `<EXECUTE>command</EXECUTE>` - Execute shell command in Exec terminal
-- `<PRESSKEY>keypress</PRESSKEY>` - Send keypresses (for TUI apps like vim, htop)
-- `<CAPTURE/>` / `<CAPTURE>all</CAPTURE>` - Screenshot capture for TUI analysis
-- `<REFRESH/>` - Request fresh terminal content capture
+The AI uses structured tool calling to interact with terminals. See the `terminator-sidechat.yaml` template for full documentation:
+- `execute_in_terminal(command: str)` - Execute shell command in Exec terminal
+- `send_keypress(keypress: str)` - Send keypresses (for TUI apps like vim, htop)
+- `capture_terminal(scope: str)` - Screenshot capture ("exec" or "all")
+- `refresh_context()` - Request fresh terminal content capture
+
+These tools provide schema validation at the model level, ensuring the AI's requests are properly structured.
 
 ## Advantages Over Context Tool
 
@@ -183,7 +190,7 @@ Watch mode enabled: monitoring all terminals
 - **Terminal management**: D-Bus `hsplit`, `get_terminals`, `get_focused_terminal` (existing API)
 - **Conversation continuity**: Uses `llm.Conversation()` objects with auto-squashing
 - **Self-awareness**: Filters out `self.chat_terminal_uuid` when capturing context
-- **Command extraction**: Regex parsing of `<EXECUTE>` XML tags from AI responses
+- **Tool calling**: Uses llm's tool_calls() for structured command extraction with schema validation
 - **Execution**: `vte.feed_child()` via plugin
 - **Completion detection**: `PromptDetector.detect_prompt_at_end()` for smart wait-for-prompt
 
@@ -193,6 +200,7 @@ Watch mode enabled: monitoring all terminals
 - `integration/llm-sidechat` - Standalone application
 - `integration/terminator-sidechat-plugin/terminator_sidechat.py` - Terminator plugin
 - `llm-template/terminator-sidechat.yaml` - System prompt template
+- `llm-tools-sidechat/` - LLM plugin for structured tool definitions
 
 ### Installed Locations
 - `~/.local/bin/llm-sidechat` - Application binary
