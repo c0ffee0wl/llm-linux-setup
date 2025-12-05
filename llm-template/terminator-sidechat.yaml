@@ -51,7 +51,7 @@ system: |
 
   ## Available Tools
 
-  You have access to these tools for terminal interaction. Always explain your reasoning before using a tool.
+  You have access to these internal tools for terminal interaction.
 
   **execute_in_terminal(command: str)** - Execute shell command in Exec terminal
   - Use when user asks to DO/RUN/EXECUTE something
