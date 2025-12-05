@@ -54,6 +54,13 @@ The repository includes an **automatic session recording and context extraction 
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
 
+5. **Google Search Tool** (`llm-tools-google-search/`): LLM plugin for web search
+   - Uses Vertex/Gemini with `google_search` grounding as backend
+   - Enables any model to perform Google Search by calling the tool
+   - Prefers Vertex if configured, falls back to standard Gemini API
+   - Returns structured JSON with search results and source URLs
+   - Usage: `llm --tool google_search "latest CVEs for log4j"`
+
 **Architecture Flow**: Shell starts → asciinema records → `$SESSION_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
 
 **Configuration**:
@@ -117,10 +124,12 @@ The shell integration uses a **three-file pattern** located in the `integration/
   - When user specifies custom template (`-t`), system prompt (`-s`), or continuation (`-c`) → no tools (user in control)
   - When `google_search` option is detected → no tools (incompatible with non-search tools on Vertex/Gemini)
 - **Why**: Vertex/Gemini API requires that when multiple tools are present, they must ALL be search tools. Non-search tools (context, sandboxed_shell) conflict with Google Search.
+- **google_search tool**: NOT included by default - use `--tool google_search` to enable. This tool uses Gemini/Vertex with google_search grounding internally, allowing any model to access Google Search.
 
 | Command | Template | Tools |
 |---------|----------|-------|
 | `llm chat` | assistant | context, sandboxed_shell |
+| `llm chat --tool google_search` | assistant | context, sandboxed_shell, google_search |
 | `llm chat -o google_search 1` | assistant | (none) |
 | `llm -o google_search 1 "prompt"` | assistant | (none) |
 | `llm chat -t custom` | custom | (none) |
@@ -916,6 +925,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `integration/llm-sidechat`, `integration/terminator-sidechat-plugin/` - Sidechat components (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
+- `llm-tools-google-search/` - LLM plugin for Google Search via Vertex/Gemini
 - `llm-template/{assistant,code,terminator-sidechat}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
@@ -963,6 +973,7 @@ Note that several packages use **forks** or specific sources:
 - **aichat**: Installed via cargo from crates.io: `cargo install aichat`
 - **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
+- **llm-tools-google-search**: Installed from local directory: `$SCRIPT_DIR/llm-tools-google-search` (Google Search tool using Vertex/Gemini as backend)
 - **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
 - **imagemage**: Installed from Go package: `github.com/quinnypig/imagemage@latest` (only when Gemini is configured and Go 1.22+ available)
 - **llm-anthropic**: Anthropic API plugin (PyPI)

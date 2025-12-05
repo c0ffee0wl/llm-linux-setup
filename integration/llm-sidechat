@@ -120,125 +120,23 @@ PRESSKEY_PATTERN = re.compile(
 
 
 # =============================================================================
-# Tool Definitions for Structured Output
+# Tool Setup
 # =============================================================================
-# These tools provide structured interfaces for terminal operations.
-# They are "stub" tools - they return structured JSON to indicate intent,
-# but the actual execution is handled by the sidechat main loop.
-# This approach provides schema validation at the model level.
+# Get tools from the plugin system, filtered by plugin name.
+# This auto-includes any tools from 'sidechat' and 'google_search' plugins.
 
-def execute_in_terminal(command: str) -> str:
-    """
-    Execute a shell command in the Exec terminal.
+_all_tools = llm.get_tools()
 
-    Use this tool to run commands in the designated execution terminal.
-    The command will be sent to the terminal and its output captured.
-
-    Always explain your reasoning before using this tool - describe what
-    you're about to do and why.
-
-    Args:
-        command: The shell command to execute (e.g., "ls -la", "git status")
-
-    Returns:
-        JSON indicating the command has been queued for execution.
-        Actual execution is handled by sidechat with user approval.
-    """
-    return json.dumps({
-        "action": "execute",
-        "command": command,
-        "status": "queued"
-    })
-
-
-def send_keypress(keypress: str) -> str:
-    """
-    Send a keypress or key sequence to the Exec terminal.
-
-    Use this for interactive applications (TUIs) that need keyboard input,
-    such as vim, less, htop, or any application expecting keypresses.
-
-    Supported special keys:
-    - Enter, Escape, Tab, Space, Backspace, Delete
-    - Ctrl+<key> (e.g., "Ctrl+C", "Ctrl+D", "Ctrl+Z")
-    - Alt+<key> (e.g., "Alt+F", "Alt+B")
-    - Arrow keys: Up, Down, Left, Right
-    - Function keys: F1-F12
-    - Page keys: PageUp, PageDown, Home, End
-
-    For regular text input, just use the characters directly (e.g., ":wq" for vim).
-
-    Always explain your reasoning before using this tool.
-
-    Args:
-        keypress: The key or key sequence to send (e.g., "Enter", "Ctrl+C", ":wq", "q")
-
-    Returns:
-        JSON indicating the keypress has been queued.
-        Actual execution is handled by sidechat with user approval.
-    """
-    return json.dumps({
-        "action": "keypress",
-        "key": keypress,
-        "status": "queued"
-    })
-
-
-def capture_terminal(scope: str = "exec") -> str:
-    """
-    Capture terminal content or screenshot.
-
-    Use this to see the current state of the terminal(s). For TUI applications
-    (vim, htop, etc.), this captures a screenshot. For regular command output,
-    it captures the text content.
-
-    Args:
-        scope: Which terminals to capture:
-               - "exec": Only the Exec terminal (default)
-               - "all": All visible terminals
-
-    Returns:
-        JSON indicating capture has been queued.
-        The captured content will be provided in the next context.
-    """
-    valid_scopes = ["exec", "all"]
-    if scope not in valid_scopes:
-        scope = "exec"
-
-    return json.dumps({
-        "action": "capture",
-        "scope": scope,
-        "status": "queued"
-    })
-
-
-def refresh_context() -> str:
-    """
-    Refresh the terminal context before continuing.
-
-    Use this when you need updated terminal content before deciding
-    what to do next. This is useful when:
-    - You're waiting for a long-running command to complete
-    - You want to see the current state without executing anything
-    - The terminal content may have changed since your last observation
-
-    Returns:
-        JSON indicating refresh has been queued.
-        Updated context will be provided in the next message.
-    """
-    return json.dumps({
-        "action": "refresh",
-        "status": "queued"
-    })
-
-
-# Create Tool objects from the functions
+# Build SIDECHAT_TOOLS from plugins - auto-includes new tools when added
 SIDECHAT_TOOLS = [
-    Tool.function(execute_in_terminal),
-    Tool.function(send_keypress),
-    Tool.function(capture_terminal),
-    Tool.function(refresh_context),
+    tool for tool in _all_tools.values()
+    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('sidechat', 'google_search')
 ]
+
+# Get google_search for the handler
+_google_search_tool = _all_tools.get('google_search')
+GOOGLE_SEARCH_AVAILABLE = _google_search_tool is not None
+google_search = _google_search_tool.implementation if _google_search_tool else None
 
 
 def is_tui_command(command: str) -> bool:
@@ -2129,7 +2027,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
     def _process_tool_call(self, tool_call) -> ToolResult:
         """Process a single tool call and return the result.
 
-        Handles: execute_in_terminal, send_keypress, capture_terminal, refresh_context
+        Handles: execute_in_terminal, send_keypress, capture_terminal, refresh_context, google_search
         Includes type validation for arguments and scope validation.
         """
         # Extract and normalize tool info (fixes case sensitivity issue)
@@ -2312,6 +2210,47 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 return ToolResult(
                     name=tool_call.name,
                     output=f"Context refresh error: {e}",
+                    tool_call_id=tool_call_id
+                )
+
+        elif tool_name == "google_search":
+            query = get_str("query")
+            max_results = tool_args.get("max_results", 5)
+            if isinstance(max_results, str):
+                try:
+                    max_results = int(max_results)
+                except ValueError:
+                    max_results = 5
+
+            if not query:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No search query provided",
+                    tool_call_id=tool_call_id
+                )
+
+            self.console.print(f"\n[cyan]Searching: {query}[/]")
+
+            if GOOGLE_SEARCH_AVAILABLE and google_search:
+                try:
+                    result = google_search(query, max_results)
+                    self.console.print("[green]✓[/] Search completed")
+                    return ToolResult(
+                        name=tool_call.name,
+                        output=result,
+                        tool_call_id=tool_call_id
+                    )
+                except Exception as e:
+                    self.console.print(f"[red]Search error: {e}[/]")
+                    return ToolResult(
+                        name=tool_call.name,
+                        output=f"Search error: {e}",
+                        tool_call_id=tool_call_id
+                    )
+            else:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: google_search tool not available. Install llm-tools-google-search plugin.",
                     tool_call_id=tool_call_id
                 )
 

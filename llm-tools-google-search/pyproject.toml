@@ -1,0 +1,23 @@
+[project]
+name = "llm-tools-google-search"
+version = "0.1.0"
+description = "Google Search tool for LLM using Vertex/Gemini with Google Search grounding"
+readme = "README.md"
+authors = [{name = "c0ffee0wl"}]
+license = {text = "Apache-2.0"}
+classifiers = [
+    "License :: OSI Approved :: Apache Software License"
+]
+dependencies = [
+    "llm"
+]
+
+[project.urls]
+Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
+
+[project.entry-points.llm]
+google_search = "llm_tools_google_search"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"

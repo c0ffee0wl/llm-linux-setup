@@ -1391,6 +1391,7 @@ PLUGINS=(
     "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
     "$SCRIPT_DIR/llm-tools-sidechat"
+    "$SCRIPT_DIR/llm-tools-google-search"
 )
 
 for plugin in "${PLUGINS[@]}"; do

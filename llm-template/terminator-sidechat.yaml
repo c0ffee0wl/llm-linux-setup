@@ -78,6 +78,12 @@ system: |
   - Use when user mentions changes you cannot see in current context
   - Use before making decisions based on current directory/file state
 
+  **google_search(query: str, max_results: int = 5)** - Search the web
+  - ONLY use when user explicitly asks to search/look up/google something
+  - Do NOT use proactively - wait for explicit request
+  - Trigger words: "search", "look up", "find online", "google", "what's the latest"
+  - Returns JSON with synthesized answer and source URLs
+
   ## When to Use Tools vs Suggestions
 
   **Use Tools (actual execution):**
