@@ -264,9 +264,11 @@ llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 llm sidechat                     # Launch AI assistant in Terminator
 llm sidechat azure/gpt-4.1       # Launch with specific model
 # Inside sidechat:
-#   /watch detect security issues  # Enable proactive monitoring
-#   /help                           # Show commands
-#   /quit                           # Exit
+#   /watch detect security issues                    # Security monitoring
+#   /watch spot inefficient shell commands           # Shell efficiency tips
+#   /watch monitor logs for errors and suggest fixes # Log monitoring
+#   /help                                            # Show commands
+#   /quit                                            # Exit
 
 # Claude Code Router (multi-provider routing)
 routed-claude                    # Launch Claude Code through router (alias for 'ccr code')

@@ -21,6 +21,7 @@ import base64
 import tempfile
 import os
 import math
+import threading
 import gi
 gi.require_version('Vte', '2.91')
 gi.require_version('Gdk', '3.0')
@@ -43,7 +44,10 @@ PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
 PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Sidechat'
 
 # Plugin version for diagnostics
-PLUGIN_VERSION = "3.2-tui-detection"
+PLUGIN_VERSION = "3.3-cache-eviction"
+
+# Cache size limit to prevent unbounded memory growth
+CACHE_MAX_SIZE = 100
 
 AVAILABLE = ['TerminatorSidechat']
 
@@ -89,6 +93,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         self.tui_cache_time = {} # uuid -> timestamp
         self.tui_cache_ttl = 0.5 # TUI detection cache valid for 0.5 seconds
 
+        # Thread-safe lock for cache operations (D-Bus calls may come from different threads)
+        self.cache_lock = threading.Lock()
+
         dbg('TerminatorSidechat initialized')
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='s')
@@ -128,12 +135,13 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 lines = vte.get_row_count()
                 dbg(f'Auto-detected {lines} visible rows for {terminal_uuid}')
 
-            # Check cache after determining lines
+            # Check cache after determining lines (thread-safe)
             cache_key = f"{terminal_uuid}:{lines}"
-            if cache_key in self.content_cache:
-                if time.time() - self.last_capture.get(cache_key, 0) < self.cache_ttl:
-                    dbg(f'Returning cached content for {terminal_uuid}')
-                    return self.content_cache[cache_key]
+            with self.cache_lock:
+                if cache_key in self.content_cache:
+                    if time.time() - self.last_capture.get(cache_key, 0) < self.cache_ttl:
+                        dbg(f'Returning cached content for {terminal_uuid}')
+                        return self.content_cache[cache_key]
 
             # Get terminal dimensions
             try:
@@ -234,9 +242,11 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 err('Content capture returned None')
                 return f"ERROR: Failed to capture content from terminal {terminal_uuid}"
 
-            # Cache the result
-            self.content_cache[cache_key] = content
-            self.last_capture[cache_key] = time.time()
+            # Cache the result (thread-safe)
+            with self.cache_lock:
+                self.content_cache[cache_key] = content
+                self.last_capture[cache_key] = time.time()
+                self._evict_old_cache_entries()
 
             dbg(f'Captured {len(content)} characters from {terminal_uuid}')
             return content
@@ -514,7 +524,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             dbg(f'DEBUG: self.terminator.terminals = {self.terminator.terminals}')
             dbg(f'DEBUG: len(self.terminator.terminals) = {len(self.terminator.terminals)}')
 
-            for term in self.terminator.terminals:
+            # Copy terminals list to avoid race with GTK thread modifying it during iteration
+            terminals_snapshot = list(self.terminator.terminals)
+            for term in terminals_snapshot:
                 dbg(f'DEBUG: Processing terminal {term}')
                 # Get custom title if set, otherwise use automatic title
                 title = term.titlebar.get_custom_string()
@@ -614,7 +626,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             dbg(f'[SIDECHAT-PLUGIN] Total terminals in Terminator instance: {len(self.terminator.terminals)}')
 
             # Filter terminals to only those in the same TAB
-            for term in self.terminator.terminals:
+            # Copy terminals list to avoid race with GTK thread modifying it during iteration
+            terminals_snapshot = list(self.terminator.terminals)
+            for term in terminals_snapshot:
                 term_tab = self._get_tab_container(term)
 
                 # Compare tab container objects (same instance = same tab)
@@ -656,7 +670,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             UUID string, or empty string if no terminal is focused
         """
         try:
-            for term in self.terminator.terminals:
+            # Copy terminals list to avoid race with GTK thread modifying it during iteration
+            terminals_snapshot = list(self.terminator.terminals)
+            for term in terminals_snapshot:
                 vte = term.get_vte()
                 if vte and vte.has_focus():
                     return term.uuid.urn
@@ -692,11 +708,12 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             True if terminal likely has TUI active, False otherwise
         """
         try:
-            # Check TUI detection cache first (avoids expensive capture calls)
-            if terminal_uuid in self.tui_cache:
-                if time.time() - self.tui_cache_time.get(terminal_uuid, 0) < self.tui_cache_ttl:
-                    dbg(f'TUI detection for {terminal_uuid}: using cached result')
-                    return self.tui_cache[terminal_uuid]
+            # Check TUI detection cache first (avoids expensive capture calls, thread-safe)
+            with self.cache_lock:
+                if terminal_uuid in self.tui_cache:
+                    if time.time() - self.tui_cache_time.get(terminal_uuid, 0) < self.tui_cache_ttl:
+                        dbg(f'TUI detection for {terminal_uuid}: using cached result')
+                        return self.tui_cache[terminal_uuid]
 
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
             if not terminal:
@@ -713,12 +730,13 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 if content and not content.startswith('ERROR'):
                     if PromptDetector.detect_prompt_at_end(content):
                         dbg(f'TUI detection for {terminal_uuid}: shell prompt found, not TUI')
-                        # Invalidate TUI cache when prompt detected (TUI just exited)
+                        # Invalidate TUI cache when prompt detected (TUI just exited, thread-safe)
                         # Delete cache entry entirely to force re-evaluation on next call
-                        if terminal_uuid in self.tui_cache:
-                            dbg(f'TUI detection: invalidating stale cache for {terminal_uuid}')
-                            del self.tui_cache[terminal_uuid]
-                            del self.tui_cache_time[terminal_uuid]
+                        with self.cache_lock:
+                            if terminal_uuid in self.tui_cache:
+                                dbg(f'TUI detection: invalidating stale cache for {terminal_uuid}')
+                                del self.tui_cache[terminal_uuid]
+                                del self.tui_cache_time[terminal_uuid]
                         return False  # Don't re-cache result - let next call rebuild
 
             # Fallback: vadjustment heuristic for alternate screen detection
@@ -747,17 +765,42 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return False
 
     def _cache_tui_result(self, terminal_uuid, is_tui):
-        """Cache TUI detection result for performance."""
-        self.tui_cache[terminal_uuid] = is_tui
-        self.tui_cache_time[terminal_uuid] = time.time()
+        """Cache TUI detection result for performance (thread-safe)."""
+        with self.cache_lock:
+            self.tui_cache[terminal_uuid] = is_tui
+            self.tui_cache_time[terminal_uuid] = time.time()
+            self._evict_old_cache_entries()
+
+    def _evict_old_cache_entries(self):
+        """Remove oldest cache entries if cache exceeds max size.
+
+        Must be called while holding cache_lock.
+        Uses LRU eviction based on timestamps.
+        """
+        # Evict content cache entries
+        while len(self.content_cache) > CACHE_MAX_SIZE:
+            if not self.last_capture:
+                break
+            oldest_key = min(self.last_capture, key=self.last_capture.get)
+            del self.content_cache[oldest_key]
+            del self.last_capture[oldest_key]
+
+        # Evict TUI cache entries
+        while len(self.tui_cache) > CACHE_MAX_SIZE:
+            if not self.tui_cache_time:
+                break
+            oldest_key = min(self.tui_cache_time, key=self.tui_cache_time.get)
+            del self.tui_cache[oldest_key]
+            del self.tui_cache_time[oldest_key]
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='')
     def clear_cache(self):
-        """Clear all caches (content and TUI detection)"""
-        self.content_cache.clear()
-        self.last_capture.clear()
-        self.tui_cache.clear()
-        self.tui_cache_time.clear()
+        """Clear all caches (content and TUI detection, thread-safe)"""
+        with self.cache_lock:
+            self.content_cache.clear()
+            self.last_capture.clear()
+            self.tui_cache.clear()
+            self.tui_cache_time.clear()
         dbg('All caches cleared (content + TUI detection)')
 
     def unload(self):

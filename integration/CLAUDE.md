@@ -129,8 +129,8 @@ The AI uses XML action tags to interact with terminals. See the `terminator-side
 ## Installation
 
 - Template: `terminator-sidechat.yaml` installed (Phase 4)
-- Plugin: Copied to `~/.config/terminator/plugins/` (Phase 6)
-- Application: `llm-sidechat` installed to `~/.local/bin/` (Phase 6)
+- Plugin: Copied to `~/.config/terminator/plugins/` (Phase 5)
+- Application: `llm-sidechat` installed to `~/.local/bin/` (Phase 5)
 - Dependencies: PyGObject, dbus-python conditionally installed (Phase 1, only if Terminator detected)
 - Enable plugin: Terminator Preferences → Plugins → Check "TerminatorSidechat"
 
