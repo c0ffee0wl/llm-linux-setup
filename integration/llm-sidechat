@@ -80,23 +80,43 @@ class PromptDetector:
         return False
 
 
-# Common TUI applications that shouldn't use stability detection
+# Common TUI applications that use screenshot capture instead of text
+# All lowercase for case-insensitive matching
 TUI_COMMANDS = {
-    'htop', 'top', 'btop', 'glances',  # System monitors
-    'vim', 'vi', 'nvim', 'nano', 'emacs', 'helix',  # Editors
-    'less', 'more', 'most',  # Pagers
-    'watch',  # Periodic command execution
-    'tmux', 'screen',  # Terminal multiplexers
-    'ncdu', 'mc', 'ranger', 'nnn',  # File managers
-    'tig', 'lazygit',  # Git TUIs
-    'k9s', 'kubectl',  # Kubernetes TUIs (when in interactive mode)
-    'docker', 'lazydocker',  # Docker TUIs (when in interactive mode)
-    'htop', 'iotop', 'iftop', 'nethogs',  # Various monitors
-    'alsamixer', 'pulsemixer',  # Audio mixers
-    'mutt', 'neomutt',  # Email clients
-    'weechat', 'irssi',  # IRC clients
-    'cmus', 'ncmpcpp',  # Music players
-    'lynx', 'w3m', 'links',  # Web browsers
+    # System monitors
+    'htop', 'top', 'btop', 'gtop', 'glances', 'atop', 'nmon',
+    'iotop', 'iftop', 'nethogs', 'bmon', 'vnstat', 'procs',
+    # Editors
+    'vim', 'vi', 'nvim', 'nano', 'emacs', 'helix', 'micro',
+    'joe', 'pico', 'jed', 'ne', 'mg', 'kakoune', 'kak',
+    # Pagers
+    'less', 'more', 'most', 'bat',
+    # File managers
+    'mc', 'ranger', 'nnn', 'lf', 'vifm', 'fff', 'broot',
+    'ncdu', 'duf', 'dust',
+    # Terminal multiplexers
+    'tmux', 'screen', 'byobu', 'zellij',
+    # Git TUIs
+    'tig', 'lazygit', 'gitui',
+    # Container/K8s TUIs
+    'k9s', 'lazydocker', 'dive', 'ctop',
+    # Fuzzy finders (when run standalone)
+    'fzf', 'sk', 'peco',
+    # Periodic execution
+    'watch',
+    # Audio
+    'alsamixer', 'pulsemixer',
+    # Email/IRC
+    'mutt', 'neomutt', 'aerc',
+    'weechat', 'irssi',
+    # Music players
+    'cmus', 'ncmpcpp', 'moc', 'mocp',
+    # Web browsers
+    'lynx', 'w3m', 'links', 'elinks',
+    # Task management
+    'taskwarrior-tui', 'taskell',
+    # Calendar
+    'calcurse', 'khal',
 }
 
 # Pattern to detect special keys that should be routed to keypress handler
@@ -108,23 +128,42 @@ SPECIAL_KEY_PATTERN = re.compile(
     re.IGNORECASE
 )
 
+# Patterns for AI-requested captures
+# [📷] or [📷 all] - request screenshot
+SCREENSHOT_REQUEST_PATTERN = re.compile(r'\[📷(?:\s+(all))?\]', re.IGNORECASE)
+# [🔄] - request context refresh
+CONTEXT_REFRESH_PATTERN = re.compile(r'\[🔄\]')
+
 
 def is_tui_command(command: str) -> bool:
     """
-    Detect if a command is a TUI application that continuously updates
-    or waits for input.
+    Detect if a command will launch a TUI application.
+
+    Handles piped commands by checking the rightmost command,
+    since that's what actually displays in the terminal.
 
     Args:
-        command: Full command string (e.g., "htop -d 5")
+        command: Full command string (e.g., "htop -d 5" or "git log | less")
 
     Returns:
         True if command is a known TUI application
     """
+    if not command.strip():
+        return False
+
+    # For piped commands, check the rightmost command (that's what displays)
+    # e.g., "cat file | less" -> check "less"
+    # e.g., "git log | head" -> check "head" (not TUI)
+    if '|' in command:
+        parts = command.split('|')
+        command = parts[-1].strip()
+
     # Extract the base command (first word)
-    base_cmd = command.strip().split()[0] if command.strip() else ""
+    base_cmd = command.split()[0] if command.split() else ""
 
     # Remove path if present (e.g., /usr/bin/htop -> htop)
-    base_cmd = os.path.basename(base_cmd)
+    # Use lowercase for case-insensitive matching
+    base_cmd = os.path.basename(base_cmd).lower()
 
     return base_cmd in TUI_COMMANDS
 
@@ -132,8 +171,11 @@ def is_tui_command(command: str) -> bool:
 class TerminatorSidechatSession:
     """Main sidechat session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False, capture_timeout: float = 3.0):
         self.console = Console()
+
+        # Debug mode flag
+        self.debug = debug
 
         # Initialize shutdown state and lock file handle
         self._shutdown_initiated = False
@@ -197,7 +239,7 @@ class TerminatorSidechatSession:
             'max_poll_interval': 1.0,    # Maximum poll interval (seconds)
             'backoff_factor': 1.3,       # Exponential backoff multiplier
             'stability_checks': 3,       # Consecutive matches needed for stability
-            'max_wait': 3.0,             # Total timeout (seconds)
+            'max_wait': capture_timeout, # Total timeout (seconds) - configurable via CLI
             'min_wait_before_stability': 0.5,  # Minimum wait before allowing stability detection
         }
 
@@ -205,14 +247,36 @@ class TerminatorSidechatSession:
         self.plugin = None
         self.dbus_service = None
 
+        # Track screenshot files for cleanup
+        self.screenshot_files = []
+
     def _acquire_instance_lock(self):
         """
         Ensure only one sidechat instance per user session.
         Uses file locking with automatic cleanup on process exit.
+        Detects and cleans up stale locks from crashed processes.
         """
         # Use runtime directory for lock file (XDG_RUNTIME_DIR or /tmp)
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
         lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
+
+        # Check for stale lock before attempting to acquire
+        if lock_path.exists():
+            try:
+                with open(lock_path, 'r') as f:
+                    old_pid_str = f.read().strip()
+                    if old_pid_str:
+                        old_pid = int(old_pid_str)
+                        # Check if process is still running
+                        try:
+                            os.kill(old_pid, 0)  # Signal 0 checks if process exists
+                            # Process exists, lock is valid - will fail below
+                        except OSError:
+                            # Process doesn't exist - stale lock, clean up silently
+                            lock_path.unlink()
+            except (ValueError, IOError):
+                # Can't read PID or file issues - try to proceed anyway
+                pass
 
         try:
             # Open lock file (create if doesn't exist)
@@ -308,14 +372,24 @@ class TerminatorSidechatSession:
                     # Don't let watch mode cleanup prevent other cleanup
                     pass
 
-            # STEP 2: Clear plugin cache (if available)
+            # STEP 2: Clean up screenshot files
+            if hasattr(self, 'screenshot_files') and self.screenshot_files:
+                for screenshot_path in self.screenshot_files:
+                    try:
+                        if os.path.exists(screenshot_path):
+                            os.unlink(screenshot_path)
+                    except (IOError, OSError):
+                        pass  # Ignore cleanup errors
+                self.screenshot_files.clear()
+
+            # STEP 3: Clear plugin cache (if available)
             if hasattr(self, 'plugin_dbus'):
                 try:
                     self.plugin_dbus.clear_cache()
                 except Exception:
                     pass
 
-            # STEP 3: Close D-Bus connections (graceful disconnect)
+            # STEP 4: Close D-Bus connections (graceful disconnect)
             # D-Bus connections don't need explicit cleanup in Python - garbage collected
             # But we can dereference them to signal intent
             if hasattr(self, 'dbus_service'):
@@ -323,10 +397,10 @@ class TerminatorSidechatSession:
             if hasattr(self, 'plugin_dbus'):
                 self.plugin_dbus = None
 
-            # STEP 4: Release instance lock (most important)
+            # STEP 5: Release instance lock (most important)
             self._release_instance_lock()
 
-            # STEP 5: Save conversation state (if needed)
+            # STEP 6: Save conversation state (if needed)
             # llm library auto-saves, but we can explicitly flush here
             if hasattr(self, 'conversation'):
                 try:
@@ -351,6 +425,11 @@ class TerminatorSidechatSession:
         except Exception:
             return "azure/gpt-4.1-mini"
 
+    def _debug(self, msg: str):
+        """Print debug message if debug mode is enabled"""
+        if self.debug:
+            self.console.print(f"[dim]DEBUG: {msg}[/dim]")
+
     def _normalize_uuid(self, uuid_value) -> str:
         """Normalize UUID to Python string (ensures dbus.String -> str conversion)"""
         if uuid_value is None or uuid_value == '':
@@ -364,19 +443,29 @@ class TerminatorSidechatSession:
             bus = dbus.SessionBus()
 
             # Discover actual Terminator service name (includes UUID suffix)
-            service_name = None
-            for name in bus.list_names():
-                if name.startswith('net.tenshu.Terminator2'):
-                    service_name = name
-                    break
+            # Check for multiple instances
+            terminator_services = [
+                name for name in bus.list_names()
+                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Sidechat')
+            ]
+
+            if len(terminator_services) > 1:
+                self.console.print(f"[yellow]Multiple Terminator instances detected ({len(terminator_services)})[/]")
+                self.console.print(f"[yellow]Using first found: {terminator_services[0]}[/]")
+
+            service_name = terminator_services[0] if terminator_services else None
 
             if not service_name:
                 service_name = 'net.tenshu.Terminator2'  # Fallback for older versions
 
+            self._debug(f"Connected to Terminator D-Bus: {service_name}")
             self.dbus_service = bus.get_object(service_name, '/net/tenshu/Terminator2')
             return True
-        except Exception as e:
+        except dbus.exceptions.DBusException as e:
             self.console.print(f"[red]D-Bus reconnection failed: {e}[/]")
+            return False
+        except Exception as e:
+            self.console.print(f"[red]D-Bus reconnection error ({type(e).__name__}): {e}[/]")
             return False
 
     def _check_dbus_connection(self) -> bool:
@@ -399,7 +488,7 @@ class TerminatorSidechatSession:
         # Connect to plugin's D-Bus service for terminal content/commands
         if not self._connect_to_plugin_dbus():
             self.console.print("[red]Error: Plugin D-Bus service not available[/]")
-            self.console.print("Ensure TerminatorSidechatPlugin is:")
+            self.console.print("Ensure TerminatorSidechat plugin is:")
             self.console.print("  1. Installed in ~/.config/terminator/plugins/")
             self.console.print("  2. Enabled in Terminator Preferences > Plugins")
             self.console.print("  3. Terminator has been restarted after enabling")
@@ -414,16 +503,12 @@ class TerminatorSidechatSession:
                 '/net/tenshu/Terminator2/Sidechat'
             )
 
-            # Check plugin version for diagnostics
+            # Log plugin version for diagnostics (debug only)
             try:
                 version = self.plugin_dbus.get_plugin_version()
-                self.console.print(f"[dim]Plugin version: {version}[/dim]")
-                if "vadjustment" not in version.lower():
-                    self.console.print("[yellow]⚠ Plugin is outdated! Restart Terminator to load new version.[/yellow]")
-                    self.console.print("[yellow]  Run: killall -9 terminator && terminator &[/yellow]")
+                self._debug(f"Plugin version: {version}")
             except Exception:
-                self.console.print("[yellow]⚠ Plugin version check failed (old plugin running)[/yellow]")
-                self.console.print("[yellow]  Restart Terminator: killall -9 terminator && terminator &[/yellow]")
+                pass  # Ignore version check failures
 
             return True
         except Exception as e:
@@ -461,29 +546,31 @@ class TerminatorSidechatSession:
                     raise Exception("No terminal is currently focused. Please focus a terminal and try again.")
                 self.chat_terminal_uuid = self._normalize_uuid(focused_terminal)
 
-                # Check if exactly one other pane exists (besides chat terminal)
+                # Check for existing Exec pane or offer to reuse single other pane
                 try:
-                    self.console.print(f"[dim]Checking for existing panes (chat UUID: {self.chat_terminal_uuid[:8]}...)[/dim]")
                     terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
-                    self.console.print(f"[dim]Found {len(terminals)} terminal(s) in current window[/dim]")
-
                     chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
 
                     # Filter out chat terminal
                     other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
 
+                    # First: Look for existing Sidechat Exec pane by title
+                    exec_candidates = [t for t in other_terminals if t.get('title', '').startswith('Sidechat: Exec')]
+                    if exec_candidates:
+                        # Reuse existing exec pane silently
+                        self.exec_terminal_uuid = self._normalize_uuid(exec_candidates[0]['uuid'])
+                        self.console.print("[green]✓[/] Terminals ready")
+                        return  # Success - reusing existing exec terminal
+
+                    # Second: If exactly one other pane, offer to use it
                     if len(other_terminals) == 1:
-                        # Exactly one other pane exists - offer to use it
                         existing_pane = other_terminals[0]
                         pane_title = existing_pane.get('title', 'Untitled')
-                        self.console.print(f"[yellow]Found existing terminal:[/] {pane_title}")
-
-                        use_existing = Confirm.ask("Use this terminal as Exec pane?", default=True)
+                        use_existing = Confirm.ask(f"Use '{pane_title}' as Exec pane?", default=True)
 
                         if use_existing:
                             self.exec_terminal_uuid = self._normalize_uuid(existing_pane['uuid'])
-                            self.console.print(f"[green]✓[/] Chat terminal: {self.chat_terminal_uuid[:8]}...")
-                            self.console.print(f"[green]✓[/] Exec terminal (existing): {self.exec_terminal_uuid[:8]}...")
+                            self.console.print("[green]✓[/] Terminals ready")
                             return  # Success - using existing terminal
                 except dbus.exceptions.DBusException as e:
                     # D-Bus specific errors (method not found, connection issues, etc.)
@@ -510,8 +597,7 @@ class TerminatorSidechatSession:
                     raise Exception(f"Failed to split terminal: {exec_uuid}")
                 self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
 
-                self.console.print(f"[green]✓[/] Chat terminal: {self.chat_terminal_uuid[:8]}...")
-                self.console.print(f"[green]✓[/] Exec terminal: {self.exec_terminal_uuid[:8]}...")
+                self.console.print("[green]✓[/] Terminals ready")
                 return  # Success
 
             except Exception as e:
@@ -527,19 +613,19 @@ class TerminatorSidechatSession:
         try:
             terminals = self.plugin_dbus.get_all_terminals_metadata()
 
-            # DEBUG: Show what we're comparing
-            self.console.print(f"[yellow]DEBUG: Looking for exec UUID:[/] {repr(self.exec_terminal_uuid)} (type: {type(self.exec_terminal_uuid).__name__})")
-            self.console.print(f"[yellow]DEBUG: Plugin returned {len(terminals)} terminals[/]")
+            # Debug output for terminal verification
+            self._debug(f"Looking for exec UUID: {repr(self.exec_terminal_uuid)} (type: {type(self.exec_terminal_uuid).__name__})")
+            self._debug(f"Plugin returned {len(terminals)} terminals")
             for t in terminals:
-                self.console.print(f"[yellow]  - {repr(t['uuid'])} (type: {type(t['uuid']).__name__}) | Title: {t.get('title', 'N/A')}[/]")
+                self._debug(f"  - {repr(t['uuid'])} (type: {type(t['uuid']).__name__}) | Title: {t.get('title', 'N/A')}")
                 if t['uuid'] == self.exec_terminal_uuid:
-                    self.console.print(f"[green]    ✓ EXACT MATCH![/]")
+                    self._debug("    ✓ EXACT MATCH!")
 
             # Normalize both sides for comparison
             exec_uuid_normalized = self._normalize_uuid(self.exec_terminal_uuid)
             return any(self._normalize_uuid(t['uuid']) == exec_uuid_normalized for t in terminals)
         except Exception as e:
-            self.console.print(f"[red]DEBUG: Verification error: {e}[/]")
+            self._debug(f"Verification error: {e}")
             return False
 
     def _recreate_exec_terminal(self) -> bool:
@@ -620,9 +706,13 @@ class TerminatorSidechatSession:
                     dbg_len = len(current_content) if current_content else 0
                     self.console.print(f"[dim]Initial capture: {dbg_len} chars[/dim]", end="\r")
 
+            except dbus.exceptions.DBusException as e:
+                # D-Bus communication error with plugin
+                self.console.print(f"[red]Plugin D-Bus error: {e}[/red]")
+                return ("", True)
             except Exception as e:
-                # Plugin error, give up
-                self.console.print(f"[red]Capture error: {e}[/red]")
+                # Other unexpected error
+                self.console.print(f"[red]Capture error ({type(e).__name__}): {e}[/red]")
                 return ("", True)
 
             # Check for stability with enhanced validation
@@ -638,7 +728,8 @@ class TerminatorSidechatSession:
                     stable_count = 0
                     previous_content = current_content
                     # Show why we're not accepting stability yet
-                    print(f"\r⏱  Too early for stability ({elapsed:.1f}s < {min_wait}s)   ", end="", flush=True)
+                    sys.stdout.write(f"\r⏱  Too early for stability ({elapsed:.1f}s < {min_wait}s)   ")
+                    sys.stdout.flush()
                 elif stable_count >= stability_checks:
                     # Content appears stable - validate with size heuristic
                     content_len = len(current_content) if current_content else 0
@@ -646,11 +737,13 @@ class TerminatorSidechatSession:
                     # If content is suspiciously small (< 400 chars), require extra confirmation
                     if content_len < 400 and elapsed < 1.5:
                         # Content looks incomplete - keep waiting
-                        print(f"\r⚠  Content small ({content_len} chars), waiting longer...   ", end="", flush=True)
+                        sys.stdout.write(f"\r⚠  Content small ({content_len} chars), waiting longer...   ")
+                        sys.stdout.flush()
                         stable_count = stability_checks - 1  # Reset to need one more match
                     else:
                         # Content is stable and sufficient!
-                        print("\r" + " " * 60 + "\r", end="", flush=True)  # Clear line
+                        sys.stdout.write("\r" + " " * 60 + "\r")
+                        sys.stdout.flush()
                         return (current_content, False)
             else:
                 # Content changed, reset stability counter
@@ -661,7 +754,8 @@ class TerminatorSidechatSession:
             spinner = spinner_chars[attempt % len(spinner_chars)]
             stability_dots = "●" * stable_count + "○" * (stability_checks - stable_count)
             elapsed = initial_delay + sum([poll_interval * (backoff_factor ** i) for i in range(attempt)])
-            print(f"\r{spinner} Waiting for output {stability_dots} ({elapsed:.1f}s)", end="", flush=True)
+            sys.stdout.write(f"\r{spinner} Waiting for output {stability_dots} ({elapsed:.1f}s)")
+            sys.stdout.flush()
 
             # Adaptive wait with exponential backoff
             time.sleep(current_interval)
@@ -669,7 +763,8 @@ class TerminatorSidechatSession:
             attempt += 1
 
         # Timeout - clear feedback line, return last content
-        print("\r" + " " * 60 + "\r", end="", flush=True)
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
         return (current_content if current_content else "", True)
 
     def simple_snapshot_capture(self, terminal_uuid, lines=-1) -> str:
@@ -694,6 +789,46 @@ class TerminatorSidechatSession:
         except Exception as e:
             self.console.print(f"[red]Snapshot capture error: {e}[/]")
             return ""
+
+    def wait_for_tui_render(self, terminal_uuid, max_wait=2.0) -> bool:
+        """
+        Wait for TUI application to finish rendering by detecting content stability.
+
+        Uses polling to detect when two consecutive captures are identical,
+        indicating the TUI has finished its initial render.
+
+        Args:
+            terminal_uuid: Terminal to monitor
+            max_wait: Maximum wait time in seconds (default: 2.0)
+
+        Returns:
+            True if content stabilized, False if timed out
+        """
+        start_time = time.time()
+        poll_interval = 0.15
+        previous_content = None
+        stable_count = 0
+
+        while time.time() - start_time < max_wait:
+            try:
+                current_content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+                if current_content == previous_content:
+                    stable_count += 1
+                    if stable_count >= 2:  # Stable for 2 consecutive polls
+                        self._debug(f"TUI render stabilized after {time.time() - start_time:.2f}s")
+                        return True
+                else:
+                    stable_count = 0
+                    previous_content = current_content
+
+                time.sleep(poll_interval)
+            except Exception as e:
+                self._debug(f"TUI render wait error: {e}")
+                time.sleep(poll_interval)
+
+        self._debug(f"TUI render wait timed out after {max_wait}s")
+        return False  # Timeout - proceed anyway
 
     def prompt_based_capture(self, terminal_uuid, max_wait=30) -> Tuple[bool, str]:
         """
@@ -732,22 +867,28 @@ class TerminatorSidechatSession:
                 # Check for prompt immediately
                 if content and PromptDetector.detect_prompt(content):
                     # Clear spinner and return
-                    print("\r" + " " * 60 + "\r", end="", flush=True)
+                    sys.stdout.write("\r" + " " * 60 + "\r")
+                    sys.stdout.flush()
                     return (True, content)
 
                 # Visual feedback
                 spinner = spinner_chars[attempt % len(spinner_chars)]
                 elapsed = initial_delay + (attempt * poll_interval)
-                print(f"\r{spinner} Waiting for prompt ({elapsed:.1f}s)", end="", flush=True)
+                sys.stdout.write(f"\r{spinner} Waiting for prompt ({elapsed:.1f}s)")
+                sys.stdout.flush()
 
                 time.sleep(poll_interval)
 
+            except dbus.exceptions.DBusException as e:
+                self.console.print(f"[red]Plugin D-Bus error during capture: {e}[/]")
+                return (False, "")
             except Exception as e:
-                self.console.print(f"[red]Prompt-based capture error: {e}[/]")
+                self.console.print(f"[red]Prompt-based capture error ({type(e).__name__}): {e}[/]")
                 return (False, "")
 
         # Timeout - return last content
-        print("\r" + " " * 60 + "\r", end="", flush=True)
+        sys.stdout.write("\r" + " " * 60 + "\r")
+        sys.stdout.flush()
         return (False, content if content else "")
 
     def capture_context(self, include_exec_output=False) -> str:
@@ -947,6 +1088,22 @@ Provide a brief but comprehensive summary."""
         matches = re.findall(pattern, text, re.MULTILINE)
         return [kp.strip() for kp in matches if kp.strip()]
 
+    def extract_screenshot_requests(self, text: str) -> List[str]:
+        """
+        Extract screenshot requests from [📷] blocks.
+
+        Returns list of screenshot types:
+        - 'exec' for [📷] (default - exec terminal only)
+        - 'all' for [📷 all] (all terminals)
+        """
+        matches = SCREENSHOT_REQUEST_PATTERN.findall(text)
+        # findall returns the capture group (the 'all' part or empty string)
+        return ['all' if m.lower() == 'all' else 'exec' for m in matches] if matches else []
+
+    def extract_context_refresh_requests(self, text: str) -> bool:
+        """Check if text contains a context refresh request [🔄]"""
+        return bool(CONTEXT_REFRESH_PATTERN.search(text))
+
     def process_fragments(self, prompt: str):
         """
         Process !fragment commands in a prompt and return modified prompt plus resolved fragments.
@@ -1014,12 +1171,51 @@ Provide a brief but comprehensive summary."""
             self.console.print(f"[yellow]Error during command wait: {e}[/]")
             return (False, "")
 
-    def execute_command(self, command: str) -> bool:
+    def should_use_screenshot_capture(self, command: str) -> bool:
+        """
+        Determine if screenshot capture should be used instead of text capture.
+
+        Uses hybrid detection approach:
+        1. Command-based detection (known TUI commands)
+        2. Terminal state detection (alternate screen buffer heuristic)
+
+        This provides better accuracy than command-based detection alone,
+        catching cases where a TUI is launched via script or alias.
+
+        Args:
+            command: The command being executed
+
+        Returns:
+            True if screenshot capture should be used, False for text capture
+        """
+        # First check: known TUI command
+        if is_tui_command(command):
+            self._debug(f"TUI detected via command name: {command.split()[0] if command else ''}")
+            return True
+
+        # Second check: terminal state suggests TUI is active
+        # This catches TUIs launched via scripts, aliases, or complex pipelines
+        try:
+            is_tui_active = self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid)
+            if is_tui_active:
+                self._debug("TUI detected via terminal state (alternate screen heuristic)")
+                self.console.print("[cyan]TUI detected via terminal state[/]")
+                return True
+        except dbus.exceptions.DBusException as e:
+            # Method might not exist in older plugin versions
+            self._debug(f"TUI state detection unavailable: {e}")
+        except Exception as e:
+            # Fall back to command-based detection only
+            self._debug(f"TUI state detection error: {e}")
+
+        return False
+
+    def execute_command(self, command: str) -> Tuple[bool, str]:
         """
         Execute command in Exec terminal with user approval and intelligent completion detection.
 
         Returns:
-            True if executed, False if skipped
+            Tuple of (executed: bool, output: str or tuple)
         """
         # Smart detection: Check if this "command" is actually a special key
         # If so, automatically route to keypress handler instead
@@ -1043,7 +1239,7 @@ Provide a brief but comprehensive summary."""
         )
 
         if choice == "n":
-            return False
+            return (False, "")
 
         if choice == "e":
             # Allow editing
@@ -1054,7 +1250,7 @@ Provide a brief but comprehensive summary."""
         if not self._verify_exec_terminal():
             self.console.print("[yellow]Exec terminal not found[/]")
             if not self._recreate_exec_terminal():
-                return False
+                return (False, "")
 
         # Send to Exec terminal
         try:
@@ -1067,11 +1263,14 @@ Provide a brief but comprehensive summary."""
             if success:
                 self.console.print("[green]✓[/] Command sent to Exec terminal")
 
-                # Detect if this is a TUI application
-                if is_tui_command(command):
+                # Detect if this is a TUI application using hybrid detection
+                # Checks both command name AND terminal state (alternate screen heuristic)
+                if self.should_use_screenshot_capture(command):
                     # TUI detected - use screenshot capture
                     self.console.print("[cyan]TUI application detected - using screenshot capture[/]")
-                    time.sleep(1.5)  # Give TUI time to fully render
+
+                    # Adaptive wait for TUI to render (replaces fixed 1.5s delay)
+                    self.wait_for_tui_render(self.exec_terminal_uuid, max_wait=2.0)
 
                     try:
                         # Capture screenshot via plugin
@@ -1093,6 +1292,9 @@ Provide a brief but comprehensive summary."""
                         with open(temp_path, 'wb') as f:
                             f.write(image_bytes)
 
+                        # Track screenshot for cleanup on exit
+                        self.screenshot_files.append(temp_path)
+
                         self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
 
                         # Return a message with the screenshot path
@@ -1112,11 +1314,10 @@ Screenshot size: {len(image_bytes)} bytes"""
                         return True, f"Screenshot capture failed: {e}"
                 else:
                     # Regular command - use prompt-based capture
-                    with self.console.status("[cyan]Waiting for command to complete..."):
-                        prompt_detected, output = self.prompt_based_capture(
-                            self.exec_terminal_uuid,
-                            max_wait=30
-                        )
+                    prompt_detected, output = self.prompt_based_capture(
+                        self.exec_terminal_uuid,
+                        max_wait=30
+                    )
 
                     if prompt_detected:
                         self.console.print("[green]✓[/] Command completed (prompt detected)")
@@ -1127,8 +1328,12 @@ Screenshot size: {len(image_bytes)} bytes"""
             else:
                 self.console.print("[red]✗[/] Failed to send command")
                 return False, ""
+        except dbus.exceptions.DBusException as e:
+            self.console.print(f"[red]D-Bus error executing command: {e}[/]")
+            self.console.print("[yellow]Plugin may have disconnected. Try /reset[/]")
+            return False, ""
         except Exception as e:
-            self.console.print(f"[red]Error executing command: {e}[/]")
+            self.console.print(f"[red]Error executing command ({type(e).__name__}): {e}[/]")
             return False, ""
 
     def execute_keypress(self, keypress: str) -> bool:
@@ -1202,42 +1407,43 @@ Screenshot size: {len(image_bytes)} bytes"""
         """Background monitoring of all terminals (like tmuxai watch mode)"""
         while self.watch_mode:
             try:
-                # Capture all terminal content (including exec output for watch)
-                context = self.capture_context(include_exec_output=True)
+                # Thread-safe capture and prompt - hold lock during D-Bus calls and conversation
+                # This prevents race conditions with main thread's D-Bus operations
+                context = None
+                response_text = None
 
-                if not context.strip():
-                    await asyncio.sleep(self.watch_interval)
-                    continue
+                with self.watch_lock:
+                    # Capture all terminal content (including exec output for watch)
+                    context = self.capture_context(include_exec_output=True)
 
-                # Send to AI with watch goal
-                prompt = f"""[Watch Mode] Goal: {self.watch_goal}
+                    if not context.strip():
+                        # Release lock and sleep if no context
+                        pass
+                    else:
+                        # Build and send prompt while holding lock
+                        prompt = f"""[Watch Mode] Goal: {self.watch_goal}
 
 Current terminal state:
 {context}
 
 Based on the watch goal, analyze the terminal activity and provide suggestions ONLY if you observe something relevant to the goal. If everything looks normal, respond with "OK" only."""
 
-                # Use conversation.prompt() for watch mode with thread safety
-                # Note: We don't pass system prompt here as it should already be in conversation
-                try:
-                    # Keep lock held for entire response lifecycle to ensure thread safety
-                    with self.watch_lock:
-                        response = self.conversation.prompt(prompt)
-                        # Consume response while holding lock to prevent concurrent modifications
-                        response_text = response.text()
+                        try:
+                            response = self.conversation.prompt(prompt)
+                            # Consume response while holding lock to prevent concurrent modifications
+                            response_text = response.text()
+                        except Exception as response_error:
+                            self.console.print(f"[yellow]Watch mode response error: {response_error}[/]")
 
-                    # Only show if AI has actionable feedback (not just "OK")
-                    if response_text.strip() and response_text.strip().lower() != "ok":
-                        self.console.print()
-                        self.console.print(Panel(
-                            Markdown(response_text),
-                            title="[bold yellow]⚠ Watch Mode Alert[/]",
-                            border_style="yellow"
-                        ))
-                        self.console.print()
-                except Exception as response_error:
-                    self.console.print(f"[yellow]Watch mode response error: {response_error}[/]")
-                    # Continue watching despite error
+                # Only show if AI has actionable feedback (not just "OK") - outside lock
+                if response_text and response_text.strip() and response_text.strip().lower() != "ok":
+                    self.console.print()
+                    self.console.print(Panel(
+                        Markdown(response_text),
+                        title="[bold yellow]⚠ Watch Mode Alert[/]",
+                        border_style="yellow"
+                    ))
+                    self.console.print()
 
             except Exception as e:
                 self.console.print(f"[red]Watch mode error: {e}[/]")
@@ -1558,7 +1764,7 @@ Type !fragment <name> [...] to insert fragments
 
                 # Simple snapshot capture (no stability detection)
                 # Works better for TUI applications and provides instant feedback
-                context = self.capture_context(include_exec_output=False)
+                context = self.capture_context(include_exec_output=True)
 
                 # Process fragments if present
                 processed_input, fragments = self.process_fragments(user_input)
@@ -1582,7 +1788,7 @@ Type !fragment <name> [...] to insert fragments
                 stream_success = False
 
                 try:
-                    self.console.print("\n[bold green]ai[/]")
+                    self.console.print("\n[bold green]llm[/]")
 
                     # Thread-safe conversation access
                     with self.watch_lock:
@@ -1636,20 +1842,19 @@ Type !fragment <name> [...] to insert fragments
                                         # Regular command returned text only
                                         exec_text = exec_content
 
-                                    # DEBUG: Show what was captured
-                                    self.console.print(f"\n[yellow]═══ DEBUG: Captured Content ═══[/]")
-                                    self.console.print(f"[yellow]UUID: {self.exec_terminal_uuid}[/]")
+                                    # Debug output for captured content
+                                    self._debug("═══ Captured Content ═══")
+                                    self._debug(f"UUID: {self.exec_terminal_uuid}")
                                     if screenshot_path:
-                                        self.console.print(f"[yellow]Type: Screenshot (TUI)[/]")
-                                        self.console.print(f"[yellow]Screenshot path: {screenshot_path}[/]")
-                                        self.console.print(f"[yellow]Description length: {len(exec_text)} chars[/]")
+                                        self._debug("Type: Screenshot (TUI)")
+                                        self._debug(f"Screenshot path: {screenshot_path}")
+                                        self._debug(f"Description length: {len(exec_text)} chars")
                                     else:
-                                        self.console.print(f"[yellow]Type: Text output[/]")
-                                        self.console.print(f"[yellow]Length: {len(exec_text)} chars[/]")
-                                        self.console.print(f"[yellow]Is ERROR: {exec_text.startswith('ERROR') if exec_text else 'N/A (empty)'}[/]")
-                                        self.console.print(f"[yellow]First 300 chars:[/]")
-                                        self.console.print(f"[cyan]{exec_text[:300] if exec_text else '(empty)'}[/]")
-                                    self.console.print(f"[yellow]═══════════════════════════════[/]\n")
+                                        self._debug("Type: Text output")
+                                        self._debug(f"Length: {len(exec_text)} chars")
+                                        self._debug(f"Is ERROR: {exec_text.startswith('ERROR') if exec_text else 'N/A (empty)'}")
+                                        self._debug(f"First 300 chars: {exec_text[:300] if exec_text else '(empty)'}")
+                                    self._debug("═══════════════════════════════")
 
                                     # Build prompt with command execution context
                                     if screenshot_path:
@@ -1694,16 +1899,16 @@ Please analyze the output and provide feedback if needed."""
                                         # Consume response while holding lock
                                         followup_text = followup_response.text()
 
-                                    # DEBUG: Show AI response handling
-                                    self.console.print(f"\n[yellow]═══ DEBUG: AI Response ═══[/]")
-                                    self.console.print(f"[yellow]Length: {len(followup_text)} chars[/]")
-                                    self.console.print(f"[yellow]Stripped lowercase: '{followup_text.strip().lower()[:100]}'[/]")
-                                    self.console.print(f"[yellow]Will be filtered (hidden): {followup_text.strip().lower() in ['ok', 'okay', 'done']}[/]")
-                                    self.console.print(f"[yellow]═══════════════════════════[/]\n")
+                                    # Debug output for AI response handling
+                                    self._debug("═══ AI Response ═══")
+                                    self._debug(f"Length: {len(followup_text)} chars")
+                                    self._debug(f"Stripped lowercase: '{followup_text.strip().lower()[:100]}'")
+                                    self._debug(f"Will be filtered (hidden): {followup_text.strip().lower() in ['ok', 'okay', 'done']}")
+                                    self._debug("═══════════════════════════")
 
                                     # Display the AI's analysis
                                     if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
-                                        self.console.print("\n[bold green]ai[/]")
+                                        self.console.print("\n[bold green]llm[/]")
                                         self.console.print(Markdown(followup_text))
 
                         # Extract and execute keypresses
@@ -1715,6 +1920,88 @@ Please analyze the output and provide feedback if needed."""
                                     self.console.print(f"\n[bold]Keypress {i}/{len(keypresses)}[/]")
 
                                 self.execute_keypress(kp)
+
+                        # Handle screenshot requests [📷]
+                        screenshot_requests = self.extract_screenshot_requests(response_text)
+                        for screenshot_type in screenshot_requests:
+                            self.console.print(f"\n[cyan]Capturing screenshot ({screenshot_type})...[/]")
+                            try:
+                                if screenshot_type == 'all':
+                                    # Capture all terminals
+                                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+                                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
+                                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
+
+                                    for term in other_terminals:
+                                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
+                                        if not screenshot_data.startswith('ERROR'):
+                                            import base64
+                                            image_bytes = base64.b64decode(screenshot_data)
+                                            temp_path = f"/tmp/sidechat_screenshot_{term['uuid'][:8]}_{int(time.time())}.png"
+                                            with open(temp_path, 'wb') as f:
+                                                f.write(image_bytes)
+                                            self.screenshot_files.append(temp_path)
+
+                                            # Send to AI
+                                            with self.watch_lock:
+                                                self.console.print(f"[green]✓[/] Screenshot: {term.get('title', 'Terminal')}")
+                                                followup = self.conversation.prompt(
+                                                    f"Screenshot of terminal '{term.get('title', 'Terminal')}':",
+                                                    attachments=[llm.Attachment(path=temp_path)]
+                                                )
+                                                self.console.print("\n[bold green]llm[/]")
+                                                self.console.print(Markdown(followup.text()))
+                                else:
+                                    # Capture exec terminal only
+                                    screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
+                                    if screenshot_data.startswith('ERROR'):
+                                        self.console.print(f"[red]Screenshot failed: {screenshot_data}[/]")
+                                    else:
+                                        import base64
+                                        image_bytes = base64.b64decode(screenshot_data)
+                                        temp_path = f"/tmp/sidechat_screenshot_{int(time.time())}.png"
+                                        with open(temp_path, 'wb') as f:
+                                            f.write(image_bytes)
+                                        self.screenshot_files.append(temp_path)
+                                        self.console.print(f"[green]✓[/] Screenshot captured: {temp_path}")
+
+                                        # Send to AI for analysis
+                                        with self.watch_lock:
+                                            followup = self.conversation.prompt(
+                                                "Here is the screenshot you requested. Please analyze it:",
+                                                attachments=[llm.Attachment(path=temp_path)]
+                                            )
+                                            self.console.print("\n[bold green]llm[/]")
+                                            self.console.print(Markdown(followup.text()))
+                            except Exception as e:
+                                self.console.print(f"[red]Screenshot error: {e}[/]")
+
+                        # Handle context refresh requests [🔄]
+                        if self.extract_context_refresh_requests(response_text):
+                            self.console.print("\n[cyan]Refreshing terminal context...[/]")
+                            try:
+                                # Clear cache to get fresh content
+                                try:
+                                    self.plugin_dbus.clear_cache()
+                                except Exception:
+                                    pass
+
+                                # Capture fresh context
+                                context = self.capture_context(include_exec_output=True)
+                                if context:
+                                    self.console.print(f"[green]✓[/] Context refreshed ({len(context)} chars)")
+
+                                    # Send to AI
+                                    with self.watch_lock:
+                                        followup = self.conversation.prompt(
+                                            f"Here is the refreshed terminal context:\n\n{context}\n\nPlease analyze the current state:"
+                                        )
+                                        self.console.print("\n[bold green]llm[/]")
+                                        self.console.print(Markdown(followup.text()))
+                                else:
+                                    self.console.print("[yellow]No terminal content captured[/]")
+                            except Exception as e:
+                                self.console.print(f"[red]Context refresh error: {e}[/]")
 
                     except Exception as e:
                         self.console.print(f"\n[red]Command/keypress execution error: {e}[/]")
@@ -1736,9 +2023,25 @@ def main():
         nargs='?',
         help='LLM model to use (default: azure/gpt-4.1-mini)'
     )
+    parser.add_argument(
+        '--debug',
+        action='store_true',
+        help='Enable debug output for troubleshooting'
+    )
+    parser.add_argument(
+        '--capture-timeout',
+        type=float,
+        default=3.0,
+        metavar='SECS',
+        help='Maximum wait time for command output capture (default: 3.0 seconds)'
+    )
     args = parser.parse_args()
 
-    session = TerminatorSidechatSession(model_name=args.model)
+    session = TerminatorSidechatSession(
+        model_name=args.model,
+        debug=args.debug,
+        capture_timeout=args.capture_timeout
+    )
     session.run()
 
 

@@ -35,12 +35,12 @@ PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
 PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Sidechat'
 
 # Plugin version for diagnostics
-PLUGIN_VERSION = "3.0-screenshot-capture"
+PLUGIN_VERSION = "3.2-tui-detection"
 
-AVAILABLE = ['TerminatorSidechatPlugin']
+AVAILABLE = ['TerminatorSidechat']
 
 
-class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
+class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
     """Plugin providing terminal content capture for llm-sidechat via D-Bus"""
 
     capabilities = ['sidechat_bridge']
@@ -62,11 +62,11 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
                 do_not_queue=True
             )
             dbus.service.Object.__init__(self, self.bus_name, PLUGIN_BUS_PATH)
-            dbg('TerminatorSidechatPlugin: D-Bus service registered at %s' % PLUGIN_BUS_NAME)
+            dbg('TerminatorSidechat: D-Bus service registered at %s' % PLUGIN_BUS_NAME)
         except (DBusException, KeyError) as e:
             # KeyError occurs when object path handler is already registered (plugin loaded multiple times)
             # DBusException occurs when D-Bus is not available or bus name cannot be claimed
-            dbg('TerminatorSidechatPlugin: Could not register D-Bus service: %s (continuing anyway)' % e)
+            dbg('TerminatorSidechat: Could not register D-Bus service: %s (continuing anyway)' % e)
             # Continue without D-Bus (fallback for when loaded by external process or already loaded)
 
         self.terminator = Terminator()
@@ -76,7 +76,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
         self.last_capture = {}   # uuid -> timestamp
         self.cache_ttl = 0.5     # Cache valid for 0.5 seconds
 
-        dbg('TerminatorSidechatPlugin initialized')
+        dbg('TerminatorSidechat initialized')
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='s')
     def capture_terminal_content(self, terminal_uuid, lines=-1):
@@ -216,7 +216,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             return content
 
         except Exception as e:
-            err(f'TerminatorSidechatPlugin: Error capturing terminal content: {e}')
+            err(f'TerminatorSidechat: Error capturing terminal content: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')
@@ -300,7 +300,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
                 return f"ERROR: Failed to save screenshot: {str(e)}"
 
         except Exception as e:
-            err(f'TerminatorSidechatPlugin: Error capturing screenshot: {e}')
+            err(f'TerminatorSidechat: Error capturing screenshot: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ssb', out_signature='b')
@@ -338,7 +338,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             return True
 
         except Exception as e:
-            err(f'TerminatorSidechatPlugin: Error sending keys: {e}')
+            err(f'TerminatorSidechat: Error sending keys: {e}')
             return False
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ss', out_signature='b')
@@ -463,7 +463,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
             return True
 
         except Exception as e:
-            err(f'TerminatorSidechatPlugin: Error sending keypress: {e}')
+            err(f'TerminatorSidechat: Error sending keypress: {e}')
             return False
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='aa{ss}')
@@ -514,7 +514,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
 
         except Exception as e:
             import traceback
-            err(f'TerminatorSidechatPlugin: Error getting terminals metadata: {e}')
+            err(f'TerminatorSidechat: Error getting terminals metadata: {e}')
             err(f'Traceback: {traceback.format_exc()}')
             return []
 
@@ -601,7 +601,7 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
                     return term.uuid.urn
             return ''  # Return empty string instead of None for D-Bus
         except Exception as e:
-            err(f'TerminatorSidechatPlugin: Error getting focused terminal: {e}')
+            err(f'TerminatorSidechat: Error getting focused terminal: {e}')
             return ''  # Return empty string instead of None for D-Bus
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='s')
@@ -614,6 +614,53 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
         """
         return PLUGIN_VERSION
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
+    def is_likely_tui_active(self, terminal_uuid):
+        """
+        Heuristic detection of whether a TUI is active in the terminal.
+
+        Uses vadjustment to detect alternate screen buffer characteristics:
+        - TUI apps typically have minimal scrollback (alternate screen)
+        - Shell output has growing scrollback
+
+        Args:
+            terminal_uuid: UUID of terminal to check
+
+        Returns:
+            True if terminal likely has TUI active, False otherwise
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                return False
+
+            vte = terminal.get_vte()
+            if not vte:
+                return False
+
+            vadj = vte.get_vadjustment()
+            if not vadj:
+                return False
+
+            scroll_pos = vadj.get_value()
+            upper = vadj.get_upper()
+            page_size = vadj.get_page_size()
+
+            # Alternate screen heuristic:
+            # - Scroll position near top (< 5 rows from start)
+            # - Minimal scrollable area (< 10 rows beyond visible)
+            scrollback_rows = upper - page_size
+            is_near_top = scroll_pos < 5
+            has_minimal_scrollback = scrollback_rows < 10
+
+            dbg(f'TUI detection for {terminal_uuid}: scroll_pos={scroll_pos}, scrollback={scrollback_rows}, likely_tui={is_near_top and has_minimal_scrollback}')
+            return is_near_top and has_minimal_scrollback
+
+        except Exception as e:
+            err(f'TerminatorSidechat: Error detecting TUI state: {e}')
+            return False
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='')
     def clear_cache(self):
         """Clear content cache (useful when explicitly requested)"""
         self.content_cache.clear()
@@ -623,4 +670,4 @@ class TerminatorSidechatPlugin(plugin.Plugin, dbus.service.Object):
     def unload(self):
         """Clean up when plugin is unloaded"""
         self.clear_cache()
-        dbg('TerminatorSidechatPlugin unloaded')
+        dbg('TerminatorSidechat unloaded')

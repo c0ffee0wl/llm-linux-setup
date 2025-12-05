@@ -26,6 +26,7 @@ llm() {
         "openai" "gemini" "openrouter" "vertex"
         "cmd" "cmdcomp" "jq"
         "rag" "git-commit" "sort"
+        "consortium" "classify"
     )
 
     # Check if first argument is an excluded subcommand
@@ -142,6 +143,9 @@ llm() {
     elif [ "$1" = "code" ]; then
         shift
         command llm -t code --cl 15 "$@"
+    elif [ "$1" = "sidechat" ]; then
+        shift
+        llm-sidechat "$@"
     else
         if should_skip_template "$@"; then
             command llm --cl 15 "$@"
