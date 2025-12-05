@@ -29,6 +29,16 @@ class PromptDetector:
     KALI_HEADER = re.compile(r'^[┌╭]──.*[\])]$')
     KALI_PROMPT_LINE = re.compile(r'^[└╰]─[$#]')
 
+    # Patterns for EMPTY prompts only (shell ready for input)
+    # Used by detect_prompt_at_end() for completion detection
+    # Unlike PROMPT_PATTERNS, these require prompt char at END of line
+    EMPTY_PROMPT_PATTERNS = [
+        re.compile(r'[~\w/\])\s:][$#]\s*$'),   # bash/sh: ends with $ or #
+        re.compile(r'(?<!\d)[%❯→➜]\s*$'),      # zsh: ends with % ❯ → ➜
+        re.compile(r'^\S+@\S+.*[$#%]\s*$'),    # user@host: ends with prompt char
+    ]
+    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─[$#]\s*$')
+
     @classmethod
     def is_prompt_line(cls, line: str) -> bool:
         """Check if a single line matches a prompt pattern"""
@@ -45,14 +55,18 @@ class PromptDetector:
     @classmethod
     def detect_prompt_at_end(cls, text: str) -> bool:
         """
-        Check if text ends with a shell prompt.
-        Used by sidechat to detect command completion.
+        Check if text ends with an EMPTY shell prompt (ready for input).
+
+        Unlike is_prompt_line(), this does NOT match prompts with commands
+        after them. Used for completion detection to distinguish between:
+        - "$ command" (executing) - does NOT match
+        - "$ " (ready for input) - MATCHES
 
         Args:
             text: Terminal output text
 
         Returns:
-            True if text ends with a recognized shell prompt
+            True if text ends with an empty prompt ready for input
         """
         if not text or not text.strip():
             return False
@@ -60,14 +74,14 @@ class PromptDetector:
         lines = text.strip().split('\n')
         last = lines[-1]
 
-        # Check standard prompt patterns
-        if cls.is_prompt_line(last):
+        # Check empty prompt patterns (ready for input, no command after)
+        if any(p.search(last) for p in cls.EMPTY_PROMPT_PATTERNS):
             return True
 
-        # Check Kali two-line prompt
+        # Check Kali two-line prompt (must be empty)
         if len(lines) >= 2:
             prev = lines[-2]
-            if cls.KALI_HEADER.search(prev) and cls.KALI_PROMPT_LINE.search(last):
+            if cls.KALI_HEADER.search(prev) and cls.KALI_EMPTY_PROMPT_LINE.search(last):
                 return True
 
         return False
