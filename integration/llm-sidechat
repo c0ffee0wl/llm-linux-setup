@@ -888,7 +888,7 @@ class TerminatorSidechatSession:
         sys.stdout.flush()
         return (False, content if content else "")
 
-    def capture_context(self, include_exec_output=False) -> str:
+    def capture_context(self, include_exec_output=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture visible content from all terminals (like tmuxai).
 
@@ -896,12 +896,20 @@ class TerminatorSidechatSession:
         - Chat terminal (where sidechat is running) - to avoid self-reference
         - Exec terminal (unless include_exec_output=True)
 
+        For TUI applications (htop, glances, vim, etc.), captures screenshots
+        instead of text since TUI content doesn't extract well as plain text.
+
         Returns:
-            Formatted context string with XML-wrapped terminal content
+            Tuple of (context_string, attachments_list):
+            - context_string: XML-wrapped text content for non-TUI terminals
+            - attachments_list: Screenshot attachments for TUI terminals
         """
+        import base64
+
         try:
             terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
             context_parts = []
+            attachments = []
 
             for term in terminals:
                 term_uuid = self._normalize_uuid(term['uuid'])
@@ -914,7 +922,39 @@ class TerminatorSidechatSession:
                 if not include_exec_output and term_uuid == self.exec_terminal_uuid:
                     continue
 
-                # Capture visible content (auto-detect viewport size)
+                # Check if TUI is active in this terminal
+                is_tui = False
+                try:
+                    is_tui = self.plugin_dbus.is_likely_tui_active(term['uuid'])
+                except Exception:
+                    pass  # Fall back to text capture if TUI detection fails
+
+                if is_tui:
+                    # Capture screenshot for TUI terminal
+                    self._debug(f"TUI detected in terminal {term['title']}, capturing screenshot")
+                    try:
+                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
+                        if screenshot_data and not screenshot_data.startswith('ERROR'):
+                            # Save to temp file and create attachment
+                            image_bytes = base64.b64decode(screenshot_data)
+                            temp_path = os.path.join(
+                                tempfile.gettempdir(),
+                                f"sidechat_ctx_{term_uuid[:8]}_{int(time.time()*1000)}.png"
+                            )
+                            with open(temp_path, 'wb') as f:
+                                f.write(image_bytes)
+                            self.screenshot_files.append(temp_path)
+                            attachments.append(llm.Attachment(path=temp_path))
+                            # Add marker in context so AI knows about the screenshot
+                            context_parts.append(f'<terminal uuid="{term_uuid}" title="{term["title"]}" type="tui-screenshot">Screenshot attached for this TUI terminal</terminal>')
+                            continue  # Don't fall through to text capture
+                        else:
+                            self._debug(f"Screenshot failed for {term['title']}: {screenshot_data}")
+                    except Exception as e:
+                        self._debug(f"TUI screenshot failed for {term['title']}: {e}")
+                    # Fall through to text capture if screenshot fails
+
+                # Regular text capture for non-TUI terminals (or TUI fallback)
                 content = self.plugin_dbus.capture_terminal_content(term['uuid'], -1)
 
                 if content and not content.startswith('ERROR'):
@@ -923,25 +963,33 @@ class TerminatorSidechatSession:
 {content}
 </terminal>''')
 
-            return "\n\n".join(context_parts)
+            return "\n\n".join(context_parts), attachments
         except Exception as e:
             self.console.print(f"[red]Error capturing context: {e}[/]")
-            return ""
+            return "", []
 
-    def capture_context_intelligent(self, include_exec_output=False) -> str:
+    def capture_context_intelligent(self, include_exec_output=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture context with intelligent stability detection.
         Uses adaptive polling to wait for terminal output to stabilize.
+
+        For TUI applications, captures screenshots instead of text since TUI
+        content doesn't stabilize well with text-based capture.
 
         Args:
             include_exec_output: If True, include exec terminal content
 
         Returns:
-            Formatted context string with XML-wrapped terminal content
+            Tuple of (context_string, attachments_list):
+            - context_string: XML-wrapped text content for non-TUI terminals
+            - attachments_list: Screenshot attachments for TUI terminals
         """
+        import base64
+
         try:
             terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
             context_parts = []
+            attachments = []
             timeout_warnings = []
 
             for term in terminals:
@@ -955,7 +1003,38 @@ class TerminatorSidechatSession:
                 if not include_exec_output and uuid == self.exec_terminal_uuid:
                     continue
 
-                # Intelligent capture with stability detection
+                # Check if TUI is active in this terminal
+                is_tui = False
+                try:
+                    is_tui = self.plugin_dbus.is_likely_tui_active(term['uuid'])
+                except Exception:
+                    pass  # Fall back to text capture if TUI detection fails
+
+                if is_tui:
+                    # Capture screenshot for TUI terminal (no stability detection needed)
+                    self._debug(f"TUI detected in terminal {term['title']}, capturing screenshot")
+                    try:
+                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
+                        if screenshot_data and not screenshot_data.startswith('ERROR'):
+                            # Save to temp file and create attachment
+                            image_bytes = base64.b64decode(screenshot_data)
+                            temp_path = os.path.join(
+                                tempfile.gettempdir(),
+                                f"sidechat_ctx_{uuid[:8]}_{int(time.time()*1000)}.png"
+                            )
+                            with open(temp_path, 'wb') as f:
+                                f.write(image_bytes)
+                            self.screenshot_files.append(temp_path)
+                            attachments.append(llm.Attachment(path=temp_path))
+                            context_parts.append(f'<terminal uuid="{uuid}" title="{term["title"]}" type="tui-screenshot">Screenshot attached for this TUI terminal</terminal>')
+                            continue  # Don't fall through to text capture
+                        else:
+                            self._debug(f"Screenshot failed for {term['title']}: {screenshot_data}")
+                    except Exception as e:
+                        self._debug(f"TUI screenshot failed for {term['title']}: {e}")
+                    # Fall through to text capture if screenshot fails
+
+                # Intelligent capture with stability detection for non-TUI terminals
                 content, timed_out = self.intelligent_capture_with_stability(uuid)
 
                 if timed_out:
@@ -972,10 +1051,10 @@ class TerminatorSidechatSession:
                 warning_msg = ", ".join(timeout_warnings)
                 self.console.print(f"[yellow]⚠ Capture timeout: {warning_msg}[/yellow]")
 
-            return "\n\n".join(context_parts)
+            return "\n\n".join(context_parts), attachments
         except Exception as e:
             self.console.print(f"[red]Error capturing context: {e}[/]")
-            return ""
+            return "", []
 
     def estimate_tokens(self) -> int:
         """Estimate token count from conversation responses and system prompt.
@@ -1419,6 +1498,25 @@ Screenshot size: {len(image_bytes)} bytes"""
                         return True, output
                     else:
                         self.console.print("[yellow]⚠[/] Timeout or long-running command")
+
+                        # Post-timeout TUI check: command may have launched a TUI we didn't expect
+                        # (e.g., git log with pager, script that invokes vim, etc.)
+                        try:
+                            if self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid):
+                                self.console.print("[cyan]TUI detected after timeout - capturing screenshot[/]")
+                                import base64
+                                screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
+                                if screenshot_data and not screenshot_data.startswith('ERROR'):
+                                    image_bytes = base64.b64decode(screenshot_data)
+                                    temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
+                                    with open(temp_path, 'wb') as f:
+                                        f.write(image_bytes)
+                                    self.screenshot_files.append(temp_path)
+                                    self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
+                                    return True, (output, temp_path)  # Return with screenshot
+                        except Exception as e:
+                            self._debug(f"Post-timeout TUI check failed: {e}")
+
                         return True, output
             else:
                 self.console.print("[red]✗[/] Failed to send command")
@@ -1505,12 +1603,14 @@ Screenshot size: {len(image_bytes)} bytes"""
                 # Thread-safe capture and prompt - hold lock during D-Bus calls and conversation
                 # This prevents race conditions with main thread's D-Bus operations
                 context = None
+                tui_attachments = []
                 response_text = None
                 exec_status = ""
 
                 with self.watch_lock:
                     # Capture all terminal content (including exec output for watch)
-                    context = self.capture_context(include_exec_output=True)
+                    # Returns (context_text, tui_attachments) tuple for TUI screenshot support
+                    context, tui_attachments = self.capture_context(include_exec_output=True)
 
                     # Check exec terminal idle state using PromptDetector
                     try:
@@ -1537,7 +1637,8 @@ Current terminal state:
 Based on the watch goal, analyze the terminal activity and provide suggestions ONLY if you observe something relevant to the goal. If everything looks normal, respond with "OK" only."""
 
                         try:
-                            response = self.conversation.prompt(prompt)
+                            # Include TUI screenshots if any were captured
+                            response = self.conversation.prompt(prompt, attachments=tui_attachments if tui_attachments else None)
                             # Consume response while holding lock to prevent concurrent modifications
                             response_text = response.text()
                         except Exception as response_error:
@@ -1641,11 +1742,15 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
                 pass
 
             # Simple snapshot capture (includes exec terminal)
-            # Instant capture without stability detection
-            context = self.capture_context(include_exec_output=True)
+            # Returns (context_text, tui_attachments) tuple for TUI screenshot support
+            context, tui_attachments = self.capture_context(include_exec_output=True)
 
-            if context:
+            if context or tui_attachments:
                 self.console.print(f"[green]✓[/] Captured {len(context)} characters of context")
+
+                # Show TUI screenshots info
+                if tui_attachments:
+                    self.console.print(f"[green]✓[/] Captured {len(tui_attachments)} TUI screenshot(s)")
 
                 # Show per-terminal breakdown
                 import re
@@ -1653,19 +1758,26 @@ Based on the watch goal, analyze the terminal activity and provide suggestions O
                 if terminals:
                     self.console.print("\n[bold]Terminals captured:[/]")
                     for uuid_match, title in terminals:
-                        # Extract content for this terminal
-                        term_pattern = rf'<terminal uuid="{re.escape(uuid_match)}"[^>]*>(.*?)</terminal>'
-                        term_match = re.search(term_pattern, context, re.DOTALL)
-                        if term_match:
-                            term_content = term_match.group(1).strip()
-                            lines = len([l for l in term_content.split('\n') if l.strip()])
-                            chars = len(term_content)
-                            self.console.print(f"  • [cyan]{title}[/]: {lines} lines, {chars} chars")
+                        # Check if this is a TUI screenshot
+                        tui_pattern = rf'<terminal uuid="{re.escape(uuid_match)}"[^>]*type="tui-screenshot"'
+                        if re.search(tui_pattern, context):
+                            self.console.print(f"  • [cyan]{title}[/]: [magenta]TUI screenshot[/]")
+                        else:
+                            # Extract content for this terminal
+                            term_pattern = rf'<terminal uuid="{re.escape(uuid_match)}"[^>]*>(.*?)</terminal>'
+                            term_match = re.search(term_pattern, context, re.DOTALL)
+                            if term_match:
+                                term_content = term_match.group(1).strip()
+                                lines = len([l for l in term_content.split('\n') if l.strip()])
+                                chars = len(term_content)
+                                self.console.print(f"  • [cyan]{title}[/]: {lines} lines, {chars} chars")
 
-                # Show preview of first terminal
-                self.console.print("\n[dim]First 300 chars of content:[/]")
-                preview = context[:300].replace('\n', ' ')
-                self.console.print(f"[dim]{preview}...[/]")
+                # Show preview of first terminal (skip if only TUI screenshots)
+                text_only = re.sub(r'<terminal[^>]*type="tui-screenshot"[^>]*>.*?</terminal>', '', context, flags=re.DOTALL)
+                if text_only.strip():
+                    self.console.print("\n[dim]First 300 chars of text content:[/]")
+                    preview = text_only[:300].replace('\n', ' ')
+                    self.console.print(f"[dim]{preview}...[/]")
             else:
                 self.console.print("[yellow]No context captured[/]")
 
@@ -1906,10 +2018,14 @@ Type !fragment <name> [...] to insert fragments
 
                         # Simple snapshot capture (no stability detection)
                         # Works better for TUI applications and provides instant feedback
-                        context = self.capture_context(include_exec_output=True)
+                        # Returns (context_text, tui_attachments) tuple for TUI screenshot support
+                        context, tui_attachments = self.capture_context(include_exec_output=True)
 
                         # Process fragments if present
                         processed_input, fragments = self.process_fragments(user_input)
+
+                        # Combine user fragments with TUI screenshot attachments
+                        all_attachments = fragments + tui_attachments
 
                         # Build prompt with context
                         if context:
@@ -1922,11 +2038,11 @@ Type !fragment <name> [...] to insert fragments
                             full_prompt = processed_input
 
                         # Pass system prompt if this is the first interaction
-                        # Also pass fragments if any were specified
+                        # Also pass attachments (user fragments + TUI screenshots)
                         if len(self.conversation.responses) == 0:
-                            response = self.conversation.prompt(full_prompt, system=self.system_prompt, attachments=fragments)
+                            response = self.conversation.prompt(full_prompt, system=self.system_prompt, attachments=all_attachments)
                         else:
-                            response = self.conversation.prompt(full_prompt, attachments=fragments)
+                            response = self.conversation.prompt(full_prompt, attachments=all_attachments)
 
                     # Stream the response OUTSIDE lock to avoid blocking watch mode
                     # Using Live display to update markdown rendering as chunks arrive
@@ -2116,14 +2232,17 @@ Please analyze the output and provide feedback if needed."""
                                     pass
 
                                 # Capture fresh context
-                                context = self.capture_context(include_exec_output=True)
-                                if context:
-                                    self.console.print(f"[green]✓[/] Context refreshed ({len(context)} chars)")
+                                # Returns (context_text, tui_attachments) tuple for TUI screenshot support
+                                context, tui_attachments = self.capture_context(include_exec_output=True)
+                                if context or tui_attachments:
+                                    tui_info = f" + {len(tui_attachments)} TUI screenshot(s)" if tui_attachments else ""
+                                    self.console.print(f"[green]✓[/] Context refreshed ({len(context)} chars{tui_info})")
 
-                                    # Send to AI
+                                    # Send to AI with TUI screenshots if any
                                     with self.watch_lock:
                                         followup = self.conversation.prompt(
-                                            f"Here is the refreshed terminal context:\n\n{context}\n\nPlease analyze the current state:"
+                                            f"Here is the refreshed terminal context:\n\n{context}\n\nPlease analyze the current state:",
+                                            attachments=tui_attachments if tui_attachments else None
                                         )
                                         self.console.print("\n[bold green]llm[/]")
                                         self.console.print(Markdown(followup.text()))
