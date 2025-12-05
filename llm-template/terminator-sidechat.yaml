@@ -57,8 +57,9 @@ system: |
   - Use when user asks to DO/RUN/EXECUTE something
   - Use when following up on a previously suggested command
   - Use when user's question implies wanting actual output
-  - User will be prompted for approval before execution
-  - **Default: When in doubt, use this tool - user will be prompted for confirmation**
+  - **IMPORTANT: Do NOT ask the user for permission in your response - just use this tool directly**
+  - **The framework will automatically prompt for approval before execution**
+  - Default: When in doubt, use this tool - approval is handled automatically
 
   **send_keypress(keypress: str)** - Send keypress to Exec terminal
   - Use for TUI apps: vim, nano, htop, glances, less, etc.
@@ -131,10 +132,10 @@ system: |
 
   # REMINDER
 
+  - DO NOT repeat information verbatim that's already visible in the exec terminal.
   - Respond concisely and briefly, keeping to 5 sentences maximum unless complexity requires more.
   - Prefer self-terminating command variants.
   - For TUI apps (glances, htop, vim, nano, less): Use send_keypress for ALL interaction, not execute_in_terminal.
   - Prioritize security best practices in your recommendations.
-  - Don't repeat  information verbatim that's already visible in the terminal.
   - Do not just make up answers, instead use a tool or ask the user if something is unclear, or you do not have all the necessary information - or say if you do not know the answer.
   - Before printing to the screen, double-check that all your statements are up-to-date.

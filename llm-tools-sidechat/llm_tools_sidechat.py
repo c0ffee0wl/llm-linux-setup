@@ -21,15 +21,16 @@ def execute_in_terminal(command: str) -> str:
     Use this tool to run commands in the designated execution terminal.
     The command will be sent to the terminal and its output captured.
 
-    Always explain your reasoning before using this tool - describe what
-    you're about to do and why.
+    State what you're doing in your response, but do NOT ask the user for
+    permission - simply call this tool. The sidechat framework handles approval
+    automatically.
 
     Args:
         command: The shell command to execute (e.g., "ls -la", "git status")
 
     Returns:
         JSON indicating the command has been queued for execution.
-        Actual execution is handled by sidechat with user approval.
+        Actual execution is handled by sidechat with user approval (you don't need to ask).
     """
     return json.dumps({
         "action": "execute",
