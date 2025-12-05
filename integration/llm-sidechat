@@ -32,6 +32,7 @@ sys.path.insert(0, site.getusersitepackages())
 import os
 import re
 import time
+import hashlib
 import tempfile
 import asyncio
 import threading
@@ -213,6 +214,9 @@ class TerminatorSidechatSession:
         self.watch_interval = 5  # seconds
         self.watch_lock = threading.Lock()
         self.event_loop = None
+        # Watch mode intelligent change detection
+        self.previous_watch_context_hash = None  # SHA256 hash for deduplication
+        self.previous_watch_iteration_count = 0   # Track iterations for prompt
 
         # Intelligent capture timing configuration
         self.capture_config = {
@@ -289,6 +293,12 @@ class TerminatorSidechatSession:
 
         except Exception as e:
             self.console.print(f"[red]Error acquiring lock: {e}[/]")
+            # Clean up file handle if it was opened before the exception
+            if self.lock_file:
+                try:
+                    self.lock_file.close()
+                except Exception:
+                    pass
             sys.exit(1)
 
     def _release_instance_lock(self):
@@ -1603,6 +1613,36 @@ Screenshot size: {len(image_bytes)} bytes"""
             self.console.print(f"[red]Error sending keypress: {e}[/]")
             return False
 
+    def _compute_context_hash(self, context: str, attachments: List[llm.Attachment]) -> str:
+        """Compute SHA256 hash of context for change detection."""
+        hasher = hashlib.sha256()
+        normalized_context = ' '.join(context.split())  # Normalize whitespace
+        hasher.update(normalized_context.encode('utf-8'))
+        for attachment in attachments:
+            if hasattr(attachment, 'path') and attachment.path:
+                hasher.update(attachment.path.encode('utf-8'))
+        return hasher.hexdigest()
+
+    def _is_watch_response_dismissive(self, response_text: str) -> bool:
+        """Determine if response indicates no action needed."""
+        if not response_text:
+            return True
+        normalized = response_text.strip().lower().rstrip('.')
+        dismissive_exact = {
+            'ok', 'okay', 'k', 'no comment', 'no issues', 'nothing to report',
+            'nothing new', 'all good', 'looks good', 'no action needed',
+            'no changes', 'nothing notable', 'nothing unusual', 'all normal',
+        }
+        if normalized in dismissive_exact:
+            return True
+        # Short positive responses (1-3 words) are likely dismissive
+        words = normalized.split()
+        if len(words) <= 3:
+            positive = {'ok', 'okay', 'good', 'fine', 'normal', 'clear', 'stable'}
+            if any(word in positive for word in words):
+                return True
+        return False
+
     def _start_watch_mode_thread(self):
         """Start watch mode in a background thread with its own event loop"""
         def watch_thread_target():
@@ -1619,7 +1659,13 @@ Screenshot size: {len(image_bytes)} bytes"""
         self.watch_thread.start()
 
     async def watch_loop(self):
-        """Background monitoring of all terminals (like tmuxai watch mode)"""
+        """
+        Background monitoring of all terminals (like tmuxai watch mode).
+
+        Implements intelligent change detection:
+        1. Hash-based skip: Don't send unchanged context to AI
+        2. History-aware prompt: Tell AI to focus on NEW content when changes detected
+        """
         while self.watch_mode:
             try:
                 # Thread-safe capture and prompt - hold lock during D-Bus calls and conversation
@@ -1628,6 +1674,7 @@ Screenshot size: {len(image_bytes)} bytes"""
                 tui_attachments = []
                 response_text = None
                 exec_status = ""
+                should_skip = False
 
                 with self.watch_lock:
                     # Capture all terminal content (including exec output for watch)
@@ -1646,35 +1693,57 @@ Screenshot size: {len(image_bytes)} bytes"""
                         exec_status = "[Exec: unknown]"
 
                     if not context.strip():
-                        # Release lock and sleep if no context
-                        pass
+                        # No context to analyze
+                        should_skip = True
                     else:
-                        # Build and send prompt while holding lock
-                        prompt = f"""[Watch Mode] Goal: {self.watch_goal}
+                        # CHANGE DETECTION: Compute hash and compare with previous
+                        current_hash = self._compute_context_hash(context, tui_attachments)
+
+                        if current_hash == self.previous_watch_context_hash:
+                            # Context unchanged - skip AI call entirely
+                            should_skip = True
+                        else:
+                            # Context changed - update hash and proceed
+                            self.previous_watch_context_hash = current_hash
+                            self.previous_watch_iteration_count += 1
+
+                            # HISTORY-AWARE PROMPT: Tell AI to focus on new content
+                            prompt = f"""[Watch Mode - Iteration {self.previous_watch_iteration_count}] Goal: {self.watch_goal}
 {exec_status}
+
+IMPORTANT: Compare this terminal state against the conversation history above.
+Focus ONLY on content that has changed or is NEW since your last watch observation.
+Do not comment on content you have already analyzed in previous iterations.
 
 Current terminal state:
 {context}
 
-Based on the watch goal, analyze the terminal activity and provide suggestions ONLY if you observe something relevant to the goal. If everything looks normal, respond with "OK" only."""
+Instructions:
+1. Identify what has CHANGED since your last observation (use conversation history for reference)
+2. If changes are relevant to the watch goal "{self.watch_goal}", provide actionable suggestions
+3. If no relevant NEW content, respond with only "OK"
+4. Keep responses concise - focus on actionable insights only"""
 
-                        try:
-                            # Include TUI screenshots if any were captured
-                            response = self.conversation.prompt(prompt, attachments=tui_attachments if tui_attachments else None)
-                            # Consume response while holding lock to prevent concurrent modifications
-                            response_text = response.text()
-                        except Exception as response_error:
-                            self.console.print(f"[yellow]Watch mode response error: {response_error}[/]")
+                            try:
+                                # Include TUI screenshots if any were captured
+                                response = self.conversation.prompt(prompt, attachments=tui_attachments if tui_attachments else None)
+                                # Consume response while holding lock to prevent concurrent modifications
+                                response_text = response.text()
+                            except Exception as response_error:
+                                # Don't update hash on error - will retry next iteration
+                                self.previous_watch_context_hash = None
+                                self.console.print(f"[yellow]Watch mode response error: {response_error}[/]")
 
-                # Only show if AI has actionable feedback (not just "OK") - outside lock
-                if response_text and response_text.strip() and response_text.strip().lower() != "ok":
-                    self.console.print()
-                    self.console.print(Panel(
-                        Markdown(response_text),
-                        title="[bold yellow]⚠ Watch Mode Alert[/]",
-                        border_style="yellow"
-                    ))
-                    self.console.print()
+                # Only show if AI has actionable feedback - outside lock
+                if not should_skip and response_text and response_text.strip():
+                    if not self._is_watch_response_dismissive(response_text):
+                        self.console.print()
+                        self.console.print(Panel(
+                            Markdown(response_text),
+                            title="[bold yellow]Watch Mode Alert[/]",
+                            border_style="yellow"
+                        ))
+                        self.console.print()
 
             except Exception as e:
                 self.console.print(f"[red]Watch mode error: {e}[/]")
@@ -1859,6 +1928,9 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 if self.watch_mode:
                     with self.watch_lock:
                         self.watch_mode = False
+                        # Reset state for next enable
+                        self.previous_watch_context_hash = None
+                        self.previous_watch_iteration_count = 0
                         if self.event_loop and not self.event_loop.is_closed():
                             # Stop the loop gracefully
                             try:
@@ -1900,6 +1972,9 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 with self.watch_lock:
                     self.watch_mode = True
                     self.watch_goal = args
+                    # Reset state for fresh analysis with new goal
+                    self.previous_watch_context_hash = None
+                    self.previous_watch_iteration_count = 0
                     self._start_watch_mode_thread()
                 self.console.print(f"[green]✓[/] Watch mode enabled")
                 self.console.print(f"Goal: {self.watch_goal}")
@@ -2073,14 +2148,15 @@ Type !fragment <name> [...] to insert fragments
                         else:
                             response = self.conversation.prompt(full_prompt, attachments=all_attachments)
 
-                    # Stream the response OUTSIDE lock to avoid blocking watch mode
-                    # Using Live display to update markdown rendering as chunks arrive
-                    with Live(Markdown(""), console=self.console, refresh_per_second=10) as live:
-                        for chunk in response:
-                            response_text += chunk
-                            live.update(Markdown(self.escape_action_tags_for_display(response_text)))
+                        # Consume response INSIDE lock to prevent race condition with watch mode
+                        # This trades streaming display for thread safety - response shows all at once
+                        # instead of character-by-character, but prevents potential corruption if
+                        # watch thread calls conversation.prompt() while we're iterating
+                        response_text = response.text()
 
-                    # No need for extra newline - Rich Live handles formatting
+                    # Display the response OUTSIDE lock (already consumed)
+                    self.console.print(Markdown(self.escape_action_tags_for_display(response_text)))
+
                     stream_success = True
 
                 except Exception as e:

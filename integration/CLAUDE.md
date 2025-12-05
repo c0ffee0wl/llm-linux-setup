@@ -81,8 +81,13 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - **User-defined goals**: `/watch detect security issues`
 - **Proactive suggestions**: AI only responds when actionable
 - **Background asyncio**: Non-blocking monitoring loop
-- **Configurable interval**: Default 5 seconds
+- **Fixed 5-second interval**: Polls every 5 seconds
 - **Exec terminal state**: Reports if Exec terminal is idle or running a command
+
+**Intelligent Change Detection** (TmuxAI-inspired):
+1. **Hash-based skip**: SHA256 hash of terminal context - skips AI calls when unchanged
+2. **History-aware prompting**: AI compares against conversation history, focuses on NEW content
+3. **Robust dismissive filter**: Recognizes "OK", "no issues", "nothing to report", etc.
 
 ## Slash Commands
 
