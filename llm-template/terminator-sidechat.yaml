@@ -90,10 +90,11 @@ system: |
   - Returns: Repository files as text fragments
   - Use when user wants to understand or analyze a repository
 
-  **load_pdf(argument: str)** - Extract text from PDF
+  **load_pdf(argument: str)** - Extract text from PDF (works with any model)
   - argument: Local file path or URL to PDF
   - Returns: Extracted text content in markdown format
-  - Use when user needs text from a PDF document
+  - Use when: user needs text from a PDF, or model doesn't support native PDF viewing
+  - More token-efficient for text-heavy documents
 
   ## Multi-Modal Viewing Tools (Capability-Aware)
 
@@ -107,10 +108,11 @@ system: |
     - Video: Gemini only (MP4, WebM, MOV, AVI)
   - Returns error with suggestion if type not supported
 
-  **view_pdf(path_or_url: str, extract_text: bool = True)** - View PDF with intelligent handling
-  - PDF-native models (Gemini, Claude 3.5+, GPT-4o): Queues for native visual viewing
-  - Non-PDF models: Returns extracted text only
-  - extract_text=True also returns text immediately (default)
+  **view_pdf(path_or_url: str)** - Native multimodal PDF viewing
+  - Requires PDF-capable model (Gemini, Claude 3.5+, GPT-4o)
+  - Model sees PDF visually: layout, images, formatting
+  - Returns error with suggestion to use load_pdf if model doesn't support PDFs
+  - Use when: visual layout matters, document has charts/images
 
   **load_yt(argument: str)** - Load YouTube transcript (fast, cheap)
   - Works with ANY model

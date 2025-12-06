@@ -150,31 +150,29 @@ def view_attachment(path_or_url: str) -> str:
     })
 
 
-def view_pdf(path_or_url: str, extract_text: bool = True) -> str:
+def view_pdf(path_or_url: str) -> str:
     """
-    View a PDF document with intelligent handling based on model capabilities.
+    View a PDF document using the model's native multimodal capability.
 
-    This tool provides the best experience for PDFs:
-    - PDF-native models (Gemini, Claude 3.5+, GPT-4o): Queues PDF for native
-      visual understanding plus optional text extraction.
-    - Non-PDF models: Returns extracted text only.
+    Requires a PDF-capable model (Gemini, Claude 3.5+, GPT-4o). The model
+    processes the PDF visually, seeing layout, images, and formatting.
 
     The PDF will be visible to you in your NEXT conversation turn (not immediately).
 
+    For text extraction instead (works with any model, more token-efficient for
+    text-heavy documents), use load_pdf().
+
     Args:
-        path_or_url: Local file path or URL to the PDF document
-        extract_text: If True (default), also extract and return text immediately.
-                      Useful for searching or referencing specific content.
+        path_or_url: Local file path or URL to the PDF document.
+                     URLs are passed directly to the model API.
 
     Returns:
-        If extract_text is True: Extracted text content, plus JSON indicating
-        the PDF has been queued for visual viewing (if model supports it).
-        If extract_text is False: JSON indicating the PDF has been queued.
+        JSON indicating the PDF has been queued for native viewing.
+        Returns error if model doesn't support native PDF viewing.
     """
     return json.dumps({
         "action": "view_pdf",
         "path_or_url": path_or_url,
-        "extract_text": extract_text,
         "status": "queued"
     })
 

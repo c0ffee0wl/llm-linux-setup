@@ -107,22 +107,6 @@ TUI_COMMANDS = {
     'calcurse', 'khal',
 }
 
-# Patterns for AI-requested captures (XML tags)
-# <CAPTURE/> or <CAPTURE>all</CAPTURE> - request screenshot
-SCREENSHOT_REQUEST_PATTERN = re.compile(r'<CAPTURE(?:\s*/\s*>|>(all)?</CAPTURE>)', re.IGNORECASE)
-# <REFRESH/> - request context refresh
-CONTEXT_REFRESH_PATTERN = re.compile(r'<REFRESH\s*/?\s*>', re.IGNORECASE)
-# <EXECUTE>...</EXECUTE> - command execution
-EXECUTE_PATTERN = re.compile(
-    r'<\s*EXECUTE\s*>(.*?)<\s*/\s*EXECUTE\s*>',
-    re.DOTALL | re.IGNORECASE
-)
-# <PRESSKEY>...</PRESSKEY> - keypress
-PRESSKEY_PATTERN = re.compile(
-    r'<\s*PRESSKEY\s*>(.*?)<\s*/\s*PRESSKEY\s*>',
-    re.DOTALL | re.IGNORECASE
-)
-
 
 # =============================================================================
 # Tool Setup
@@ -197,7 +181,7 @@ def is_tui_command(command: str) -> bool:
 class TerminatorSidechatSession:
     """Main sidechat session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None, debug: bool = False, capture_timeout: float = 3.0):
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False):
         self.console = Console()
 
         # Debug mode flag
@@ -254,9 +238,11 @@ class TerminatorSidechatSession:
             self.system_prompt = template.system or template.prompt
             if not self.system_prompt:
                 raise ValueError("Template has no system or prompt field")
+            self._debug(f"Template loaded: terminator-sidechat ({len(self.system_prompt)} chars)")
         except Exception as e:
             self.console.print(f"[yellow]⚠ Could not load terminator-sidechat template: {e}[/]")
             self.console.print("[yellow]Using basic system prompt. Install template with: ./install-llm-tools.sh[/]")
+            self._debug(f"Template load failed: {e}")
             self.system_prompt = "You are an AI terminal assistant. Provide commands in <EXECUTE>command</EXECUTE> XML tags."
 
         # Store original system prompt for context squashing
@@ -286,17 +272,6 @@ class TerminatorSidechatSession:
         # Watch mode intelligent change detection
         self.previous_watch_context_hash = None  # SHA256 hash for deduplication
         self.previous_watch_iteration_count = 0   # Track iterations for prompt
-
-        # Intelligent capture timing configuration
-        self.capture_config = {
-            'initial_delay': 0.3,        # Initial wait before first capture (seconds)
-            'poll_interval': 0.2,        # Starting poll interval (seconds)
-            'max_poll_interval': 1.0,    # Maximum poll interval (seconds)
-            'backoff_factor': 1.3,       # Exponential backoff multiplier
-            'stability_checks': 3,       # Consecutive matches needed for stability
-            'max_wait': capture_timeout, # Total timeout (seconds) - configurable via CLI
-            'min_wait_before_stability': 0.5,  # Minimum wait before allowing stability detection
-        }
 
         # D-Bus connections
         self.dbus_service = None
@@ -990,142 +965,6 @@ Shell: {env_type} {shell_info}
             self.console.print(f"[red]Failed to recreate exec terminal: {e}[/]")
             return False
 
-    def intelligent_capture_with_stability(self, terminal_uuid, max_wait=None):
-        """
-        Capture terminal content with adaptive polling and stability detection.
-        Waits for content to stop changing before returning.
-
-        Args:
-            terminal_uuid: Terminal to capture
-            max_wait: Maximum wait time in seconds (uses config default if None)
-
-        Returns:
-            Tuple of (content, timed_out)
-        """
-        if max_wait is None:
-            max_wait = self.capture_config['max_wait']
-
-        # Get configuration
-        initial_delay = self.capture_config['initial_delay']
-        poll_interval = self.capture_config['poll_interval']
-        max_poll_interval = self.capture_config['max_poll_interval']
-        backoff_factor = self.capture_config['backoff_factor']
-        stability_checks = self.capture_config['stability_checks']
-
-        # Calculate max attempts based on timing
-        max_attempts = int(max_wait / poll_interval) + 5
-
-        # Initial delay for command to start executing
-        time.sleep(initial_delay)
-
-        # Track elapsed time for minimum wait enforcement
-        start_time = time.time()
-
-        previous_content = None
-        stable_count = 0
-        attempt = 0
-        current_interval = poll_interval
-        current_content = ""  # Initialize to avoid NameError if loop doesn't execute
-
-        # Spinner animation characters
-        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
-
-        while attempt < max_attempts:
-            # Capture current content
-            try:
-                current_content = self.plugin_dbus.capture_terminal_content(
-                    terminal_uuid, -1
-                )
-
-                # DIAGNOSTIC: Log what we're getting
-                if attempt == 0:
-                    dbg_len = len(current_content) if current_content else 0
-                    self.console.print(f"[dim]Initial capture: {dbg_len} chars[/dim]", end="\r")
-
-            except dbus.exceptions.DBusException as e:
-                # D-Bus communication error with plugin
-                self.console.print(f"[red]Plugin D-Bus error: {e}[/red]")
-                return ("", True)
-            except Exception as e:
-                # Other unexpected error
-                self.console.print(f"[red]Capture error ({type(e).__name__}): {e}[/red]")
-                return ("", True)
-
-            # Check for stability with enhanced validation
-            elapsed = time.time() - start_time
-            min_wait = self.capture_config.get('min_wait_before_stability', 0.5)
-
-            if current_content == previous_content:
-                # Apply minimum wait before allowing stability detection
-                if elapsed < min_wait:
-                    # Too early - don't count toward stability yet
-                    # Show why we're not accepting stability yet
-                    sys.stdout.write(f"\r⏱  Too early for stability ({elapsed:.1f}s < {min_wait}s)   ")
-                    sys.stdout.flush()
-                else:
-                    # Time constraint met, count this as a stable match
-                    stable_count += 1
-
-                if stable_count >= stability_checks:
-                    # Content appears stable - validate with size heuristic
-                    content_len = len(current_content) if current_content else 0
-
-                    # If content is suspiciously small (< 400 chars), require extra confirmation
-                    if content_len < 400 and elapsed < 1.5:
-                        # Content looks incomplete - keep waiting
-                        sys.stdout.write(f"\r⚠  Content small ({content_len} chars), waiting longer...   ")
-                        sys.stdout.flush()
-                        stable_count = stability_checks - 1  # Reset to need one more match
-                    else:
-                        # Content is stable and sufficient!
-                        sys.stdout.write("\r" + " " * 60 + "\r")
-                        sys.stdout.flush()
-                        return (current_content, False)
-            else:
-                # Content changed, reset stability counter
-                stable_count = 0
-                previous_content = current_content
-
-            # Visual feedback
-            spinner = spinner_chars[attempt % len(spinner_chars)]
-            stability_dots = "●" * stable_count + "○" * (stability_checks - stable_count)
-            elapsed = initial_delay + sum([poll_interval * (backoff_factor ** i) for i in range(attempt)])
-            sys.stdout.write(f"\r{spinner} Waiting for output {stability_dots} ({elapsed:.1f}s)")
-            sys.stdout.flush()
-
-            # Adaptive wait with exponential backoff
-            time.sleep(current_interval)
-            current_interval = min(current_interval * backoff_factor, max_poll_interval)
-            attempt += 1
-
-        # Timeout - clear feedback line, return last content
-        sys.stdout.write("\r" + " " * 60 + "\r")
-        sys.stdout.flush()
-        return (current_content if current_content else "", True)
-
-    def simple_snapshot_capture(self, terminal_uuid, lines=-1) -> str:
-        """
-        Simple direct snapshot of terminal content with no stability detection.
-
-        This is ideal for:
-        - TUI applications (htop, vim) that continuously update or wait for input
-        - Watch mode captures (periodic snapshots)
-        - Manual context captures
-
-        Args:
-            terminal_uuid: Terminal to capture
-            lines: Number of lines to capture (-1 for auto-detect viewport)
-
-        Returns:
-            Terminal content as string
-        """
-        try:
-            content = self.plugin_dbus.capture_terminal_content(terminal_uuid, lines)
-            return content if content and not content.startswith('ERROR') else ""
-        except Exception as e:
-            self.console.print(f"[red]Snapshot capture error: {e}[/]")
-            return ""
-
     def wait_for_tui_render(self, terminal_uuid, max_wait=2.0, initial_content=None) -> bool:
         """
         Wait for TUI application to finish rendering by detecting content stability.
@@ -1252,6 +1091,74 @@ Shell: {env_type} {shell_info}
         sys.stdout.flush()
         return (False, content if content else "")
 
+    def _capture_last_command_output(self, terminal_uuid: str) -> str:
+        """
+        Capture the last command's output intelligently using dynamic extension.
+        Starts with viewport-sized capture, expands if needed to find command boundaries.
+
+        This ensures that even if the user manually runs a command with output
+        exceeding the viewport, the full output is captured (similar to tool execution).
+
+        Args:
+            terminal_uuid: Terminal UUID to capture from
+
+        Returns:
+            String containing the last command's prompt + output
+        """
+        INITIAL_LINES = 50      # Start with viewport-ish size
+        MAX_LINES = 10000       # VTE typical max scrollback
+
+        try:
+            _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
+        except Exception:
+            # Fallback to viewport capture
+            return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+        lines_to_capture = INITIAL_LINES
+
+        while lines_to_capture <= MAX_LINES:
+            start_row = max(0, cursor_row - lines_to_capture)
+
+            try:
+                content = self.plugin_dbus.capture_from_row(terminal_uuid, start_row)
+            except Exception:
+                return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+            if not content or content.startswith('ERROR'):
+                return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+            # Find prompt lines to identify command boundaries
+            prompts = PromptDetector.find_all_prompts(content)
+
+            # Found command boundary (2+ prompts) - extract last command
+            if len(prompts) >= 2:
+                last_cmd_start_line = prompts[-2][0]
+                lines = content.split('\n')
+                return '\n'.join(lines[last_cmd_start_line:])
+
+            # Only one prompt - need more context, double the range
+            if start_row == 0:
+                # Already at beginning of scrollback, return what we have
+                if prompts:
+                    lines = content.split('\n')
+                    return '\n'.join(lines[prompts[0][0]:])
+                return content
+
+            lines_to_capture *= 2  # Double and retry
+
+        # Hit max - return full capture with prompt extraction
+        content = self.plugin_dbus.capture_from_row(terminal_uuid, 0)
+        prompts = PromptDetector.find_all_prompts(content)
+        if len(prompts) >= 2:
+            # Extract from second-to-last prompt (last command start)
+            lines = content.split('\n')
+            return '\n'.join(lines[prompts[-2][0]:])
+        elif prompts:
+            # Single prompt - return from there
+            lines = content.split('\n')
+            return '\n'.join(lines[prompts[0][0]:])
+        return content
+
     def capture_context(self, include_exec_output=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture visible content from all terminals (like tmuxai).
@@ -1318,102 +1225,14 @@ Shell: {env_type} {shell_info}
                         self._debug(f"TUI screenshot failed for {term['title']}: {e}")
                     # Fall through to text capture if screenshot fails
 
-                # Regular text capture for non-TUI terminals (or TUI fallback)
-                content = self.plugin_dbus.capture_terminal_content(term['uuid'], -1)
+                # Intelligent capture: get full last command output (not just viewport)
+                content = self._capture_last_command_output(term['uuid'])
 
                 if content and not content.startswith('ERROR'):
                     # Format like tmux-fragments
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
 {content}
 </terminal>''')
-
-            return "\n\n".join(context_parts), attachments
-        except Exception as e:
-            self.console.print(f"[red]Error capturing context: {e}[/]")
-            return "", []
-
-    def capture_context_intelligent(self, include_exec_output=False) -> Tuple[str, List[llm.Attachment]]:
-        """
-        Capture context with intelligent stability detection.
-        Uses adaptive polling to wait for terminal output to stabilize.
-
-        For TUI applications, captures screenshots instead of text since TUI
-        content doesn't stabilize well with text-based capture.
-
-        Args:
-            include_exec_output: If True, include exec terminal content
-
-        Returns:
-            Tuple of (context_string, attachments_list):
-            - context_string: XML-wrapped text content for non-TUI terminals
-            - attachments_list: Screenshot attachments for TUI terminals
-        """
-        import base64
-
-        try:
-            terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
-            context_parts = []
-            attachments = []
-            timeout_warnings = []
-
-            for term in terminals:
-                uuid = self._normalize_uuid(term.get('uuid'))
-
-                # Skip chat terminal (self-awareness)
-                if uuid == self.chat_terminal_uuid:
-                    continue
-
-                # Optionally skip exec terminal
-                if not include_exec_output and uuid == self.exec_terminal_uuid:
-                    continue
-
-                # Check if TUI is active in this terminal
-                is_tui = False
-                try:
-                    is_tui = self.plugin_dbus.is_likely_tui_active(term['uuid'])
-                except Exception:
-                    pass  # Fall back to text capture if TUI detection fails
-
-                if is_tui:
-                    # Capture screenshot for TUI terminal (no stability detection needed)
-                    self._debug(f"TUI detected in terminal {term['title']}, capturing screenshot")
-                    try:
-                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
-                        if screenshot_data and not screenshot_data.startswith('ERROR'):
-                            # Save to temp file and create attachment
-                            image_bytes = base64.b64decode(screenshot_data)
-                            temp_path = os.path.join(
-                                tempfile.gettempdir(),
-                                f"sidechat_ctx_{uuid[:8]}_{int(time.time()*1000)}.png"
-                            )
-                            with open(temp_path, 'wb') as f:
-                                f.write(image_bytes)
-                            self.screenshot_files.append(temp_path)
-                            attachments.append(llm.Attachment(path=temp_path))
-                            context_parts.append(f'<terminal uuid="{uuid}" title="{term["title"]}" type="tui-screenshot">Screenshot attached for this TUI terminal</terminal>')
-                            continue  # Don't fall through to text capture
-                        else:
-                            self._debug(f"Screenshot failed for {term['title']}: {screenshot_data}")
-                    except Exception as e:
-                        self._debug(f"TUI screenshot failed for {term['title']}: {e}")
-                    # Fall through to text capture if screenshot fails
-
-                # Intelligent capture with stability detection for non-TUI terminals
-                content, timed_out = self.intelligent_capture_with_stability(uuid)
-
-                if timed_out:
-                    timeout_warnings.append(term.get('title', 'Unknown'))
-
-                if content and not content.startswith('ERROR'):
-                    # Format like tmux-fragments
-                    context_parts.append(f'''<terminal uuid="{uuid}" title="{term['title']}" cwd="{term['cwd']}">
-{content}
-</terminal>''')
-
-            # Show timeout warnings if any
-            if timeout_warnings:
-                warning_msg = ", ".join(timeout_warnings)
-                self.console.print(f"[yellow]⚠ Capture timeout: {warning_msg}[/yellow]")
 
             return "\n\n".join(context_parts), attachments
         except Exception as e:
@@ -1580,64 +1399,6 @@ Provide a brief but comprehensive summary."""
         except Exception as e:
             self.console.print(f"[red]Error squashing context: {e}[/]")
 
-    def extract_commands(self, text: str) -> List[str]:
-        """Extract commands from <EXECUTE>...</EXECUTE> XML tags.
-
-        Each <EXECUTE> tag contains one command to execute.
-        Multi-line content within a single tag is split into separate commands.
-        """
-        matches = EXECUTE_PATTERN.findall(text)
-
-        commands = []
-        for block in matches:
-            # Split multi-line blocks into individual commands
-            for line in block.split('\n'):
-                line = line.strip()
-                # Skip empty lines and comments
-                if not line or line.startswith('#'):
-                    continue
-                commands.append(line)
-
-        return commands
-
-    def escape_action_tags_for_display(self, text: str) -> str:
-        """Remove XML action tags, show only content in backticks.
-
-        <EXECUTE>cmd</EXECUTE> → `cmd`
-        <PRESSKEY>q</PRESSKEY> → `q`
-        """
-        # Replace content tags with backtick-wrapped content
-        text = EXECUTE_PATTERN.sub(r'`\1`', text)
-        text = PRESSKEY_PATTERN.sub(r'`\1`', text)
-        # Replace self-closing tags with placeholder
-        text = re.sub(r'<CAPTURE(?:>.*?</CAPTURE>|/?>)', '`[capture]`', text, flags=re.IGNORECASE)
-        text = re.sub(r'<REFRESH/?>', '`[refresh]`', text, flags=re.IGNORECASE)
-        return text
-
-    def extract_keypresses(self, text: str) -> List[str]:
-        """Extract keypresses from <PRESSKEY>...</PRESSKEY> XML tags.
-
-        Each <PRESSKEY> tag contains one keypress to send.
-        Examples: <PRESSKEY>Ctrl+C</PRESSKEY>, <PRESSKEY>:wq</PRESSKEY>, <PRESSKEY>Enter</PRESSKEY>
-        """
-        matches = PRESSKEY_PATTERN.findall(text)
-        return [kp.strip() for kp in matches if kp.strip()]
-
-    def extract_screenshot_requests(self, text: str) -> List[str]:
-        """Extract screenshot requests from <CAPTURE/> XML tags.
-
-        Returns list of screenshot types:
-        - 'exec' for <CAPTURE/> (default - exec terminal only)
-        - 'all' for <CAPTURE>all</CAPTURE> (all terminals)
-        """
-        matches = SCREENSHOT_REQUEST_PATTERN.findall(text)
-        # findall returns the capture group (the 'all' part or empty string)
-        return ['all' if m and m.lower() == 'all' else 'exec' for m in matches] if matches else []
-
-    def extract_context_refresh_requests(self, text: str) -> bool:
-        """Check if text contains a context refresh request <REFRESH/>"""
-        return bool(CONTEXT_REFRESH_PATTERN.search(text))
-
     def process_fragments(self, prompt: str):
         """
         Process !fragment commands in a prompt and return modified prompt plus resolved fragments.
@@ -1667,43 +1428,6 @@ Provide a brief but comprehensive summary."""
                 prompt_lines.append(line)
 
         return "\n".join(prompt_lines), fragments
-
-    def wait_for_command_completion(self, timeout=30) -> Tuple[bool, str]:
-        """
-        Wait for command to complete using intelligent capture with stability detection.
-
-        Returns:
-            (completed, output): Boolean + captured output
-        """
-        try:
-            # Use intelligent capture with stability detection
-            # This handles timing, polling, and content validation automatically
-            content, timed_out = self.intelligent_capture_with_stability(
-                self.exec_terminal_uuid,
-                max_wait=timeout
-            )
-
-            if timed_out:
-                # Timeout occurred, but return whatever we captured
-                return (False, content)
-
-            # Content is stable - verify it looks reasonable
-            if content and len(content) > 100:
-                # Sanity check: verify prompt markers are present
-                # This confirms command completed and shell is ready
-                if PromptDetector.detect_prompt_at_end(content):
-                    return (True, content)
-                else:
-                    # Content stable but no clear prompt - might be TUI or long output
-                    # Still consider it successful
-                    return (True, content)
-            else:
-                # Very short content - might be problematic
-                return (False, content)
-
-        except Exception as e:
-            self.console.print(f"[yellow]Error during command wait: {e}[/]")
-            return (False, "")
 
     def should_use_screenshot_capture(self, command: str) -> bool:
         """
@@ -2093,7 +1817,18 @@ Instructions:
 
                             try:
                                 # Include TUI screenshots if any were captured
-                                response = self.conversation.prompt(prompt, attachments=tui_attachments if tui_attachments else None)
+                                # Pass system prompt if this is the first interaction (e.g., user started with /watch)
+                                if len(self.conversation.responses) == 0:
+                                    response = self.conversation.prompt(
+                                        prompt,
+                                        system=self._build_system_prompt(),
+                                        attachments=tui_attachments if tui_attachments else None
+                                    )
+                                else:
+                                    response = self.conversation.prompt(
+                                        prompt,
+                                        attachments=tui_attachments if tui_attachments else None
+                                    )
                                 # Consume response while holding lock to prevent concurrent modifications
                                 response_text = response.text()
                             except Exception as response_error:
@@ -2270,10 +2005,18 @@ Instructions:
         elif cmd == "/info":
             tokens = self.estimate_tokens()
             percentage = (tokens * 100 // self.max_context_size) if self.max_context_size > 0 else 0
+            # System prompt status
+            if self.system_prompt:
+                prompt_len = len(self.system_prompt)
+                is_template = "terminal assistant" in self.system_prompt.lower()
+                system_status = f"System prompt: {'terminator-sidechat' if is_template else 'fallback'} ({prompt_len:,} chars)"
+            else:
+                system_status = "System prompt: NOT LOADED"
             self.console.print(Panel(f"""
 [bold]Session Information:[/]
 
 Model: {self.model_name}
+{system_status}
 Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%)
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}
@@ -2606,7 +2349,6 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
 
         elif tool_name == "view_pdf":
             path_or_url = get_str("path_or_url")
-            extract_text = tool_args.get("extract_text", True)
 
             if not path_or_url:
                 return ToolResult(
@@ -2616,37 +2358,22 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 )
 
             caps = self._get_model_capabilities()
-            text_content = ""
 
-            # Extract text if requested
-            if extract_text:
-                self.console.print(f"[cyan]Extracting PDF text...[/]")
-                loaders = llm.get_fragment_loaders()
-                if 'pdf' in loaders:
-                    try:
-                        results = loaders['pdf'](path_or_url)
-                        if not isinstance(results, list):
-                            results = [results]
-                        text_parts = [str(r) for r in results if isinstance(r, llm.Fragment)]
-                        text_content = "\n".join(text_parts)
-                        self.console.print(f"[green]✓[/] Extracted {len(text_content)} chars")
-                    except Exception as e:
-                        text_content = f"[Text extraction failed: {e}]"
-                        self.console.print(f"[yellow]Text extraction failed: {e}[/]")
-                else:
-                    text_content = "[PDF fragment loader not available]"
+            # Native PDF viewing only - no text extraction
+            if not caps['pdf']:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: Model doesn't support native PDF viewing. Use load_pdf for text extraction instead.",
+                    tool_call_id=tool_call_id
+                )
 
-            # Queue for native PDF viewing if supported
-            if caps['pdf']:
-                try:
-                    attachment = self._create_attachment(path_or_url)
-                    self.pending_attachments.append(attachment)
-                    self.console.print(f"[green]✓[/] PDF queued for native viewing")
-                    result = f"{text_content}\n\n[PDF queued for native viewing in next turn.]"
-                except Exception as e:
-                    result = f"{text_content}\n\n[Failed to queue PDF: {e}]"
-            else:
-                result = f"{text_content}\n\n[Note: Model doesn't support native PDF viewing, text extraction only.]"
+            try:
+                attachment = self._create_attachment(path_or_url)
+                self.pending_attachments.append(attachment)
+                self.console.print(f"[green]✓[/] PDF queued for native viewing: {path_or_url}")
+                result = f"PDF queued for native viewing in next turn: {path_or_url}"
+            except Exception as e:
+                result = f"Failed to queue PDF: {e}"
 
             return ToolResult(
                 name=tool_call.name,
@@ -3055,19 +2782,11 @@ def main():
         action='store_true',
         help='Enable debug output for troubleshooting'
     )
-    parser.add_argument(
-        '--capture-timeout',
-        type=float,
-        default=3.0,
-        metavar='SECS',
-        help='Maximum wait time for command output capture (default: 3.0 seconds)'
-    )
     args = parser.parse_args()
 
     session = TerminatorSidechatSession(
         model_name=args.model,
-        debug=args.debug,
-        capture_timeout=args.capture_timeout
+        debug=args.debug
     )
     session.run()
 
