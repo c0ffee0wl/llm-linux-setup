@@ -256,7 +256,7 @@ class TerminatorSidechatSession:
         self.exec_terminal_uuid = None
 
         # Context management (like tmuxai)
-        self.max_context_size = 100000  # tokens
+        self.max_context_size = 200000  # tokens
         self.context_squash_threshold = 0.8  # 80%
 
         # Token count cache (avoids O(n) recalculation on every input)
@@ -2024,8 +2024,8 @@ Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}
 {f"Watch goal: {self.watch_goal}" if self.watch_mode else ""}
 
-Chat terminal: {self.chat_terminal_uuid[:16]}...
-Exec terminal: {self.exec_terminal_uuid[:16]}...
+Chat terminal: {self.chat_terminal_uuid}
+Exec terminal: {self.exec_terminal_uuid}
 """, title="Session Info", border_style="cyan"))
             return True
 
