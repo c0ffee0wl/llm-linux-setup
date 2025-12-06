@@ -692,7 +692,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         return toplevel
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='aa{ss}')
-    def get_terminals_in_same_window(self, reference_terminal_uuid):
+    def get_terminals_in_same_tab(self, reference_terminal_uuid):
         """
         Get metadata for terminals in the same TAB as the reference terminal.
 
@@ -706,7 +706,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             - focused: "True" or "False" indicating if terminal has focus
             - cwd: Current working directory
         """
-        dbg(f'[SIDECHAT-PLUGIN] get_terminals_in_same_window called with UUID: {reference_terminal_uuid}')
+        dbg(f'[SIDECHAT-PLUGIN] get_terminals_in_same_tab called with UUID: {reference_terminal_uuid}')
         terminals_info = []
 
         try:
@@ -757,7 +757,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
         except Exception as e:
             import traceback
-            err(f'[SIDECHAT-PLUGIN] Error getting terminals in same window: {e}')
+            err(f'[SIDECHAT-PLUGIN] Error getting terminals in same tab: {e}')
             err(f'[SIDECHAT-PLUGIN] Traceback: {traceback.format_exc()}')
             return []
 

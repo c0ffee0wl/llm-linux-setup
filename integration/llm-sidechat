@@ -207,8 +207,26 @@ class TerminatorSidechatSession:
         self._shutdown_initiated = False
         self.lock_file = None
 
-        # Acquire instance lock FIRST (before any other initialization)
-        self._acquire_instance_lock()
+        # Clean up any stale lock files from crashed instances
+        self._cleanup_stale_lock_files()
+
+        # Early D-Bus detection (BEFORE lock acquisition)
+        # This determines which tab we're in for tab-specific locking
+        self.early_terminal_uuid = self._get_current_terminal_uuid_early()
+
+        if not self.early_terminal_uuid:
+            self.console.print("[red]Error: llm-sidechat requires Terminator terminal[/]")
+            self.console.print("[yellow]Please run this from inside a Terminator terminal.[/]")
+            sys.exit(1)
+
+        # Check for existing sidechat in the same tab
+        if self._check_existing_sidechat_in_tab(self.early_terminal_uuid):
+            self.console.print("[red]Error: A sidechat is already running in this tab[/]")
+            self.console.print("[yellow]You can run sidechat in a different Terminator tab.[/]")
+            sys.exit(1)
+
+        # Acquire tab-specific instance lock
+        self._acquire_instance_lock(self.early_terminal_uuid)
 
         # Register shutdown handlers EARLY (before creating resources)
         self._register_shutdown_handlers()
@@ -290,15 +308,22 @@ class TerminatorSidechatSession:
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
         self._load_auto_kbs()  # Load from config on startup
 
-    def _acquire_instance_lock(self):
+    def _acquire_instance_lock(self, terminal_uuid: str):
         """
-        Ensure only one sidechat instance per user session.
+        Ensure only one sidechat instance per TAB.
         Uses file locking with automatic cleanup on process exit.
-        Detects and cleans up stale locks from crashed processes.
+        Lock file is named with terminal UUID for per-tab isolation.
+
+        Args:
+            terminal_uuid: UUID of the chat terminal (required, determines lock file)
         """
         # Use runtime directory for lock file (XDG_RUNTIME_DIR or /tmp)
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
-        lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
+
+        # Tab-specific lock file using terminal UUID
+        # Extract just the UUID part (remove urn:uuid: prefix if present)
+        uuid_short = terminal_uuid.replace('urn:uuid:', '')
+        lock_path = Path(runtime_dir) / f'llm-sidechat-{uuid_short}.lock'
 
         # Check for stale lock before attempting to acquire
         if lock_path.exists():
@@ -330,9 +355,9 @@ class TerminatorSidechatSession:
             self.lock_file.flush()
 
         except BlockingIOError:
-            # Lock is held by another instance
-            self.console.print("[red]Error: Another sidechat instance is already running[/]")
-            self.console.print("[yellow]Only one sidechat session can run at a time.[/]")
+            # Lock is held by another instance in this tab
+            self.console.print("[red]Error: A sidechat instance is already running in this tab[/]")
+            self.console.print("[yellow]You can run sidechat in a different tab.[/]")
             self.console.print(f"[yellow]Lock file: {lock_path}[/]")
 
             # Try to read PID from lock file
@@ -365,6 +390,101 @@ class TerminatorSidechatSession:
                 self.lock_file = None
             except Exception:
                 pass  # Lock will be released by kernel anyway
+
+    def _get_current_terminal_uuid_early(self) -> Optional[str]:
+        """
+        Get current terminal UUID via D-Bus BEFORE acquiring lock.
+        This enables tab-specific locking for multi-tab support.
+
+        Returns:
+            Terminal UUID string, or None if not in Terminator
+        """
+        try:
+            bus = dbus.SessionBus()
+
+            # Discover Terminator service (same logic as _reconnect_dbus)
+            terminator_services = [
+                name for name in bus.list_names()
+                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Sidechat')
+            ]
+
+            if not terminator_services:
+                return None  # Not running in Terminator
+
+            service_name = terminator_services[0]
+            dbus_service = bus.get_object(service_name, '/net/tenshu/Terminator2')
+
+            # Get focused terminal UUID
+            focused = dbus_service.get_focused_terminal()
+            if not focused:
+                return None
+
+            return self._normalize_uuid(focused)
+
+        except Exception:
+            return None  # D-Bus not available or error
+
+    def _check_existing_sidechat_in_tab(self, terminal_uuid: str) -> bool:
+        """
+        Check if another sidechat instance is already running in the same tab.
+
+        Looks for terminals with title starting with "Sidechat: Exec" in the
+        same tab as the given terminal.
+
+        Args:
+            terminal_uuid: UUID of the current terminal
+
+        Returns:
+            True if another sidechat is running in this tab, False otherwise
+        """
+        try:
+            bus = dbus.SessionBus()
+            plugin_dbus = bus.get_object(
+                'net.tenshu.Terminator2.Sidechat',
+                '/net/tenshu/Terminator2/Sidechat'
+            )
+
+            # Get terminals in same tab
+            terminals = plugin_dbus.get_terminals_in_same_tab(terminal_uuid)
+
+            # Check for existing Sidechat Exec terminal
+            for t in terminals:
+                title = t.get('title', '')
+                if title.startswith('Sidechat: Exec'):
+                    # Found another sidechat in this tab
+                    return True
+
+            return False
+
+        except Exception:
+            # Plugin not available or error - allow startup
+            # (will fail later with proper error message)
+            return False
+
+    def _cleanup_stale_lock_files(self):
+        """
+        Clean up stale lock files from crashed sidechat instances.
+        Scans for llm-sidechat-*.lock files and removes those with dead PIDs.
+        """
+        runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
+        lock_pattern = Path(runtime_dir).glob('llm-sidechat-*.lock')
+
+        for lock_path in lock_pattern:
+            try:
+                with open(lock_path, 'r') as f:
+                    pid_str = f.read().strip()
+                    if pid_str:
+                        pid = int(pid_str)
+                        try:
+                            os.kill(pid, 0)  # Check if process exists
+                            # Process exists, lock is valid
+                        except OSError:
+                            # Process doesn't exist - stale lock
+                            lock_path.unlink()
+                            self._debug(f"Cleaned up stale lock: {lock_path}")
+            except (ValueError, IOError):
+                # Can't read/parse - skip
+                pass
 
     def _get_model_capabilities(self):
         """
@@ -801,7 +921,7 @@ Shell: {env_type} {shell_info}
 
                 # Check for existing Exec pane or offer to reuse single other pane
                 try:
-                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+                    terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
                     chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
 
                     # Filter out chat terminal
@@ -829,7 +949,7 @@ Shell: {env_type} {shell_info}
                     # D-Bus specific errors (method not found, connection issues, etc.)
                     error_msg = str(e)
                     if 'Unknown method' in error_msg or 'does not exist' in error_msg:
-                        self.console.print("[red]ERROR: Plugin method 'get_terminals_in_same_window' not found![/]")
+                        self.console.print("[red]ERROR: Plugin method 'get_terminals_in_same_tab' not found![/]")
                         self.console.print("[red]Please restart Terminator to load the updated plugin.[/red]")
                     else:
                         self.console.print(f"[red]D-Bus error enumerating terminals: {e}[/]")
@@ -1189,7 +1309,7 @@ Shell: {env_type} {shell_info}
         import base64
 
         try:
-            terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+            terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
             context_parts = []
             attachments = []
 
@@ -1269,7 +1389,7 @@ Shell: {env_type} {shell_info}
         import base64
 
         try:
-            terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+            terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
             context_parts = []
             attachments = []
             timeout_warnings = []
@@ -2390,7 +2510,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                 captured_info = []
 
                 if scope == 'all':
-                    terminals = self.plugin_dbus.get_terminals_in_same_window(self.chat_terminal_uuid)
+                    terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
                     chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
                     other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
 
