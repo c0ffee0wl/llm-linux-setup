@@ -54,6 +54,7 @@ from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from typing import List, Optional, Tuple, Dict
 
+
 # Import shared prompt detection module
 try:
     from llm_tools.prompt_detection import PromptDetector
@@ -61,6 +62,10 @@ except ImportError:
     # Fallback for development - import from context directory
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'context'))
     from prompt_detection import PromptDetector
+
+# Import system info detection (local copy)
+sys.path.insert(0, os.path.dirname(__file__))
+from system_info import detect_os, detect_shell, detect_environment
 
 
 # Common TUI applications that use screenshot capture instead of text
@@ -124,7 +129,7 @@ PRESSKEY_PATTERN = re.compile(
 # =============================================================================
 # External tool plugins that sidechat can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch')
+EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch', 'fragment_bridge')
 
 _all_tools = llm.get_tools()
 
@@ -149,6 +154,10 @@ EXTERNAL_TOOLS = {
 EXTERNAL_TOOL_DISPLAY = {
     'google_search': ('query', 'Searching', 'Search the web'),
     'web_fetch': ('url', 'Fetching', 'Fetch web page content'),
+    # Fragment bridge tools
+    'load_yt': ('argument', 'Loading transcript', 'Load YouTube transcript'),
+    'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
+    'load_pdf': ('argument', 'Extracting PDF', 'Extract PDF content'),
 }
 
 
@@ -274,6 +283,13 @@ class TerminatorSidechatSession:
         # Track screenshot files for cleanup
         self.screenshot_files = []
 
+        # Pending attachments for multi-modal viewing (deferred to next turn)
+        self.pending_attachments = []
+
+        # Knowledge Base system (TmuxAI-style)
+        self.loaded_kbs: Dict[str, str] = {}  # name -> content
+        self._load_auto_kbs()  # Load from config on startup
+
     def _acquire_instance_lock(self):
         """
         Ensure only one sidechat instance per user session.
@@ -349,6 +365,41 @@ class TerminatorSidechatSession:
                 self.lock_file = None
             except Exception:
                 pass  # Lock will be released by kernel anyway
+
+    def _get_model_capabilities(self):
+        """
+        Query current model's multi-modal capabilities.
+
+        Returns a dict with capability flags based on model.attachment_types.
+        """
+        types = getattr(self.conversation.model, 'attachment_types', set())
+        return {
+            'vision': any(t.startswith("image/") for t in types),
+            'pdf': "application/pdf" in types,
+            'audio': any(t.startswith("audio/") for t in types),
+            'video': any(t.startswith("video/") for t in types),
+            'youtube': "video/youtube" in types,  # Gemini only
+            'supported_types': types,
+        }
+
+    def _create_attachment(self, path_or_url: str) -> Attachment:
+        """
+        Create an Attachment from a path or URL.
+
+        Automatically detects whether the input is a URL (http/https) or local path
+        and sets the appropriate Attachment field.
+
+        Args:
+            path_or_url: Local file path or URL
+
+        Returns:
+            Attachment object with path or url set appropriately
+        """
+        is_url = path_or_url.startswith('http')
+        return Attachment(
+            path=None if is_url else path_or_url,
+            url=path_or_url if is_url else None
+        )
 
     def _register_shutdown_handlers(self):
         """Register signal handlers and atexit hook for cleanup"""
@@ -459,6 +510,164 @@ class TerminatorSidechatSession:
         """Print debug message if debug mode is enabled"""
         if self.debug:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
+
+    def _build_system_prompt(self) -> str:
+        """Build system prompt with injected date, platform info, and KB content."""
+        from datetime import date
+
+        # Get platform info
+        os_info = detect_os()
+        shell_name, shell_version = detect_shell()
+        shell_info = f"{shell_name} {shell_version}".strip() if shell_version else shell_name
+        env_type = detect_environment()  # 'native', 'wsl', 'gitbash', 'cygwin'
+
+        # Build environment section
+        env_section = f"""
+<environment>
+Today's date: {date.today().isoformat()}
+Platform: {os_info}
+Shell: {env_type} {shell_info}
+</environment>
+"""
+
+        prompt = f"{self.system_prompt}\n{env_section}"
+
+        # Append KB content if any loaded
+        kb_content = self._get_loaded_kb_content()
+        if kb_content:
+            prompt = f"{prompt}\n# Knowledge Base\n\n{kb_content}"
+
+        return prompt
+
+    # =========================================================================
+    # Knowledge Base System
+    # =========================================================================
+
+    def _get_kb_dir(self) -> Path:
+        """Get or create KB directory."""
+        kb_dir = Path.home() / ".config" / "llm-sidechat" / "kb"
+        kb_dir.mkdir(parents=True, exist_ok=True)
+        return kb_dir
+
+    def _get_config_file(self) -> Path:
+        """Get config file path."""
+        return Path.home() / ".config" / "llm-sidechat" / "config.yaml"
+
+    def _load_config(self) -> dict:
+        """Load config.yaml if it exists."""
+        config_file = self._get_config_file()
+        if config_file.exists():
+            try:
+                import yaml
+                with open(config_file) as f:
+                    return yaml.safe_load(f) or {}
+            except Exception:
+                return {}
+        return {}
+
+    def _load_auto_kbs(self):
+        """Load KBs listed in config.yaml auto_load."""
+        config = self._load_config()
+        auto_load = config.get("knowledge_base", {}).get("auto_load", [])
+        for name in auto_load:
+            self._load_kb(name, silent=True)
+
+    def _load_kb(self, name: str, silent: bool = False) -> bool:
+        """Load a KB file by name."""
+        kb_dir = self._get_kb_dir()
+
+        # Try with .md extension first
+        kb_path = kb_dir / f"{name}.md"
+        if not kb_path.exists():
+            # Try without extension
+            kb_path = kb_dir / name
+            if not kb_path.exists():
+                if not silent:
+                    self.console.print(f"[red]KB not found: {name}[/]")
+                    self.console.print(f"[dim]Looking in: {kb_dir}[/]")
+                return False
+
+        try:
+            content = kb_path.read_text()
+            self.loaded_kbs[name] = content
+            if not silent:
+                self.console.print(f"[green]✓[/] Loaded KB: {name} ({len(content)} chars)")
+            return True
+        except Exception as e:
+            if not silent:
+                self.console.print(f"[red]Failed to load {name}: {e}[/]")
+            return False
+
+    def _unload_kb(self, name: str) -> bool:
+        """Unload a KB from session."""
+        if name in self.loaded_kbs:
+            del self.loaded_kbs[name]
+            self.console.print(f"[green]✓[/] Unloaded KB: {name}")
+            return True
+        self.console.print(f"[yellow]KB not loaded: {name}[/]")
+        return False
+
+    def _get_loaded_kb_content(self) -> str:
+        """Get combined content of all loaded KBs."""
+        if not self.loaded_kbs:
+            return ""
+        parts = []
+        for name, content in self.loaded_kbs.items():
+            parts.append(f"## {name}\n\n{content}")
+        return "\n\n---\n\n".join(parts)
+
+    def _handle_kb_command(self, args: str) -> bool:
+        """Handle /kb commands. Returns True to continue REPL."""
+        parts = args.strip().split(maxsplit=1)
+
+        if not parts or parts[0] == "":
+            # /kb - list KBs
+            self._list_kbs()
+        elif parts[0] == "load" and len(parts) > 1:
+            # /kb load <name> or /kb load name1,name2,name3
+            names = [n.strip() for n in parts[1].split(",") if n.strip()]
+            for name in names:
+                self._load_kb(name)
+        elif parts[0] == "unload" and len(parts) > 1:
+            # /kb unload <name> or /kb unload name1,name2,name3
+            names = [n.strip() for n in parts[1].split(",") if n.strip()]
+            for name in names:
+                self._unload_kb(name)
+        elif parts[0] == "reload":
+            # /kb reload - reload all loaded KBs
+            names = list(self.loaded_kbs.keys())
+            if names:
+                for name in names:
+                    self._load_kb(name)
+            else:
+                self.console.print("[yellow]No KBs loaded to reload[/]")
+        else:
+            self.console.print("[yellow]Usage: /kb [load|unload|reload] [name][/]")
+
+        return True
+
+    def _list_kbs(self):
+        """List available and loaded KBs."""
+        kb_dir = self._get_kb_dir()
+        available = sorted([f.stem for f in kb_dir.glob("*.md")])
+
+        self.console.print("\n[bold]Knowledge Bases[/]")
+
+        if self.loaded_kbs:
+            self.console.print("\n[green]Loaded:[/]")
+            for name in sorted(self.loaded_kbs.keys()):
+                chars = len(self.loaded_kbs[name])
+                self.console.print(f"  • {name} ({chars} chars)")
+
+        unloaded = [n for n in available if n not in self.loaded_kbs]
+        if unloaded:
+            self.console.print("\n[dim]Available:[/]")
+            for name in unloaded:
+                self.console.print(f"  • {name}")
+
+        if not available and not self.loaded_kbs:
+            self.console.print(f"\n[dim]No KBs found in {kb_dir}[/]")
+            self.console.print("[dim]Create markdown files to use as knowledge bases.[/]")
 
     def _normalize_uuid(self, uuid_value) -> Optional[str]:
         """Normalize UUID to Python string (ensures dbus.String -> str conversion)"""
@@ -1851,6 +2060,10 @@ Instructions:
 /watch off         Disable watch mode
 /watch status      Show watch mode status
 /squash            Manually compress conversation context
+/kb                List available and loaded knowledge bases
+/kb load <names>   Load KB(s) into session (comma-separated)
+/kb unload <names> Remove KB(s) from session (comma-separated)
+/kb reload         Reload all loaded knowledge bases
 /quit or /exit     Exit sidechat
 
 [bold]Usage:[/]
@@ -2061,6 +2274,9 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
             self.squash_context()
             return True
 
+        elif cmd == "/kb":
+            return self._handle_kb_command(args)
+
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
             return False
@@ -2259,6 +2475,139 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
                     tool_call_id=tool_call_id
                 )
 
+        elif tool_name == "view_attachment":
+            path_or_url = get_str("path_or_url")
+            if not path_or_url:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No path_or_url provided",
+                    tool_call_id=tool_call_id
+                )
+
+            caps = self._get_model_capabilities()
+
+            # Create attachment and detect MIME type
+            try:
+                attachment = self._create_attachment(path_or_url)
+                mime_type = attachment.resolve_type()
+            except Exception as e:
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Error resolving attachment: {e}",
+                    tool_call_id=tool_call_id
+                )
+
+            # Check if model supports this type
+            if mime_type not in caps['supported_types']:
+                if mime_type == "application/pdf" and not caps['pdf']:
+                    result = f"Model doesn't support PDF viewing. Use load_pdf tool for text extraction."
+                elif mime_type and mime_type.startswith("audio/") and not caps['audio']:
+                    result = f"Model doesn't support audio ({mime_type}). Only Gemini models can process audio."
+                elif mime_type and mime_type.startswith("video/") and not caps['video']:
+                    result = f"Model doesn't support video ({mime_type}). Only Gemini models can process video."
+                else:
+                    result = f"Unsupported attachment type: {mime_type}"
+                self.console.print(f"[yellow]{result}[/]")
+                return ToolResult(
+                    name=tool_call.name,
+                    output=result,
+                    tool_call_id=tool_call_id
+                )
+
+            self.pending_attachments.append(attachment)
+            self.console.print(f"[green]✓[/] Queued {mime_type}: {path_or_url}")
+            return ToolResult(
+                name=tool_call.name,
+                output=f"Queued for viewing: {path_or_url} ({mime_type}). Will be visible in next turn.",
+                tool_call_id=tool_call_id
+            )
+
+        elif tool_name == "view_pdf":
+            path_or_url = get_str("path_or_url")
+            extract_text = tool_args.get("extract_text", True)
+
+            if not path_or_url:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No path_or_url provided",
+                    tool_call_id=tool_call_id
+                )
+
+            caps = self._get_model_capabilities()
+            text_content = ""
+
+            # Extract text if requested
+            if extract_text:
+                self.console.print(f"[cyan]Extracting PDF text...[/]")
+                loaders = llm.get_fragment_loaders()
+                if 'pdf' in loaders:
+                    try:
+                        results = loaders['pdf'](path_or_url)
+                        if not isinstance(results, list):
+                            results = [results]
+                        text_parts = [str(r) for r in results if isinstance(r, llm.Fragment)]
+                        text_content = "\n".join(text_parts)
+                        self.console.print(f"[green]✓[/] Extracted {len(text_content)} chars")
+                    except Exception as e:
+                        text_content = f"[Text extraction failed: {e}]"
+                        self.console.print(f"[yellow]Text extraction failed: {e}[/]")
+                else:
+                    text_content = "[PDF fragment loader not available]"
+
+            # Queue for native PDF viewing if supported
+            if caps['pdf']:
+                try:
+                    attachment = self._create_attachment(path_or_url)
+                    self.pending_attachments.append(attachment)
+                    self.console.print(f"[green]✓[/] PDF queued for native viewing")
+                    result = f"{text_content}\n\n[PDF queued for native viewing in next turn.]"
+                except Exception as e:
+                    result = f"{text_content}\n\n[Failed to queue PDF: {e}]"
+            else:
+                result = f"{text_content}\n\n[Note: Model doesn't support native PDF viewing, text extraction only.]"
+
+            return ToolResult(
+                name=tool_call.name,
+                output=result,
+                tool_call_id=tool_call_id
+            )
+
+        elif tool_name == "view_youtube_native":
+            url = get_str("url")
+            if not url:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No URL provided",
+                    tool_call_id=tool_call_id
+                )
+
+            caps = self._get_model_capabilities()
+
+            if not caps['youtube']:
+                # Non-Gemini model - suggest load_yt() instead
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: Current model doesn't support native YouTube video. Use load_yt(url) for transcript extraction instead (faster, cheaper, works with any model).",
+                    tool_call_id=tool_call_id
+                )
+
+            try:
+                attachment = Attachment(url=url)
+                attachment.type = "video/youtube"  # Force YouTube type
+                self.pending_attachments.append(attachment)
+                self.console.print(f"[green]✓[/] YouTube video queued for native viewing")
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"YouTube video queued for native viewing (visual + audio). Will process in next turn.",
+                    tool_call_id=tool_call_id
+                )
+            except Exception as e:
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Failed to queue YouTube video: {e}",
+                    tool_call_id=tool_call_id
+                )
+
         elif tool_name in EXTERNAL_TOOLS:
             # Generic auto-dispatch for external tools (google_search, web_fetch, etc.)
             impl = EXTERNAL_TOOLS[tool_name]
@@ -2448,8 +2797,11 @@ Type !fragment <name> [...] to insert fragments
                         # Process fragments if present
                         processed_input, fragments = self.process_fragments(user_input)
 
-                        # Combine user fragments with TUI screenshot attachments
-                        all_attachments = fragments + tui_attachments
+                        # Combine user fragments, TUI screenshots, and pending attachments
+                        all_attachments = fragments + tui_attachments + self.pending_attachments
+
+                        # Clear pending attachments after including them
+                        self.pending_attachments = []
 
                         # Build prompt with context
                         if context:
@@ -2467,7 +2819,7 @@ Type !fragment <name> [...] to insert fragments
                         if len(self.conversation.responses) == 0:
                             response = self.conversation.prompt(
                                 full_prompt,
-                                system=self.system_prompt,
+                                system=self._build_system_prompt(),
                                 attachments=all_attachments,
                                 tools=SIDECHAT_TOOLS
                             )
@@ -2527,12 +2879,20 @@ Type !fragment <name> [...] to insert fragments
                                 if self.debug:
                                     self.console.print(f"\n[dim]Sending {len(tool_results)} tool result(s) to model...[/]")
 
+                                # Include pending attachments from view_attachment calls (auto-send)
+                                followup_attachments = self.pending_attachments if self.pending_attachments else None
+                                if followup_attachments:
+                                    self.pending_attachments = []  # Clear after including
+                                    if self.debug:
+                                        self.console.print(f"[dim]Including {len(followup_attachments)} pending attachment(s)[/]")
+
                                 with self.watch_lock:
-                                    # Continue conversation with tool results
+                                    # Continue conversation with tool results (and any pending attachments)
                                     followup_response = self.conversation.prompt(
                                         "",  # Empty prompt - tool results drive the continuation
                                         tools=SIDECHAT_TOOLS,
-                                        tool_results=tool_results
+                                        tool_results=tool_results,
+                                        attachments=followup_attachments
                                     )
                                     followup_text = followup_response.text()
 
@@ -2560,6 +2920,33 @@ Type !fragment <name> [...] to insert fragments
                             # Warn if max iterations reached and model still wants more
                             if iteration >= MAX_TOOL_ITERATIONS and more_tool_calls:
                                 self.console.print(f"\n[yellow]Max tool iterations ({MAX_TOOL_ITERATIONS}) reached. Model requested {len(more_tool_calls)} more tool call(s). Please continue the conversation.[/]")
+
+                            # Auto-send any remaining pending attachments (e.g., view_attachment was last tool call)
+                            if self.pending_attachments:
+                                if self.debug:
+                                    self.console.print(f"\n[dim]Auto-sending {len(self.pending_attachments)} pending attachment(s)[/]")
+
+                                attachments_to_send = self.pending_attachments
+                                self.pending_attachments = []
+
+                                with self.watch_lock:
+                                    attachment_response = self.conversation.prompt(
+                                        "",  # Empty prompt - attachments drive the continuation
+                                        tools=SIDECHAT_TOOLS,
+                                        attachments=attachments_to_send
+                                    )
+                                    response_text = attachment_response.text()
+                                    more_calls = list(attachment_response.tool_calls())
+
+                                # Display response
+                                if response_text.strip():
+                                    self.console.print("\n[bold green]llm[/]")
+                                    self.console.print(Markdown(response_text))
+
+                                # Process any tool calls from viewing the attachment
+                                if more_calls:
+                                    for tc in more_calls:
+                                        self._process_tool_call(tc)
 
                     except Exception as e:
                         self.console.print(f"\n[red]Tool execution error: {e}[/]")

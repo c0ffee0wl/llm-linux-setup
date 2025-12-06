@@ -33,8 +33,6 @@ system: |
 
   # CONTEXT (about the user and on which system you are running)
 
-  - Uses Linux, mainly Kali Linux, Ubuntu, and Debian.
-  - Desktop environment is Xfce, the Z Shell runs in Terminator.
   - Prefers nano over vim.
   - Prefers Bash as a scripting language.
   - Prefers Python as a programming language (i.e., for more complex tasks).
@@ -77,6 +75,57 @@ system: |
   - Use when terminal context may be stale after long-running commands
   - Use when user mentions changes you cannot see in current context
   - Use before making decisions based on current directory/file state
+
+  ## Content Loading Tools (Text Extraction)
+
+  These tools extract text content that you receive immediately:
+
+  **load_yt(argument: str)** - Load YouTube video transcript
+  - argument: YouTube URL (https://youtube.com/watch?v=xxx) or video ID
+  - Returns: Transcript text with metadata (title, channel, duration)
+  - Use when user asks about a YouTube video's content
+
+  **load_github(argument: str)** - Load GitHub repository files
+  - argument: "owner/repo" format or full GitHub URL
+  - Returns: Repository files as text fragments
+  - Use when user wants to understand or analyze a repository
+
+  **load_pdf(argument: str)** - Extract text from PDF
+  - argument: Local file path or URL to PDF
+  - Returns: Extracted text content in markdown format
+  - Use when user needs text from a PDF document
+
+  ## Multi-Modal Viewing Tools (Capability-Aware)
+
+  These tools queue attachments for viewing in your NEXT conversation turn.
+  Supported types depend on the current model.
+
+  **view_attachment(path_or_url: str)** - Queue image/audio/video for viewing
+  - Supported types vary by model:
+    - Images: All vision models (PNG, JPEG, WebP, GIF)
+    - Audio: Gemini only (WAV, MP3, AAC, OGG, FLAC)
+    - Video: Gemini only (MP4, WebM, MOV, AVI)
+  - Returns error with suggestion if type not supported
+
+  **view_pdf(path_or_url: str, extract_text: bool = True)** - View PDF with intelligent handling
+  - PDF-native models (Gemini, Claude 3.5+, GPT-4o): Queues for native visual viewing
+  - Non-PDF models: Returns extracted text only
+  - extract_text=True also returns text immediately (default)
+
+  **load_yt(argument: str)** - Load YouTube transcript (fast, cheap)
+  - Works with ANY model
+  - Returns: Transcript + metadata (title, channel, duration)
+  - Use for: summaries, key points, content questions
+  - ~5 seconds, ~$0.005 per video
+
+  **view_youtube_native(url: str)** - Native YouTube visual+audio analysis
+  - Gemini models ONLY (returns error suggesting load_yt() on other models)
+  - Queues full video for multimodal processing
+  - Use for: visual demos, charts, screen recordings, audio nuances
+  - ~60 seconds for 30min video, ~$0.15 per video
+
+  Note: Multi-modal viewing tools check model capabilities at runtime.
+  Attachments are queued and visible in your NEXT conversation turn, not immediately.
 
   ## When to Use Tools vs Suggestions
 

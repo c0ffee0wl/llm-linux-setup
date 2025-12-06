@@ -106,11 +106,55 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/watch off` - Disable watch mode
 - `/watch status` - Show watch mode status (same as `/watch`)
 - `/squash` - Manually compress conversation context
+- `/kb` - List available and loaded knowledge bases
+- `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
+- `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)
+- `/kb reload` - Reload all loaded knowledge bases
 - `/quit` or `/exit` - Exit sidechat
+
+## Knowledge Base System
+
+Sidechat supports TmuxAI-style knowledge bases for persistent context:
+
+**Location**: `~/.config/llm-sidechat/kb/`
+
+**Usage**:
+```bash
+# Create a KB file
+echo "## Project Conventions
+- Use Python 3.10+
+- Follow PEP8" > ~/.config/llm-sidechat/kb/project.md
+
+# In sidechat:
+/kb load project              # Load single KB
+/kb load project,docker,git   # Load multiple KBs
+/kb                           # List all KBs
+/kb unload project            # Remove from session
+```
+
+**Auto-load config** (optional):
+```yaml
+# ~/.config/llm-sidechat/config.yaml
+knowledge_base:
+  auto_load:
+    - project
+    - docker-conventions
+```
+
+Loaded KBs are injected after the system prompt, providing persistent context without consuming conversation history.
 
 ## Input Modes
 
-- `!multi` - Enter multi-line input mode (finish with `!end`)
+The bottom status bar shows the current input mode and available keybindings:
+
+- **Single-line mode** (default): Press Enter to submit
+- **Multi-line mode**: Press Enter for newlines, Alt+Enter to submit
+
+**Keybindings:**
+- `Ctrl+Space` - Toggle between single-line and multi-line modes
+- `Ctrl+D` - Exit sidechat
+
+**Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
 
 ## AI Tool Interface

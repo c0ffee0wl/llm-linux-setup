@@ -1477,6 +1477,7 @@ PLUGINS=(
     "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
     "$SCRIPT_DIR/llm-tools-sidechat"
+    "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
 )

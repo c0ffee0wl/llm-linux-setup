@@ -26,8 +26,9 @@ class PromptDetector:
     ]
 
     # Kali/fancy two-line prompts (supports ┌/╭ and └/╰)
-    KALI_HEADER = re.compile(r'^[┌╭]──.*[\])]$')
-    KALI_PROMPT_LINE = re.compile(r'^[└╰]─[$#]')
+    # Note: \s* allows trailing whitespace which terminals often include
+    KALI_HEADER = re.compile(r'^[┌╭]──.*[\])]\s*$')
+    KALI_PROMPT_LINE = re.compile(r'^[└╰]─+[$#]')
 
     # Patterns for EMPTY prompts only (shell ready for input)
     # Used by detect_prompt_at_end() for completion detection
@@ -37,7 +38,7 @@ class PromptDetector:
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),      # zsh: ends with % ❯ → ➜
         re.compile(r'^\S+@\S+.*[$#%]\s*$'),    # user@host: ends with prompt char
     ]
-    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─[$#]\s*$')
+    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+[$#]\s*$')
 
     @classmethod
     def is_prompt_line(cls, line: str) -> bool:

@@ -120,6 +120,94 @@ def refresh_context() -> str:
     })
 
 
+def view_attachment(path_or_url: str) -> str:
+    """
+    Queue an image, PDF, audio, or video file for viewing in the next turn.
+
+    Use this tool to view media files. The attachment will be visible to you
+    in your NEXT conversation turn (not immediately).
+
+    Supported types depend on the current model:
+    - Images: All vision models (PNG, JPEG, WebP, GIF, HEIC)
+    - PDF: Gemini, Claude 3.5+, GPT-4o (native viewing)
+    - Audio: Gemini only (WAV, MP3, AAC, OGG, FLAC)
+    - Video: Gemini only (MP4, WebM, MOV, AVI)
+
+    If the model doesn't support a type, you'll receive an error suggesting
+    alternatives (e.g., use load_pdf for text extraction instead).
+
+    Args:
+        path_or_url: Local file path or URL to the attachment
+
+    Returns:
+        JSON indicating the attachment has been queued.
+        You will see the content in your next turn.
+    """
+    return json.dumps({
+        "action": "view_attachment",
+        "path_or_url": path_or_url,
+        "status": "queued"
+    })
+
+
+def view_pdf(path_or_url: str, extract_text: bool = True) -> str:
+    """
+    View a PDF document with intelligent handling based on model capabilities.
+
+    This tool provides the best experience for PDFs:
+    - PDF-native models (Gemini, Claude 3.5+, GPT-4o): Queues PDF for native
+      visual understanding plus optional text extraction.
+    - Non-PDF models: Returns extracted text only.
+
+    The PDF will be visible to you in your NEXT conversation turn (not immediately).
+
+    Args:
+        path_or_url: Local file path or URL to the PDF document
+        extract_text: If True (default), also extract and return text immediately.
+                      Useful for searching or referencing specific content.
+
+    Returns:
+        If extract_text is True: Extracted text content, plus JSON indicating
+        the PDF has been queued for visual viewing (if model supports it).
+        If extract_text is False: JSON indicating the PDF has been queued.
+    """
+    return json.dumps({
+        "action": "view_pdf",
+        "path_or_url": path_or_url,
+        "extract_text": extract_text,
+        "status": "queued"
+    })
+
+
+def view_youtube_native(url: str) -> str:
+    """
+    View a YouTube video with native Gemini visual+audio analysis.
+
+    Requires Gemini model. For transcript-only (faster, cheaper, works with
+    any model), use load_yt() instead.
+
+    Use this when:
+    - Visual content matters (demos, charts, screen recordings)
+    - Audio nuances are important (tone, music, sound effects)
+    - You need to see what's displayed, not just hear what's said
+
+    Note: Native video processing is slower (~60s for 30min video) and more
+    expensive (~$0.15) than transcript extraction (~5s, ~$0.005).
+
+    Args:
+        url: YouTube video URL (e.g., https://youtube.com/watch?v=xxx or https://youtu.be/xxx)
+
+    Returns:
+        JSON indicating video queued for native processing, or error if
+        model doesn't support native YouTube.
+    """
+    return json.dumps({
+        "action": "view_youtube_native",
+        "url": url,
+        "status": "queued"
+    })
+
+
 @llm.hookimpl
 def register_tools(register):
     """Register sidechat terminal control tools."""
@@ -127,3 +215,7 @@ def register_tools(register):
     register(send_keypress)
     register(capture_terminal)
     register(refresh_context)
+    # Multi-modal viewing tools
+    register(view_attachment)
+    register(view_pdf)
+    register(view_youtube_native)

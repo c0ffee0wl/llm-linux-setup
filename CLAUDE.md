@@ -980,6 +980,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 - **llm-tools-google-search**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-google-search` (Google Search tool using Vertex/Gemini as backend)
 - **llm-tools-web-fetch**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-web-fetch` (Web fetch tool for retrieving URL content)
+- **llm-tools-fragment-bridge**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge` (bridge converting fragment loaders to callable tools: load_yt, load_github, load_pdf)
 - **llm-functions**: NOT automatically installed; users must install manually from https://github.com/sigoden/llm-functions/ if needed
 - **imagemage**: Installed from Go package: `github.com/quinnypig/imagemage@latest` (only when Gemini is configured and Go 1.22+ available)
 - **llm-anthropic**: Anthropic API plugin (PyPI)
