@@ -59,7 +59,7 @@ The repository includes an **automatic session recording and context extraction 
    - Enables any model to perform Google Search by calling the tool
    - Prefers Vertex if configured, falls back to standard Gemini API
    - Returns structured JSON with search results and source URLs
-   - Usage: `llm --tool google_search "latest CVEs for log4j"`
+   - Usage: `llm --tool search_google "latest CVEs for log4j"`
 
 **Architecture Flow**: Shell starts → asciinema records → `$SESSION_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
 
@@ -124,12 +124,12 @@ The shell integration uses a **three-file pattern** located in the `integration/
   - When user specifies custom template (`-t`), system prompt (`-s`), or continuation (`-c`) → no tools (user in control)
   - When `google_search` option is detected → no tools (incompatible with non-search tools on Vertex/Gemini)
 - **Why**: Vertex/Gemini API requires that when multiple tools are present, they must ALL be search tools. Non-search tools (context, sandboxed_shell) conflict with Google Search.
-- **google_search tool**: NOT included by default - use `--tool google_search` to enable. This tool uses Gemini/Vertex with google_search grounding internally, allowing any model to access Google Search.
+- **search_google tool**: NOT included by default - use `--tool search_google` to enable. This tool uses Gemini/Vertex with google_search grounding internally, allowing any model to access Google Search.
 
 | Command | Template | Tools |
 |---------|----------|-------|
 | `llm chat` | assistant | context, sandboxed_shell |
-| `llm chat --tool google_search` | assistant | context, sandboxed_shell, google_search |
+| `llm chat --tool search_google` | assistant | context, sandboxed_shell, search_google |
 | `llm chat -o google_search 1` | assistant | (none) |
 | `llm -o google_search 1 "prompt"` | assistant | (none) |
 | `llm chat -t custom` | custom | (none) |

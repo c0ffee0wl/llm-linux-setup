@@ -113,7 +113,7 @@ TUI_COMMANDS = {
 # =============================================================================
 # External tool plugins that sidechat can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch', 'fragment_bridge', 'fabric')
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric')
 
 _all_tools = llm.get_tools()
 
@@ -136,8 +136,8 @@ EXTERNAL_TOOLS = {
 # Display configuration for external tools: tool_name -> (param_name, action_verb, brief_description)
 # Tools not in this dict will use generic "Calling {tool_name}..." message
 EXTERNAL_TOOL_DISPLAY = {
-    'google_search': ('query', 'Searching', 'Search the web'),
-    'web_fetch': ('url', 'Fetching', 'Fetch web page content'),
+    'search_google': ('query', 'Searching', 'Search the web'),
+    'fetch_url': ('url', 'Fetching', 'Fetch web page content'),
     # Fragment bridge tools
     'load_yt': ('argument', 'Loading transcript', 'Load YouTube transcript'),
     'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
