@@ -207,11 +207,7 @@ class TerminatorSidechatSession:
         self._shutdown_initiated = False
         self.lock_file = None
 
-        # Clean up any stale lock files from crashed instances
-        self._cleanup_stale_lock_files()
-
-        # Early D-Bus detection (BEFORE lock acquisition)
-        # This determines which tab we're in for tab-specific locking
+        # Early D-Bus detection - require Terminator
         self.early_terminal_uuid = self._get_current_terminal_uuid_early()
 
         if not self.early_terminal_uuid:
@@ -219,14 +215,21 @@ class TerminatorSidechatSession:
             self.console.print("[yellow]Please run this from inside a Terminator terminal.[/]")
             sys.exit(1)
 
-        # Check for existing sidechat in the same tab
+        # Fast check: Is there already a sidechat in this tab?
         if self._check_existing_sidechat_in_tab(self.early_terminal_uuid):
             self.console.print("[red]Error: A sidechat is already running in this tab[/]")
             self.console.print("[yellow]You can run sidechat in a different Terminator tab.[/]")
             sys.exit(1)
 
-        # Acquire tab-specific instance lock
-        self._acquire_instance_lock(self.early_terminal_uuid)
+        # Acquire global lock (brief, only during initialization)
+        self._acquire_instance_lock()
+
+        # Double-check under lock (catches race condition)
+        if self._check_existing_sidechat_in_tab(self.early_terminal_uuid):
+            self._release_instance_lock()
+            self.console.print("[red]Error: A sidechat is already running in this tab[/]")
+            self.console.print("[yellow]You can run sidechat in a different Terminator tab.[/]")
+            sys.exit(1)
 
         # Register shutdown handlers EARLY (before creating resources)
         self._register_shutdown_handlers()
@@ -308,22 +311,16 @@ class TerminatorSidechatSession:
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
         self._load_auto_kbs()  # Load from config on startup
 
-    def _acquire_instance_lock(self, terminal_uuid: str):
+    def _acquire_instance_lock(self):
         """
-        Ensure only one sidechat instance per TAB.
-        Uses file locking with automatic cleanup on process exit.
-        Lock file is named with terminal UUID for per-tab isolation.
+        Acquire brief global lock during initialization.
+        Used with double-check pattern to prevent race conditions
+        when multiple tabs start simultaneously.
 
-        Args:
-            terminal_uuid: UUID of the chat terminal (required, determines lock file)
+        The lock is released after exec terminal creation (not end of session).
         """
-        # Use runtime directory for lock file (XDG_RUNTIME_DIR or /tmp)
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
-
-        # Tab-specific lock file using terminal UUID
-        # Extract just the UUID part (remove urn:uuid: prefix if present)
-        uuid_short = terminal_uuid.replace('urn:uuid:', '')
-        lock_path = Path(runtime_dir) / f'llm-sidechat-{uuid_short}.lock'
+        lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
 
         # Check for stale lock before attempting to acquire
         if lock_path.exists():
@@ -332,48 +329,35 @@ class TerminatorSidechatSession:
                     old_pid_str = f.read().strip()
                     if old_pid_str:
                         old_pid = int(old_pid_str)
-                        # Check if process is still running
                         try:
-                            os.kill(old_pid, 0)  # Signal 0 checks if process exists
-                            # Process exists, lock is valid - will fail below
+                            os.kill(old_pid, 0)  # Check if process exists
                         except OSError:
-                            # Process doesn't exist - stale lock, clean up silently
+                            # Process doesn't exist - stale lock
                             lock_path.unlink()
             except (ValueError, IOError):
-                # Can't read PID or file issues - try to proceed anyway
                 pass
 
         try:
-            # Open lock file (create if doesn't exist)
             self.lock_file = open(lock_path, 'w')
-
-            # Try to acquire exclusive lock (non-blocking)
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-
-            # Write PID for debugging (optional but helpful)
             self.lock_file.write(f"{os.getpid()}\n")
             self.lock_file.flush()
 
         except BlockingIOError:
-            # Lock is held by another instance in this tab
-            self.console.print("[red]Error: A sidechat instance is already running in this tab[/]")
-            self.console.print("[yellow]You can run sidechat in a different tab.[/]")
-            self.console.print(f"[yellow]Lock file: {lock_path}[/]")
-
-            # Try to read PID from lock file
+            # Another instance is initializing - wait briefly and retry
+            # This allows multi-tab support while preventing race conditions
+            self.console.print("[yellow]Another sidechat is starting, waiting...[/]")
             try:
-                with open(lock_path, 'r') as f:
-                    pid = f.read().strip()
-                    if pid:
-                        self.console.print(f"[yellow]Existing instance PID: {pid}[/]")
-            except Exception:
-                pass
-
-            sys.exit(1)
+                self.lock_file = open(lock_path, 'w')
+                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)  # Blocking wait
+                self.lock_file.write(f"{os.getpid()}\n")
+                self.lock_file.flush()
+            except Exception as e:
+                self.console.print(f"[red]Error acquiring lock: {e}[/]")
+                sys.exit(1)
 
         except Exception as e:
             self.console.print(f"[red]Error acquiring lock: {e}[/]")
-            # Clean up file handle if it was opened before the exception
             if self.lock_file:
                 try:
                     self.lock_file.close()
@@ -460,31 +444,6 @@ class TerminatorSidechatSession:
             # Plugin not available or error - allow startup
             # (will fail later with proper error message)
             return False
-
-    def _cleanup_stale_lock_files(self):
-        """
-        Clean up stale lock files from crashed sidechat instances.
-        Scans for llm-sidechat-*.lock files and removes those with dead PIDs.
-        """
-        runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
-        lock_pattern = Path(runtime_dir).glob('llm-sidechat-*.lock')
-
-        for lock_path in lock_pattern:
-            try:
-                with open(lock_path, 'r') as f:
-                    pid_str = f.read().strip()
-                    if pid_str:
-                        pid = int(pid_str)
-                        try:
-                            os.kill(pid, 0)  # Check if process exists
-                            # Process exists, lock is valid
-                        except OSError:
-                            # Process doesn't exist - stale lock
-                            lock_path.unlink()
-                            self._debug(f"Cleaned up stale lock: {lock_path}")
-            except (ValueError, IOError):
-                # Can't read/parse - skip
-                pass
 
     def _get_model_capabilities(self):
         """
@@ -932,6 +891,7 @@ Shell: {env_type} {shell_info}
                     if exec_candidates:
                         # Reuse existing exec pane silently
                         self.exec_terminal_uuid = self._normalize_uuid(exec_candidates[0]['uuid'])
+                        self._release_instance_lock()  # Release global lock
                         self.console.print("[green]✓[/] Terminals ready")
                         return  # Success - reusing existing exec terminal
 
@@ -943,6 +903,7 @@ Shell: {env_type} {shell_info}
 
                         if use_existing:
                             self.exec_terminal_uuid = self._normalize_uuid(existing_pane['uuid'])
+                            self._release_instance_lock()  # Release global lock
                             self.console.print("[green]✓[/] Terminals ready")
                             return  # Success - using existing terminal
                 except dbus.exceptions.DBusException as e:
@@ -970,6 +931,7 @@ Shell: {env_type} {shell_info}
                     raise Exception(f"Failed to split terminal: {exec_uuid}")
                 self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
 
+                self._release_instance_lock()  # Release global lock
                 self.console.print("[green]✓[/] Terminals ready")
                 return  # Success
 
