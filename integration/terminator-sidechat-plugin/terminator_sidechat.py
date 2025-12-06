@@ -98,6 +98,37 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
         dbg('TerminatorSidechat initialized')
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='(ii)')
+    def get_cursor_position(self, terminal_uuid):
+        """
+        Get cursor position in scrollback buffer coordinates.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Tuple of (column, row) in scrollback buffer coordinates.
+            Returns (-1, -1) on error.
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return (-1, -1)
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return (-1, -1)
+
+            col, row = vte.get_cursor_position()
+            dbg(f'Cursor position for {terminal_uuid}: col={col}, row={row}')
+            return (col, row)
+
+        except Exception as e:
+            err(f'Error getting cursor position: {e}')
+            return (-1, -1)
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='s')
     def capture_terminal_content(self, terminal_uuid, lines=-1):
         """
@@ -161,36 +192,36 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                     scroll_pos = vadj.get_value()
                     # Calculate visible viewport range in buffer coordinates
                     # Use math.floor consistently to ensure proper row alignment
-                    start_row = math.floor(scroll_pos)
-                    end_row = math.floor(scroll_pos + term_height) - 1
-                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, viewport range=[{start_row}, {end_row}]')
+                    capture_start = math.floor(scroll_pos)
+                    capture_end = math.floor(scroll_pos + term_height) - 1
+                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, viewport range=[{capture_start}, {capture_end}]')
                 else:
                     # Fallback if vadjustment returns None
                     dbg('vadjustment returned None, using fallback')
                     # Try scrollback position as fallback
                     try:
                         scrollback = vte.get_scrollback_lines()
-                        start_row = scrollback
-                        end_row = scrollback + term_height - 1
-                        dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{start_row}, {end_row}]')
+                        capture_start = scrollback
+                        capture_end = scrollback + term_height - 1
+                        dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{capture_start}, {capture_end}]')
                     except Exception:
                         # Ultimate fallback: top of buffer
-                        start_row = 0
-                        end_row = term_height - 1
-                        dbg(f'Using ultimate fallback: range=[{start_row}, {end_row}]')
+                        capture_start = 0
+                        capture_end = term_height - 1
+                        dbg(f'Using ultimate fallback: range=[{capture_start}, {capture_end}]')
             except Exception as e:
                 # Exception during vadjustment access
                 dbg(f'vadjustment exception: {type(e).__name__}: {e}')
-                start_row = 0
-                end_row = term_height - 1
+                capture_start = 0
+                capture_end = term_height - 1
 
             # DEBUG: Log capture parameters
             dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg(f'  Capture method: vadjustment')
+            dbg(f'  Capture mode: viewport')
             dbg(f'  Terminal size: width={term_width}, height={term_height}')
             dbg(f'  Requested lines: {lines}')
-            dbg(f'  Calculated range: start_row={start_row}, end_row={end_row}')
-            dbg(f'  Range span: {end_row - start_row + 1} rows')
+            dbg(f'  Calculated range: start_row={capture_start}, end_row={capture_end}')
+            dbg(f'  Range span: {capture_end - capture_start + 1} rows')
 
             # Version-aware content capture with error handling
             content = None
@@ -202,8 +233,8 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 try:
                     result = vte.get_text_range_format(
                         Vte.Format.TEXT,
-                        start_row, 0,           # start row, start col
-                        end_row, term_width - 1     # end row, end col (full width)
+                        capture_start, 0,           # start row, start col
+                        capture_end, term_width - 1     # end row, end col (full width)
                     )
                     # Verify it's a tuple and extract text
                     # Handle edge cases: None, empty tuple, or direct string
@@ -222,8 +253,8 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 dbg(f'Using get_text_range (VTE {vte_version})')
                 try:
                     result = vte.get_text_range(
-                        start_row, 0,           # start row, start col
-                        end_row, term_width - 1,    # end row, end col (full width)
+                        capture_start, 0,           # start row, start col
+                        capture_end, term_width - 1,    # end row, end col (full width)
                         lambda *a: True  # Include all cells
                     )
                     # Extract text from tuple (same pattern as logger.py, remote.py)
@@ -253,6 +284,75 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
         except Exception as e:
             err(f'TerminatorSidechat: Error capturing terminal content: {e}')
+            return f"ERROR: {str(e)}"
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='s')
+    def capture_from_row(self, terminal_uuid, start_row):
+        """
+        Capture terminal content from start_row to current cursor position.
+
+        Used for capturing full command output that may exceed the viewport.
+
+        Args:
+            terminal_uuid: UUID of terminal to capture (string format)
+            start_row: Row number in scrollback buffer to start capture from
+
+        Returns:
+            String containing terminal content, or error message
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return f"ERROR: Terminal with UUID {terminal_uuid} not found"
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
+
+            term_width = vte.get_column_count()
+            term_height = vte.get_row_count()
+
+            # Calculate end row: current scroll position + viewport height
+            try:
+                vadj = vte.get_vadjustment()
+                if vadj:
+                    scroll_pos = vadj.get_value()
+                    capture_end = math.floor(scroll_pos + term_height) - 1
+                else:
+                    # Fallback: use cursor position
+                    _, cursor_row = vte.get_cursor_position()
+                    capture_end = cursor_row if cursor_row >= 0 else start_row + term_height
+            except Exception:
+                _, cursor_row = vte.get_cursor_position()
+                capture_end = cursor_row if cursor_row >= 0 else start_row + term_height
+
+            dbg(f'capture_from_row: start={start_row}, end={capture_end}, span={capture_end - start_row + 1} rows')
+
+            # Version-aware content capture
+            vte_version = Vte.get_minor_version()
+
+            if vte_version >= 72:
+                result = vte.get_text_range_format(
+                    Vte.Format.TEXT,
+                    start_row, 0,
+                    capture_end, term_width - 1
+                )
+                content = result[0] if isinstance(result, tuple) else (result or '')
+            else:
+                result = vte.get_text_range(
+                    start_row, 0,
+                    capture_end, term_width - 1,
+                    lambda *a: True
+                )
+                content = result[0] if isinstance(result, tuple) else (result or '')
+
+            dbg(f'capture_from_row: captured {len(content)} characters')
+            return content
+
+        except Exception as e:
+            err(f'TerminatorSidechat: Error in capture_from_row: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')

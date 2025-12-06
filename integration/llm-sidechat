@@ -144,11 +144,11 @@ EXTERNAL_TOOLS = {
     and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
 }
 
-# Display configuration for external tools: tool_name -> (param_name, action_verb)
+# Display configuration for external tools: tool_name -> (param_name, action_verb, brief_description)
 # Tools not in this dict will use generic "Calling {tool_name}..." message
 EXTERNAL_TOOL_DISPLAY = {
-    'google_search': ('query', 'Searching'),
-    'web_fetch': ('url', 'Fetching'),
+    'google_search': ('query', 'Searching', 'Search the web'),
+    'web_fetch': ('url', 'Fetching', 'Fetch web page content'),
 }
 
 
@@ -1495,6 +1495,14 @@ Provide a brief but comprehensive summary."""
         except Exception:
             initial_content = None  # Fallback: skip change detection
 
+        # Record cursor position BEFORE command (for smart full-output capture)
+        cmd_start_row = -1
+        try:
+            _, cmd_start_row = self.plugin_dbus.get_cursor_position(self.exec_terminal_uuid)
+            self._debug(f"Command start cursor row: {cmd_start_row}")
+        except Exception as e:
+            self._debug(f"Could not get cursor position: {e}")
+
         # Send to Exec terminal
         try:
             success = self.plugin_dbus.send_keys_to_terminal(
@@ -1566,6 +1574,31 @@ Screenshot size: {len(image_bytes)} bytes"""
 
                     if prompt_detected:
                         self.console.print("[green]✓[/] Command completed (prompt detected)")
+
+                        # Smart full-output capture: capture from command start row
+                        # This ensures we get complete output even if it scrolled past viewport
+                        if cmd_start_row >= 0:
+                            try:
+                                _, cmd_end_row = self.plugin_dbus.get_cursor_position(self.exec_terminal_uuid)
+
+                                # Validate range (protects against clear/reset commands)
+                                # Cap max capture (protects against memory issues)
+                                MAX_CAPTURE_ROWS = 10000
+                                if (cmd_end_row >= cmd_start_row and
+                                    (cmd_end_row - cmd_start_row) < MAX_CAPTURE_ROWS):
+                                    full_output = self.plugin_dbus.capture_from_row(
+                                        self.exec_terminal_uuid, cmd_start_row
+                                    )
+                                    if full_output and not full_output.startswith('ERROR'):
+                                        output = full_output
+                                        output_rows = cmd_end_row - cmd_start_row
+                                        self._debug(f"Full capture: {output_rows} rows from row {cmd_start_row}")
+                                else:
+                                    # Invalid range (clear/reset) or huge output - keep viewport
+                                    self._debug(f"Skipping full capture: end={cmd_end_row}, start={cmd_start_row}")
+                            except Exception as e:
+                                self._debug(f"Smart capture failed, using viewport: {e}")
+
                         return True, output
                     else:
                         self.console.print("[yellow]⚠[/] Timeout or long-running command")
@@ -2232,7 +2265,7 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
 
             # Display primary parameter if configured, otherwise generic message
             if tool_name in EXTERNAL_TOOL_DISPLAY:
-                param_name, action_verb = EXTERNAL_TOOL_DISPLAY[tool_name]
+                param_name, action_verb, _ = EXTERNAL_TOOL_DISPLAY[tool_name]
                 param_value = tool_args.get(param_name, '')
                 if param_value:
                     self.console.print(f"\n[cyan]{action_verb}: {param_value}[/]")
@@ -2274,11 +2307,24 @@ Exec terminal: {self.exec_terminal_uuid[:16]}...
         # Setup terminals
         self.setup_terminals()
 
+        # Build external tools list for display
+        external_tools_list = ""
+        if EXTERNAL_TOOLS:
+            tools_info = []
+            for name in sorted(EXTERNAL_TOOLS.keys()):
+                if name in EXTERNAL_TOOL_DISPLAY:
+                    _, _, desc = EXTERNAL_TOOL_DISPLAY[name]
+                    tools_info.append(f"  [dim]•[/] {name}: {desc}")
+                else:
+                    tools_info.append(f"  [dim]•[/] {name}")
+            if tools_info:
+                external_tools_list = "\n\n[bold]External Tools:[/]\n" + "\n".join(tools_info)
+
         # Display welcome message
         self.console.print(Panel.fit(
             f"""[bold green]Terminator Sidechat Started[/]
 
-Model: [cyan]{self.model_name}[/]
+Model: [cyan]{self.model_name}[/]{external_tools_list}
 
 [bold]Commands:[/]
 Type /help for slash commands
