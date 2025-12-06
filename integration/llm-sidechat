@@ -1019,7 +1019,7 @@ Shell: {env_type} {shell_info}
         self._debug(f"TUI render wait timed out after {max_wait}s")
         return False  # Timeout - proceed anyway
 
-    def prompt_based_capture(self, terminal_uuid, max_wait=30, initial_content=None) -> Tuple[bool, str]:
+    def prompt_based_capture(self, terminal_uuid, max_wait=60, initial_content=None) -> Tuple[bool, str]:
         """
         Capture terminal content using prompt detection instead of stability checks.
 
@@ -1036,7 +1036,7 @@ Shell: {env_type} {shell_info}
 
         Args:
             terminal_uuid: Terminal to capture
-            max_wait: Maximum wait time in seconds (default: 30)
+            max_wait: Maximum wait time in seconds (default: 60)
             initial_content: Terminal content before command was sent (for change detection)
 
         Returns:
@@ -1585,7 +1585,7 @@ Screenshot size: {len(image_bytes)} bytes"""
                     # Regular command - use prompt-based capture
                     prompt_detected, output = self.prompt_based_capture(
                         self.exec_terminal_uuid,
-                        max_wait=30,
+                        max_wait=60,
                         initial_content=initial_content
                     )
 
@@ -2482,9 +2482,7 @@ Exec terminal: {self.exec_terminal_uuid}
 
         # Display welcome message
         self.console.print(Panel.fit(
-            f"""[bold green]Terminator Sidechat Started[/]
-
-Model: [cyan]{self.model_name}[/]{external_tools_list}
+            f"""Model: [cyan]{self.model_name}[/]{external_tools_list}
 
 [bold]Commands:[/]
 Type /help for slash commands

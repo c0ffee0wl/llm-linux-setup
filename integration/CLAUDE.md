@@ -75,7 +75,7 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - **PromptDetector**: Uses shared `prompt_detection.py` module to detect shell prompts
 - **Polls for prompt**: Instead of fixed timeout, polls until prompt appears
 - **Visual feedback**: Shows spinner animation while waiting
-- **Timeout fallback**: Falls back to 30-second timeout for long-running commands
+- **Timeout fallback**: Falls back to 60-second timeout for long-running commands
 - **TUI detection**: Switches to screenshot capture for TUI apps (htop, vim, etc.)
 
 **Detection patterns**: Supports bash (`$`/`#`), zsh (`%`/`❯`/`→`/`➜`), and Kali two-line prompts.
