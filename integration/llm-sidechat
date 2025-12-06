@@ -113,7 +113,7 @@ TUI_COMMANDS = {
 # =============================================================================
 # External tool plugins that sidechat can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch', 'fragment_bridge')
+EXTERNAL_TOOL_PLUGINS = ('google_search', 'web_fetch', 'fragment_bridge', 'fabric')
 
 _all_tools = llm.get_tools()
 
@@ -142,6 +142,8 @@ EXTERNAL_TOOL_DISPLAY = {
     'load_yt': ('argument', 'Loading transcript', 'Load YouTube transcript'),
     'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
     'load_pdf': ('argument', 'Extracting PDF', 'Extract PDF content'),
+    # Fabric pattern tool
+    'fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
 }
 
 
@@ -2775,7 +2777,7 @@ def main():
     parser.add_argument(
         'model',
         nargs='?',
-        help='LLM model to use (default: azure/gpt-4.1-mini)'
+        help='LLM model to use'
     )
     parser.add_argument(
         '--debug',

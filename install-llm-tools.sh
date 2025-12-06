@@ -1480,6 +1480,7 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
+    "git+https://github.com/c0ffee0wl/llm-tools-fabric"
 )
 
 for plugin in "${PLUGINS[@]}"; do
