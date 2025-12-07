@@ -65,7 +65,7 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
 
 - **Auto-squashing**: Compresses conversation at 80% of 200k token limit (160k threshold)
 - **Manual squashing**: `/squash` command
-- **Token estimation**: Rough estimation (4 chars = 1 token)
+- **Token estimation**: Uses API's actual token counts from last response (accurate); falls back to char-based estimation (4 chars = 1 token) if unavailable
 - **Preserves recent context**: Keeps system prompt + last 5 messages + summary
 
 ## Command Completion Detection

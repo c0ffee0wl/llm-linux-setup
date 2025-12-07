@@ -258,9 +258,8 @@ class TerminatorSidechatSession:
         self.max_context_size = max_context_size  # from CLI --max-context
         self.context_squash_threshold = 0.8  # 80%
 
-        # Token count cache (avoids O(n) recalculation on every input)
-        self._cached_token_count = 0
-        self._cached_response_count = 0
+        # Tool token overhead estimate (cached after first API call)
+        self._tool_token_overhead = 0
 
         # Watch mode (thread-safe)
         self.watch_mode = False
@@ -1353,67 +1352,72 @@ Shell: {env_type} {shell_info}
             self.console.print(f"[red]Error capturing context: {e}[/]")
             return "", []
 
-    def estimate_tokens(self) -> int:
-        """Estimate token count from conversation responses and system prompt.
+    def estimate_tokens(self, with_source: bool = False):
+        """Estimate current context window size in tokens.
 
-        Uses API token counts when available (accurate), falls back to
-        char-based estimation (4 chars = 1 token) when not.
+        Returns the actual tokens that would be sent on the next API call:
+        - Uses the last response's input_tokens + output_tokens (accurate from API)
+        - Falls back to char-based estimation if API tokens unavailable
 
-        Uses incremental caching to avoid O(n) recalculation on every call.
+        Note: input_tokens from API is cumulative (includes full conversation history),
+        so the last response's tokens represent the current context window size.
+
+        Args:
+            with_source: If True, returns tuple (tokens, source) where source is
+                        "API" or "estimated". If False, returns just the token count.
         """
+        source = "estimated"
+        tokens = 0
+
         try:
-            current_response_count = len(self.conversation.responses)
+            if not self.conversation.responses:
+                # No responses yet - estimate system prompt + tools
+                # System prompt chars / 4, plus estimated tool overhead
+                base_tokens = len(self.system_prompt) // 4
+                # Tool overhead: ~200 tokens per tool (schema + description)
+                tool_tokens = self._tool_token_overhead or (len(SIDECHAT_TOOLS) * 200)
+                tokens = base_tokens + tool_tokens
+                source = "estimated"
+            else:
+                # Use the LAST response's tokens (represents current context window)
+                last_response = self.conversation.responses[-1]
 
-            # If conversation was reset/squashed (fewer responses), reset cache
-            if current_response_count < self._cached_response_count:
-                self._cached_token_count = len(self.system_prompt) // 4
-                self._cached_response_count = 0
+                if last_response.input_tokens is not None:
+                    # API provided accurate token counts
+                    source = "API"
+                    # Cache tool overhead for pre-response estimates
+                    if self._tool_token_overhead == 0 and len(self.conversation.responses) == 1:
+                        # First response: estimate tool overhead from difference
+                        # input_tokens = system + tools + user_msg + context
+                        # We know system prompt size, so remainder includes tools
+                        system_tokens = len(self.system_prompt) // 4
+                        if last_response.input_tokens > system_tokens:
+                            # Rough: assume tools are ~60% of non-system input on first call
+                            self._tool_token_overhead = int((last_response.input_tokens - system_tokens) * 0.6)
 
-            # If no new responses, return cached value
-            if current_response_count == self._cached_response_count:
-                if self._cached_token_count == 0:
-                    self._cached_token_count = len(self.system_prompt) // 4
-                return self._cached_token_count
-
-            # Count only NEW responses (incremental update)
-            new_tokens = 0
-            for response in self.conversation.responses[self._cached_response_count:]:
-                # Try API token counts first (accurate)
-                if response.input_tokens and response.output_tokens:
-                    new_tokens += response.input_tokens + response.output_tokens
+                    output_tokens = last_response.output_tokens or 0
+                    tokens = last_response.input_tokens + output_tokens
                 else:
-                    # Fallback: char-based estimation using public APIs
-                    chars = 0
-                    if hasattr(response, 'prompt') and response.prompt:
-                        if response.prompt.prompt:
-                            chars += len(response.prompt.prompt)
-                        if response.prompt.system:
-                            chars += len(response.prompt.system)
-                    chars += len(response.text())
-                    new_tokens += chars // 4
-
-            # Update cache (add system prompt on first count)
-            if self._cached_response_count == 0 and self._cached_token_count == 0:
-                self._cached_token_count = len(self.system_prompt) // 4
-            self._cached_token_count += new_tokens
-            self._cached_response_count = current_response_count
-
-            return self._cached_token_count
+                    # Fallback: char-based estimation for current context
+                    # Count system prompt + all messages once each
+                    source = "estimated"
+                    total_chars = len(self.system_prompt)
+                    for resp in self.conversation.responses:
+                        if hasattr(resp, 'prompt') and resp.prompt:
+                            if resp.prompt.prompt:
+                                total_chars += len(resp.prompt.prompt)
+                        total_chars += len(resp.text())
+                    # Add tool overhead estimate
+                    tool_tokens = len(SIDECHAT_TOOLS) * 200
+                    tokens = (total_chars // 4) + tool_tokens
 
         except Exception as e:
             self.console.print(f"[yellow]Warning: Token estimation failed: {e}[/]")
-            # Fallback: estimate from conversation object using public APIs
-            try:
-                total_tokens = len(self.system_prompt) // 4
-                for resp in self.conversation.responses:
-                    if resp.input_tokens and resp.output_tokens:
-                        total_tokens += resp.input_tokens + resp.output_tokens
-                    else:
-                        total_tokens += len(resp.text()) // 4
-                return total_tokens
-            except Exception:
-                # Ultimate fallback: use fixed estimate
-                return len(self.conversation.responses) * 1000
+            # Ultimate fallback
+            tokens = len(self.system_prompt) // 4 + len(self.conversation.responses) * 500
+            source = "estimated"
+
+        return (tokens, source) if with_source else tokens
 
     def check_and_squash_context(self):
         """Auto-squash when context reaches threshold (like tmuxai)"""
@@ -2063,11 +2067,8 @@ Instructions:
             return True
 
         elif cmd == "/info":
-            tokens = self.estimate_tokens()
+            tokens, token_source = self.estimate_tokens(with_source=True)
             percentage = (tokens * 100 // self.max_context_size) if self.max_context_size > 0 else 0
-            # Determine token count source (API vs estimated)
-            has_api_tokens = any(r.input_tokens for r in self.conversation.responses)
-            token_source = "from API" if has_api_tokens else "estimated"
             # System prompt status
             if self.system_prompt:
                 prompt_len = len(self.system_prompt)
