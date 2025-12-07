@@ -275,6 +275,10 @@ class TerminatorSidechatSession:
         self.previous_watch_context_hash = None  # SHA256 hash for deduplication
         self.previous_watch_iteration_count = 0   # Track iterations for prompt
 
+        # Per-terminal content hash tracking for deduplication
+        # Enables [Content unchanged] placeholder when terminal content hasn't changed
+        self.terminal_content_hashes: Dict[str, str] = {}  # uuid -> content hash
+
         # D-Bus connections
         self.dbus_service = None
 
@@ -1161,7 +1165,7 @@ Shell: {env_type} {shell_info}
             return '\n'.join(lines[prompts[0][0]:])
         return content
 
-    def capture_context(self, include_exec_output=False) -> Tuple[str, List[llm.Attachment]]:
+    def capture_context(self, include_exec_output=False, dedupe_unchanged=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture visible content from all terminals (like tmuxai).
 
@@ -1171,6 +1175,11 @@ Shell: {env_type} {shell_info}
 
         For TUI applications (htop, glances, vim, etc.), captures screenshots
         instead of text since TUI content doesn't extract well as plain text.
+
+        Args:
+            include_exec_output: Whether to include exec terminal in context
+            dedupe_unchanged: If True and content matches previous hash for a terminal,
+                             emit [Content unchanged] placeholder instead of full content
 
         Returns:
             Tuple of (context_string, attachments_list):
@@ -1219,6 +1228,7 @@ Shell: {env_type} {shell_info}
                             self.screenshot_files.append(temp_path)
                             attachments.append(llm.Attachment(path=temp_path))
                             # Add marker in context so AI knows about the screenshot
+                            # TUI screenshots always have unique timestamps, so no deduplication
                             context_parts.append(f'<terminal uuid="{term_uuid}" title="{term["title"]}" type="tui-screenshot">Screenshot attached for this TUI terminal</terminal>')
                             continue  # Don't fall through to text capture
                         else:
@@ -1231,6 +1241,19 @@ Shell: {env_type} {shell_info}
                 content = self._capture_last_command_output(term['uuid'])
 
                 if content and not content.startswith('ERROR'):
+                    # Per-terminal content deduplication
+                    if dedupe_unchanged:
+                        content_hash = hashlib.sha256(content.encode()).hexdigest()
+                        if term_uuid in self.terminal_content_hashes:
+                            if self.terminal_content_hashes[term_uuid] == content_hash:
+                                # Content unchanged - emit placeholder
+                                context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
+[Content unchanged]
+</terminal>''')
+                                continue
+                        # Content changed or new terminal - store hash
+                        self.terminal_content_hashes[term_uuid] = content_hash
+
                     # Format like tmux-fragments
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
 {content}
@@ -1393,6 +1416,9 @@ Provide a brief but comprehensive summary."""
             # Create completely fresh conversation
             # We'll pass the new system prompt on the next user interaction
             self.conversation = llm.Conversation(model=self.model)
+
+            # Clear per-terminal content hashes (summary replaces full history)
+            self.terminal_content_hashes.clear()
 
             new_tokens = self.estimate_tokens()
             self.console.print(f"[green]✓[/] Context squashed: ~{new_tokens} tokens")
@@ -1772,7 +1798,11 @@ Screenshot size: {len(image_bytes)} bytes"""
                 with self.watch_lock:
                     # Capture all terminal content (including exec output for watch)
                     # Returns (context_text, tui_attachments) tuple for TUI screenshot support
-                    context, tui_attachments = self.capture_context(include_exec_output=True)
+                    # Enable per-terminal deduplication after first watch iteration
+                    context, tui_attachments = self.capture_context(
+                        include_exec_output=True,
+                        dedupe_unchanged=self.previous_watch_iteration_count > 0
+                    )
 
                     # Check exec terminal idle state using PromptDetector
                     try:
@@ -1896,6 +1926,8 @@ Instructions:
             # Reset conversation (system prompt will be passed on next interaction)
             try:
                 self.conversation = llm.Conversation(model=self.model)
+                # Clear per-terminal content hashes (AI needs fresh context)
+                self.terminal_content_hashes.clear()
                 self.console.print("[green]✓[/] Conversation cleared")
             except Exception as e:
                 self.console.print(f"[red]Error clearing conversation: {e}[/]")
@@ -1925,6 +1957,9 @@ Instructions:
                 if hasattr(self, 'plugin_dbus') and self.plugin_dbus:
                     self.plugin_dbus.clear_cache()
 
+                # Clear per-terminal content hashes (AI needs fresh context)
+                self.terminal_content_hashes.clear()
+
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
                 self.console.print(f"[red]Error resetting: {e}[/]")
@@ -1940,9 +1975,13 @@ Instructions:
             except Exception:
                 pass
 
+            # Clear per-terminal content hashes to ensure full fresh capture
+            self.terminal_content_hashes.clear()
+
             # Simple snapshot capture (includes exec terminal)
             # Returns (context_text, tui_attachments) tuple for TUI screenshot support
             # Use watch_lock to avoid racing with watch mode (thread-safe)
+            # No deduplication - user explicitly wants to see current full state
             with self.watch_lock:
                 context, tui_attachments = self.capture_context(include_exec_output=True)
 
@@ -2271,7 +2310,10 @@ Exec terminal: {self.exec_terminal_uuid}
                 except Exception:
                     pass
 
-                # Capture fresh context
+                # Clear per-terminal content hashes to ensure full fresh context
+                self.terminal_content_hashes.clear()
+
+                # Capture fresh context (no deduplication - user/AI explicitly requested refresh)
                 context_text, tui_attachments_refresh = self.capture_context(include_exec_output=True)
                 result_attachments = []
                 if tui_attachments_refresh:
@@ -2601,7 +2643,12 @@ Type !fragment <name> [...] to insert fragments
                         # Simple snapshot capture (no stability detection)
                         # Works better for TUI applications and provides instant feedback
                         # Returns (context_text, tui_attachments) tuple for TUI screenshot support
-                        context, tui_attachments = self.capture_context(include_exec_output=True)
+                        # Enable per-terminal deduplication after first message
+                        has_prior_context = len(self.conversation.responses) > 0
+                        context, tui_attachments = self.capture_context(
+                            include_exec_output=True,
+                            dedupe_unchanged=has_prior_context
+                        )
 
                         # Process fragments if present
                         processed_input, fragments = self.process_fragments(user_input)

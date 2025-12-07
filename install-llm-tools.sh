@@ -1464,7 +1464,7 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
     "git+https://github.com/c0ffee0wl/llm-tools-patch"
     "llm-fragments-site-text"
-    "llm-fragments-pdf"
+    "git+https://github.com/c0ffee0wl/llm-fragments-pdf"
     "llm-fragments-github"
     "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
     "llm-fragments-dir"
