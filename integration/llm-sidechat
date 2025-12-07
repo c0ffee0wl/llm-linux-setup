@@ -331,8 +331,15 @@ class TerminatorSidechatSession:
                         try:
                             old_pid = int(old_pid_str)
                             os.kill(old_pid, 0)  # Check if process exists
+                            # Also check for zombie state (os.kill succeeds for zombies)
+                            try:
+                                with open(f'/proc/{old_pid}/status', 'r') as status_f:
+                                    if 'State:\tZ' in status_f.read():
+                                        raise OSError("Zombie process - treating as stale")
+                            except FileNotFoundError:
+                                raise OSError("Process no longer exists")
                         except (ValueError, OSError):
-                            # Process doesn't exist or PID invalid - stale/corrupted lock
+                            # Process doesn't exist, is zombie, or PID invalid - stale/corrupted lock
                             try:
                                 lock_path.unlink()
                             except OSError:
@@ -1030,8 +1037,24 @@ Shell: {env_type} {shell_info}
                 pass  # Ignore version check failures
 
             return True
+        except dbus.exceptions.DBusException as e:
+            # Provide specific guidance based on the error
+            error_name = e.get_dbus_name() if hasattr(e, 'get_dbus_name') else str(e)
+            if 'ServiceUnknown' in str(error_name) or 'ServiceUnknown' in str(e):
+                self.console.print("[yellow]Plugin D-Bus service not registered[/]")
+                self.console.print("[dim]The TerminatorSidechat plugin is not running.[/]")
+            elif 'NoReply' in str(error_name):
+                self.console.print("[yellow]Plugin D-Bus service not responding[/]")
+            else:
+                self.console.print(f"[yellow]Plugin D-Bus error: {e}[/]")
+            return False
         except Exception as e:
-            self.console.print(f"[yellow]Plugin D-Bus connection failed: {e}[/]")
+            # Check if D-Bus session bus itself is unavailable
+            if 'DBUS_SESSION_BUS_ADDRESS' not in os.environ:
+                self.console.print("[yellow]D-Bus session bus not available[/]")
+                self.console.print("[dim]Try: export $(dbus-launch)[/]")
+            else:
+                self.console.print(f"[yellow]Plugin D-Bus connection failed: {e}[/]")
             return False
 
     def _check_plugin_available(self) -> bool:
@@ -1561,19 +1584,22 @@ Shell: {env_type} {shell_info}
                 if last_response.input_tokens is not None:
                     # API provided accurate token counts
                     source = "API"
-                    # API provides separate input (prompt) and output (completion) token counts
-                    output_tokens = last_response.output_tokens or 0
-                    tokens = last_response.input_tokens + output_tokens
+                    # Use input_tokens only - output tokens are already included in next request's input
+                    # When the next request is made, its input_tokens will include the previous output
+                    # So we only need input_tokens to know how much context we're using
+                    tokens = last_response.input_tokens
                 else:
                     # Fallback: char-based estimation for current context
-                    # Count system prompt + all messages once each
+                    # The conversation is cumulative - each response already contains history
+                    # So we only count the LAST exchange, not sum all of them (which would overestimate)
                     source = "estimated"
                     total_chars = len(self.system_prompt)
-                    for resp in self.conversation.responses:
-                        if hasattr(resp, 'prompt') and resp.prompt:
-                            if resp.prompt.prompt:
-                                total_chars += len(resp.prompt.prompt)
-                        total_chars += len(resp.text())
+                    if self.conversation.responses:
+                        last_resp = self.conversation.responses[-1]
+                        if hasattr(last_resp, 'prompt') and last_resp.prompt:
+                            if last_resp.prompt.prompt:
+                                total_chars += len(last_resp.prompt.prompt)
+                        total_chars += len(last_resp.text())
                     # Add measured tool overhead
                     tool_tokens = self._tool_token_overhead  # Use measured value
                     tokens = (total_chars // 4) + tool_tokens

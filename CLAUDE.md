@@ -988,3 +988,4 @@ Note that several packages use **forks** or specific sources:
 - **llm-openrouter**: OpenRouter API plugin (PyPI)
 - **llm-tools-quickjs**: QuickJS runtime for llm (PyPI)
 - **llm-tools-sqlite**: SQLite query tool (PyPI)
+- llm is installed in the uv environment llm, calling python3 -c "import llm" wont work.

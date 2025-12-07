@@ -303,6 +303,11 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             String containing terminal content, or error message
         """
         try:
+            # Validate start_row parameter
+            if start_row < 0:
+                err(f'Invalid start_row: {start_row} (must be >= 0)')
+                return f"ERROR: start_row must be non-negative, got {start_row}"
+
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
             if not terminal:
                 err(f'Terminal {terminal_uuid} not found')
@@ -641,27 +646,31 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             # Copy terminals list to avoid race with GTK thread modifying it during iteration
             terminals_snapshot = list(self.terminator.terminals)
             for term in terminals_snapshot:
-                dbg(f'DEBUG: Processing terminal {term}')
-                # Get custom title if set, otherwise use automatic title
-                title = term.titlebar.get_custom_string()
-                if not title:
-                    title = term.get_window_title() or 'Terminal'
+                try:
+                    dbg(f'DEBUG: Processing terminal {term}')
+                    # Get custom title if set, otherwise use automatic title
+                    title = term.titlebar.get_custom_string()
+                    if not title:
+                        title = term.get_window_title() or 'Terminal'
 
-                # Check focus state
-                focused = False
-                vte = term.get_vte()
-                if vte:
-                    focused = vte.has_focus()
+                    # Check focus state
+                    focused = False
+                    vte = term.get_vte()
+                    if vte:
+                        focused = vte.has_focus()
 
-                # Get current working directory
-                cwd = term.get_cwd() or '~'
+                    # Get current working directory
+                    cwd = term.get_cwd() or '~'
 
-                terminals_info.append({
-                    'uuid': term.uuid.urn,
-                    'title': title,
-                    'focused': str(focused),  # Convert boolean to string for D-Bus
-                    'cwd': cwd
-                })
+                    terminals_info.append({
+                        'uuid': term.uuid.urn,
+                        'title': title,
+                        'focused': str(focused),  # Convert boolean to string for D-Bus
+                        'cwd': cwd
+                    })
+                except Exception as term_error:
+                    # Terminal may have been destroyed between snapshot and access
+                    dbg(f'DEBUG: Skipping terminal (may be destroyed): {term_error}')
 
             dbg(f'Retrieved metadata for {len(terminals_info)} terminals')
             return terminals_info
