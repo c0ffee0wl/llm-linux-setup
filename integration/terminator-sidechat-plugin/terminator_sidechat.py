@@ -65,12 +65,14 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         self.bus_name = None
         try:
             bus = dbus.SessionBus()
-            # Claim the bus name with replacement flags
+            # Claim the bus name - don't allow replacement by other processes for security
+            # replace_existing=True only takes over from OTHER Terminator instances (same plugin)
+            # allow_replacement=False prevents malicious processes from hijacking our service
             self.bus_name = dbus.service.BusName(
                 PLUGIN_BUS_NAME,
                 bus=bus,
-                allow_replacement=True,
-                replace_existing=True,
+                allow_replacement=False,  # Security: prevent hijacking by other processes
+                replace_existing=True,    # Take over from crashed/old plugin instances
                 do_not_queue=True
             )
             dbus.service.Object.__init__(self, self.bus_name, PLUGIN_BUS_PATH)
@@ -174,10 +176,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                         dbg(f'Returning cached content for {terminal_uuid}')
                         return self.content_cache[cache_key]
 
-            # Get terminal dimensions
+            # Get terminal width for full-width capture
             try:
                 term_width = vte.get_column_count()
-                term_height = vte.get_row_count()
             except Exception as e:
                 err(f'Error getting terminal dimensions: {e}')
                 return "ERROR: Could not access terminal state"
@@ -186,15 +187,16 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             # vadjustment tells us where the visible screen is in the buffer coordinates.
             # This is CRITICAL for alternate screen (TUI apps): the content is at the
             # buffer position indicated by scroll_pos, not at row 0!
+            # Use `lines` parameter (already set to viewport height if auto-detected)
             try:
                 vadj = vte.get_vadjustment()
                 if vadj:
                     scroll_pos = vadj.get_value()
-                    # Calculate visible viewport range in buffer coordinates
+                    # Calculate capture range in buffer coordinates using requested lines
                     # Use math.floor consistently to ensure proper row alignment
                     capture_start = math.floor(scroll_pos)
-                    capture_end = math.floor(scroll_pos + term_height) - 1
-                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, viewport range=[{capture_start}, {capture_end}]')
+                    capture_end = math.floor(scroll_pos + lines) - 1
+                    dbg(f'Using vadjustment: scroll_pos={scroll_pos}, capture range=[{capture_start}, {capture_end}]')
                 else:
                     # Fallback if vadjustment returns None
                     dbg('vadjustment returned None, using fallback')
@@ -202,23 +204,23 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                     try:
                         scrollback = vte.get_scrollback_lines()
                         capture_start = scrollback
-                        capture_end = scrollback + term_height - 1
+                        capture_end = scrollback + lines - 1
                         dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{capture_start}, {capture_end}]')
                     except Exception:
                         # Ultimate fallback: top of buffer
                         capture_start = 0
-                        capture_end = term_height - 1
+                        capture_end = lines - 1
                         dbg(f'Using ultimate fallback: range=[{capture_start}, {capture_end}]')
             except Exception as e:
                 # Exception during vadjustment access
                 dbg(f'vadjustment exception: {type(e).__name__}: {e}')
                 capture_start = 0
-                capture_end = term_height - 1
+                capture_end = lines - 1
 
             # DEBUG: Log capture parameters
             dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg(f'  Capture mode: viewport')
-            dbg(f'  Terminal size: width={term_width}, height={term_height}')
+            dbg(f'  Capture mode: viewport-based')
+            dbg(f'  Terminal width: {term_width}')
             dbg(f'  Requested lines: {lines}')
             dbg(f'  Calculated range: start_row={capture_start}, end_row={capture_end}')
             dbg(f'  Range span: {capture_end - capture_start + 1} rows')
@@ -314,19 +316,31 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             term_width = vte.get_column_count()
             term_height = vte.get_row_count()
 
-            # Calculate end row: current scroll position + viewport height
+            # Calculate end row: use cursor position (where command output ends)
+            # This allows dynamic expansion to capture full command output
             try:
-                vadj = vte.get_vadjustment()
-                if vadj:
-                    scroll_pos = vadj.get_value()
-                    capture_end = math.floor(scroll_pos + term_height) - 1
-                else:
-                    # Fallback: use cursor position
-                    _, cursor_row = vte.get_cursor_position()
-                    capture_end = cursor_row if cursor_row >= 0 else start_row + term_height
-            except Exception:
                 _, cursor_row = vte.get_cursor_position()
-                capture_end = cursor_row if cursor_row >= 0 else start_row + term_height
+                if cursor_row >= 0:
+                    capture_end = cursor_row
+                else:
+                    # Fallback if cursor position unavailable
+                    vadj = vte.get_vadjustment()
+                    if vadj:
+                        scroll_pos = vadj.get_value()
+                        capture_end = math.floor(scroll_pos + term_height) - 1
+                    else:
+                        capture_end = start_row + term_height
+            except Exception:
+                # Ultimate fallback
+                try:
+                    vadj = vte.get_vadjustment()
+                    if vadj:
+                        scroll_pos = vadj.get_value()
+                        capture_end = math.floor(scroll_pos + term_height) - 1
+                    else:
+                        capture_end = start_row + term_height
+                except Exception:
+                    capture_end = start_row + term_height
 
             dbg(f'capture_from_row: start={start_row}, end={capture_end}, span={capture_end - start_row + 1} rows')
 
@@ -729,9 +743,16 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             # Copy terminals list to avoid race with GTK thread modifying it during iteration
             terminals_snapshot = list(self.terminator.terminals)
             for term in terminals_snapshot:
-                term_tab = self._get_tab_container(term)
+                try:
+                    term_tab = self._get_tab_container(term)
+                except Exception as e:
+                    dbg(f'[SIDECHAT-PLUGIN] Could not get tab container for terminal: {e}')
+                    continue
 
                 # Compare tab container objects (same instance = same tab)
+                # Both containers are obtained in the same call, so object identity is stable
+                if term_tab is None:
+                    continue
                 if term_tab is reference_tab:
                     # Get terminal metadata (same code as get_all_terminals_metadata)
                     title = term.titlebar.get_custom_string()
@@ -876,22 +897,29 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
         Must be called while holding cache_lock.
         Uses LRU eviction based on timestamps.
+
+        Optimized: O(n log n) instead of O(n²) by sorting once and deleting in batch.
         """
-        # Evict content cache entries
-        while len(self.content_cache) > CACHE_MAX_SIZE:
-            if not self.last_capture:
-                break
-            oldest_key = min(self.last_capture, key=self.last_capture.get)
-            del self.content_cache[oldest_key]
-            del self.last_capture[oldest_key]
+        import heapq
+
+        # Evict content cache entries - find all entries to evict in one pass
+        excess_content = len(self.content_cache) - CACHE_MAX_SIZE
+        if excess_content > 0 and self.last_capture:
+            # Use heapq.nsmallest for O(n log k) where k = excess_content
+            oldest_keys = heapq.nsmallest(excess_content, self.last_capture,
+                                          key=self.last_capture.get)
+            for key in oldest_keys:
+                self.content_cache.pop(key, None)
+                self.last_capture.pop(key, None)
 
         # Evict TUI cache entries
-        while len(self.tui_cache) > CACHE_MAX_SIZE:
-            if not self.tui_cache_time:
-                break
-            oldest_key = min(self.tui_cache_time, key=self.tui_cache_time.get)
-            del self.tui_cache[oldest_key]
-            del self.tui_cache_time[oldest_key]
+        excess_tui = len(self.tui_cache) - CACHE_MAX_SIZE
+        if excess_tui > 0 and self.tui_cache_time:
+            oldest_keys = heapq.nsmallest(excess_tui, self.tui_cache_time,
+                                          key=self.tui_cache_time.get)
+            for key in oldest_keys:
+                self.tui_cache.pop(key, None)
+                self.tui_cache_time.pop(key, None)
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='')
     def clear_cache(self):

@@ -142,7 +142,7 @@ EXTERNAL_TOOL_DISPLAY = {
     'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
     'load_pdf': ('argument', 'Extracting PDF', 'Extract PDF content'),
     # Fabric pattern tool
-    'fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
+    'prompt_fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
 }
 
 
@@ -258,8 +258,13 @@ class TerminatorSidechatSession:
         self.max_context_size = max_context_size  # from CLI --max-context
         self.context_squash_threshold = 0.8  # 80%
 
-        # Tool token overhead estimate (cached after first API call)
-        self._tool_token_overhead = 0
+        # Capture size limits (prevent memory exhaustion)
+        self.MAX_CAPTURE_ROWS = 10000      # Maximum rows to capture
+        self.MAX_CAPTURE_BYTES = 10_000_000  # 10MB byte limit
+        self.MAX_CAPTURE_CHARS = 2_000_000   # 2M character limit (~500k tokens)
+
+        # Tool token overhead (estimated at startup, cached for session)
+        self._tool_token_overhead = self._estimate_tool_schema_tokens()
 
         # Watch mode (thread-safe)
         self.watch_mode = False
@@ -280,7 +285,8 @@ class TerminatorSidechatSession:
         # D-Bus connections
         self.dbus_service = None
 
-        # Track screenshot files for cleanup
+        # Track screenshot files for cleanup (use dedicated temp directory)
+        self.screenshot_dir = self._setup_screenshot_dir()
         self.screenshot_files = []
 
         # Pending attachments for multi-modal viewing (deferred to next turn)
@@ -300,8 +306,20 @@ class TerminatorSidechatSession:
         when multiple tabs start simultaneously.
 
         The lock is released after exec terminal creation (not end of session).
+
+        Security improvements:
+        - Uses per-user subdirectory to prevent cross-user interference
+        - Sets lock file permissions to 0600
+        - Handles corrupted lock files gracefully
         """
-        runtime_dir = os.environ.get('XDG_RUNTIME_DIR', '/tmp')
+        # Use per-user lock directory for security
+        runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
+        if not runtime_dir or not Path(runtime_dir).is_dir():
+            # Fallback to user-specific temp directory
+            runtime_dir = Path(tempfile.gettempdir()) / f'llm-sidechat-{os.getuid()}'
+            runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+            runtime_dir = str(runtime_dir)
+
         lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
 
         # Check for stale lock before attempting to acquire
@@ -310,17 +328,26 @@ class TerminatorSidechatSession:
                 with open(lock_path, 'r') as f:
                     old_pid_str = f.read().strip()
                     if old_pid_str:
-                        old_pid = int(old_pid_str)
                         try:
+                            old_pid = int(old_pid_str)
                             os.kill(old_pid, 0)  # Check if process exists
-                        except OSError:
-                            # Process doesn't exist - stale lock
-                            lock_path.unlink()
-            except (ValueError, IOError):
-                pass
+                        except (ValueError, OSError):
+                            # Process doesn't exist or PID invalid - stale/corrupted lock
+                            try:
+                                lock_path.unlink()
+                            except OSError:
+                                pass  # Another process may have removed it
+            except IOError:
+                # Can't read lock file - try to remove it
+                try:
+                    lock_path.unlink()
+                except OSError:
+                    pass
 
         try:
-            self.lock_file = open(lock_path, 'w')
+            # Open with secure permissions (0600) using fdopen pattern
+            fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+            self.lock_file = os.fdopen(fd, 'w')
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
             self.lock_file.write(f"{os.getpid()}\n")
             self.lock_file.flush()
@@ -330,7 +357,8 @@ class TerminatorSidechatSession:
             # This allows multi-tab support while preventing race conditions
             self.console.print("[yellow]Another sidechat is starting, waiting...[/]")
             try:
-                self.lock_file = open(lock_path, 'w')
+                fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
+                self.lock_file = os.fdopen(fd, 'w')
                 fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)  # Blocking wait
                 self.lock_file.write(f"{os.getpid()}\n")
                 self.lock_file.flush()
@@ -356,6 +384,37 @@ class TerminatorSidechatSession:
                 self.lock_file = None
             except Exception:
                 pass  # Lock will be released by kernel anyway
+
+    def _setup_screenshot_dir(self) -> Path:
+        """
+        Set up dedicated directory for screenshot temp files.
+        Also cleans up any orphaned files from crashed sessions.
+
+        Returns:
+            Path to screenshot directory
+        """
+        # Use user-specific temp directory for security
+        base_dir = Path(tempfile.gettempdir()) / f'llm-sidechat-{os.getuid()}'
+        screenshot_dir = base_dir / 'screenshots'
+
+        try:
+            screenshot_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+
+            # Clean up orphaned screenshot files from crashed sessions
+            # Files older than 1 hour are considered orphaned
+            cleanup_threshold = time.time() - 3600  # 1 hour ago
+            for old_file in screenshot_dir.glob('sidechat_screenshot_*.png'):
+                try:
+                    if old_file.stat().st_mtime < cleanup_threshold:
+                        old_file.unlink()
+                except OSError:
+                    pass  # File may have been deleted by another process
+        except OSError as e:
+            # Fallback to system temp if we can't create our directory
+            self._debug(f"Could not create screenshot dir: {e}")
+            screenshot_dir = Path(tempfile.gettempdir())
+
+        return screenshot_dir
 
     def _get_current_terminal_uuid_early(self) -> Optional[str]:
         """
@@ -606,6 +665,95 @@ class TerminatorSidechatSession:
         if self.debug:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
 
+    def _estimate_tool_schema_tokens(self) -> int:
+        """
+        Estimate token count for all tool schemas.
+
+        Uses char-based estimation (4 chars = 1 token) which is fast and
+        consistent. The actual token count varies by model tokenizer, but
+        this estimate is sufficient for context window tracking.
+
+        Returns:
+            Estimated token count for all tool schemas
+        """
+        try:
+            # Build JSON representation of tool schemas (as sent to API)
+            import json
+            tool_schemas = []
+            for tool in SIDECHAT_TOOLS:
+                schema = {
+                    'name': tool.name,
+                    'description': tool.description or '',
+                    'parameters': tool.schema.get('parameters', {}) if hasattr(tool, 'schema') else {}
+                }
+                tool_schemas.append(schema)
+
+            tools_json = json.dumps(tool_schemas, indent=2)
+
+            # Estimate tokens using char-based method (4 chars = 1 token)
+            tokens = len(tools_json) // 4
+            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(SIDECHAT_TOOLS)} tools, {len(tools_json)} chars)")
+            return tokens
+
+        except Exception as e:
+            # Fallback
+            fallback = len(SIDECHAT_TOOLS) * 200
+            self._debug(f"Tool schema measurement exception: {e}, using estimate: {fallback}")
+            return fallback
+
+    def _truncate_capture_if_needed(self, content: str, source_desc: str = "content") -> str:
+        """
+        Truncate captured content if it exceeds size limits.
+
+        Adds warning message when truncation occurs.
+
+        Args:
+            content: Content to check/truncate
+            source_desc: Description of content source (for warning message)
+
+        Returns:
+            Original or truncated content with warning
+        """
+        if not content:
+            return content
+
+        original_size = len(content)
+        byte_size = len(content.encode('utf-8'))
+
+        # Check if truncation needed
+        needs_truncation = False
+        truncation_reason = []
+
+        if byte_size > self.MAX_CAPTURE_BYTES:
+            needs_truncation = True
+            truncation_reason.append(f"{byte_size:,} bytes > {self.MAX_CAPTURE_BYTES:,} byte limit")
+
+        if original_size > self.MAX_CAPTURE_CHARS:
+            needs_truncation = True
+            truncation_reason.append(f"{original_size:,} chars > {self.MAX_CAPTURE_CHARS:,} char limit")
+
+        if not needs_truncation:
+            return content
+
+        # Truncate to character limit (simpler than byte-aware truncation)
+        truncated = content[:self.MAX_CAPTURE_CHARS]
+
+        # Add warning header
+        warning = (
+            f"\n{'='*60}\n"
+            f"WARNING: {source_desc.capitalize()} truncated\n"
+            f"Reason: {', '.join(truncation_reason)}\n"
+            f"Showing first {len(truncated):,} of {original_size:,} characters\n"
+            f"{'='*60}\n\n"
+        )
+
+        result = warning + truncated
+
+        self._debug(f"Truncated {source_desc}: {original_size:,} -> {len(truncated):,} chars")
+        self.console.print(f"[yellow]⚠ {source_desc.capitalize()} truncated ({original_size:,} chars)[/]")
+
+        return result
+
     def _build_system_prompt(self) -> str:
         """Build system prompt with injected date, platform info, and KB content."""
         from datetime import date
@@ -772,13 +920,18 @@ Shell: {env_type} {shell_info}
         return str(uuid_value)
 
     def _reconnect_dbus(self) -> bool:
-        """Attempt to reconnect to Terminator D-Bus with timeout"""
+        """Attempt to reconnect to Terminator D-Bus with timeout.
+
+        Uses SIGALRM for timeout protection. On timeout or error, ensures
+        D-Bus state is cleaned up to prevent stale connections.
+        """
         # Use SIGALRM for timeout (safe at startup, before asyncio event loop)
         def timeout_handler(signum, frame):
             raise TimeoutError("D-Bus connection timed out")
 
         old_handler = signal.signal(signal.SIGALRM, timeout_handler)
         signal.alarm(10)  # 10 second timeout
+        bus = None
 
         try:
             bus = dbus.SessionBus()
@@ -791,10 +944,24 @@ Shell: {env_type} {shell_info}
             ]
 
             if len(terminator_services) > 1:
-                self.console.print(f"[yellow]Multiple Terminator instances detected ({len(terminator_services)})[/]")
-                self.console.print(f"[yellow]Using first found: {terminator_services[0]}[/]")
-
-            service_name = terminator_services[0] if terminator_services else None
+                # Multiple Terminator instances - try to pick the right one
+                # Check if TERMINATOR_UUID environment variable can help identify our instance
+                env_uuid = os.environ.get('TERMINATOR_UUID', '')
+                matching_service = None
+                for service in terminator_services:
+                    if env_uuid and env_uuid in service:
+                        matching_service = service
+                        break
+                if matching_service:
+                    self._debug(f"Matched Terminator instance via TERMINATOR_UUID: {matching_service}")
+                    service_name = matching_service
+                else:
+                    # Can't determine - use first and warn
+                    self.console.print(f"[yellow]Multiple Terminator instances detected ({len(terminator_services)})[/]")
+                    self.console.print(f"[yellow]Using first found: {terminator_services[0]}[/]")
+                    service_name = terminator_services[0]
+            else:
+                service_name = terminator_services[0] if terminator_services else None
 
             if not service_name:
                 service_name = 'net.tenshu.Terminator2'  # Fallback for older versions
@@ -805,12 +972,16 @@ Shell: {env_type} {shell_info}
         except TimeoutError:
             self.console.print("[red]D-Bus connection timed out (10s)[/]")
             self.console.print("[yellow]Terminator may not be running or D-Bus is unresponsive[/]")
+            # Clean up any partial state
+            self.dbus_service = None
             return False
         except dbus.exceptions.DBusException as e:
             self.console.print(f"[red]D-Bus reconnection failed: {e}[/]")
+            self.dbus_service = None
             return False
         except Exception as e:
             self.console.print(f"[red]D-Bus reconnection error ({type(e).__name__}): {e}[/]")
+            self.dbus_service = None
             return False
         finally:
             signal.alarm(0)  # Cancel alarm
@@ -1029,14 +1200,15 @@ Shell: {env_type} {shell_info}
 
             image_bytes = base64.b64decode(screenshot_data)
 
-            if unique_id is None:
-                unique_id = str(int(time.time()))
-
-            temp_path = os.path.join(
-                tempfile.gettempdir(),
-                f"sidechat_screenshot_{unique_id}.png"
+            # Use mkstemp for atomic, secure temp file creation in dedicated directory
+            temp_fd, temp_path = tempfile.mkstemp(
+                suffix='.png',
+                prefix='sidechat_screenshot_',
+                dir=str(self.screenshot_dir)
             )
-            with open(temp_path, 'wb') as f:
+
+            # Write image data
+            with os.fdopen(temp_fd, 'wb') as f:
                 f.write(image_bytes)
 
             self.screenshot_files.append(temp_path)
@@ -1304,11 +1476,13 @@ Shell: {env_type} {shell_info}
                         if screenshot_data and not screenshot_data.startswith('ERROR'):
                             # Save to temp file and create attachment
                             image_bytes = base64.b64decode(screenshot_data)
-                            temp_path = os.path.join(
-                                tempfile.gettempdir(),
-                                f"sidechat_ctx_{term_uuid[:8]}_{int(time.time()*1000)}.png"
+                            # Use mkstemp for atomic, secure temp file creation in dedicated directory
+                            temp_fd, temp_path = tempfile.mkstemp(
+                                suffix='.png',
+                                prefix=f'sidechat_ctx_{term_uuid[:8]}_',
+                                dir=str(self.screenshot_dir)
                             )
-                            with open(temp_path, 'wb') as f:
+                            with os.fdopen(temp_fd, 'wb') as f:
                                 f.write(image_bytes)
                             self.screenshot_files.append(temp_path)
                             attachments.append(llm.Attachment(path=temp_path))
@@ -1347,7 +1521,10 @@ Shell: {env_type} {shell_info}
 {content}
 </terminal>''')
 
-            return "\n\n".join(context_parts), attachments
+            combined_context = "\n\n".join(context_parts)
+            # Truncate if needed to prevent memory/token issues
+            combined_context = self._truncate_capture_if_needed(combined_context, "terminal context")
+            return combined_context, attachments
         except Exception as e:
             self.console.print(f"[red]Error capturing context: {e}[/]")
             return "", []
@@ -1372,10 +1549,9 @@ Shell: {env_type} {shell_info}
         try:
             if not self.conversation.responses:
                 # No responses yet - estimate system prompt + tools
-                # System prompt chars / 4, plus estimated tool overhead
+                # System prompt chars / 4, plus measured tool overhead
                 base_tokens = len(self.system_prompt) // 4
-                # Tool overhead: ~200 tokens per tool (schema + description)
-                tool_tokens = self._tool_token_overhead or (len(SIDECHAT_TOOLS) * 200)
+                tool_tokens = self._tool_token_overhead  # Already measured in __init__
                 tokens = base_tokens + tool_tokens
                 source = "estimated"
             else:
@@ -1385,16 +1561,7 @@ Shell: {env_type} {shell_info}
                 if last_response.input_tokens is not None:
                     # API provided accurate token counts
                     source = "API"
-                    # Cache tool overhead for pre-response estimates
-                    if self._tool_token_overhead == 0 and len(self.conversation.responses) == 1:
-                        # First response: estimate tool overhead from difference
-                        # input_tokens = system + tools + user_msg + context
-                        # We know system prompt size, so remainder includes tools
-                        system_tokens = len(self.system_prompt) // 4
-                        if last_response.input_tokens > system_tokens:
-                            # Rough: assume tools are ~60% of non-system input on first call
-                            self._tool_token_overhead = int((last_response.input_tokens - system_tokens) * 0.6)
-
+                    # API provides separate input (prompt) and output (completion) token counts
                     output_tokens = last_response.output_tokens or 0
                     tokens = last_response.input_tokens + output_tokens
                 else:
@@ -1407,8 +1574,8 @@ Shell: {env_type} {shell_info}
                             if resp.prompt.prompt:
                                 total_chars += len(resp.prompt.prompt)
                         total_chars += len(resp.text())
-                    # Add tool overhead estimate
-                    tool_tokens = len(SIDECHAT_TOOLS) * 200
+                    # Add measured tool overhead
+                    tool_tokens = self._tool_token_overhead  # Use measured value
                     tokens = (total_chars // 4) + tool_tokens
 
         except Exception as e:
@@ -1425,7 +1592,39 @@ Shell: {env_type} {shell_info}
 
         if current_tokens >= self.max_context_size * self.context_squash_threshold:
             self.console.print("[yellow]Context approaching limit, auto-squashing...[/]")
+
+            # Record pre-squash tokens
+            pre_squash_tokens = current_tokens
+
             self.squash_context()
+
+            # Validate squashing reduced tokens
+            post_squash_tokens = self.estimate_tokens()
+            tokens_saved = pre_squash_tokens - post_squash_tokens
+
+            if tokens_saved > 0:
+                self.console.print(
+                    f"[green]✓[/] Context squashed: {pre_squash_tokens:,} → {post_squash_tokens:,} "
+                    f"(-{tokens_saved:,} tokens, -{tokens_saved/pre_squash_tokens*100:.1f}%)"
+                )
+            else:
+                # Squashing didn't help (or made it worse!)
+                self.console.print(
+                    f"[yellow]⚠ Warning: Squashing ineffective[/] "
+                    f"(before: {pre_squash_tokens:,}, after: {post_squash_tokens:,})"
+                )
+
+                # Still over threshold? Warn user
+                if post_squash_tokens >= self.max_context_size * 0.9:  # 90% threshold
+                    self.console.print(
+                        f"[red]⚠ Context still very large ({post_squash_tokens:,} tokens)[/]"
+                    )
+                    self.console.print(
+                        "[yellow]Consider:[/]\n"
+                        "  • Use /reset to clear conversation\n"
+                        "  • Use a model with larger context window\n"
+                        "  • Reduce terminal content in watch mode"
+                    )
 
     def squash_context(self, keep: Optional[str] = None):
         """Compress earlier messages into summary (like Claude Code's /compact).
@@ -1664,7 +1863,8 @@ Screenshot size: {file_size} bytes"""
                                         self.exec_terminal_uuid, cmd_start_row
                                     )
                                     if full_output and not full_output.startswith('ERROR'):
-                                        output = full_output
+                                        # Truncate if needed to prevent memory issues
+                                        output = self._truncate_capture_if_needed(full_output, "command output")
                                         output_rows = cmd_end_row - cmd_start_row
                                         self._debug(f"Full capture: {output_rows} rows from row {cmd_start_row}")
                                 else:
@@ -1876,12 +2076,16 @@ Instructions:
                                 # Include TUI screenshots if any were captured
                                 # Always pass system prompt on every call (required for Gemini/Vertex
                                 # which is stateless - systemInstruction must be sent on every request)
+                                #
+                                # IMPORTANT: stream=False minimizes lock hold time by getting the
+                                # complete response in one call. Lock is necessary because the
+                                # conversation object is not thread-safe and is shared with main thread.
                                 response = self.conversation.prompt(
                                     prompt,
                                     system=self._build_system_prompt(),
-                                    attachments=tui_attachments if tui_attachments else None
+                                    attachments=tui_attachments if tui_attachments else None,
+                                    stream=False  # Reduce lock hold time
                                 )
-                                # Consume response while holding lock to prevent concurrent modifications
                                 response_text = response.text()
                             except Exception as response_error:
                                 # Don't update hash on error - will retry next iteration
