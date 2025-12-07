@@ -903,37 +903,6 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             self.tui_cache_time.clear()
         dbg('All caches cleared (content + TUI detection)')
 
-    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ss', out_signature='b')
-    def set_terminal_title(self, terminal_uuid, title):
-        """
-        Set the title of a terminal.
-
-        Args:
-            terminal_uuid: UUID of terminal to set title for
-            title: New title string
-
-        Returns:
-            True on success, False on error
-        """
-        try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return False
-
-            # Set custom title via titlebar
-            if hasattr(terminal, 'titlebar') and terminal.titlebar:
-                terminal.titlebar.set_custom_string(title)
-                dbg(f'Set title of {terminal_uuid} to "{title}"')
-                return True
-            else:
-                err(f'Terminal {terminal_uuid} has no titlebar')
-                return False
-
-        except Exception as e:
-            err(f'TerminatorSidechat: Error setting title: {e}')
-            return False
-
     def unload(self):
         """Clean up when plugin is unloaded"""
         self.clear_cache()

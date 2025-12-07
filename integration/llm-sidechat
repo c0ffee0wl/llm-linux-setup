@@ -19,13 +19,12 @@ License: GPL v2 only
 """
 
 import sys
-import json
 import base64
 import uuid
 
 import llm
 from llm import Tool, ToolResult, Attachment
-from llm.cli import load_template, resolve_fragments, FragmentNotFound, process_fragments_in_chat, logs_db_path
+from llm.cli import load_template, process_fragments_in_chat, logs_db_path
 import sqlite_utils
 
 # Add system site-packages to path for dbus and other system-only packages
@@ -48,7 +47,6 @@ import signal
 import atexit
 from pathlib import Path
 from rich.console import Console
-from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
@@ -184,7 +182,7 @@ def is_tui_command(command: str) -> bool:
 class TerminatorSidechatSession:
     """Main sidechat session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None, debug: bool = False):
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 128000):
         self.console = Console()
 
         # Debug mode flag
@@ -257,7 +255,7 @@ class TerminatorSidechatSession:
         self.exec_terminal_uuid = None
 
         # Context management (like tmuxai)
-        self.max_context_size = 200000  # tokens
+        self.max_context_size = max_context_size  # from CLI --max-context
         self.context_squash_threshold = 0.8  # 80%
 
         # Token count cache (avoids O(n) recalculation on every input)
@@ -288,6 +286,9 @@ class TerminatorSidechatSession:
 
         # Pending attachments for multi-modal viewing (deferred to next turn)
         self.pending_attachments = []
+
+        # Pending summary from context squash (prepended to next user message)
+        self.pending_summary: Optional[str] = None
 
         # Knowledge Base system (TmuxAI-style)
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
@@ -413,18 +414,52 @@ class TerminatorSidechatSession:
             # Get terminals in same tab
             terminals = plugin_dbus.get_terminals_in_same_tab(terminal_uuid)
 
-            # Check for existing Sidechat Exec terminal
+            # Check for existing Sidechat Exec terminal with active process
             for t in terminals:
                 title = t.get('title', '')
                 if title.startswith('Sidechat: Exec'):
-                    # Found another sidechat in this tab
-                    return True
+                    # Extract PID from title and verify process is running
+                    pid = self._extract_pid_from_title(title)
+                    if pid and self._process_exists(pid):
+                        # Found active sidechat in this tab
+                        return True
+                    # Stale title (no PID or process dead) - continue checking
 
             return False
 
         except Exception:
             # Plugin not available or error - allow startup
             # (will fail later with proper error message)
+            return False
+
+    def _extract_pid_from_title(self, title: str) -> int:
+        """
+        Extract PID from 'Sidechat: Exec (PID 12345)' or 'Sidechat: Exec (Restored PID 12345)' format.
+
+        Args:
+            title: Terminal title string
+
+        Returns:
+            PID as integer, or None if not found
+        """
+        import re
+        match = re.search(r'\((?:Restored )?PID (\d+)\)', title)
+        return int(match.group(1)) if match else None
+
+    def _process_exists(self, pid: int) -> bool:
+        """
+        Check if a process with the given PID exists.
+
+        Args:
+            pid: Process ID to check
+
+        Returns:
+            True if process exists, False otherwise
+        """
+        try:
+            os.kill(pid, 0)  # Signal 0 = check existence without killing
+            return True
+        except (OSError, ProcessLookupError):
             return False
 
     def _get_model_capabilities(self):
@@ -531,15 +566,7 @@ class TerminatorSidechatSession:
                 except Exception:
                     pass
 
-            # STEP 4: Reset Exec terminal title (allows reuse after exit)
-            if hasattr(self, 'plugin_dbus') and hasattr(self, 'exec_terminal_uuid') and self.exec_terminal_uuid:
-                try:
-                    # Reset title to generic "Terminal" so detection doesn't find stale "Sidechat: Exec"
-                    self.plugin_dbus.set_terminal_title(self.exec_terminal_uuid, 'Terminal')
-                except Exception:
-                    pass  # Best effort - don't fail shutdown
-
-            # STEP 5: Close D-Bus connections (graceful disconnect)
+            # STEP 4: Close D-Bus connections (graceful disconnect)
             # D-Bus connections don't need explicit cleanup in Python - garbage collected
             # But we can dereference them to signal intent
             if hasattr(self, 'dbus_service'):
@@ -547,10 +574,10 @@ class TerminatorSidechatSession:
             if hasattr(self, 'plugin_dbus'):
                 self.plugin_dbus = None
 
-            # STEP 6: Release instance lock (most important)
+            # STEP 5: Release instance lock (most important)
             self._release_instance_lock()
 
-            # STEP 7: Save conversation state (if needed)
+            # STEP 6: Save conversation state (if needed)
             # llm library auto-saves, but we can explicitly flush here
             if hasattr(self, 'conversation'):
                 try:
@@ -875,14 +902,19 @@ Shell: {env_type} {shell_info}
                     # Filter out chat terminal (already normalized at assignment)
                     other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
-                    # First: Look for existing Sidechat Exec pane by title
-                    exec_candidates = [t for t in other_terminals if t.get('title', '').startswith('Sidechat: Exec')]
-                    if exec_candidates:
-                        # Reuse existing exec pane silently
-                        self.exec_terminal_uuid = self._normalize_uuid(exec_candidates[0]['uuid'])
-                        self._release_instance_lock()  # Release global lock
-                        self.console.print("[green]✓[/] Terminals ready")
-                        return  # Success - reusing existing exec terminal
+                    # First: Look for existing Sidechat Exec pane with ACTIVE process
+                    # (If PID in title is dead, don't reuse - it has wrong PID)
+                    for t in other_terminals:
+                        title = t.get('title', '')
+                        if title.startswith('Sidechat: Exec'):
+                            pid = self._extract_pid_from_title(title)
+                            # Only reuse if: no PID in title (legacy) OR PID matches current process
+                            if pid is None or pid == os.getpid():
+                                self.exec_terminal_uuid = self._normalize_uuid(t['uuid'])
+                                self._release_instance_lock()  # Release global lock
+                                self.console.print("[green]✓[/] Terminals ready")
+                                return  # Success - reusing existing exec terminal
+                            # Stale title with dead PID - don't reuse (would have wrong PID)
 
                     # Second: If exactly one other pane, offer to use it
                     if len(other_terminals) == 1:
@@ -913,7 +945,7 @@ Shell: {env_type} {shell_info}
                 exec_uuid = self.dbus_service.vsplit(
                     self.chat_terminal_uuid,
                     dbus.Dictionary({
-                        'title': 'Sidechat: Exec'
+                        'title': f'Sidechat: Exec (PID {os.getpid()})'
                     }, signature='ss')
                 )
                 if str(exec_uuid).startswith('ERROR'):
@@ -965,7 +997,7 @@ Shell: {env_type} {shell_info}
             # Create new exec terminal (split to the right)
             exec_uuid = self.dbus_service.vsplit(
                 current_uuid,
-                dbus.Dictionary({'title': 'Sidechat: Exec (Restored)'}, signature='ss')
+                dbus.Dictionary({'title': f'Sidechat: Exec (Restored PID {os.getpid()})'}, signature='ss')
             )
             if str(exec_uuid).startswith('ERROR'):
                 raise Exception(f"Failed to split terminal: {exec_uuid}")
@@ -1391,8 +1423,12 @@ Shell: {env_type} {shell_info}
             self.console.print("[yellow]Context approaching limit, auto-squashing...[/]")
             self.squash_context()
 
-    def squash_context(self):
-        """Compress earlier messages into summary (like tmuxai)"""
+    def squash_context(self, keep: Optional[str] = None):
+        """Compress earlier messages into summary (like Claude Code's /compact).
+
+        Args:
+            keep: Optional instruction for what to preserve (e.g., 'API patterns')
+        """
         if len(self.conversation.responses) <= 5:  # Keep at least 5 recent exchanges
             self.console.print("[yellow]Too few messages to squash[/]")
             return
@@ -1417,12 +1453,17 @@ Shell: {env_type} {shell_info}
                 if response_text:
                     summary_parts.append(f"{i}. AI: {response_text[:200]}...")
 
+            # Build keep instruction if provided
+            keep_section = ""
+            if keep:
+                keep_section = f"\n\nIMPORTANT: Preserve full details about: {keep}"
+
             # Generate summary using a standalone prompt (not in conversation)
             summary_prompt = f"""Summarize this conversation history concisely, focusing on:
 - Key technical issues discussed
 - Commands executed and their results
 - Important decisions or insights
-- Relevant context for continuing the conversation
+- Relevant context for continuing the conversation{keep_section}
 
 Previous messages:
 {chr(10).join(summary_parts)}
@@ -1434,23 +1475,18 @@ Provide a brief but comprehensive summary."""
 
             # Create new conversation and update system prompt
             # Build enhanced system prompt from ORIGINAL, not current
-            # This prevents infinite growth when squashing multiple times
-            self.system_prompt = f"""{self.original_system_prompt}
-
-[Previous conversation summary]
-{summary}
-[End of summary]"""
+            # Store summary for next user message (keeps system prompt clean)
+            self.pending_summary = summary
+            self.system_prompt = self.original_system_prompt
 
             # Create completely fresh conversation
-            # We'll pass the new system prompt on the next user interaction
             self.conversation = llm.Conversation(model=self.model)
 
             # Clear per-terminal content hashes (summary replaces full history)
             self.terminal_content_hashes.clear()
 
-            new_tokens = self.estimate_tokens()
-            self.console.print(f"[green]✓[/] Context squashed: ~{new_tokens} tokens")
-            self.console.print(f"[cyan]Started fresh conversation with summary in system prompt[/]")
+            self.console.print(f"[green]✓[/] Context squashed")
+            self.console.print(f"[cyan]Summary will be included with your next message[/]")
 
         except Exception as e:
             self.console.print(f"[red]Error squashing context: {e}[/]")
@@ -1670,7 +1706,7 @@ Screenshot size: {file_size} bytes"""
             True if sent, False if skipped
         """
         self.console.print(Panel(
-            Text(f"[▸] {keypress}", style="bold magenta"),
+            Text(keypress, style="bold magenta"),
             title="[bold]Keypress to Send[/]",
             border_style="magenta"
         ))
@@ -1888,7 +1924,7 @@ Instructions:
 /watch <goal>      Enable watch mode with goal
 /watch off         Disable watch mode
 /watch status      Show watch mode status
-/squash            Manually compress conversation context
+/squash [keep]     Compress context (e.g., /squash keep API patterns)
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -1977,7 +2013,6 @@ Instructions:
                     self.console.print(f"[green]✓[/] Captured {len(tui_attachments)} TUI screenshot(s)")
 
                 # Show per-terminal breakdown
-                import re
                 terminals = re.findall(r'<terminal uuid="([^"]+)" title="([^"]+)"', context)
                 if terminals:
                     self.console.print("\n[bold]Terminals captured:[/]")
@@ -2030,6 +2065,9 @@ Instructions:
         elif cmd == "/info":
             tokens = self.estimate_tokens()
             percentage = (tokens * 100 // self.max_context_size) if self.max_context_size > 0 else 0
+            # Determine token count source (API vs estimated)
+            has_api_tokens = any(r.input_tokens for r in self.conversation.responses)
+            token_source = "from API" if has_api_tokens else "estimated"
             # System prompt status
             if self.system_prompt:
                 prompt_len = len(self.system_prompt)
@@ -2040,7 +2078,7 @@ Instructions:
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
             self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
-Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%)
+Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%) [{token_source}]
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
 
@@ -2117,7 +2155,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             return True
 
         elif cmd == "/squash":
-            self.squash_context()
+            # Support "keep" instruction: /squash keep API patterns
+            keep_instruction = args if args else None
+            self.squash_context(keep=keep_instruction)
             return True
 
         elif cmd == "/kb":
@@ -2645,6 +2685,15 @@ Type !fragment <name> [...] to insert fragments""",
                         else:
                             full_prompt = processed_input
 
+                        # Prepend pending summary from squash (one-time use)
+                        if self.pending_summary:
+                            full_prompt = f"""[Previous conversation summary]
+{self.pending_summary}
+[End of summary]
+
+{full_prompt}"""
+                            self.pending_summary = None
+
                         # Always pass system prompt on every call (required for Gemini/Vertex
                         # which is stateless - systemInstruction must be sent on every request)
                         # Also pass fragments and attachments (TUI screenshots)
@@ -2800,11 +2849,18 @@ def main():
         action='store_true',
         help='Enable debug output for troubleshooting'
     )
+    parser.add_argument(
+        '--max-context',
+        type=int,
+        default=128000,
+        help='Max context tokens before auto-squash (default: 128000)'
+    )
     args = parser.parse_args()
 
     session = TerminatorSidechatSession(
         model_name=args.model,
-        debug=args.debug
+        debug=args.debug,
+        max_context_size=args.max_context
     )
     session.run()
 
