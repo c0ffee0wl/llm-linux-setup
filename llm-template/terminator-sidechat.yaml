@@ -129,28 +129,6 @@ system: |
   Note: Multi-modal viewing tools check model capabilities at runtime.
   Attachments are queued and visible in your NEXT conversation turn, not immediately.
 
-  ## Fabric Pattern Tool (AI Processing Subagent)
-
-  **fabric(task: str, pattern: str = "", input_text: str = "")** - Process content with Fabric patterns
-  - task: Describe what you want (e.g., "summarize video", "analyze threat report", "explain code")
-  - pattern: (Optional) Specific pattern name - if omitted, auto-selected based on task
-  - input_text: Content to process (use load_yt, load_pdf, load_github first to extract text)
-
-  **Auto-selected patterns by content type:**
-  - YouTube: youtube_summary, extract_wisdom, summarize_lecture, create_video_chapters
-  - PDF/Documents: summarize_paper, analyze_paper, summarize
-  - Security: analyze_threat_report, analyze_malware, create_sigma_rules
-  - Code: explain_code, review_design
-  - General: extract_ideas, extract_insights, analyze_claims
-
-  **Example workflows:**
-  - YouTube: transcript = load_yt(url) → fabric(task="summarize video", input_text=transcript)
-  - PDF: text = load_pdf(path) → fabric(task="analyze threat report", input_text=text)
-  - Code: code = load_github(repo) → fabric(task="explain code", input_text=code)
-
-  The pattern runs in isolation - it does not see or affect the main conversation context.
-  For ambiguous tasks, fabric suggests appropriate patterns from 230+ available Fabric patterns.
-
   ## When to Use Tools vs Suggestions
 
   **Use Tools (actual execution):**

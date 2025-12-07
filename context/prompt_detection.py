@@ -21,8 +21,8 @@ class PromptDetector:
         # Zsh markers (not after digit to avoid $100)
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),
         re.compile(r'(?<!\d)[%❯→➜]\s+\S+'),
-        # user@host pattern
-        re.compile(r'^\S+@\S+.*[$#%]'),
+        # user@host pattern - require prompt char at/near end (avoid matching email addresses)
+        re.compile(r'^\S+@\S+\s*[$#%]\s*$'),
     ]
 
     # Kali/fancy two-line prompts (supports ┌/╭ and └/╰)
@@ -36,9 +36,10 @@ class PromptDetector:
     EMPTY_PROMPT_PATTERNS = [
         re.compile(r'[~\w/\])\s:][$#]\s*$'),   # bash/sh: ends with $ or #
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),      # zsh: ends with % ❯ → ➜
-        re.compile(r'^\S+@\S+.*[$#%]\s*$'),    # user@host: ends with prompt char
+        re.compile(r'^\S+@\S+\s*[$#%]\s*$'),   # user@host: prompt char at END (tightened)
     ]
-    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+[$#]\s*$')
+    # Kali prompt: allow trailing whitespace and control chars (cursor, etc.)
+    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+[$#][\s\x00-\x1f]*$')
 
     @classmethod
     def is_prompt_line(cls, line: str) -> bool:
@@ -54,7 +55,7 @@ class PromptDetector:
         return False
 
     @classmethod
-    def detect_prompt_at_end(cls, text: str) -> bool:
+    def detect_prompt_at_end(cls, text: str, debug: bool = False) -> bool:
         """
         Check if text ends with an EMPTY shell prompt (ready for input).
 
@@ -65,26 +66,45 @@ class PromptDetector:
 
         Args:
             text: Terminal output text
+            debug: If True, print diagnostic info about pattern matching
 
         Returns:
             True if text ends with an empty prompt ready for input
         """
         if not text or not text.strip():
+            if debug:
+                print("[PromptDetector] Empty or whitespace-only text")
             return False
 
         lines = text.strip().split('\n')
         last = lines[-1]
 
+        if debug:
+            print(f"[PromptDetector] Checking {len(lines)} lines")
+            print(f"[PromptDetector] Last line: {last!r}")
+            if len(lines) >= 2:
+                print(f"[PromptDetector] Prev line: {lines[-2]!r}")
+
         # Check empty prompt patterns (ready for input, no command after)
-        if any(p.search(last) for p in cls.EMPTY_PROMPT_PATTERNS):
-            return True
+        for i, p in enumerate(cls.EMPTY_PROMPT_PATTERNS):
+            if p.search(last):
+                if debug:
+                    print(f"[PromptDetector] Matched EMPTY_PROMPT_PATTERNS[{i}]")
+                return True
 
         # Check Kali two-line prompt (must be empty)
         if len(lines) >= 2:
             prev = lines[-2]
-            if cls.KALI_HEADER.search(prev) and cls.KALI_EMPTY_PROMPT_LINE.search(last):
+            header_match = cls.KALI_HEADER.search(prev)
+            prompt_match = cls.KALI_EMPTY_PROMPT_LINE.search(last)
+            if debug:
+                print(f"[PromptDetector] Kali header match: {header_match is not None}")
+                print(f"[PromptDetector] Kali prompt match: {prompt_match is not None}")
+            if header_match and prompt_match:
                 return True
 
+        if debug:
+            print("[PromptDetector] No pattern matched")
         return False
 
     @classmethod

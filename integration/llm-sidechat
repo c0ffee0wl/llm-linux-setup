@@ -25,7 +25,8 @@ import uuid
 
 import llm
 from llm import Tool, ToolResult, Attachment
-from llm.cli import load_template, resolve_fragments, FragmentNotFound
+from llm.cli import load_template, resolve_fragments, FragmentNotFound, process_fragments_in_chat, logs_db_path
+import sqlite_utils
 
 # Add system site-packages to path for dbus and other system-only packages
 # (Must be AFTER llm imports to avoid typing_extensions conflicts)
@@ -113,7 +114,7 @@ TUI_COMMANDS = {
 # =============================================================================
 # External tool plugins that sidechat can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge')  # 'fabric' - disabled for now
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric')
 
 _all_tools = llm.get_tools()
 
@@ -142,8 +143,8 @@ EXTERNAL_TOOL_DISPLAY = {
     'load_yt': ('argument', 'Loading transcript', 'Load YouTube transcript'),
     'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
     'load_pdf': ('argument', 'Extracting PDF', 'Extract PDF content'),
-    # Fabric pattern tool - disabled for now
-    # 'fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
+    # Fabric pattern tool
+    'fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
 }
 
 
@@ -530,7 +531,15 @@ class TerminatorSidechatSession:
                 except Exception:
                     pass
 
-            # STEP 4: Close D-Bus connections (graceful disconnect)
+            # STEP 4: Reset Exec terminal title (allows reuse after exit)
+            if hasattr(self, 'plugin_dbus') and hasattr(self, 'exec_terminal_uuid') and self.exec_terminal_uuid:
+                try:
+                    # Reset title to generic "Terminal" so detection doesn't find stale "Sidechat: Exec"
+                    self.plugin_dbus.set_terminal_title(self.exec_terminal_uuid, 'Terminal')
+                except Exception:
+                    pass  # Best effort - don't fail shutdown
+
+            # STEP 5: Close D-Bus connections (graceful disconnect)
             # D-Bus connections don't need explicit cleanup in Python - garbage collected
             # But we can dereference them to signal intent
             if hasattr(self, 'dbus_service'):
@@ -538,10 +547,10 @@ class TerminatorSidechatSession:
             if hasattr(self, 'plugin_dbus'):
                 self.plugin_dbus = None
 
-            # STEP 5: Release instance lock (most important)
+            # STEP 6: Release instance lock (most important)
             self._release_instance_lock()
 
-            # STEP 6: Save conversation state (if needed)
+            # STEP 7: Save conversation state (if needed)
             # llm library auto-saves, but we can explicitly flush here
             if hasattr(self, 'conversation'):
                 try:
@@ -862,10 +871,9 @@ Shell: {env_type} {shell_info}
                 # Check for existing Exec pane or offer to reuse single other pane
                 try:
                     terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
-                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
 
-                    # Filter out chat terminal
-                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
+                    # Filter out chat terminal (already normalized at assignment)
+                    other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
                     # First: Look for existing Sidechat Exec pane by title
                     exec_candidates = [t for t in other_terminals if t.get('title', '').startswith('Sidechat: Exec')]
@@ -937,9 +945,8 @@ Shell: {env_type} {shell_info}
                 if t['uuid'] == self.exec_terminal_uuid:
                     self._debug("    ✓ EXACT MATCH!")
 
-            # Normalize both sides for comparison
-            exec_uuid_normalized = self._normalize_uuid(self.exec_terminal_uuid)
-            return any(self._normalize_uuid(t['uuid']) == exec_uuid_normalized for t in terminals)
+            # exec_terminal_uuid is already normalized at assignment
+            return any(str(t['uuid']) == self.exec_terminal_uuid for t in terminals)
         except Exception as e:
             self._debug(f"Verification error: {e}")
             return False
@@ -970,6 +977,42 @@ Shell: {env_type} {shell_info}
         except Exception as e:
             self.console.print(f"[red]Failed to recreate exec terminal: {e}[/]")
             return False
+
+    def _capture_screenshot(self, terminal_uuid: str, unique_id: str = None) -> Tuple[Optional[str], Optional[str]]:
+        """
+        Capture terminal screenshot and save to temp file.
+
+        Args:
+            terminal_uuid: UUID of terminal to capture
+            unique_id: Optional unique identifier for filename (default: timestamp)
+
+        Returns:
+            Tuple of (temp_file_path, error_message). One will be None.
+        """
+        try:
+            screenshot_data = self.plugin_dbus.capture_terminal_screenshot(terminal_uuid)
+
+            if not screenshot_data or screenshot_data.startswith('ERROR'):
+                error_msg = screenshot_data if screenshot_data else "No data returned"
+                return None, error_msg
+
+            image_bytes = base64.b64decode(screenshot_data)
+
+            if unique_id is None:
+                unique_id = str(int(time.time()))
+
+            temp_path = os.path.join(
+                tempfile.gettempdir(),
+                f"sidechat_screenshot_{unique_id}.png"
+            )
+            with open(temp_path, 'wb') as f:
+                f.write(image_bytes)
+
+            self.screenshot_files.append(temp_path)
+            return temp_path, None
+
+        except Exception as e:
+            return None, str(e)
 
     def wait_for_tui_render(self, terminal_uuid, max_wait=2.0, initial_content=None) -> bool:
         """
@@ -1147,7 +1190,13 @@ Shell: {env_type} {shell_info}
                 # Already at beginning of scrollback, return what we have
                 if prompts:
                     lines = content.split('\n')
-                    return '\n'.join(lines[prompts[0][0]:])
+                    # Check if shell is waiting for input (prompt at end)
+                    # If so, the single prompt is the END marker - return content BEFORE it
+                    if PromptDetector.detect_prompt_at_end(content):
+                        return '\n'.join(lines[:prompts[0][0]]).rstrip()
+                    else:
+                        # Prompt at start or command running - return from prompt
+                        return '\n'.join(lines[prompts[0][0]:])
                 return content
 
             lines_to_capture *= 2  # Double and retry
@@ -1160,9 +1209,14 @@ Shell: {env_type} {shell_info}
             lines = content.split('\n')
             return '\n'.join(lines[prompts[-2][0]:])
         elif prompts:
-            # Single prompt - return from there
+            # Single prompt - check if it's at the end (scrollback exceeded)
             lines = content.split('\n')
-            return '\n'.join(lines[prompts[0][0]:])
+            if PromptDetector.detect_prompt_at_end(content):
+                # Prompt at end = return content BEFORE it
+                return '\n'.join(lines[:prompts[0][0]]).rstrip()
+            else:
+                # Prompt at start or command running - return from prompt
+                return '\n'.join(lines[prompts[0][0]:])
         return content
 
     def capture_context(self, include_exec_output=False, dedupe_unchanged=False) -> Tuple[str, List[llm.Attachment]]:
@@ -1241,18 +1295,21 @@ Shell: {env_type} {shell_info}
                 content = self._capture_last_command_output(term['uuid'])
 
                 if content and not content.startswith('ERROR'):
-                    # Per-terminal content deduplication
-                    if dedupe_unchanged:
-                        content_hash = hashlib.sha256(content.encode()).hexdigest()
-                        if term_uuid in self.terminal_content_hashes:
-                            if self.terminal_content_hashes[term_uuid] == content_hash:
-                                # Content unchanged - emit placeholder
-                                context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
+                    # Compute hash for change detection (normalize whitespace for stability)
+                    content_hash = hashlib.sha256(content.strip().encode()).hexdigest()
+
+                    # Per-terminal deduplication: emit placeholder if content unchanged
+                    # Only active after first message (AI needs initial context)
+                    if dedupe_unchanged and term_uuid in self.terminal_content_hashes:
+                        if self.terminal_content_hashes[term_uuid] == content_hash:
+                            # Content unchanged - emit placeholder
+                            context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
 [Content unchanged]
 </terminal>''')
-                                continue
-                        # Content changed or new terminal - store hash
-                        self.terminal_content_hashes[term_uuid] = content_hash
+                            continue
+
+                    # Always store hash for future comparison (even on first message)
+                    self.terminal_content_hashes[term_uuid] = content_hash
 
                     # Format like tmux-fragments
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
@@ -1267,71 +1324,64 @@ Shell: {env_type} {shell_info}
     def estimate_tokens(self) -> int:
         """Estimate token count from conversation responses and system prompt.
 
+        Uses API token counts when available (accurate), falls back to
+        char-based estimation (4 chars = 1 token) when not.
+
         Uses incremental caching to avoid O(n) recalculation on every call.
-        Only counts new responses since last cache update.
         """
         try:
             current_response_count = len(self.conversation.responses)
 
             # If conversation was reset/squashed (fewer responses), reset cache
             if current_response_count < self._cached_response_count:
-                self._cached_token_count = len(self.system_prompt)
+                self._cached_token_count = len(self.system_prompt) // 4
                 self._cached_response_count = 0
 
             # If no new responses, return cached value
             if current_response_count == self._cached_response_count:
-                # Ensure system prompt is counted even with no responses
                 if self._cached_token_count == 0:
-                    self._cached_token_count = len(self.system_prompt)
-                return self._cached_token_count // 4
+                    self._cached_token_count = len(self.system_prompt) // 4
+                return self._cached_token_count
 
             # Count only NEW responses (incremental update)
-            new_chars = 0
+            new_tokens = 0
             for response in self.conversation.responses[self._cached_response_count:]:
-                # Count the prompt
-                if hasattr(response, 'prompt'):
-                    prompt_obj = response.prompt
-                    if hasattr(prompt_obj, 'prompt'):
-                        new_chars += len(str(prompt_obj.prompt))
-                    if hasattr(prompt_obj, 'system') and prompt_obj.system:
-                        new_chars += len(str(prompt_obj.system))
-
-                # Count the response text
-                # NOTE: Accessing internal llm library attribute '_chunks' for response text.
-                # This is fragile and may break if llm library internals change.
-                # hasattr check provides graceful degradation if attribute is removed.
-                if hasattr(response, '_chunks'):
-                    new_chars += sum(len(chunk) for chunk in response._chunks)
+                # Try API token counts first (accurate)
+                if response.input_tokens and response.output_tokens:
+                    new_tokens += response.input_tokens + response.output_tokens
                 else:
-                    # Warn about API degradation (only once per session)
-                    if not hasattr(self, '_api_warning_shown'):
-                        self.console.print("[yellow]⚠ Warning: Token estimation using fallback (llm API may have changed)[/]")
-                        self._api_warning_shown = True
-                    # Fallback: use response.text() length
-                    try:
-                        new_chars += len(response.text())
-                    except Exception:
-                        pass  # Silently skip if text() also unavailable
+                    # Fallback: char-based estimation using public APIs
+                    chars = 0
+                    if hasattr(response, 'prompt') and response.prompt:
+                        if response.prompt.prompt:
+                            chars += len(response.prompt.prompt)
+                        if response.prompt.system:
+                            chars += len(response.prompt.system)
+                    chars += len(response.text())
+                    new_tokens += chars // 4
 
             # Update cache (add system prompt on first count)
             if self._cached_response_count == 0 and self._cached_token_count == 0:
-                self._cached_token_count = len(self.system_prompt)
-            self._cached_token_count += new_chars
+                self._cached_token_count = len(self.system_prompt) // 4
+            self._cached_token_count += new_tokens
             self._cached_response_count = current_response_count
 
-            return self._cached_token_count // 4
+            return self._cached_token_count
 
         except Exception as e:
             self.console.print(f"[yellow]Warning: Token estimation failed: {e}[/]")
-            # Fallback: estimate from conversation object
+            # Fallback: estimate from conversation object using public APIs
             try:
-                total_chars = len(self.system_prompt)
+                total_tokens = len(self.system_prompt) // 4
                 for resp in self.conversation.responses:
-                    total_chars += len(str(resp))
-                return total_chars // 4
+                    if resp.input_tokens and resp.output_tokens:
+                        total_tokens += resp.input_tokens + resp.output_tokens
+                    else:
+                        total_tokens += len(resp.text()) // 4
+                return total_tokens
             except Exception:
                 # Ultimate fallback: use fixed estimate
-                return len(self.conversation.responses) * 1000  # ~1000 tokens per exchange
+                return len(self.conversation.responses) * 1000
 
     def check_and_squash_context(self):
         """Auto-squash when context reaches threshold (like tmuxai)"""
@@ -1351,38 +1401,16 @@ Shell: {env_type} {shell_info}
             # Get responses to squash (all but last 3 - we'll re-execute those)
             responses_to_squash = self.conversation.responses[:-3]
 
-            # Build summary from old responses
+            # Build summary from old responses using public APIs
             summary_parts = []
             for i, response in enumerate(responses_to_squash, 1):
-                # Extract prompt text
-                # NOTE: Accessing internal llm library attributes '_prompt' and '_chunks'.
-                # This is fragile and may break if llm library internals change.
+                # Extract prompt text using public API
                 prompt_text = ""
-                if hasattr(response, 'prompt'):
-                    if hasattr(response.prompt, '_prompt'):
-                        prompt_text = response.prompt._prompt or ""
-                    elif hasattr(response.prompt, 'prompt'):
-                        # Try public API first
-                        prompt_text = str(response.prompt.prompt) or ""
-                    else:
-                        # Fallback: stringify entire prompt object
-                        try:
-                            prompt_text = str(response.prompt)[:500]  # Limit length
-                        except:
-                            prompt_text = "[prompt unavailable]"
+                if hasattr(response, 'prompt') and response.prompt:
+                    prompt_text = response.prompt.prompt or ""
 
-                # Extract response text
-                response_text = ""
-                if hasattr(response, '_chunks'):
-                    response_text = "".join(response._chunks)
-                elif hasattr(response, 'text'):
-                    # Fallback to public text() method
-                    try:
-                        response_text = response.text()
-                    except:
-                        response_text = "[response unavailable]"
-                else:
-                    response_text = str(response)[:500]  # Last resort
+                # Extract response text using public API
+                response_text = response.text()
 
                 if prompt_text:
                     summary_parts.append(f"{i}. User: {prompt_text[:200]}...")
@@ -1429,33 +1457,18 @@ Provide a brief but comprehensive summary."""
 
     def process_fragments(self, prompt: str):
         """
-        Process !fragment commands in a prompt and return modified prompt plus resolved fragments.
-        Based on llm.cli.process_fragments_in_chat
+        Process !fragment commands in a prompt.
+        Uses llm.cli.process_fragments_in_chat for correct database access.
 
         Returns:
-            (modified_prompt, fragments): Tuple of prompt text and list of Fragment objects
+            (modified_prompt, fragments, attachments)
         """
-        prompt_lines = []
-        fragments = []
-
-        for line in prompt.splitlines():
-            if line.startswith("!fragment "):
-                try:
-                    fragment_strs = line.strip().removeprefix("!fragment ").split()
-                    # Get llm database
-                    db = llm.get_default_db()
-                    # Resolve fragments
-                    resolved = resolve_fragments(db, fragments=fragment_strs, allow_attachments=False)
-                    fragments.extend(resolved)
-                except FragmentNotFound as ex:
-                    self.console.print(f"[red]Fragment error: {ex}[/]")
-                    # Don't include the !fragment line but continue processing
-                except Exception as ex:
-                    self.console.print(f"[red]Error processing fragment: {ex}[/]")
-            else:
-                prompt_lines.append(line)
-
-        return "\n".join(prompt_lines), fragments
+        try:
+            db = sqlite_utils.Database(logs_db_path())
+            return process_fragments_in_chat(db, prompt)
+        except Exception as ex:
+            self.console.print(f"[red]Fragment error: {ex}[/]")
+            return prompt, [], []
 
     def should_use_screenshot_capture(self, command: str) -> bool:
         """
@@ -1567,46 +1580,24 @@ Provide a brief but comprehensive summary."""
                     # Pass initial_content so we wait for content to change first
                     self.wait_for_tui_render(self.exec_terminal_uuid, max_wait=2.0, initial_content=initial_content)
 
-                    try:
-                        # Capture screenshot via plugin
-                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(
-                            self.exec_terminal_uuid
-                        )
+                    temp_path, error = self._capture_screenshot(self.exec_terminal_uuid)
+                    if error:
+                        escaped_error = error.replace('[', '[[').replace(']', ']]')
+                        self.console.print(f"[red]Screenshot capture failed: {escaped_error}[/]")
+                        return True, f"Screenshot capture failed: {error}"
 
-                        if screenshot_data.startswith('ERROR'):
-                            # Escape brackets in error message for Rich markup
-                            escaped_error = screenshot_data.replace('[', '[[').replace(']', ']]')
-                            self.console.print(f"[red]{escaped_error}[/]")
-                            return True, f"Screenshot capture failed: {screenshot_data}"
+                    self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
 
-                        # Save screenshot to temporary file
-                        import base64
-                        image_bytes = base64.b64decode(screenshot_data)
-
-                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
-                        with open(temp_path, 'wb') as f:
-                            f.write(image_bytes)
-
-                        # Track screenshot for cleanup on exit
-                        self.screenshot_files.append(temp_path)
-
-                        self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
-
-                        # Return a message with the screenshot path
-                        # The AI will be able to see this image via attachments
-                        output = f"""TUI application screenshot saved to: {temp_path}
+                    # Return a message with the screenshot path
+                    # The AI will be able to see this image via attachments
+                    file_size = os.path.getsize(temp_path)
+                    output = f"""TUI application screenshot saved to: {temp_path}
 
 This is an interactive TUI application (like htop, vim, or less). The screenshot shows its current display state.
 
-Screenshot size: {len(image_bytes)} bytes"""
+Screenshot size: {file_size} bytes"""
 
-                        return True, (output, temp_path)  # Return both text and image path
-
-                    except Exception as e:
-                        # Escape brackets in exception message for Rich markup
-                        escaped_error = str(e).replace('[', '[[').replace(']', ']]')
-                        self.console.print(f"[red]Screenshot capture error: {escaped_error}[/]")
-                        return True, f"Screenshot capture failed: {e}"
+                    return True, (output, temp_path)  # Return both text and image path
                 else:
                     # Regular command - use prompt-based capture
                     prompt_detected, output = self.prompt_based_capture(
@@ -1651,14 +1642,8 @@ Screenshot size: {len(image_bytes)} bytes"""
                         try:
                             if self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid):
                                 self.console.print("[cyan]TUI detected after timeout - capturing screenshot[/]")
-                                import base64
-                                screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
-                                if screenshot_data and not screenshot_data.startswith('ERROR'):
-                                    image_bytes = base64.b64decode(screenshot_data)
-                                    temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{int(time.time())}.png")
-                                    with open(temp_path, 'wb') as f:
-                                        f.write(image_bytes)
-                                    self.screenshot_files.append(temp_path)
+                                temp_path, error = self._capture_screenshot(self.exec_terminal_uuid)
+                                if temp_path:
                                     self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
                                     return True, (output, temp_path)  # Return with screenshot
                         except Exception as e:
@@ -1849,18 +1834,13 @@ Instructions:
 
                             try:
                                 # Include TUI screenshots if any were captured
-                                # Pass system prompt if this is the first interaction (e.g., user started with /watch)
-                                if len(self.conversation.responses) == 0:
-                                    response = self.conversation.prompt(
-                                        prompt,
-                                        system=self._build_system_prompt(),
-                                        attachments=tui_attachments if tui_attachments else None
-                                    )
-                                else:
-                                    response = self.conversation.prompt(
-                                        prompt,
-                                        attachments=tui_attachments if tui_attachments else None
-                                    )
+                                # Always pass system prompt on every call (required for Gemini/Vertex
+                                # which is stateless - systemInstruction must be sent on every request)
+                                response = self.conversation.prompt(
+                                    prompt,
+                                    system=self._build_system_prompt(),
+                                    attachments=tui_attachments if tui_attachments else None
+                                )
                                 # Consume response while holding lock to prevent concurrent modifications
                                 response_text = response.text()
                             except Exception as response_error:
@@ -1960,6 +1940,10 @@ Instructions:
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
 
+                # Reset watch mode tracking state
+                self.previous_watch_context_hash = None
+                self.previous_watch_iteration_count = 0
+
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
                 self.console.print(f"[red]Error resetting: {e}[/]")
@@ -2053,19 +2037,15 @@ Instructions:
                 system_status = f"System prompt: {'terminator-sidechat' if is_template else 'fallback'} ({prompt_len:,} chars)"
             else:
                 system_status = "System prompt: NOT LOADED"
-            self.console.print(Panel(f"""
-[bold]Session Information:[/]
-
-Model: {self.model_name}
+            watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
+            self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
 Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%)
 Exchanges: {len(self.conversation.responses)}
-Watch mode: {"enabled" if self.watch_mode else "disabled"}
-{f"Watch goal: {self.watch_goal}" if self.watch_mode else ""}
+Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
 
 Chat terminal: {self.chat_terminal_uuid}
-Exec terminal: {self.exec_terminal_uuid}
-""", title="Session Info", border_style="cyan"))
+Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style="cyan"))
             return True
 
         elif cmd == "/watch":
@@ -2257,35 +2237,32 @@ Exec terminal: {self.exec_terminal_uuid}
 
                 if scope == 'all':
                     terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
-                    chat_uuid_normalized = self._normalize_uuid(self.chat_terminal_uuid)
-                    other_terminals = [t for t in terminals if self._normalize_uuid(t['uuid']) != chat_uuid_normalized]
+                    # Filter out chat terminal (already normalized at assignment)
+                    other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
                     for term in other_terminals:
-                        screenshot_data = self.plugin_dbus.capture_terminal_screenshot(term['uuid'])
-                        if screenshot_data and not screenshot_data.startswith('ERROR'):
-                            image_bytes = base64.b64decode(screenshot_data)
-                            temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{uuid.uuid4().hex[:12]}.png")
-                            with open(temp_path, 'wb') as f:
-                                f.write(image_bytes)
-                            self.screenshot_files.append(temp_path)
+                        temp_path, error = self._capture_screenshot(
+                            term['uuid'],
+                            unique_id=uuid.uuid4().hex[:12]
+                        )
+                        if temp_path:
                             result_attachments.append(Attachment(path=temp_path))
                             captured_info.append(term.get('title', 'Terminal'))
                             self.console.print(f"[green]✓[/] Screenshot: {term.get('title', 'Terminal')}")
+                        else:
+                            self.console.print(f"[yellow]Screenshot failed for {term.get('title', 'Terminal')}: {error}[/]")
                 else:
-                    screenshot_data = self.plugin_dbus.capture_terminal_screenshot(self.exec_terminal_uuid)
-                    if not screenshot_data or screenshot_data.startswith('ERROR'):
-                        error_msg = screenshot_data if screenshot_data else "No data returned"
-                        self.console.print(f"[red]Screenshot failed: {error_msg}[/]")
-                        captured_info.append(f"Error: {error_msg}")
-                    else:
-                        image_bytes = base64.b64decode(screenshot_data)
-                        temp_path = os.path.join(tempfile.gettempdir(), f"sidechat_screenshot_{uuid.uuid4().hex[:12]}.png")
-                        with open(temp_path, 'wb') as f:
-                            f.write(image_bytes)
-                        self.screenshot_files.append(temp_path)
+                    temp_path, error = self._capture_screenshot(
+                        self.exec_terminal_uuid,
+                        unique_id=uuid.uuid4().hex[:12]
+                    )
+                    if temp_path:
                         result_attachments.append(Attachment(path=temp_path))
                         captured_info.append("Exec terminal")
                         self.console.print(f"[green]✓[/] Screenshot captured")
+                    else:
+                        self.console.print(f"[red]Screenshot failed: {error}[/]")
+                        captured_info.append(f"Error: {error}")
 
                 return ToolResult(
                     name=tool_call.name,
@@ -2530,8 +2507,7 @@ Exec terminal: {self.exec_terminal_uuid}
 Type /help for slash commands
 Type 'exit' or 'quit' to exit
 Type !multi to enter multiple lines, then !end to finish
-Type !fragment <name> [...] to insert fragments
-""",
+Type !fragment <name> [...] to insert fragments""",
             title="llm-sidechat",
             border_style="green"
         ))
@@ -2651,10 +2627,10 @@ Type !fragment <name> [...] to insert fragments
                         )
 
                         # Process fragments if present
-                        processed_input, fragments = self.process_fragments(user_input)
+                        processed_input, fragments, fragment_attachments = self.process_fragments(user_input)
 
-                        # Combine user fragments, TUI screenshots, and pending attachments
-                        all_attachments = fragments + tui_attachments + self.pending_attachments
+                        # Combine fragment attachments, TUI screenshots, and pending attachments
+                        all_attachments = fragment_attachments + tui_attachments + self.pending_attachments
 
                         # Clear pending attachments after including them
                         self.pending_attachments = []
@@ -2669,22 +2645,17 @@ Type !fragment <name> [...] to insert fragments
                         else:
                             full_prompt = processed_input
 
-                        # Pass system prompt if this is the first interaction
-                        # Also pass attachments (user fragments + TUI screenshots)
+                        # Always pass system prompt on every call (required for Gemini/Vertex
+                        # which is stateless - systemInstruction must be sent on every request)
+                        # Also pass fragments and attachments (TUI screenshots)
                         # Include tools for structured output (schema validation)
-                        if len(self.conversation.responses) == 0:
-                            response = self.conversation.prompt(
-                                full_prompt,
-                                system=self._build_system_prompt(),
-                                attachments=all_attachments,
-                                tools=SIDECHAT_TOOLS
-                            )
-                        else:
-                            response = self.conversation.prompt(
-                                full_prompt,
-                                attachments=all_attachments,
-                                tools=SIDECHAT_TOOLS
-                            )
+                        response = self.conversation.prompt(
+                            full_prompt,
+                            system=self._build_system_prompt(),
+                            fragments=[str(f) for f in fragments] if fragments else None,
+                            attachments=all_attachments if all_attachments else None,
+                            tools=SIDECHAT_TOOLS
+                        )
 
                         # Consume response INSIDE lock to prevent race condition with watch mode
                         # This trades streaming display for thread safety - response shows all at once

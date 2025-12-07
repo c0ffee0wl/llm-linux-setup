@@ -215,6 +215,7 @@ llm code -c "and smaller than 500MB; add comments" | tee script.sh
 # Use fragments for context
 llm -f github:user/repo "analyze this"
 llm -f pdf:document.pdf "summarize"
+llm -f pdf:https://example.com/doc.pdf "summarize remote PDF"
 llm -f yt:https://youtube.com/watch?v=VIDEO_ID "summarize video"
 llm -f https://example.com "extract key points"
 
