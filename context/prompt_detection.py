@@ -15,8 +15,9 @@ class PromptDetector:
     # to avoid false positives on output containing $ (like currency) or # (shell comments)
     PROMPT_PATTERNS = [
         # Dollar prompt: word char, path, or symbol before $
-        re.compile(r'[~\w/\])\s:][$]\s*$'),
-        re.compile(r'[~\w/\])\s:][$]\s+\S+'),
+        # NO whitespace - avoids matching " $ " in prose like 'echo "Enter $ to continue"'
+        re.compile(r'[~\w/\]):][$]\s*$'),
+        re.compile(r'[~\w/\]):][$]\s+\S+'),
         # Standalone $ at line start (minimal prompt)
         re.compile(r'^[$]\s*$'),
         re.compile(r'^[$]\s+\S+'),
@@ -40,8 +41,8 @@ class PromptDetector:
     # Used by detect_prompt_at_end() for completion detection
     # Unlike PROMPT_PATTERNS, these require prompt char at END of line
     EMPTY_PROMPT_PATTERNS = [
-        # Dollar prompt: ends with $
-        re.compile(r'[~\w/\])\s:][$]\s*$'),
+        # Dollar prompt: ends with $ (NO whitespace before - avoids " $ " in prose)
+        re.compile(r'[~\w/\]):][$]\s*$'),
         re.compile(r'^[$]\s*$'),               # standalone $ at line start
         # Hash prompt (root): ends with # (path context required)
         re.compile(r'(?:/\w*|[~\])])[#]\s*$'),
