@@ -30,12 +30,17 @@ class PromptDetector:
         re.compile(r'(?<!\d)[%❯→➜]\s+\S+'),
         # user@host pattern - require prompt char at/near end (avoid matching email addresses)
         re.compile(r'^\S+@\S+\s*[$#%]\s*$'),
+        # PowerShell prompts: PS C:\path> or PS /path> or PS>
+        re.compile(r'^PS\s+[^>]*>\s*$'),
+        re.compile(r'^PS\s+[^>]*>\s+\S+'),
+        re.compile(r'^PS>\s*$'),
+        re.compile(r'^PS>\s+\S+'),
     ]
 
     # Kali/fancy two-line prompts (supports ┌/╭ and └/╰)
     # Note: \s* allows trailing whitespace which terminals often include
     KALI_HEADER = re.compile(r'^[┌╭]──.*[\])]\s*$')
-    KALI_PROMPT_LINE = re.compile(r'^[└╰]─+[$#]')
+    KALI_PROMPT_LINE = re.compile(r'^[└╰]─+(?:[$#]|PS>)')
 
     # Patterns for EMPTY prompts only (shell ready for input)
     # Used by detect_prompt_at_end() for completion detection
@@ -50,19 +55,22 @@ class PromptDetector:
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),
         # user@host: prompt char at END
         re.compile(r'^\S+@\S+\s*[$#%]\s*$'),
+        # PowerShell: PS C:\path> or PS /path> or PS>
+        re.compile(r'^PS\s+[^>]*>\s*$'),
+        re.compile(r'^PS>\s*$'),
     ]
     # Kali prompt: allow trailing whitespace and control chars (cursor, etc.)
-    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+[$#][\s\x00-\x1f]*$')
+    KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+(?:[$#]|PS>)[\s\x00-\x1f]*$')
 
     @classmethod
     def is_prompt_line(cls, line: str) -> bool:
         """Check if a single line matches a prompt pattern"""
         if not line.strip():
             return False
-        # Check standard patterns
+        # Check standard patterns (includes PowerShell)
         if any(p.search(line) for p in cls.PROMPT_PATTERNS):
             return True
-        # Check Kali two-line prompt (second line)
+        # Check Kali two-line prompt (second line, includes PS>)
         if cls.KALI_PROMPT_LINE.search(line):
             return True
         return False
@@ -105,7 +113,7 @@ class PromptDetector:
                     print(f"[PromptDetector] Matched EMPTY_PROMPT_PATTERNS[{i}]")
                 return True
 
-        # Check Kali two-line prompt (must be empty)
+        # Check Kali two-line prompt (must be empty, includes PS>)
         if len(lines) >= 2:
             prev = lines[-2]
             header_match = cls.KALI_HEADER.search(prev)

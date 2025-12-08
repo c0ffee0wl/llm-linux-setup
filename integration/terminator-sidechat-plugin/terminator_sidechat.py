@@ -487,9 +487,9 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             # Feed text to VTE (convert to bytes)
             vte.feed_child(text.encode('utf-8'))
 
-            # Optionally execute by sending newline
+            # Optionally execute by sending carriage return (Enter key)
             if execute:
-                vte.feed_child(b'\n')
+                vte.feed_child(b'\r')
 
             dbg(f'Sent {len(text)} characters to {terminal_uuid} (execute={execute})')
             return True
@@ -518,8 +518,8 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         # Special key mappings to escape sequences
         special_keys = {
             # Basic navigation and editing
-            'Enter': b'\n',
-            'Return': b'\n',
+            'Enter': b'\r',
+            'Return': b'\r',
             'Escape': b'\x1b',
             'Esc': b'\x1b',
             'Tab': b'\t',
