@@ -1381,7 +1381,7 @@ Shell: {env_type} {shell_info}
             String containing the last command's prompt + output
         """
         INITIAL_LINES = 50      # Start with viewport-ish size
-        MAX_LINES = 10000       # VTE typical max scrollback
+        MAX_LINES = 5000        # Hard limit on capture range
 
         try:
             _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
@@ -1427,8 +1427,9 @@ Shell: {env_type} {shell_info}
 
             lines_to_capture *= 2  # Double and retry
 
-        # Hit max - return full capture with prompt extraction
-        content = self.plugin_dbus.capture_from_row(terminal_uuid, 0)
+        # Hit max - capture last MAX_LINES rows (not entire scrollback)
+        fallback_start = max(0, cursor_row - MAX_LINES)
+        content = self.plugin_dbus.capture_from_row(terminal_uuid, fallback_start)
         prompts = PromptDetector.find_all_prompts(content)
         if len(prompts) >= 2:
             # Extract from second-to-last prompt (last command start)
