@@ -2767,6 +2767,55 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             # Generic auto-dispatch for external tools (google_search, web_fetch, etc.)
             impl = EXTERNAL_TOOLS[tool_name]
 
+            # Special handling for capture_screen with countdown display
+            if tool_name == 'capture_screen':
+                mode = tool_args.get('mode', 'window')
+                delay = max(0, min(int(tool_args.get('delay', 5)), 30))
+
+                # Display countdown
+                print()  # Start on new line
+                for i in range(delay, 0, -1):
+                    print(f"\r\033[36mCapturing screenshot ({mode}): {i}s\033[K\033[0m", end="", flush=True)
+                    time.sleep(1)
+
+                # Clear countdown, show capturing status
+                print(f"\r\033[36mCapturing screenshot ({mode})...\033[K\033[0m", end="", flush=True)
+
+                # Call tool with delay=0 since we already waited
+                tool_args = dict(tool_args)
+                tool_args['delay'] = 0
+
+                try:
+                    result = impl(**tool_args)
+                    print(f"\r\033[36mCapturing screenshot ({mode})\033[K\033[0m")
+                    self.console.print(f"[green]✓[/] {tool_name} completed")
+
+                    # Handle ToolOutput return type
+                    attachments = []
+                    if isinstance(result, ToolOutput):
+                        attachments = result.attachments
+                        result = result.output
+
+                    if result is None:
+                        result = ""
+                    elif not isinstance(result, str):
+                        result = json.dumps(result, default=repr)
+
+                    return ToolResult(
+                        name=tool_call.name,
+                        output=result,
+                        attachments=attachments,
+                        tool_call_id=tool_call_id
+                    )
+                except Exception as e:
+                    print(f"\r\033[K\033[0m")  # Clear line
+                    self.console.print(f"[red]{tool_name} error: {e}[/]")
+                    return ToolResult(
+                        name=tool_call.name,
+                        output=f"Error calling {tool_name}: {e}",
+                        tool_call_id=tool_call_id
+                    )
+
             # Display primary parameter if configured, otherwise generic message
             if tool_name in EXTERNAL_TOOL_DISPLAY:
                 param_name, action_verb, _ = EXTERNAL_TOOL_DISPLAY[tool_name]
