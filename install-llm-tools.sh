@@ -1481,11 +1481,34 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
     "git+https://github.com/c0ffee0wl/llm-tools-fabric"
+    "git+https://github.com/c0ffee0wl/llm-tools-mcp"
 )
 
 for plugin in "${PLUGINS[@]}"; do
     install_or_upgrade_llm_plugin "$plugin"
 done
+
+# Create default MCP configuration if not exists
+MCP_CONFIG_DIR="$HOME/.llm-tools-mcp"
+MCP_CONFIG_FILE="$MCP_CONFIG_DIR/mcp.json"
+
+if [ ! -f "$MCP_CONFIG_FILE" ]; then
+    log "Creating default MCP configuration with Microsoft Learn..."
+    mkdir -p "$MCP_CONFIG_DIR"
+    cat > "$MCP_CONFIG_FILE" <<'EOF'
+{
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    }
+  }
+}
+EOF
+    log "MCP configuration created at $MCP_CONFIG_FILE"
+else
+    log "MCP configuration already exists, preserving"
+fi
 
 #############################################################################
 # PHASE 3: Configuring LLM

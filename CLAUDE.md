@@ -988,4 +988,50 @@ Note that several packages use **forks** or specific sources:
 - **llm-openrouter**: OpenRouter API plugin (PyPI)
 - **llm-tools-quickjs**: QuickJS runtime for llm (PyPI)
 - **llm-tools-sqlite**: SQLite query tool (PyPI)
+- **llm-tools-mcp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-mcp` (MCP client for connecting to Model Context Protocol servers)
 - llm is installed in the uv environment llm, calling python3 -c "import llm" wont work.
+
+## MCP Client Integration (llm-tools-mcp)
+
+The system includes **llm-tools-mcp** for connecting to MCP (Model Context Protocol) servers:
+
+**Configuration**: `~/.llm-tools-mcp/mcp.json`
+
+**Default Server**: Microsoft Learn MCP (`https://learn.microsoft.com/api/mcp`)
+
+**Exposed Tools** (Microsoft Learn):
+- `microsoft_docs_search` - Semantic search of Microsoft documentation
+- `microsoft_docs_fetch` - Fetch documentation page as markdown
+- `microsoft_code_sample_search` - Search official code samples
+
+**Usage**:
+```bash
+# Use MCP tools in llm
+llm --ta -T MCP "search for Azure authentication documentation"
+
+# With custom config
+llm --ta -T 'MCP("/path/to/custom/mcp.json")' "your prompt"
+```
+
+**Adding MCP Servers**: Edit `~/.llm-tools-mcp/mcp.json`:
+```json
+{
+  "mcpServers": {
+    "microsoft-learn": {
+      "type": "http",
+      "url": "https://learn.microsoft.com/api/mcp"
+    },
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "~/projects"]
+    }
+  }
+}
+```
+
+**Transport Types**:
+- `http` - Streamable HTTP (for remote servers like Microsoft Learn)
+- `sse` - Server-Sent Events
+- `stdio` - Local process (command + args)
+
+**llm-sidechat Integration**: MCP tools are whitelisted via `EXTERNAL_TOOL_PLUGINS` and display nicely with custom action verbs.
