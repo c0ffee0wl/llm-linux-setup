@@ -2154,7 +2154,7 @@ Instructions:
 /clear             Clear conversation history
 /reset             Full reset: clear history and remove squash summaries
 /refresh           Refresh terminal context (re-capture current state)
-/model <name>      Switch model or list available models
+/model [-q] <name> Switch model (or -q for fuzzy match) or list models
 /info              Show session information
 /watch <goal>      Enable watch mode with goal
 /watch off         Disable watch mode
@@ -2284,8 +2284,26 @@ Instructions:
                 for model in llm.get_models():
                     current = " [green](current)[/]" if model.model_id == self.model_name else ""
                     self.console.print(f"  - {model.model_id}{current}")
+            elif args.startswith("-q") or args.startswith("--query"):
+                # Query-based selection: /model -q haiku -q claude
+                query_parts = args.split()[1:]  # Remove -q/--query prefix
+                queries = [q for q in query_parts if not q.startswith("-")]
+                if not queries:
+                    self.console.print("[yellow]Usage: /model -q <query> [-q <query>...][/]")
+                else:
+                    resolved = resolve_model_query(queries)
+                    if resolved:
+                        try:
+                            self.model = llm.get_model(resolved)
+                            self.model_name = resolved
+                            self.conversation.model = self.model
+                            self.console.print(f"[green]✓[/] Switched to model: {resolved}")
+                        except Exception as e:
+                            self.console.print(f"[red]Error switching model: {e}[/]")
+                    else:
+                        self.console.print(f"[yellow]No model matching queries: {queries}[/]")
             else:
-                # Switch model
+                # Direct model name
                 try:
                     self.model = llm.get_model(args)
                     self.model_name = args
@@ -3064,6 +3082,20 @@ Type !fragment <name> [...] to insert fragments""",
             self._shutdown()
 
 
+def resolve_model_query(queries: list[str]) -> str | None:
+    """
+    Resolve model using fuzzy query matching (like llm -q).
+    Returns first model matching ALL query strings.
+    """
+    if not queries:
+        return None
+    for model in llm.get_models():
+        model_id = model.model_id.lower()
+        if all(q.lower() in model_id for q in queries):
+            return model.model_id
+    return None
+
+
 def main():
     """Entry point"""
     import argparse
@@ -3071,11 +3103,17 @@ def main():
     parser = argparse.ArgumentParser(
         description="Terminator AI Sidechat - Terminal assistant for pair programming"
     )
+    # llm-compatible model selection flags
     parser.add_argument(
-        'model',
-        nargs='?',
-        help='LLM model to use'
+        '-m', '--model',
+        help='LLM model to use (e.g., azure/gpt-4.1-mini, gemini-2.5-flash)'
     )
+    parser.add_argument(
+        '-q', '--query',
+        action='append',
+        help='Select model by fuzzy matching (can be used multiple times)'
+    )
+    # Existing flags
     parser.add_argument(
         '--debug',
         action='store_true',
@@ -3089,8 +3127,16 @@ def main():
     )
     args = parser.parse_args()
 
+    # Resolve model: -m flag > query > default
+    model_name = args.model
+    if not model_name and args.query:
+        model_name = resolve_model_query(args.query)
+        if not model_name:
+            print(f"Error: No model found matching queries {' '.join(args.query)}", file=sys.stderr)
+            sys.exit(1)
+
     session = TerminatorSidechatSession(
-        model_name=args.model,
+        model_name=model_name,
         debug=args.debug,
         max_context_size=args.max_context
     )

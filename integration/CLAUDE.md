@@ -225,8 +225,21 @@ Watch mode enabled: monitoring all terminals
 
 ## CLI Arguments
 
-- `llm-sidechat [model]` - Launch with optional model name (e.g., `llm-sidechat azure/gpt-4.1`)
-- `--capture-timeout SECS` - Configure capture timeout (default: 3.0 seconds)
+Model selection (llm-compatible):
+- `-m, --model MODEL` - LLM model to use (e.g., `llm-sidechat -m azure/gpt-4.1-mini`)
+- `-q, --query QUERY` - Select model by fuzzy matching (can be used multiple times, e.g., `-q haiku -q claude`)
+
+Other options:
+- `--debug` - Enable debug output for troubleshooting
+- `--max-context TOKENS` - Max context tokens before auto-squash (default: 800000)
+
+Examples:
+```bash
+llm-sidechat -m azure/gpt-4.1-mini    # explicit model
+llm-sidechat -q opus                   # fuzzy match for "opus"
+llm-sidechat -q haiku -q claude        # first model matching both "haiku" AND "claude"
+llm sidechat -m gemini-2.5-flash       # via llm wrapper
+```
 
 ## Technical Implementation
 
