@@ -12,12 +12,18 @@ class PromptDetector:
     """Detect shell prompts in terminal output"""
 
     # Patterns to match shell prompts. More specific than just "ends with $"
-    # to avoid false positives on output containing $ (like currency)
+    # to avoid false positives on output containing $ (like currency) or # (shell comments)
     PROMPT_PATTERNS = [
-        # Path-like character before $ or # (covers ~$, path$, ]$, )$, :$)
-        re.compile(r'[~\w/\])\s:][$#]\s*$'),
-        # $ or # followed by command (user typing)
-        re.compile(r'[~\w/\])\s:][$#]\s+\S+'),
+        # Dollar prompt: word char, path, or symbol before $
+        re.compile(r'[~\w/\])\s:][$]\s*$'),
+        re.compile(r'[~\w/\])\s:][$]\s+\S+'),
+        # Standalone $ at line start (minimal prompt)
+        re.compile(r'^[$]\s*$'),
+        re.compile(r'^[$]\s+\S+'),
+        # Hash prompt (root): require path context (/word) OR explicit symbols (~, ], ))
+        # NO whitespace before # - avoids matching "command # comment"
+        re.compile(r'(?:/\w*|[~\])])[#]\s*$'),
+        re.compile(r'(?:/\w*|[~\])])[#]\s+\S+'),
         # Zsh markers (not after digit to avoid $100)
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),
         re.compile(r'(?<!\d)[%❯→➜]\s+\S+'),
@@ -34,9 +40,15 @@ class PromptDetector:
     # Used by detect_prompt_at_end() for completion detection
     # Unlike PROMPT_PATTERNS, these require prompt char at END of line
     EMPTY_PROMPT_PATTERNS = [
-        re.compile(r'[~\w/\])\s:][$#]\s*$'),   # bash/sh: ends with $ or #
-        re.compile(r'(?<!\d)[%❯→➜]\s*$'),      # zsh: ends with % ❯ → ➜
-        re.compile(r'^\S+@\S+\s*[$#%]\s*$'),   # user@host: prompt char at END (tightened)
+        # Dollar prompt: ends with $
+        re.compile(r'[~\w/\])\s:][$]\s*$'),
+        re.compile(r'^[$]\s*$'),               # standalone $ at line start
+        # Hash prompt (root): ends with # (path context required)
+        re.compile(r'(?:/\w*|[~\])])[#]\s*$'),
+        # Zsh: ends with % ❯ → ➜
+        re.compile(r'(?<!\d)[%❯→➜]\s*$'),
+        # user@host: prompt char at END
+        re.compile(r'^\S+@\S+\s*[$#%]\s*$'),
     ]
     # Kali prompt: allow trailing whitespace and control chars (cursor, etc.)
     KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+[$#][\s\x00-\x1f]*$')

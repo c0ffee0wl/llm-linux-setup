@@ -1935,9 +1935,11 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
        "$HOME/.config/terminator/plugins/terminator_sidechat.py"
     log "Terminator sidechat plugin installed. Enable it in Terminator Preferences > Plugins"
 
-    # Install llm-sidechat application
+    # Install llm-sidechat application and its dependencies
     cp "$SCRIPT_DIR/integration/llm-sidechat" "$HOME/.local/bin/llm-sidechat"
     chmod +x "$HOME/.local/bin/llm-sidechat"
+    cp "$SCRIPT_DIR/integration/system_info.py" "$HOME/.local/bin/system_info.py"
+    cp "$SCRIPT_DIR/context/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
 
     # Inject dbus-python dependency into llm tool environment
     log "Injecting dbus-python into llm tool environment..."
