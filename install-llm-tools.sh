@@ -1123,6 +1123,11 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Build dependencies (for pip installations in isolated environments)
     log "Installing PyGObject build dependencies..."
     sudo apt-get install -y build-essential libdbus-glib-1-dev libcairo2-dev libgirepository-2.0-dev # gobject-introspection
+
+    # Screen capture dependencies (for llm-tools-capture-screen)
+    log "Installing screen capture tools..."
+    install_apt_package maim
+    install_apt_package xdotool
 fi
 
 # Install/update uv
@@ -1482,6 +1487,7 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
     "git+https://github.com/c0ffee0wl/llm-tools-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-mcp"
+    "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
 )
 
 for plugin in "${PLUGINS[@]}"; do
