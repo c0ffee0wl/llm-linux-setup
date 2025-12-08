@@ -35,6 +35,11 @@ class PromptDetector:
         re.compile(r'^PS\s+[^>]*>\s+\S+'),
         re.compile(r'^PS>\s*$'),
         re.compile(r'^PS>\s+\S+'),
+        # PowerShell Remoting: [user@host]: PS path> or [user@host]: PS>
+        re.compile(r'^\[[^\]]+\]:\s*PS\s+[^>]*>\s*$'),
+        re.compile(r'^\[[^\]]+\]:\s*PS\s+[^>]*>\s+\S+'),
+        re.compile(r'^\[[^\]]+\]:\s*PS>\s*$'),
+        re.compile(r'^\[[^\]]+\]:\s*PS>\s+\S+'),
     ]
 
     # Kali/fancy two-line prompts (supports ┌/╭ and └/╰)
@@ -58,6 +63,9 @@ class PromptDetector:
         # PowerShell: PS C:\path> or PS /path> or PS>
         re.compile(r'^PS\s+[^>]*>\s*$'),
         re.compile(r'^PS>\s*$'),
+        # PowerShell Remoting: [user@host]: PS path> or [user@host]: PS>
+        re.compile(r'^\[[^\]]+\]:\s*PS\s+[^>]*>\s*$'),
+        re.compile(r'^\[[^\]]+\]:\s*PS>\s*$'),
     ]
     # Kali prompt: allow trailing whitespace and control chars (cursor, etc.)
     KALI_EMPTY_PROMPT_LINE = re.compile(r'^[└╰]─+(?:[$#]|PS>)[\s\x00-\x1f]*$')

@@ -139,9 +139,15 @@ def should_exclude_block(block):
     command_line = lines[command_line_idx]
 
     # Extract the command after the prompt character
-    # Prompt patterns: $ # % ❯ → ➜
+    # Prompt patterns: $ # % ❯ → ➜ for Unix, > for PowerShell
     prompt_chars = r'[$#%❯→➜]'
     match = re.search(f'{prompt_chars}\\s+(.+)', command_line)
+
+    # Check for PowerShell prompts: PS path> command or [user@host]: PS path> command
+    if not match:
+        ps_match = re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+(.+)', command_line)
+        if ps_match:
+            match = ps_match
 
     if not match:
         # No command found (just a prompt), don't exclude
@@ -202,10 +208,16 @@ def extract_prompt_blocks(text, count=1):
             blocks = blocks[:-1]
         elif len(last_block_lines) == 1:
             # Single-line prompt: check if it's just a prompt with no command
+            # Unix: ends with $ # % ❯ → ➜
+            # PowerShell: ends with > after PS path
             if re.search(r'[$#%❯→➜]\s*$', last_block_lines[0]):
+                blocks = blocks[:-1]
+            elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s*$', last_block_lines[0]):
                 blocks = blocks[:-1]
             # Or check if it's context command with no output
             elif re.search(r'[$#%❯→➜]\s+context(\s|$)', last_block_lines[0]):
+                blocks = blocks[:-1]
+            elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+context(\s|$)', last_block_lines[0]):
                 blocks = blocks[:-1]
         elif len(last_block_lines) == 2:
             # Potential two-line prompt (Kali/fancy prompts)
