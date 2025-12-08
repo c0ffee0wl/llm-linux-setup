@@ -182,7 +182,7 @@ def is_tui_command(command: str) -> bool:
 class TerminatorSidechatSession:
     """Main sidechat session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 128000):
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000):
         self.console = Console()
 
         # Debug mode flag
@@ -3083,8 +3083,8 @@ def main():
     parser.add_argument(
         '--max-context',
         type=int,
-        default=128000,
-        help='Max context tokens before auto-squash (default: 128000)'
+        default=800000,
+        help='Max context tokens before auto-squash (default: 800000)'
     )
     args = parser.parse_args()
 
