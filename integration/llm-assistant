@@ -2871,8 +2871,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         print(f"\r\033[36mCapturing screenshot ({mode}): {i}s\033[K\033[0m", end="", flush=True)
                         time.sleep(1)
 
-                # Clear countdown, show capturing status
-                print(f"\r\033[36mCapturing screenshot ({mode})...\033[K\033[0m", end="", flush=True)
+                # Clear countdown, show capturing status (with newline so tool output appears on new line)
+                print(f"\r\033[36mCapturing screenshot ({mode})...\033[K\033[0m", flush=True)
 
                 # Call tool with delay=0 since we already waited
                 tool_args = dict(tool_args)
@@ -2880,7 +2880,6 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
                 try:
                     result = impl(**tool_args)
-                    print(f"\r\033[36mCapturing screenshot ({mode})\033[K\033[0m")
                     self.console.print(f"[green]✓[/] {tool_name} completed")
 
                     # Handle ToolOutput return type
