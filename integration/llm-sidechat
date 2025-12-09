@@ -691,6 +691,23 @@ class TerminatorSidechatSession:
         if self.debug:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
 
+    def _filter_thinking_traces(self, text: str) -> str:
+        """Filter out thinking traces from model output.
+
+        Gemini thinking models output internal reasoning as paragraphs starting with 'thought '.
+        These paragraphs are separated by blank lines. The actual response follows after a blank line.
+        """
+        if not text:
+            return text
+
+        # Split into paragraphs (separated by blank lines)
+        paragraphs = text.split('\n\n')
+
+        # Keep only paragraphs that don't start with 'thought '
+        filtered = [p for p in paragraphs if not p.lstrip().startswith('thought ')]
+
+        return '\n\n'.join(filtered)
+
     def _estimate_tool_schema_tokens(self) -> int:
         """
         Estimate token count for all tool schemas.
@@ -1693,8 +1710,8 @@ Shell: {env_type} {shell_info}
                 if hasattr(response, 'prompt') and response.prompt:
                     prompt_text = response.prompt.prompt or ""
 
-                # Extract response text using public API
-                response_text = response.text()
+                # Extract response text using public API (filter thinking traces)
+                response_text = self._filter_thinking_traces(response.text())
 
                 if prompt_text:
                     summary_parts.append(f"{i}. User: {prompt_text[:200]}...")
@@ -1719,7 +1736,7 @@ Previous messages:
 Provide a brief but comprehensive summary."""
 
             summary_response = self.model.prompt(summary_prompt)
-            summary = summary_response.text()
+            summary = self._filter_thinking_traces(summary_response.text())
 
             # Create new conversation and update system prompt
             # Build enhanced system prompt from ORIGINAL, not current
@@ -2148,7 +2165,7 @@ Instructions:
                                     attachments=tui_attachments if tui_attachments else None,
                                     stream=False  # Reduce lock hold time
                                 )
-                                response_text = response.text()
+                                response_text = self._filter_thinking_traces(response.text())
                             except Exception as response_error:
                                 # Don't update hash on error - will retry next iteration
                                 self.previous_watch_context_hash = None
@@ -3067,7 +3084,7 @@ Type !fragment <name> [...] to insert fragments""",
                         # This trades streaming display for thread safety - response shows all at once
                         # instead of character-by-character, but prevents potential corruption if
                         # watch thread calls conversation.prompt() while we're iterating
-                        response_text = response.text()
+                        response_text = self._filter_thinking_traces(response.text())
 
                         # Extract tool calls from the response (structured output)
                         tool_calls = list(response.tool_calls())
@@ -3136,7 +3153,7 @@ Type !fragment <name> [...] to insert fragments""",
                                         tool_results=tool_results,
                                         attachments=followup_attachments if followup_attachments else None
                                     )
-                                    followup_text = followup_response.text()
+                                    followup_text = self._filter_thinking_traces(followup_response.text())
 
                                     # Check if the model made more tool calls
                                     more_tool_calls = list(followup_response.tool_calls())
@@ -3177,7 +3194,7 @@ Type !fragment <name> [...] to insert fragments""",
                                         tools=SIDECHAT_TOOLS,
                                         attachments=attachments_to_send
                                     )
-                                    response_text = attachment_response.text()
+                                    response_text = self._filter_thinking_traces(attachment_response.text())
                                     more_calls = list(attachment_response.tool_calls())
 
                                 # Display response
