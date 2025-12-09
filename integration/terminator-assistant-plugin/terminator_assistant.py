@@ -1,8 +1,8 @@
 """
-Terminator Sidechat Plugin
+Terminator Assistant Plugin
 
 Provides terminal content capture and command injection capabilities for
-llm-sidechat. This plugin bridges the standalone sidechat application
+llm-assistant. This plugin bridges the standalone assistant application
 with Terminator's VTE terminals.
 
 Capabilities:
@@ -40,8 +40,8 @@ except ImportError:
     PROMPT_DETECTOR_AVAILABLE = False
 
 # D-Bus service constants
-PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Sidechat'
-PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Sidechat'
+PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Assistant'
+PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Assistant'
 
 # Plugin version for diagnostics
 PLUGIN_VERSION = "3.3-cache-eviction"
@@ -49,13 +49,13 @@ PLUGIN_VERSION = "3.3-cache-eviction"
 # Cache size limit to prevent unbounded memory growth
 CACHE_MAX_SIZE = 100
 
-AVAILABLE = ['TerminatorSidechat']
+AVAILABLE = ['TerminatorAssistant']
 
 
-class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
-    """Plugin providing terminal content capture for llm-sidechat via D-Bus"""
+class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
+    """Plugin providing terminal content capture for llm-assistant via D-Bus"""
 
-    capabilities = ['sidechat_bridge']
+    capabilities = ['assistant_bridge']
 
     def __init__(self):
         """Initialize plugin and D-Bus service"""
@@ -76,11 +76,11 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                 do_not_queue=True
             )
             dbus.service.Object.__init__(self, self.bus_name, PLUGIN_BUS_PATH)
-            dbg('TerminatorSidechat: D-Bus service registered at %s' % PLUGIN_BUS_NAME)
+            dbg('TerminatorAssistant: D-Bus service registered at %s' % PLUGIN_BUS_NAME)
         except (DBusException, KeyError) as e:
             # KeyError occurs when object path handler is already registered (plugin loaded multiple times)
             # DBusException occurs when D-Bus is not available or bus name cannot be claimed
-            dbg('TerminatorSidechat: Could not register D-Bus service: %s (continuing anyway)' % e)
+            dbg('TerminatorAssistant: Could not register D-Bus service: %s (continuing anyway)' % e)
             # Continue without D-Bus (fallback for when loaded by external process or already loaded)
 
         self.terminator = Terminator()
@@ -98,7 +98,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
         # Thread-safe lock for cache operations (D-Bus calls may come from different threads)
         self.cache_lock = threading.Lock()
 
-        dbg('TerminatorSidechat initialized')
+        dbg('TerminatorAssistant initialized')
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='(ii)')
     def get_cursor_position(self, terminal_uuid):
@@ -285,7 +285,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return content
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error capturing terminal content: {e}')
+            err(f'TerminatorAssistant: Error capturing terminal content: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='s')
@@ -371,7 +371,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return content
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error in capture_from_row: {e}')
+            err(f'TerminatorAssistant: Error in capture_from_row: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')
@@ -457,7 +457,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                         pass  # Ignore cleanup errors (file may not exist)
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error capturing screenshot: {e}')
+            err(f'TerminatorAssistant: Error capturing screenshot: {e}')
             return f"ERROR: {str(e)}"
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ssb', out_signature='b')
@@ -495,7 +495,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return True
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error sending keys: {e}')
+            err(f'TerminatorAssistant: Error sending keys: {e}')
             return False
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ss', out_signature='b')
@@ -620,7 +620,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return True
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error sending keypress: {e}')
+            err(f'TerminatorAssistant: Error sending keypress: {e}')
             return False
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='aa{ss}')
@@ -677,7 +677,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
 
         except Exception as e:
             import traceback
-            err(f'TerminatorSidechat: Error getting terminals metadata: {e}')
+            err(f'TerminatorAssistant: Error getting terminals metadata: {e}')
             err(f'Traceback: {traceback.format_exc()}')
             return []
 
@@ -808,7 +808,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
                     return term.uuid.urn
             return ''  # Return empty string instead of None for D-Bus
         except Exception as e:
-            err(f'TerminatorSidechat: Error getting focused terminal: {e}')
+            err(f'TerminatorAssistant: Error getting focused terminal: {e}')
             return ''  # Return empty string instead of None for D-Bus
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='s')
@@ -891,7 +891,7 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             return result
 
         except Exception as e:
-            err(f'TerminatorSidechat: Error detecting TUI state: {e}')
+            err(f'TerminatorAssistant: Error detecting TUI state: {e}')
             return False
 
     def _cache_tui_result(self, terminal_uuid, is_tui):
@@ -955,4 +955,4 @@ class TerminatorSidechat(plugin.Plugin, dbus.service.Object):
             except Exception as e:
                 dbg(f'Could not release D-Bus service: {e}')
 
-        dbg('TerminatorSidechat unloaded')
+        dbg('TerminatorAssistant unloaded')

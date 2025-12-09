@@ -1,7 +1,7 @@
 #!/bin/sh
 ''''exec "$HOME/.local/share/uv/tools/llm/bin/python3" "$0" "$@" # '''
 """
-llm-sidechat - Terminal AI Assistant for Terminator
+llm-assistant - Terminal AI Assistant for Terminator
 
 A Terminator-integrated AI assistant that provides:
 - Automatic Exec terminal creation
@@ -111,7 +111,7 @@ TUI_COMMANDS = {
 # =============================================================================
 # Tool Setup
 # =============================================================================
-# External tool plugins that sidechat can dispatch (easy to extend)
+# External tool plugins that assistant can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
 EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'capture_screen', 'imagemage')
 
@@ -129,14 +129,14 @@ except ImportError:
 except Exception:
     pass  # MCP config missing or server unavailable
 
-# Build SIDECHAT_TOOLS from plugins - includes core sidechat tools + external tools
-SIDECHAT_TOOLS = [
+# Build ASSISTANT_TOOLS from plugins - includes core assistant tools + external tools
+ASSISTANT_TOOLS = [
     tool for tool in _all_tools.values()
-    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('sidechat',) + EXTERNAL_TOOL_PLUGINS
+    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('assistant',) + EXTERNAL_TOOL_PLUGINS
 ]
 
 # Build dict of external tool implementations for auto-dispatch
-# These are tools with real implementations (not sidechat stubs)
+# These are tools with real implementations (not assistant stubs)
 EXTERNAL_TOOLS = {
     name: tool.implementation
     for name, tool in _all_tools.items()
@@ -238,8 +238,8 @@ def is_tui_command(command: str) -> bool:
     return base_cmd in TUI_COMMANDS
 
 
-class TerminatorSidechatSession:
-    """Main sidechat session manager for Terminator"""
+class TerminatorAssistantSession:
+    """Main assistant session manager for Terminator"""
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000):
         self.console = Console()
@@ -255,24 +255,24 @@ class TerminatorSidechatSession:
         self.early_terminal_uuid = self._get_current_terminal_uuid_early()
 
         if not self.early_terminal_uuid:
-            self.console.print("[red]Error: llm-sidechat requires Terminator terminal[/]")
+            self.console.print("[red]Error: llm-assistant requires Terminator terminal[/]")
             self.console.print("[yellow]Please run this from inside a Terminator terminal.[/]")
             sys.exit(1)
 
-        # Fast check: Is there already a sidechat in this tab?
-        if self._check_existing_sidechat_in_tab(self.early_terminal_uuid):
-            self.console.print("[red]Error: A sidechat is already running in this tab[/]")
-            self.console.print("[yellow]You can run sidechat in a different Terminator tab.[/]")
+        # Fast check: Is there already an assistant in this tab?
+        if self._check_existing_assistant_in_tab(self.early_terminal_uuid):
+            self.console.print("[red]Error: An assistant is already running in this tab[/]")
+            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
             sys.exit(1)
 
         # Acquire global lock (brief, only during initialization)
         self._acquire_instance_lock()
 
         # Double-check under lock (catches race condition)
-        if self._check_existing_sidechat_in_tab(self.early_terminal_uuid):
+        if self._check_existing_assistant_in_tab(self.early_terminal_uuid):
             self._release_instance_lock()
-            self.console.print("[red]Error: A sidechat is already running in this tab[/]")
-            self.console.print("[yellow]You can run sidechat in a different Terminator tab.[/]")
+            self.console.print("[red]Error: An assistant is already running in this tab[/]")
+            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
             sys.exit(1)
 
         # Register shutdown handlers EARLY (before creating resources)
@@ -293,14 +293,14 @@ class TerminatorSidechatSession:
 
         # Store system prompt separately for reuse
         try:
-            template = load_template("terminator-sidechat")
+            template = load_template("terminator-assistant")
             # Use system if available, otherwise use prompt
             self.system_prompt = template.system or template.prompt
             if not self.system_prompt:
                 raise ValueError("Template has no system or prompt field")
-            self._debug(f"Template loaded: terminator-sidechat ({len(self.system_prompt)} chars)")
+            self._debug(f"Template loaded: terminator-assistant ({len(self.system_prompt)} chars)")
         except Exception as e:
-            self.console.print(f"[yellow]⚠ Could not load terminator-sidechat template: {e}[/]")
+            self.console.print(f"[yellow]⚠ Could not load terminator-assistant template: {e}[/]")
             self.console.print("[yellow]Using basic system prompt. Install template with: ./install-llm-tools.sh[/]")
             self._debug(f"Template load failed: {e}")
             self.system_prompt = "You are an AI terminal assistant. Provide commands in <EXECUTE>command</EXECUTE> XML tags."
@@ -375,11 +375,11 @@ class TerminatorSidechatSession:
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
         if not runtime_dir or not Path(runtime_dir).is_dir():
             # Fallback to user-specific temp directory
-            runtime_dir = Path(tempfile.gettempdir()) / f'llm-sidechat-{os.getuid()}'
+            runtime_dir = Path(tempfile.gettempdir()) / f'llm-assistant-{os.getuid()}'
             runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             runtime_dir = str(runtime_dir)
 
-        lock_path = Path(runtime_dir) / 'llm-sidechat.lock'
+        lock_path = Path(runtime_dir) / 'llm-assistant.lock'
 
         # Check for stale lock before attempting to acquire
         if lock_path.exists():
@@ -421,7 +421,7 @@ class TerminatorSidechatSession:
         except BlockingIOError:
             # Another instance is initializing - wait briefly and retry
             # This allows multi-tab support while preventing race conditions
-            self.console.print("[yellow]Another sidechat is starting, waiting...[/]")
+            self.console.print("[yellow]Another assistant is starting, waiting...[/]")
             try:
                 fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
                 self.lock_file = os.fdopen(fd, 'w')
@@ -460,7 +460,7 @@ class TerminatorSidechatSession:
             Path to screenshot directory
         """
         # Use user-specific temp directory for security
-        base_dir = Path(tempfile.gettempdir()) / f'llm-sidechat-{os.getuid()}'
+        base_dir = Path(tempfile.gettempdir()) / f'llm-assistant-{os.getuid()}'
         screenshot_dir = base_dir / 'screenshots'
 
         try:
@@ -469,7 +469,7 @@ class TerminatorSidechatSession:
             # Clean up orphaned screenshot files from crashed sessions
             # Files older than 1 hour are considered orphaned
             cleanup_threshold = time.time() - 3600  # 1 hour ago
-            for old_file in screenshot_dir.glob('sidechat_screenshot_*.png'):
+            for old_file in screenshot_dir.glob('assistant_screenshot_*.png'):
                 try:
                     if old_file.stat().st_mtime < cleanup_threshold:
                         old_file.unlink()
@@ -496,7 +496,7 @@ class TerminatorSidechatSession:
             # Discover Terminator service (same logic as _reconnect_dbus)
             terminator_services = [
                 name for name in bus.list_names()
-                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Sidechat')
+                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Assistant')
             ]
 
             if not terminator_services:
@@ -515,37 +515,37 @@ class TerminatorSidechatSession:
         except Exception:
             return None  # D-Bus not available or error
 
-    def _check_existing_sidechat_in_tab(self, terminal_uuid: str) -> bool:
+    def _check_existing_assistant_in_tab(self, terminal_uuid: str) -> bool:
         """
-        Check if another sidechat instance is already running in the same tab.
+        Check if another assistant instance is already running in the same tab.
 
-        Looks for terminals with title starting with "Sidechat: Exec" in the
+        Looks for terminals with title starting with "Assistant: Exec" in the
         same tab as the given terminal.
 
         Args:
             terminal_uuid: UUID of the current terminal
 
         Returns:
-            True if another sidechat is running in this tab, False otherwise
+            True if another assistant is running in this tab, False otherwise
         """
         try:
             bus = dbus.SessionBus()
             plugin_dbus = bus.get_object(
-                'net.tenshu.Terminator2.Sidechat',
-                '/net/tenshu/Terminator2/Sidechat'
+                'net.tenshu.Terminator2.Assistant',
+                '/net/tenshu/Terminator2/Assistant'
             )
 
             # Get terminals in same tab
             terminals = plugin_dbus.get_terminals_in_same_tab(terminal_uuid)
 
-            # Check for existing Sidechat Exec terminal with active process
+            # Check for existing Assistant Exec terminal with active process
             for t in terminals:
                 title = t.get('title', '')
-                if title.startswith('Sidechat: Exec'):
+                if title.startswith('Assistant: Exec'):
                     # Extract PID from title and verify process is running
                     pid = self._extract_pid_from_title(title)
                     if pid and self._process_exists(pid):
-                        # Found active sidechat in this tab
+                        # Found active assistant in this tab
                         return True
                     # Stale title (no PID or process dead) - continue checking
 
@@ -558,7 +558,7 @@ class TerminatorSidechatSession:
 
     def _extract_pid_from_title(self, title: str) -> int:
         """
-        Extract PID from 'Sidechat: Exec (PID 12345)' or 'Sidechat: Exec (Restored PID 12345)' format.
+        Extract PID from 'Assistant: Exec (PID 12345)' or 'Assistant: Exec (Restored PID 12345)' format.
 
         Args:
             title: Terminal title string
@@ -762,7 +762,7 @@ class TerminatorSidechatSession:
         try:
             # Build JSON representation of tool schemas (as sent to API)
             tool_schemas = []
-            for tool in SIDECHAT_TOOLS:
+            for tool in ASSISTANT_TOOLS:
                 schema = {
                     'name': tool.name,
                     'description': tool.description or '',
@@ -774,12 +774,12 @@ class TerminatorSidechatSession:
 
             # Estimate tokens using char-based method (4 chars = 1 token)
             tokens = len(tools_json) // 4
-            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(SIDECHAT_TOOLS)} tools, {len(tools_json)} chars)")
+            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(ASSISTANT_TOOLS)} tools, {len(tools_json)} chars)")
             return tokens
 
         except Exception as e:
             # Fallback
-            fallback = len(SIDECHAT_TOOLS) * 200
+            fallback = len(ASSISTANT_TOOLS) * 200
             self._debug(f"Tool schema measurement exception: {e}, using estimate: {fallback}")
             return fallback
 
@@ -870,13 +870,13 @@ Shell: {env_type} {shell_info}
 
     def _get_kb_dir(self) -> Path:
         """Get or create KB directory."""
-        kb_dir = Path.home() / ".config" / "llm-sidechat" / "kb"
+        kb_dir = Path.home() / ".config" / "llm-assistant" / "kb"
         kb_dir.mkdir(parents=True, exist_ok=True)
         return kb_dir
 
     def _get_config_file(self) -> Path:
         """Get config file path."""
-        return Path.home() / ".config" / "llm-sidechat" / "config.yaml"
+        return Path.home() / ".config" / "llm-assistant" / "config.yaml"
 
     def _load_config(self) -> dict:
         """Load config.yaml if it exists."""
@@ -1022,7 +1022,7 @@ Shell: {env_type} {shell_info}
             # Check for multiple instances
             terminator_services = [
                 name for name in bus.list_names()
-                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Sidechat')
+                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Assistant')
             ]
 
             if len(terminator_services) > 1:
@@ -1089,7 +1089,7 @@ Shell: {env_type} {shell_info}
         # Connect to plugin's D-Bus service for terminal content/commands
         if not self._connect_to_plugin_dbus():
             self.console.print("[red]Error: Plugin D-Bus service not available[/]")
-            self.console.print("Ensure TerminatorSidechat plugin is:")
+            self.console.print("Ensure TerminatorAssistant plugin is:")
             self.console.print("  1. Installed in ~/.config/terminator/plugins/")
             self.console.print("  2. Enabled in Terminator Preferences > Plugins")
             self.console.print("  3. Terminator has been restarted after enabling")
@@ -1100,8 +1100,8 @@ Shell: {env_type} {shell_info}
         try:
             bus = dbus.SessionBus()
             self.plugin_dbus = bus.get_object(
-                'net.tenshu.Terminator2.Sidechat',
-                '/net/tenshu/Terminator2/Sidechat'
+                'net.tenshu.Terminator2.Assistant',
+                '/net/tenshu/Terminator2/Assistant'
             )
 
             # Log plugin version for diagnostics (debug only)
@@ -1117,7 +1117,7 @@ Shell: {env_type} {shell_info}
             error_name = e.get_dbus_name() if hasattr(e, 'get_dbus_name') else str(e)
             if 'ServiceUnknown' in str(error_name) or 'ServiceUnknown' in str(e):
                 self.console.print("[yellow]Plugin D-Bus service not registered[/]")
-                self.console.print("[dim]The TerminatorSidechat plugin is not running.[/]")
+                self.console.print("[dim]The TerminatorAssistant plugin is not running.[/]")
             elif 'NoReply' in str(error_name):
                 self.console.print("[yellow]Plugin D-Bus service not responding[/]")
             else:
@@ -1170,11 +1170,11 @@ Shell: {env_type} {shell_info}
                     # Filter out chat terminal (already normalized at assignment)
                     other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
-                    # First: Look for existing Sidechat Exec pane with ACTIVE process
+                    # First: Look for existing Assistant Exec pane with ACTIVE process
                     # (If PID in title is dead, don't reuse - it has wrong PID)
                     for t in other_terminals:
                         title = t.get('title', '')
-                        if title.startswith('Sidechat: Exec'):
+                        if title.startswith('Assistant: Exec'):
                             pid = self._extract_pid_from_title(title)
                             # Only reuse if: no PID in title (legacy) OR PID matches current process
                             if pid is None or pid == os.getpid():
@@ -1213,7 +1213,7 @@ Shell: {env_type} {shell_info}
                 exec_uuid = self.dbus_service.vsplit(
                     self.chat_terminal_uuid,
                     dbus.Dictionary({
-                        'title': f'Sidechat: Exec (PID {os.getpid()})'
+                        'title': f'Assistant: Exec (PID {os.getpid()})'
                     }, signature='ss')
                 )
                 if str(exec_uuid).startswith('ERROR'):
@@ -1265,12 +1265,39 @@ Shell: {env_type} {shell_info}
             # Create new exec terminal (split to the right)
             exec_uuid = self.dbus_service.vsplit(
                 current_uuid,
-                dbus.Dictionary({'title': f'Sidechat: Exec (Restored PID {os.getpid()})'}, signature='ss')
+                dbus.Dictionary({'title': f'Assistant: Exec (Restored PID {os.getpid()})'}, signature='ss')
             )
             if str(exec_uuid).startswith('ERROR'):
                 raise Exception(f"Failed to split terminal: {exec_uuid}")
 
             self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
+
+            # Clear plugin cache to avoid stale data from old terminal
+            try:
+                self.plugin_dbus.clear_cache()
+                self._debug("Plugin cache cleared after exec terminal recreation")
+            except Exception as e:
+                self._debug(f"Could not clear plugin cache: {e}")
+
+            # Wait for shell prompt to render (prevents false TUI detection)
+            # New terminals have minimal scrollback which triggers TUI heuristic
+            max_wait = 2.0
+            poll_interval = 0.1
+            start_time = time.time()
+            while time.time() - start_time < max_wait:
+                try:
+                    content = self.plugin_dbus.capture_terminal_content(
+                        self.exec_terminal_uuid, -1
+                    )
+                    if content and PromptDetector.detect_prompt_at_end(content):
+                        self._debug(f"Shell prompt detected after {time.time() - start_time:.2f}s")
+                        break
+                except Exception:
+                    pass
+                time.sleep(poll_interval)
+            else:
+                self._debug("Shell prompt wait timed out (continuing anyway)")
+
             self.console.print(f"[green]✓[/] Exec terminal restored: {exec_uuid[:8]}...")
             return True
 
@@ -1301,7 +1328,7 @@ Shell: {env_type} {shell_info}
             # Use mkstemp for atomic, secure temp file creation in dedicated directory
             temp_fd, temp_path = tempfile.mkstemp(
                 suffix='.png',
-                prefix='sidechat_screenshot_',
+                prefix='assistant_screenshot_',
                 dir=str(self.screenshot_dir)
             )
 
@@ -1526,7 +1553,7 @@ Shell: {env_type} {shell_info}
         Capture visible content from all terminals (like tmuxai).
 
         Excludes:
-        - Chat terminal (where sidechat is running) - to avoid self-reference
+        - Chat terminal (where assistant is running) - to avoid self-reference
         - Exec terminal (unless include_exec_output=True)
 
         For TUI applications (htop, glances, vim, etc.), captures screenshots
@@ -1578,7 +1605,7 @@ Shell: {env_type} {shell_info}
                             # Use mkstemp for atomic, secure temp file creation in dedicated directory
                             temp_fd, temp_path = tempfile.mkstemp(
                                 suffix='.png',
-                                prefix=f'sidechat_ctx_{term_uuid[:8]}_',
+                                prefix=f'assistant_ctx_{term_uuid[:8]}_',
                                 dir=str(self.screenshot_dir)
                             )
                             with os.fdopen(temp_fd, 'wb') as f:
@@ -2256,13 +2283,13 @@ Instructions:
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
 /kb reload         Reload all loaded knowledge bases
-/quit or /exit     Exit sidechat
+/quit or /exit     Exit assistant
 
 [bold]Usage:[/]
 - Type messages to chat with AI
 - AI provides commands in <EXECUTE> tags
 - Commands are sent to Exec terminal with approval
-""", title="Sidechat Help", border_style="cyan"))
+""", title="Assistant Help", border_style="cyan"))
             return True
 
         elif cmd == "/clear":
@@ -2414,7 +2441,7 @@ Instructions:
             if self.system_prompt:
                 prompt_len = len(self.system_prompt)
                 is_template = "terminal assistant" in self.system_prompt.lower()
-                system_status = f"System prompt: {'terminator-sidechat' if is_template else 'fallback'} ({prompt_len:,} chars)"
+                system_status = f"System prompt: {'terminator-assistant' if is_template else 'fallback'} ({prompt_len:,} chars)"
             else:
                 system_status = "System prompt: NOT LOADED"
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
@@ -2962,7 +2989,7 @@ Type /help for slash commands
 Type 'exit' or 'quit' to exit
 Type !multi to enter multiple lines, then !end to finish
 Type !fragment <name> [...] to insert fragments""",
-            title="llm-sidechat",
+            title="llm-assistant",
             border_style="green"
         ))
 
@@ -2983,14 +3010,14 @@ Type !fragment <name> [...] to insert fragments""",
                     if not self._check_plugin_available():
                         self.console.print("[yellow]Plugin unavailable, attempting reconnect...[/]")
                         if not self._reconnect_plugin():
-                            self.console.print("[red]Plugin reconnection failed. Please restart sidechat.[/]")
+                            self.console.print("[red]Plugin reconnection failed. Please restart assistant.[/]")
                             break
 
                     # Check D-Bus connection
                     if not self._check_dbus_connection():
                         self.console.print("[yellow]D-Bus disconnected, attempting reconnect...[/]")
                         if not self._reconnect_dbus():
-                            self.console.print("[red]D-Bus reconnection failed. Please restart sidechat.[/]")
+                            self.console.print("[red]D-Bus reconnection failed. Please restart assistant.[/]")
                             break
 
                     check_counter = 0
@@ -3117,7 +3144,7 @@ Type !fragment <name> [...] to insert fragments""",
                             system=self._build_system_prompt(),
                             fragments=[str(f) for f in fragments] if fragments else None,
                             attachments=all_attachments if all_attachments else None,
-                            tools=SIDECHAT_TOOLS
+                            tools=ASSISTANT_TOOLS
                         )
 
                         # Consume response INSIDE lock to prevent race condition with watch mode
@@ -3189,7 +3216,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     # Continue conversation with tool results (and attachments)
                                     followup_response = self._prompt(
                                         "",  # Empty prompt - tool results drive the continuation
-                                        tools=SIDECHAT_TOOLS,
+                                        tools=ASSISTANT_TOOLS,
                                         tool_results=tool_results,
                                         attachments=followup_attachments if followup_attachments else None
                                     )
@@ -3231,7 +3258,7 @@ Type !fragment <name> [...] to insert fragments""",
                                 with self.watch_lock:
                                     attachment_response = self._prompt(
                                         "",  # Empty prompt - attachments drive the continuation
-                                        tools=SIDECHAT_TOOLS,
+                                        tools=ASSISTANT_TOOLS,
                                         attachments=attachments_to_send
                                     )
                                     response_text = self._filter_thinking_traces(attachment_response.text())
@@ -3274,7 +3301,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Terminator AI Sidechat - Terminal assistant for pair programming"
+        description="Terminator AI Assistant - Terminal assistant for pair programming"
     )
     # llm-compatible model selection flags
     parser.add_argument(
@@ -3308,7 +3335,7 @@ def main():
             print(f"Error: No model found matching queries {' '.join(args.query)}", file=sys.stderr)
             sys.exit(1)
 
-    session = TerminatorSidechatSession(
+    session = TerminatorAssistantSession(
         model_name=model_name,
         debug=args.debug,
         max_context_size=args.max_context

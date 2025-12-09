@@ -40,7 +40,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
   - [Integration with Other Tools](#integration-with-other-tools)
   - [LLM Functions (Optional)](#llm-functions-optional)
   - [Micro Text Editor Integration](#micro-text-editor-integration)
-  - [Terminator Sidechat](#terminator-sidechat)
+  - [Terminator Assistant](#terminator-assistant)
   - [Claude Code Router](#claude-code-router)
   - [Managing Models](#managing-models)
   - [Model-Specific Parameters](#model-specific-parameters)
@@ -94,7 +94,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
 - ✅ **RAG document querying** - Query your documents with `llm rag` using AIChat's built-in vector database
-- ✅ **Terminator Sidechat** - AI pair programming assistant with command execution (Terminator only)
+- ✅ **Terminator Assistant** - AI pair programming assistant with command execution (Terminator only)
 
 ## System Requirements
 
@@ -261,10 +261,10 @@ llm -T Patch "Read config.yaml" --ta                           # Read files
 llm -T Patch "Create hello.py with a hello world program" --ta # Create files
 llm -T Patch "In config.yaml, change debug to true" --ta       # Edit files
 
-# Terminator Sidechat (AI terminal assistant)
-llm sidechat                     # Launch AI assistant in Terminator
-llm sidechat azure/gpt-4.1       # Launch with specific model
-# Inside sidechat:
+# Terminator Assistant (AI terminal assistant)
+llm assistant                     # Launch AI assistant in Terminator
+llm assistant azure/gpt-4.1       # Launch with specific model
+# Inside assistant:
 #   /watch detect security issues                    # Security monitoring
 #   /watch spot inefficient shell commands           # Shell efficiency tips
 #   /watch monitor logs for errors and suggest fixes # Log monitoring
@@ -346,7 +346,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
 - **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
 - **[wut.yaml](llm-template/wut.yaml)** - Command-line assistant for explaining terminal output and troubleshooting (concise 5-sentence responses, uses `context` tool automatically)
-- **[terminator-sidechat.yaml](llm-template/terminator-sidechat.yaml)** - AI pair programming template for Terminator terminal (provides intelligent debugging, command suggestions, and automatic execution in split panes)
+- **[terminator-assistant.yaml](llm-template/terminator-assistant.yaml)** - AI pair programming template for Terminator terminal (provides intelligent debugging, command suggestions, and automatic execution in split panes)
 
 ### Additional Tools
 
@@ -358,7 +358,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 - **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
 - **[whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2)** - Fast speech-to-text transcription (99+ languages, CPU-optimized)
-- **[llm-sidechat](integration/llm-sidechat)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
+- **[llm-assistant](integration/llm-assistant)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
 
 ### Shell Integration
 
@@ -1876,9 +1876,9 @@ llm -s "you are a security expert" review this code for vulnerabilities
 - Adjust `llm.context_lines` based on your needs (more context = better understanding, but slower)
 - View plugin logs: Press `Ctrl+E`, type `log` to see debug output
 
-### Terminator Sidechat
+### Terminator Assistant
 
-The repository includes **llm-sidechat**, a TmuxAI-inspired terminal AI assistant for [Terminator](https://gnome-terminator.org/) terminal emulator that provides an interactive AI pair programming experience.
+The repository includes **llm-assistant**, a TmuxAI-inspired terminal AI assistant for [Terminator](https://gnome-terminator.org/) terminal emulator that provides an interactive AI pair programming experience.
 
 **Key Features:**
 
@@ -1891,19 +1891,19 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal AI assistan
 **Quick Start:**
 
 ```bash
-# Launch sidechat in any Terminator terminal
-llm sidechat
+# Launch assistant in any Terminator terminal
+llm assistant
 
 # Launch with specific model
-llm sidechat azure/gpt-4.1
+llm assistant azure/gpt-4.1
 
 # Direct invocation also works
-llm-sidechat
+llm-assistant
 ```
 
 **Workflow:**
 
-1. Run `llm sidechat` in any Terminator terminal
+1. Run `llm assistant` in any Terminator terminal
 2. Script auto-creates Exec terminal via D-Bus hsplit
 3. Type messages in Chat terminal (where script runs)
 4. AI responds with streaming markdown
@@ -1923,7 +1923,7 @@ llm-sidechat
 | `/watch <goal>` | Enable watch mode (e.g., `/watch detect security issues`) |
 | `/watch off` | Disable watch mode |
 | `/squash` | Manually compress conversation context |
-| `/quit` | Exit sidechat |
+| `/quit` | Exit assistant |
 
 **Input Modes:**
 
@@ -1941,7 +1941,7 @@ Watch mode enabled: monitoring all terminals
 **Requirements:**
 
 - Terminator terminal emulator
-- Plugin enabled: Terminator Preferences -> Plugins -> Check "TerminatorSidechat"
+- Plugin enabled: Terminator Preferences -> Plugins -> Check "TerminatorAssistant"
 
 **For detailed documentation**, see [`integration/CLAUDE.md`](integration/CLAUDE.md).
 

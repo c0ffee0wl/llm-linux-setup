@@ -1,12 +1,12 @@
 """
-LLM tools for terminal control in sidechat.
+LLM tools for terminal control in assistant.
 
 These tools provide structured interfaces for terminal operations. They are
 "stub" tools - they return structured JSON to indicate intent, but the actual
-execution is handled by the sidechat application which processes tool_calls.
+execution is handled by the assistant application which processes tool_calls.
 
 This approach provides schema validation at the model level while keeping
-the actual terminal control logic in sidechat.
+the actual terminal control logic in assistant.
 """
 import json
 from typing import Optional
@@ -22,7 +22,7 @@ def execute_in_terminal(command: str) -> str:
     The command will be sent to the terminal and its output captured.
 
     State what you're doing in your response, but do NOT ask the user for
-    permission - simply call this tool. The sidechat framework handles approval
+    permission - simply call this tool. The assistant framework handles approval
     automatically.
 
     Args:
@@ -30,7 +30,7 @@ def execute_in_terminal(command: str) -> str:
 
     Returns:
         JSON indicating the command has been queued for execution.
-        Actual execution is handled by sidechat with user approval (you don't need to ask).
+        Actual execution is handled by assistant with user approval (you don't need to ask).
     """
     return json.dumps({
         "action": "execute",
@@ -63,7 +63,7 @@ def send_keypress(keypress: str) -> str:
 
     Returns:
         JSON indicating the keypress has been queued.
-        Actual execution is handled by sidechat with user approval.
+        Actual execution is handled by assistant with user approval.
     """
     return json.dumps({
         "action": "keypress",
@@ -208,7 +208,7 @@ def view_youtube_native(url: str) -> str:
 
 @llm.hookimpl
 def register_tools(register):
-    """Register sidechat terminal control tools."""
+    """Register assistant terminal control tools."""
     register(execute_in_terminal)
     register(send_keypress)
     register(capture_terminal)

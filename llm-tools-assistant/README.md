@@ -1,10 +1,12 @@
-# llm-tools-sidechat
+# llm-tools-assistant
 
-LLM tools for terminal control in the sidechat application.
+> Note: This plugin was previously called `llm-tools-sidechat`.
+
+LLM tools for terminal control in the assistant application.
 
 ## Overview
 
-This plugin provides structured tool interfaces for terminal operations in sidechat:
+This plugin provides structured tool interfaces for terminal operations in assistant:
 
 - `execute_in_terminal` - Execute shell commands in the Exec terminal
 - `send_keypress` - Send keypresses/sequences to TUI applications
@@ -13,31 +15,31 @@ This plugin provides structured tool interfaces for terminal operations in sidec
 
 ## Design
 
-These are "stub" tools - they return structured JSON to indicate intent, but the actual execution is handled by the sidechat application. This approach provides:
+These are "stub" tools - they return structured JSON to indicate intent, but the actual execution is handled by the assistant application. This approach provides:
 
 1. **Schema validation** - The model generates structured tool calls that can't be malformed
 2. **Separation of concerns** - Tool definitions are separate from execution logic
-3. **Approval flow** - Sidechat handles user approval before executing actions
+3. **Approval flow** - Assistant handles user approval before executing actions
 
 ## Installation
 
 ```bash
-llm install /path/to/llm-tools-sidechat
+llm install /path/to/llm-tools-assistant
 ```
 
 Or install in development mode:
 
 ```bash
-llm install -e /path/to/llm-tools-sidechat
+llm install -e /path/to/llm-tools-assistant
 ```
 
 ## Usage
 
-These tools are designed to be used by the sidechat application, not standalone. The sidechat main loop:
+These tools are designed to be used by the assistant application, not standalone. The assistant main loop:
 
 1. Passes these tools to the model via `conversation.prompt(tools=[...])`
 2. Parses `response.tool_calls()` to extract structured commands
-3. Executes actions using existing sidechat logic with user approval
+3. Executes actions using existing assistant logic with user approval
 4. Returns results via `ToolResult` objects
 
 ## Tool Descriptions

@@ -142,9 +142,13 @@ llm() {
     elif [ "$1" = "code" ]; then
         shift
         command llm -t code --cl 15 "$@"
-    elif [ "$1" = "sidechat" ]; then
+    elif [ "$1" = "assistant" ]; then
         shift
-        llm-sidechat "$@"
+        llm-assistant "$@"
+    elif [ "$1" = "sidechat" ]; then
+        echo "Warning: 'llm sidechat' is deprecated, use 'llm assistant' instead" >&2
+        shift
+        llm-assistant "$@"
     else
         if should_skip_template "$@"; then
             command llm --cl 15 "$@"

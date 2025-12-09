@@ -44,7 +44,7 @@ The repository includes an **automatic session recording and context extraction 
    - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
 
 3. **Prompt Detection Module** (`context/prompt_detection.py`): Shared Python module
-   - PromptDetector class used by both context tool and llm-sidechat
+   - PromptDetector class used by both context tool and llm-assistant
    - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
    - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
    - Installed to Python user site-packages (`python3 -m site --user-site`)/llm_tools/ in Phase 5
@@ -556,9 +556,9 @@ https://github.com/user/repo  # This fetches HTML, not source code!
 - **Automatic sync**: Installation script updates aichat config when Azure settings change
 - **No external deps**: aichat includes built-in vector database and full-text search
 
-### Terminator Sidechat Integration
+### Terminator Assistant Integration
 
-See [`integration/CLAUDE.md`](integration/CLAUDE.md) for comprehensive documentation on the llm-sidechat terminal assistant, including architecture, components, usage, and troubleshooting.
+See [`integration/CLAUDE.md`](integration/CLAUDE.md) for comprehensive documentation on the llm-assistant terminal assistant, including architecture, components, usage, and troubleshooting.
 
 ### Speech-to-Text Transcription
 
@@ -907,7 +907,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 
 ### Configuration Files
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions for llm
-- `~/.config/io.datasette.llm/templates/{assistant,code,terminator-sidechat}.yaml` - Custom LLM templates
+- `~/.config/io.datasette.llm/templates/{assistant,code,terminator-assistant}.yaml` - Custom LLM templates
 - `~/.config/aichat/config.yaml` - aichat configuration with Azure OpenAI and RAG settings
 - `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
 - `~/.claude-code-router/config.json` - Claude Code Router dual-provider configuration (auto-generated with checksum tracking)
@@ -915,7 +915,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
-- `~/.config/terminator/plugins/terminator_sidechat.py` - Terminator sidechat plugin (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
+- `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
@@ -927,11 +927,11 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
 - `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
-- `integration/llm-sidechat`, `integration/terminator-sidechat-plugin/` - Sidechat components (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
+- `integration/llm-assistant`, `integration/terminator-assistant-plugin/` - Assistant components (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
 - `context/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)
-- `llm-template/{assistant,code,terminator-sidechat}.yaml` - Template sources installed to user config
+- `llm-template/{assistant,code,terminator-assistant}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
 
@@ -1034,4 +1034,4 @@ llm --ta -T 'MCP("/path/to/custom/mcp.json")' "your prompt"
 - `sse` - Server-Sent Events
 - `stdio` - Local process (command + args)
 
-**llm-sidechat Integration**: MCP tools are whitelisted via `EXTERNAL_TOOL_PLUGINS` and display nicely with custom action verbs.
+**llm-assistant Integration**: MCP tools are whitelisted via `EXTERNAL_TOOL_PLUGINS` and display nicely with custom action verbs.

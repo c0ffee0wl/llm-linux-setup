@@ -1,7 +1,7 @@
 """Unified prompt detection for llm-tools
 
 This module provides shell prompt detection used by both the context tool
-and llm-sidechat. It's installed to Python user site-packages (llm_tools/)
+and llm-assistant. It's installed to Python user site-packages (llm_tools/)
 and can be imported as: from llm_tools.prompt_detection import PromptDetector
 """
 import re

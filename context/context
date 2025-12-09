@@ -39,8 +39,8 @@ import argparse
 
 
 # Compiled regex for filtering AI-related commands
-# Matches commands starting with: context, llm, aichat, llm-sidechat, or wut
-FILTERED_COMMANDS = re.compile(r'^(context|llm|aichat|llm-sidechat|wut)(\s|$)', re.IGNORECASE)
+# Matches commands starting with: context, llm, aichat, llm-assistant, llm-sidechat (legacy), or wut
+FILTERED_COMMANDS = re.compile(r'^(context|llm|aichat|llm-assistant|llm-sidechat|wut)(\s|$)', re.IGNORECASE)
 
 
 def find_cast_file():
@@ -108,7 +108,8 @@ def should_exclude_block(block):
     - context (with space or end of string)
     - llm (with space)
     - aichat (with space or end of string)
-    - llm-sidechat (with space or end of string)
+    - llm-assistant (with space or end of string)
+    - llm-sidechat (legacy, with space or end of string)
 
     Args:
         block: Text block containing prompt + command + output

@@ -1060,13 +1060,13 @@ fi
 # Detect Terminator Installation
 #############################################################################
 
-# Check if Terminator is installed (used for conditional sidechat installation)
+# Check if Terminator is installed (used for conditional assistant installation)
 TERMINATOR_INSTALLED=false
 if command -v terminator &> /dev/null; then
     TERMINATOR_INSTALLED=true
-    log "Terminator detected - will install sidechat integration"
+    log "Terminator detected - will install assistant integration"
 else
-    log "Terminator not found - skipping sidechat components"
+    log "Terminator not found - skipping assistant components"
 fi
 
 #############################################################################
@@ -1114,7 +1114,7 @@ fi
 
 install_apt_package pandoc
 
-# Install PyGObject and build dependencies for Terminator sidechat integration (conditional)
+# Install PyGObject and build dependencies for Terminator assistant integration (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Runtime packages (for system Python)
     log "Installing PyGObject runtime packages..."
@@ -1482,7 +1482,7 @@ PLUGINS=(
     "llm-classify"
     "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
-    "$SCRIPT_DIR/llm-tools-sidechat"
+    "$SCRIPT_DIR/llm-tools-assistant"
     "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
@@ -1879,9 +1879,11 @@ update_template_file "assistant"
 update_template_file "code"
 update_template_file "wut"
 
-# Conditionally install Terminator sidechat template
+# Conditionally install Terminator assistant template
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    update_template_file "terminator-sidechat"
+    update_template_file "terminator-assistant"
+    # Remove old template if it exists
+    rm -f "$TEMPLATES_DIR/terminator-sidechat.yaml"
 fi
 
 #############################################################################
@@ -1956,19 +1958,29 @@ PYTHON_USER_SITE=$(python3 -m site --user-site)
 mkdir -p "$PYTHON_USER_SITE/llm_tools"
 cp "$SCRIPT_DIR/context/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
-# Install Terminator sidechat components (conditional)
+# Install Terminator assistant components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    log "Installing Terminator sidechat integration..."
+    log "Installing Terminator assistant integration..."
 
-    # Install Terminator sidechat plugin
+    # Remove old llm plugin if installed
+    if command llm plugins 2>/dev/null | grep -q "llm-tools-sidechat"; then
+        log "Removing old llm-tools-sidechat plugin..."
+        command llm uninstall llm-tools-sidechat 2>/dev/null || true
+    fi
+
+    # Remove old application and plugin
+    rm -f "$HOME/.local/bin/llm-sidechat"
+    rm -f "$HOME/.config/terminator/plugins/terminator_sidechat.py"
+
+    # Install Terminator assistant plugin
     mkdir -p "$HOME/.config/terminator/plugins"
-    cp "$SCRIPT_DIR/integration/terminator-sidechat-plugin/terminator_sidechat.py" \
-       "$HOME/.config/terminator/plugins/terminator_sidechat.py"
-    log "Terminator sidechat plugin installed. Enable it in Terminator Preferences > Plugins"
+    cp "$SCRIPT_DIR/integration/terminator-assistant-plugin/terminator_assistant.py" \
+       "$HOME/.config/terminator/plugins/terminator_assistant.py"
+    log "Terminator assistant plugin installed. Enable it in Terminator Preferences > Plugins"
 
-    # Install llm-sidechat application and its dependencies
-    cp "$SCRIPT_DIR/integration/llm-sidechat" "$HOME/.local/bin/llm-sidechat"
-    chmod +x "$HOME/.local/bin/llm-sidechat"
+    # Install llm-assistant application and its dependencies
+    cp "$SCRIPT_DIR/integration/llm-assistant" "$HOME/.local/bin/llm-assistant"
+    chmod +x "$HOME/.local/bin/llm-assistant"
     cp "$SCRIPT_DIR/integration/system_info.py" "$HOME/.local/bin/system_info.py"
     cp "$SCRIPT_DIR/context/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
 

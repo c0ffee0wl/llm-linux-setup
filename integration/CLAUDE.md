@@ -1,10 +1,10 @@
-# LLM Sidechat - Terminator AI Assistant
+# LLM Assistant - Terminator AI Assistant
 
-This file provides guidance to Claude Code when working with the llm-sidechat component.
+This file provides guidance to Claude Code when working with the llm-assistant component.
 
 ## Overview
 
-The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant for Terminator terminal emulator that provides an interactive AI pair programming experience.
+The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant for Terminator terminal emulator that provides an interactive AI pair programming experience.
 
 ## Architecture Overview
 
@@ -16,7 +16,7 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
 
 ## Core Components
 
-1. **Terminator Plugin** (`terminator-sidechat-plugin/terminator_sidechat.py`):
+1. **Terminator Plugin** (`terminator-assistant-plugin/terminator_assistant.py`):
    - Provides VTE content capture via Plugin API
    - Version-aware VTE text extraction (supports VTE 72+ and older)
    - Terminal enumeration and metadata
@@ -25,19 +25,19 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
    - Inherits from both `plugin.Plugin` and `dbus.service.Object`
    - `is_likely_tui_active()` - Hybrid TUI detection (command name + terminal state via vadjustment)
 
-2. **Standalone Application** (`llm-sidechat`):
+2. **Standalone Application** (`llm-assistant`):
    - Python script that imports llm library directly
    - Rich terminal UI with streaming markdown
    - Conversation management with auto-squashing
    - Tool-based command execution with structured output
    - Asyncio-based watch mode
 
-3. **Sidechat Template** (`llm-template/terminator-sidechat.yaml`):
+3. **Assistant Template** (`llm-template/terminator-assistant.yaml`):
    - System prompt optimized for Terminator environment
    - Instructs AI on tool usage for terminal interaction
    - Explains context awareness and watch mode
 
-4. **Sidechat Tools Plugin** (`llm-tools-sidechat/`):
+4. **Assistant Tools Plugin** (`llm-tools-assistant/`):
    - Provides structured tool definitions for terminal control
    - Tools: execute_in_terminal, send_keypress, capture_terminal, refresh_context
    - Schema validation at model level prevents malformed commands
@@ -45,7 +45,7 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
 ## User Workflow
 
 ```
-1. Run llm-sidechat in any Terminator terminal
+1. Run llm-assistant in any Terminator terminal
 2. Script auto-creates Exec terminal via D-Bus hsplit
 3. Type messages in Chat terminal (where script runs)
 4. AI responds with streaming markdown
@@ -57,7 +57,7 @@ The repository includes **llm-sidechat**, a TmuxAI-inspired terminal assistant f
 ## Context Capture
 
 - **Visible content only**: Captures 100 lines of scrollback per terminal
-- **Self-aware**: Excludes Chat terminal (where sidechat runs)
+- **Self-aware**: Excludes Chat terminal (where assistant runs)
 - **All terminals**: Monitors all terminals in current window
 - **Intelligent filtering**: Optionally excludes Exec terminal output
 
@@ -110,22 +110,22 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
 - `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)
 - `/kb reload` - Reload all loaded knowledge bases
-- `/quit` or `/exit` - Exit sidechat
+- `/quit` or `/exit` - Exit assistant
 
 ## Knowledge Base System
 
-Sidechat supports TmuxAI-style knowledge bases for persistent context:
+The assistant supports TmuxAI-style knowledge bases for persistent context:
 
-**Location**: `~/.config/llm-sidechat/kb/`
+**Location**: `~/.config/llm-assistant/kb/`
 
 **Usage**:
 ```bash
 # Create a KB file
 echo "## Project Conventions
 - Use Python 3.10+
-- Follow PEP8" > ~/.config/llm-sidechat/kb/project.md
+- Follow PEP8" > ~/.config/llm-assistant/kb/project.md
 
-# In sidechat:
+# In assistant:
 /kb load project              # Load single KB
 /kb load project,docker,git   # Load multiple KBs
 /kb                           # List all KBs
@@ -134,7 +134,7 @@ echo "## Project Conventions
 
 **Auto-load config** (optional):
 ```yaml
-# ~/.config/llm-sidechat/config.yaml
+# ~/.config/llm-assistant/config.yaml
 knowledge_base:
   auto_load:
     - project
@@ -152,14 +152,14 @@ The bottom status bar shows the current input mode and available keybindings:
 
 **Keybindings:**
 - `Ctrl+Space` - Toggle between single-line and multi-line modes
-- `Ctrl+D` - Exit sidechat
+- `Ctrl+D` - Exit assistant
 
 **Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
 
 ## AI Tool Interface
 
-The AI uses structured tool calling to interact with terminals. See the `terminator-sidechat.yaml` template for full documentation:
+The AI uses structured tool calling to interact with terminals. See the `terminator-assistant.yaml` template for full documentation:
 - `execute_in_terminal(command: str)` - Execute shell command in Exec terminal
 - `send_keypress(keypress: str)` - Send keypresses (for TUI apps like vim, htop)
 - `capture_terminal(scope: str)` - Screenshot capture ("exec" or "all")
@@ -184,11 +184,11 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 
 ## Installation
 
-- Template: `terminator-sidechat.yaml` installed (Phase 4)
+- Template: `terminator-assistant.yaml` installed (Phase 4)
 - Plugin: Copied to `~/.config/terminator/plugins/` (Phase 5)
-- Application: `llm-sidechat` installed to `~/.local/bin/` (Phase 5)
+- Application: `llm-assistant` installed to `~/.local/bin/` (Phase 5)
 - Dependencies: PyGObject, dbus-python conditionally installed (Phase 1, only if Terminator detected)
-- Enable plugin: Terminator Preferences → Plugins → Check "TerminatorSidechat"
+- Enable plugin: Terminator Preferences → Plugins → Check "TerminatorAssistant"
 
 ## Dependencies
 
@@ -202,16 +202,16 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 
 **Preferred invocation** (via llm subcommand):
 ```bash
-# Launch sidechat in any Terminator terminal
-llm sidechat
+# Launch assistant in any Terminator terminal
+llm assistant
 
 # Launch with specific model
-llm sidechat azure/gpt-4.1
+llm assistant azure/gpt-4.1
 
 # Direct invocation also works
-llm-sidechat
+llm-assistant
 
-# Inside sidechat:
+# Inside assistant:
 you> why did my docker build fail?
 llm> [streams analysis based on terminal content]
 llm> <EXECUTE>docker build --no-cache -t myapp .</EXECUTE>
@@ -226,7 +226,7 @@ Watch mode enabled: monitoring all terminals
 ## CLI Arguments
 
 Model selection (llm-compatible):
-- `-m, --model MODEL` - LLM model to use (e.g., `llm-sidechat -m azure/gpt-4.1-mini`)
+- `-m, --model MODEL` - LLM model to use (e.g., `llm-assistant -m azure/gpt-4.1-mini`)
 - `-q, --query QUERY` - Select model by fuzzy matching (can be used multiple times, e.g., `-q haiku -q claude`)
 
 Other options:
@@ -235,10 +235,10 @@ Other options:
 
 Examples:
 ```bash
-llm-sidechat -m azure/gpt-4.1-mini    # explicit model
-llm-sidechat -q opus                   # fuzzy match for "opus"
-llm-sidechat -q haiku -q claude        # first model matching both "haiku" AND "claude"
-llm sidechat -m gemini-2.5-flash       # via llm wrapper
+llm-assistant -m azure/gpt-4.1-mini    # explicit model
+llm-assistant -q opus                   # fuzzy match for "opus"
+llm-assistant -q haiku -q claude        # first model matching both "haiku" AND "claude"
+llm assistant -m gemini-2.5-flash       # via llm wrapper
 ```
 
 ## Technical Implementation
@@ -254,19 +254,19 @@ llm sidechat -m gemini-2.5-flash       # via llm wrapper
 ## File Locations
 
 ### Repository Files
-- `integration/llm-sidechat` - Standalone application
-- `integration/terminator-sidechat-plugin/terminator_sidechat.py` - Terminator plugin
-- `llm-template/terminator-sidechat.yaml` - System prompt template
-- `llm-tools-sidechat/` - LLM plugin for structured tool definitions
+- `integration/llm-assistant` - Standalone application
+- `integration/terminator-assistant-plugin/terminator_assistant.py` - Terminator plugin
+- `llm-template/terminator-assistant.yaml` - System prompt template
+- `llm-tools-assistant/` - LLM plugin for structured tool definitions
 
 ### Installed Locations
-- `~/.local/bin/llm-sidechat` - Application binary
-- `~/.config/terminator/plugins/terminator_sidechat.py` - Plugin
-- `~/.config/io.datasette.llm/templates/terminator-sidechat.yaml` - Template
+- `~/.local/bin/llm-assistant` - Application binary
+- `~/.config/terminator/plugins/terminator_assistant.py` - Plugin
+- `~/.config/io.datasette.llm/templates/terminator-assistant.yaml` - Template
 
 ## Troubleshooting
 
-- **Plugin not appearing**: Check `~/.config/terminator/plugins/terminator_sidechat.py` exists, restart Terminator
+- **Plugin not appearing**: Check `~/.config/terminator/plugins/terminator_assistant.py` exists, restart Terminator
 - **Import errors**: Ensure running inside Terminator terminal: `echo $TERMINATOR_UUID`
 - **D-Bus errors**: Ensure D-Bus enabled in Terminator config
 - **No terminals captured**: Enable plugin in Terminator Preferences → Plugins
