@@ -249,6 +249,7 @@ class TerminatorAssistantSession:
 
         # Initialize shutdown state and lock file handle
         self._shutdown_initiated = False
+        self._last_interrupt_time = 0.0  # For double-press exit protection
         self.lock_file = None
 
         # Early D-Bus detection - require Terminator
@@ -627,14 +628,13 @@ class TerminatorAssistantSession:
         atexit.register(self._shutdown)
 
         # Register signal handlers for graceful shutdown
-        signal.signal(signal.SIGINT, self._signal_handler)   # Ctrl+C
+        # Note: SIGINT (Ctrl+C) uses Python's default KeyboardInterrupt - handled in input loop
         signal.signal(signal.SIGTERM, self._signal_handler)  # kill command
         signal.signal(signal.SIGHUP, self._signal_handler)   # Terminal closed
 
     def _signal_handler(self, signum, frame):
-        """Handle termination signals"""
+        """Handle termination signals (SIGTERM, SIGHUP)."""
         signal_names = {
-            signal.SIGINT: "SIGINT (Ctrl+C)",
             signal.SIGTERM: "SIGTERM",
             signal.SIGHUP: "SIGHUP (terminal closed)"
         }
@@ -642,7 +642,7 @@ class TerminatorAssistantSession:
 
         self.console.print(f"\n[yellow]Received {signal_name}, shutting down...[/]")
         self._shutdown()
-        sys.exit(0)  # Exit cleanly
+        sys.exit(0)
 
     def _shutdown(self):
         """
@@ -3034,6 +3034,12 @@ Type !fragment <name> [...] to insert fragments""",
                         # This fixes cursor positioning when input wraps to next line
                         user_input = input("\n\001\033[1;36m\002>\001\033[0m\002 ").strip()
                 except (KeyboardInterrupt, EOFError):
+                    # Double-press protection
+                    now = time.time()
+                    if now - self._last_interrupt_time > 2.0:
+                        self._last_interrupt_time = now
+                        self.console.print("\n[yellow]Press again to exit[/]")
+                        continue
                     self.console.print("\n[yellow]Exiting...[/]")
                     break
 
