@@ -2101,6 +2101,38 @@ log "Cleaning uv cache..."
 uv cache clean
 
 #############################################################################
+# PHASE 8: Browser Automation (Blueprint MCP)
+#############################################################################
+
+# Firefox is pre-installed on Kali, install if missing
+if ! command -v firefox &>/dev/null; then
+    log "Installing Firefox..."
+    install_apt_package firefox-esr
+fi
+
+# Install/upgrade Blueprint MCP server
+log "Installing/updating Blueprint MCP server..."
+install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
+
+# TODO: Add Blueprint MCP to MCP config - commented out until MCP integration is working
+# MCP_CONFIG_FILE="$HOME/.llm-tools-mcp/mcp.json"
+# if [ -f "$MCP_CONFIG_FILE" ]; then
+#     # Use jq to check if browser key exists (more robust than grep)
+#     if ! jq -e '.mcpServers.browser' "$MCP_CONFIG_FILE" &>/dev/null; then
+#         log "Adding Blueprint MCP to MCP configuration..."
+#         jq '.mcpServers.browser = {
+#             "command": "npx",
+#             "args": ["@railsblueprint/blueprint-mcp@latest"]
+#         }' "$MCP_CONFIG_FILE" > "$MCP_CONFIG_FILE.tmp" && mv "$MCP_CONFIG_FILE.tmp" "$MCP_CONFIG_FILE"
+#         log ""
+#         log "NOTE: Install the Blueprint Firefox extension for browser automation:"
+#         log "  1. Open Firefox"
+#         log "  2. Visit: https://addons.mozilla.org/firefox/addon/blueprint-mcp-for-firefox/"
+#         log "  3. Click 'Add to Firefox'"
+#     fi
+# fi
+
+#############################################################################
 # COMPLETE
 #############################################################################
 
@@ -2115,6 +2147,7 @@ log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, fragments, jq, 
 log "  - aichat (All-in-one LLM CLI with RAG functionality)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 log "  - Claude Code Router (proxy for Claude Code)"
+log "  - Blueprint MCP (browser automation for Firefox/Chrome with stealth mode)"
 log "  - micro (modern terminal text editor with llm-micro plugin for AI integration)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
@@ -2132,6 +2165,8 @@ log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
 log "  4. Test Claude Code Router: routed-claude"
+log "  5. For browser automation, install Firefox extension:"
+log "     https://addons.mozilla.org/firefox/addon/blueprint-mcp-for-firefox/"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"
