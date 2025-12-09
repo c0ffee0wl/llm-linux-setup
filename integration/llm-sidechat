@@ -2769,14 +2769,23 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
             # Special handling for capture_screen with countdown display
             if tool_name == 'capture_screen':
-                mode = tool_args.get('mode', 'window')
-                delay = max(0, min(int(tool_args.get('delay', 5)), 30))
+                mode = tool_args.get('mode') or 'window'
+                # Different default delays: automatic modes (rdp, full) don't need user prep time
+                # Interactive modes (window, region, annotate) need time for user to position/click
+                default_delay = 0 if mode in ('rdp', 'full') else 5
+                try:
+                    raw_delay = tool_args.get('delay')
+                    delay = int(raw_delay) if raw_delay is not None else default_delay
+                except (ValueError, TypeError):
+                    delay = default_delay
+                delay = max(0, min(delay, 30))
 
-                # Display countdown
+                # Display countdown if delay > 0
                 print()  # Start on new line
-                for i in range(delay, 0, -1):
-                    print(f"\r\033[36mCapturing screenshot ({mode}): {i}s\033[K\033[0m", end="", flush=True)
-                    time.sleep(1)
+                if delay > 0:
+                    for i in range(delay, 0, -1):
+                        print(f"\r\033[36mCapturing screenshot ({mode}): {i}s\033[K\033[0m", end="", flush=True)
+                        time.sleep(1)
 
                 # Clear countdown, show capturing status
                 print(f"\r\033[36mCapturing screenshot ({mode})...\033[K\033[0m", end="", flush=True)
