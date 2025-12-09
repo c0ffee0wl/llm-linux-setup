@@ -703,8 +703,8 @@ class TerminatorSidechatSession:
         # Split into paragraphs (separated by blank lines)
         paragraphs = text.split('\n\n')
 
-        # Keep only paragraphs that don't start with 'thought '
-        filtered = [p for p in paragraphs if not p.lstrip().startswith('thought ')]
+        # Keep only non-empty paragraphs that don't start with 'thought '
+        filtered = [p for p in paragraphs if p.strip() and not p.lstrip().startswith('thought ')]
 
         return '\n\n'.join(filtered)
 
