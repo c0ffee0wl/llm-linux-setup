@@ -1128,6 +1128,7 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Installing screen capture tools..."
     install_apt_package maim
     install_apt_package xdotool
+    install_apt_package flameshot
 fi
 
 # Install/update uv
