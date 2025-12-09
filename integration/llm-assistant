@@ -732,21 +732,8 @@ class TerminatorAssistantSession:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
 
     def _filter_thinking_traces(self, text: str) -> str:
-        """Filter out thinking traces from model output.
-
-        Gemini thinking models output internal reasoning as paragraphs starting with 'thought '.
-        These paragraphs are separated by blank lines. The actual response follows after a blank line.
-        """
-        if not text:
-            return text
-
-        # Split into paragraphs (separated by blank lines)
-        paragraphs = text.split('\n\n')
-
-        # Keep only non-empty paragraphs that don't start with 'thought '
-        filtered = [p for p in paragraphs if p.strip() and not p.lstrip().startswith('thought ')]
-
-        return '\n\n'.join(filtered)
+        """Return text unchanged (thinking traces filtering removed)."""
+        return text if text else text
 
     def _estimate_tool_schema_tokens(self) -> int:
         """

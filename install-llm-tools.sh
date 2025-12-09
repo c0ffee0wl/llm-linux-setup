@@ -1129,6 +1129,7 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     install_apt_package maim
     install_apt_package xdotool
     install_apt_package flameshot
+    install_apt_package freerdp2-x11
 fi
 
 # Install/update uv
@@ -1482,14 +1483,11 @@ PLUGINS=(
     "llm-classify"
     "llm-consortium"
     "$SCRIPT_DIR/llm-tools-context"
-    "$SCRIPT_DIR/llm-tools-assistant"
     "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
     "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
     "git+https://github.com/c0ffee0wl/llm-tools-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-mcp"
-    "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
-    "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
 )
 
 for plugin in "${PLUGINS[@]}"; do
@@ -1960,6 +1958,16 @@ cp "$SCRIPT_DIR/context/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
 # Install Terminator assistant components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+    PLUGINS=(
+        "$SCRIPT_DIR/llm-tools-assistant"
+        "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
+        "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
+    )
+
+    for plugin in "${PLUGINS[@]}"; do
+        install_or_upgrade_llm_plugin "$plugin"
+    done
+
     log "Installing Terminator assistant integration..."
 
     # Remove old llm plugin if installed
@@ -1987,6 +1995,21 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Inject dbus-python dependency into llm tool environment
     log "Injecting dbus-python into llm tool environment..."
     uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" dbus-python
+
+    # Install imagemage - Gemini image generation CLI (only if Gemini configured)
+    if command llm keys get gemini &>/dev/null; then
+        if install_go; then
+            log "Installing imagemage (Gemini image generation CLI)..."
+            IMAGEMAGE_DIR="/tmp/imagemage-build"
+            rm -rf "$IMAGEMAGE_DIR"
+            git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
+            (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
+            rm -rf "$IMAGEMAGE_DIR"
+            log "imagemage installed to ~/.local/bin/imagemage"
+        fi
+    else
+        log "Skipping imagemage: Gemini not configured"
+    fi
 fi
 
 #############################################################################
@@ -2041,21 +2064,6 @@ if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
 else
     log "llm-micro plugin already installed, checking for updates..."
     (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
-fi
-
-# Install imagemage - Gemini image generation CLI (only if Gemini configured)
-if command llm keys get gemini &>/dev/null; then
-    if install_go; then
-        log "Installing imagemage (Gemini image generation CLI)..."
-        IMAGEMAGE_DIR="/tmp/imagemage-build"
-        rm -rf "$IMAGEMAGE_DIR"
-        git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
-        (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
-        rm -rf "$IMAGEMAGE_DIR"
-        log "imagemage installed to ~/.local/bin/imagemage"
-    fi
-else
-    log "Skipping imagemage: Gemini not configured"
 fi
 
 #############################################################################
