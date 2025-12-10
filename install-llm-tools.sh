@@ -1129,7 +1129,12 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     install_apt_package maim
     install_apt_package xdotool
     install_apt_package flameshot
-    install_apt_package freerdp2-x11
+    # freerdp3 on newer distros (Kali 2024+), freerdp2 on older
+    if apt-cache show freerdp3-x11 &>/dev/null; then
+        install_apt_package freerdp3-x11
+    else
+        install_apt_package freerdp2-x11
+    fi
 fi
 
 # Install/update uv
