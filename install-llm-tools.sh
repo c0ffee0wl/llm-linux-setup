@@ -1441,12 +1441,11 @@ uv cache clean --quiet 2>/dev/null || true
 # Clean up stale local plugin paths before upgrade (handles migration from local to git)
 cleanup_stale_local_plugin_paths
 
-# Remove old llm plugin if installed
-# Use -y to skip confirmation, stderr redirected to handle missing packages gracefully
-# Note: llm uninstall only removes from uv-tool-packages.json, not uv-receipt.toml
-command llm uninstall -y llm-tools-sidechat 2>/dev/null || true
-# Always clean uv-receipt.toml (handles partial uninstall or stale entries)
+# Remove old llm plugin from tracking files
+# Must clean uv-receipt.toml FIRST - llm uninstall fails if local path is invalid
 remove_plugin_from_uv_receipt "llm-tools-sidechat"
+# Then uninstall from uv-tool-packages.json (may already be gone, that's ok)
+command llm uninstall -y llm-tools-sidechat 2>/dev/null || true
 
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
