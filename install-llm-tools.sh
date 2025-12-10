@@ -992,19 +992,31 @@ cleanup_stale_local_plugin_paths() {
     fi
 }
 
-# Remove a specific plugin from uv-receipt.toml by name
-# Use this after `llm uninstall` which cleans uv-tool-packages.json but NOT uv-receipt.toml
-# Usage: remove_plugin_from_uv_receipt "plugin-name"
-remove_plugin_from_uv_receipt() {
+# Remove a specific plugin from both tracking files by name
+# Must clean both files to prevent llm-uv-tool from re-adding entries
+# Usage: remove_plugin_from_tracking "plugin-name"
+remove_plugin_from_tracking() {
     local plugin_name="$1"
+    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
     local uv_receipt_file="$HOME/.local/share/uv/tools/llm/uv-receipt.toml"
 
-    [ -f "$uv_receipt_file" ] || return 0
+    # Remove from uv-tool-packages.json (llm-uv-tool tracking)
+    if [ -f "$uv_packages_file" ]; then
+        if jq -e --arg name "$plugin_name" 'any(. == $name or endswith("/" + $name))' "$uv_packages_file" >/dev/null 2>&1; then
+            jq --arg name "$plugin_name" 'map(select(. != $name and (. | tostring | endswith("/" + $name) | not)))' \
+                "$uv_packages_file" > "${uv_packages_file}.tmp" && \
+                mv "${uv_packages_file}.tmp" "$uv_packages_file"
+            log "Removed $plugin_name from uv-tool-packages.json"
+        fi
+    fi
 
-    if grep -q "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file"; then
-        grep -v "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file" > "${uv_receipt_file}.tmp"
-        mv "${uv_receipt_file}.tmp" "$uv_receipt_file"
-        log "Removed $plugin_name from uv-receipt.toml"
+    # Remove from uv-receipt.toml (uv internal tracking)
+    if [ -f "$uv_receipt_file" ]; then
+        if grep -q "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file"; then
+            grep -v "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file" > "${uv_receipt_file}.tmp"
+            mv "${uv_receipt_file}.tmp" "$uv_receipt_file"
+            log "Removed $plugin_name from uv-receipt.toml"
+        fi
     fi
 }
 
@@ -1441,11 +1453,9 @@ uv cache clean --quiet 2>/dev/null || true
 # Clean up stale local plugin paths before upgrade (handles migration from local to git)
 cleanup_stale_local_plugin_paths
 
-# Remove old llm plugin from tracking files
-# Must clean uv-receipt.toml FIRST - llm uninstall fails if local path is invalid
-remove_plugin_from_uv_receipt "llm-tools-sidechat"
-# Then uninstall from uv-tool-packages.json (may already be gone, that's ok)
-command llm uninstall -y llm-tools-sidechat 2>/dev/null || true
+# Remove old llm plugin from both tracking files
+# Must clean BEFORE any llm operations - invalid local paths cause failures
+remove_plugin_from_tracking "llm-tools-sidechat"
 
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
