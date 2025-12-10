@@ -491,36 +491,20 @@ class TerminatorAssistantSession:
 
     def _get_current_terminal_uuid_early(self) -> Optional[str]:
         """
-        Get current terminal UUID via D-Bus BEFORE acquiring lock.
+        Get current terminal UUID from environment BEFORE acquiring lock.
         This enables tab-specific locking for multi-tab support.
+
+        Uses TERMINATOR_UUID environment variable which is stable and set
+        at terminal creation time (doesn't change when focus changes).
 
         Returns:
             Terminal UUID string, or None if not in Terminator
         """
-        try:
-            bus = dbus.SessionBus()
-
-            # Discover Terminator service (same logic as _reconnect_dbus)
-            terminator_services = [
-                name for name in bus.list_names()
-                if name.startswith('net.tenshu.Terminator2') and not name.endswith('.Assistant')
-            ]
-
-            if not terminator_services:
-                return None  # Not running in Terminator
-
-            service_name = terminator_services[0]
-            dbus_service = bus.get_object(service_name, '/net/tenshu/Terminator2')
-
-            # Get focused terminal UUID
-            focused = dbus_service.get_focused_terminal()
-            if not focused:
-                return None
-
-            return self._normalize_uuid(focused)
-
-        except Exception:
-            return None  # D-Bus not available or error
+        # Use TERMINATOR_UUID env var - stable, doesn't change with focus
+        env_uuid = os.environ.get('TERMINATOR_UUID')
+        if env_uuid:
+            return self._normalize_uuid(env_uuid)
+        return None  # Not running in Terminator
 
     def _check_existing_assistant_in_tab(self, terminal_uuid: str) -> bool:
         """
@@ -1150,11 +1134,9 @@ Shell: {env_type} {shell_info}
                     if not self._reconnect_dbus():
                         raise Exception("D-Bus reconnection failed")
 
-                # Get current (Chat) terminal UUID
-                focused_terminal = self.dbus_service.get_focused_terminal()
-                if not focused_terminal:
-                    raise Exception("No terminal is currently focused. Please focus a terminal and try again.")
-                self.chat_terminal_uuid = self._normalize_uuid(focused_terminal)
+                # Use early_terminal_uuid captured at startup to avoid race condition
+                # where user switches tabs before setup_terminals() is called
+                self.chat_terminal_uuid = self.early_terminal_uuid
 
                 # Check for existing Exec pane or offer to reuse single other pane
                 try:
@@ -1249,15 +1231,10 @@ Shell: {env_type} {shell_info}
         try:
             self.console.print("[yellow]Recreating Exec terminal...[/]")
 
-            # Get current focused terminal
-            focused_terminal = self.dbus_service.get_focused_terminal()
-            if not focused_terminal:
-                raise Exception("No terminal is currently focused. Cannot recreate Exec terminal.")
-            current_uuid = str(focused_terminal)
-
-            # Create new exec terminal (split to the right)
+            # Create new exec terminal by splitting from chat terminal
+            # Use chat_terminal_uuid (stable) instead of get_focused_terminal()
             exec_uuid = self.dbus_service.vsplit(
-                current_uuid,
+                self.chat_terminal_uuid,
                 dbus.Dictionary({'title': f'Assistant: Exec (Restored PID {os.getpid()})'}, signature='ss')
             )
             if str(exec_uuid).startswith('ERROR'):
@@ -3149,7 +3126,6 @@ Type !fragment <name> [...] to insert fragments""",
                     now = time.time()
                     if now - self._last_interrupt_time > 2.0:
                         self._last_interrupt_time = now
-                        self.console.print("\n[yellow]Press again to exit[/]")
                         continue
                     self.console.print("\n[yellow]Exiting...[/]")
                     break
