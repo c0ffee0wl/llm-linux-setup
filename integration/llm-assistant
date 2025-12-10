@@ -109,6 +109,70 @@ TUI_COMMANDS = {
 
 
 # =============================================================================
+# Spinner Animation
+# =============================================================================
+
+class Spinner:
+    """Animated spinner for long-running operations (context manager or manual control)."""
+
+    CHARS = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    CYAN = "\033[36m"
+    RESET = "\033[0m"
+
+    def __init__(self, message: str = ""):
+        self.message = message
+        self._running = False
+        self._thread = None
+        self._idx = 0
+
+    def __enter__(self):
+        self.start()
+        return self
+
+    def __exit__(self, *args):
+        self.stop()
+
+    def start(self):
+        """Start the spinner animation in a background thread."""
+        self._running = True
+        self._thread = threading.Thread(target=self._animate, daemon=True)
+        self._thread.start()
+
+    def stop(self):
+        """Stop the spinner and clear the line."""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=0.5)
+        self.clear()
+
+    def clear(self):
+        """Clear the spinner line."""
+        sys.stdout.write("\r" + " " * 80 + "\r")
+        sys.stdout.flush()
+
+    def update(self, message: str):
+        """Update the spinner message (thread-safe for simple assignment)."""
+        self.message = message
+
+    def tick(self, message: str = None):
+        """Manual tick for polling loops - update spinner once without threading."""
+        if message is not None:
+            self.message = message
+        spinner = self.CHARS[self._idx % len(self.CHARS)]
+        sys.stdout.write(f"\r{self.CYAN}{spinner} {self.message}\033[K{self.RESET}")
+        sys.stdout.flush()
+        self._idx += 1
+
+    def _animate(self):
+        while self._running:
+            spinner = self.CHARS[self._idx % len(self.CHARS)]
+            sys.stdout.write(f"\r{self.CYAN}{spinner} {self.message}\033[K{self.RESET}")
+            sys.stdout.flush()
+            time.sleep(0.1)
+            self._idx += 1
+
+
+# =============================================================================
 # Tool Setup
 # =============================================================================
 # External tool plugins that assistant can dispatch (easy to extend)
@@ -1395,8 +1459,8 @@ Shell: {env_type} {shell_info}
         # Initial delay for command to start
         time.sleep(initial_delay)
 
-        # Spinner animation
-        spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        # Spinner for visual feedback (manual tick mode for polling loop)
+        spinner = Spinner()
         content_changed = initial_content is None  # If no initial content, skip change detection
         content = ""  # Initialize to avoid NameError if loop doesn't execute
 
@@ -1412,30 +1476,27 @@ Shell: {env_type} {shell_info}
 
                 # Only check for prompt after content has changed
                 if content_changed and content and PromptDetector.detect_prompt_at_end(content):
-                    # Clear spinner and return
-                    sys.stdout.write("\r" + " " * 60 + "\r")
-                    sys.stdout.flush()
+                    spinner.clear()
                     return (True, content)
 
-                # Visual feedback
-                spinner = spinner_chars[attempt % len(spinner_chars)]
+                # Visual feedback with dynamic status
                 elapsed = initial_delay + (attempt * poll_interval)
                 status = "Waiting for output" if not content_changed else "Waiting for prompt"
-                sys.stdout.write(f"\r{spinner} {status} ({elapsed:.1f}s)")
-                sys.stdout.flush()
+                spinner.tick(f"{status} ({elapsed:.1f}s)")
 
                 time.sleep(poll_interval)
 
             except dbus.exceptions.DBusException as e:
+                spinner.clear()
                 self.console.print(f"[red]Plugin D-Bus error during capture: {e}[/]")
                 return (False, "")
             except Exception as e:
+                spinner.clear()
                 self.console.print(f"[red]Prompt-based capture error ({type(e).__name__}): {e}[/]")
                 return (False, "")
 
         # Timeout - return last content
-        sys.stdout.write("\r" + " " * 60 + "\r")
-        sys.stdout.flush()
+        spinner.clear()
         return (False, content if content else "")
 
     def _capture_last_command_output(self, terminal_uuid: str) -> str:
@@ -1761,16 +1822,55 @@ Shell: {env_type} {shell_info}
                 keep_section = f"\n\nIMPORTANT: Preserve full details about: {keep}"
 
             # Generate summary using a standalone prompt (not in conversation)
-            summary_prompt = f"""Summarize this conversation history concisely, focusing on:
-- Key technical issues discussed
-- Commands executed and their results
-- Important decisions or insights
-- Relevant context for continuing the conversation{keep_section}
+            summary_prompt = f"""Create a comprehensive summary of our entire conversation that will serve as complete context for continuing this work. 
+Structure your summary to capture both the narrative flow and technical details necessary for seamless continuation.
+
+Your summary must include these sections in order:
+
+## 1. User's Primary Goals and Intent
+Capture ALL explicit requests and objectives stated by the user throughout the conversation, preserving their exact priorities and constraints.
+
+## 2. Conversation Timeline and Progress
+Chronologically document the key phases of our work:
+- Initial requests and how they were addressed
+- Major decisions made and their rationale
+- Problems encountered and solutions applied
+- Current state of the work
+
+## 3. Technical Context and Decisions
+- Technologies, frameworks, and tools being used
+- Key technical constraints or requirements identified
+- Important patterns or conventions established
+
+## 4. Active Work and Last Actions
+CRITICAL: Detail EXACTLY what was being worked on in the most recent exchanges:
+- The specific task or problem being addressed
+- Last completed action
+- Any partial work or mid-implementation state
+- Include relevant command or code snippets from the most recent work
+
+## 5. Unresolved Issues and Pending Tasks
+- Any errors or issues still requiring attention
+- Tasks explicitly requested but not yet started
+- Decisions waiting for user input
+
+## 6. Additional Context
+- Relevant context for continuing the conversation
+{keep_section}
+
+## 7. Immediate Next Step
+State the SPECIFIC next action to take based on:
+- The user's most recent request
+- The current state of implementation
+- Any ongoing work that was interrupted
+
+Important: Be precise with technical details, file names, and code. The next agent reading this should be able to continue exactly where we left off without asking clarifying questions. Include enough detail that no context is lost, but remain focused on actionable information.
+
+Respond with ONLY the summary text following this structure - no additional commentary or meta-discussion.
 
 Previous messages:
 {chr(10).join(summary_parts)}
-
-Provide a brief but comprehensive summary."""
+"""
 
             summary_response = self.model.prompt(summary_prompt)
             summary = self._filter_thinking_traces(summary_response.text())
@@ -2366,7 +2466,7 @@ Instructions:
 /watch <goal>      Enable watch mode with goal
 /watch off         Disable watch mode
 /watch status      Show watch mode status
-/squash [keep]     Compress context (e.g., /squash keep API patterns)
+/squash <keep>    Compress context (e.g., /squash keep API patterns)
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -2959,15 +3059,14 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         print(f"\r\033[36mCapturing screenshot ({mode}): {i}s\033[K\033[0m", end="", flush=True)
                         time.sleep(1)
 
-                # Clear countdown, show capturing status (with newline so tool output appears on new line)
-                print(f"\r\033[36mCapturing screenshot ({mode})...\033[K\033[0m", flush=True)
-
                 # Call tool with delay=0 since we already waited
                 tool_args = dict(tool_args)
                 tool_args['delay'] = 0
 
+                # Use spinner while capturing
                 try:
-                    result = impl(**tool_args)
+                    with Spinner(f"Capturing screenshot ({mode})..."):
+                        result = impl(**tool_args)
                     self.console.print(f"[green]✓[/] {tool_name} completed")
 
                     # Handle ToolOutput return type
@@ -2988,7 +3087,6 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         tool_call_id=tool_call_id
                     )
                 except Exception as e:
-                    print(f"\r\033[K\033[0m")  # Clear line
                     self.console.print(f"[red]{tool_name} error: {e}[/]")
                     return ToolResult(
                         name=tool_call.name,
@@ -2997,18 +3095,21 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     )
 
             # Display primary parameter if configured, otherwise generic message
+            # Build status message for spinner
             if tool_name in EXTERNAL_TOOL_DISPLAY:
                 param_name, action_verb, _ = EXTERNAL_TOOL_DISPLAY[tool_name]
                 param_value = tool_args.get(param_name, '')
                 if param_value:
-                    self.console.print(f"\n[cyan]{action_verb}: {param_value}[/]")
+                    status_msg = f"{action_verb}: {param_value}"
                 else:
-                    self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+                    status_msg = f"Calling {tool_name}..."
             else:
-                self.console.print(f"\n[cyan]Calling {tool_name}...[/]")
+                status_msg = f"Calling {tool_name}..."
 
+            print()  # Newline before spinner
             try:
-                result = impl(**tool_args)
+                with Spinner(status_msg):
+                    result = impl(**tool_args)
                 self.console.print(f"[green]✓[/] {tool_name} completed")
 
                 # Handle ToolOutput return type (e.g., capture_screen with attachments)
