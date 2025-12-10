@@ -255,6 +255,9 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Cleans **two files**: `uv-tool-packages.json` (llm-uv-tool) and `uv-receipt.toml` (uv internal)
   - Scans for local paths (`/path/to/...`) that no longer exist on disk
   - Removes stale entries before llm upgrade to prevent failures
+- **`remove_plugin_from_tracking(plugin_name)`**: Remove a specific plugin by name from both tracking files (used in Phase 2)
+  - Use after `llm uninstall` which only cleans `uv-tool-packages.json`, not `uv-receipt.toml`
+  - Removes all entries matching the plugin name regardless of directory state
 - **`npm_install(package_name)`**: NPM global installation with retry logic (used in Phase 7)
   - 3 attempts with 2-second delay between retries
   - Handles ENOTEMPTY errors by detecting and removing conflicting directories

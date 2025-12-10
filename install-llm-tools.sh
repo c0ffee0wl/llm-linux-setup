@@ -992,6 +992,35 @@ cleanup_stale_local_plugin_paths() {
     fi
 }
 
+# Remove a specific plugin from both tracking files by name
+# Use this after `llm uninstall` which only cleans uv-tool-packages.json
+# Usage: remove_plugin_from_tracking "plugin-name"
+remove_plugin_from_tracking() {
+    local plugin_name="$1"
+    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
+    local uv_receipt_file="$HOME/.local/share/uv/tools/llm/uv-receipt.toml"
+
+    # Remove from uv-tool-packages.json
+    if [ -f "$uv_packages_file" ]; then
+        if jq -e --arg name "$plugin_name" 'map(select(. == $name or endswith("/" + $name))) | length > 0' "$uv_packages_file" >/dev/null 2>&1; then
+            jq --arg name "$plugin_name" 'map(select(. != $name and (endswith("/" + $name) | not)))' \
+                "$uv_packages_file" > "${uv_packages_file}.tmp" && \
+                mv "${uv_packages_file}.tmp" "$uv_packages_file"
+            log "Removed $plugin_name from uv-tool-packages.json"
+        fi
+    fi
+
+    # Remove from uv-receipt.toml
+    if [ -f "$uv_receipt_file" ]; then
+        if grep -q "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file"; then
+            local temp_file="${uv_receipt_file}.tmp"
+            grep -v "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file" > "$temp_file"
+            mv "$temp_file" "$uv_receipt_file"
+            log "Removed $plugin_name from uv-receipt.toml"
+        fi
+    fi
+}
+
 # Install Go if not present or version is insufficient
 # Returns 0 if Go is available (>= MIN_GO_VERSION), 1 otherwise
 # Only installs from apt - warns and skips if repo version is insufficient
@@ -1426,10 +1455,14 @@ uv cache clean --quiet 2>/dev/null || true
 cleanup_stale_local_plugin_paths
 
 # Remove old llm plugin if installed
+# Note: llm uninstall only removes from uv-tool-packages.json, not uv-receipt.toml
+# Must explicitly remove from both tracking files
 if command llm plugins 2>/dev/null | grep -q "llm-tools-sidechat"; then
     log "Removing old llm-tools-sidechat plugin..."
     command llm uninstall llm-tools-sidechat 2>/dev/null || true
 fi
+# Always try to remove from tracking files (handles case where plugin was partially uninstalled)
+remove_plugin_from_tracking "llm-tools-sidechat"
 
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
