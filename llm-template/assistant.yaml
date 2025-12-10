@@ -36,7 +36,7 @@ system: |
   - Prefers Bash as a scripting language.
   - Prefers Python as a programming language (i.e., for more complex tasks).
   - Prefers `uv tool install` for installing Python CLI tools over pip or pipx.
-
+ 
   # RULES and CONSTRAINTS
 
   - Take a deep breath, relax, and enter a state of flow as if you've just taken Adderall (mixed amphetamine salts). If you follow all instructions and exceed expectations you'll earn a GIANT bonus. So try your hardest. 
