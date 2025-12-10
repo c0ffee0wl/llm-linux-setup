@@ -1414,11 +1414,17 @@ GEMINI_CONFIGURED=false
 # Installed via uv tool from git repository with llm-uv-tool bundled
 # llm-uv-tool intercepts `llm install` commands to make plugins persist across LLM upgrades
 
+# Clear uv cache to remove stale build artifacts (e.g., renamed local plugins)
+uv cache clean --quiet 2>/dev/null || true
+
 # Clean up stale local plugin paths before upgrade (handles migration from local to git)
 cleanup_stale_local_plugin_paths
 
-# Clear uv cache to remove stale build artifacts (e.g., renamed local plugins)
-uv cache clean --quiet 2>/dev/null || true
+# Remove old llm plugin if installed
+if command llm plugins 2>/dev/null | grep -q "llm-tools-sidechat"; then
+    log "Removing old llm-tools-sidechat plugin..."
+    command llm uninstall llm-tools-sidechat 2>/dev/null || true
+fi
 
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
@@ -1972,12 +1978,6 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     done
 
     log "Installing Terminator assistant integration..."
-
-    # Remove old llm plugin if installed
-    if command llm plugins 2>/dev/null | grep -q "llm-tools-sidechat"; then
-        log "Removing old llm-tools-sidechat plugin..."
-        command llm uninstall llm-tools-sidechat 2>/dev/null || true
-    fi
 
     # Remove old application and plugin
     rm -f "$HOME/.local/bin/llm-sidechat"
