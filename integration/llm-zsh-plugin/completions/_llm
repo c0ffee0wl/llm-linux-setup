@@ -64,6 +64,7 @@ _llm() {
                 'prompt:Execute a prompt'
                 'chat:Hold an ongoing chat'
                 'code:Generate code without markdown formatting'
+                'assistant:Start the terminal assistant'
                 'rag:Work with RAG collections (routes to aichat)'
                 'keys:Manage stored API keys'
                 'logs:View and manage logs'
@@ -144,6 +145,16 @@ _llm() {
                         '-u[Show token usage]' \
                         '-x[Extract first code block]' \
                         '--xl[Extract last code block]'
+                    ;;
+                assistant)
+                    _llm_handle_options \
+                        '-m+[Model]:model:_llm_get_models' \
+                        '-q+[Model query (fuzzy match)]:query:_default' \
+                        '--debug[Enable debug output]' \
+                        '--max-context+[Max context tokens before auto-squash]:tokens:_default' \
+                        '-c[Continue the most recent conversation]' \
+                        '--cid+[Continue conversation with given ID]:id:_default' \
+                        '--no-log[Disable conversation logging to database]'
                     ;;
                 keys)
                     local -a subcommands=(

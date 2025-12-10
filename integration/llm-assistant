@@ -241,11 +241,17 @@ def is_tui_command(command: str) -> bool:
 class TerminatorAssistantSession:
     """Main assistant session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000):
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000,
+                 continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False):
         self.console = Console()
 
         # Debug mode flag
         self.debug = debug
+
+        # Conversation persistence settings
+        self.logging_enabled = not no_log
+        self.continue_ = continue_
+        self.conversation_id = conversation_id
 
         # Initialize shutdown state and lock file handle
         self._shutdown_initiated = False
@@ -290,7 +296,7 @@ class TerminatorAssistantSession:
                 self.console.print(f"  - {model.model_id}")
             sys.exit(1)
 
-        self.conversation = llm.Conversation(model=self.model)
+        self._init_conversation()
 
         # Store system prompt separately for reuse
         try:
@@ -1798,13 +1804,23 @@ Provide a brief but comprehensive summary."""
             self.pending_summary = summary
             self.system_prompt = self.original_system_prompt
 
+            # Save old conversation ID before creating new one
+            old_conversation_id = self.conversation.id
+
             # Create completely fresh conversation
             self.conversation = llm.Conversation(model=self.model)
+            new_conversation_id = self.conversation.id
+
+            # Record link between old and new conversation for --continue tracking
+            if self.logging_enabled:
+                self._record_squash_link(old_conversation_id, new_conversation_id)
 
             # Clear per-terminal content hashes (summary replaces full history)
             self.terminal_content_hashes.clear()
 
             self.console.print(f"[green]✓[/] Context squashed")
+            self.console.print(f"[cyan]New session: {new_conversation_id}[/]")
+            self.console.print(f"[dim](Previous: {old_conversation_id})[/]")
             self.console.print(f"[cyan]Summary will be included with your next message[/]")
 
         except Exception as e:
@@ -1826,6 +1842,112 @@ Provide a brief but comprehensive summary."""
         if response.prompt and response.prompt.attachments:
             response.attachments = list(response.prompt.attachments)
         return response
+
+    def _strip_context(self, prompt_text):
+        """Remove [Current terminal context] section from prompt before DB storage.
+
+        Terminal context is ephemeral and captured fresh on each prompt.
+        Storing it would bloat the DB and expose sensitive terminal content.
+        """
+        if not prompt_text:
+            return prompt_text
+        return re.sub(r'\n\[Current terminal context\]\n.*$', '', prompt_text, flags=re.DOTALL)
+
+    def _log_response(self, response):
+        """Log response to database with context stripping.
+
+        Strips terminal context from prompts before saving to preserve privacy
+        while maintaining conversation history for --continue functionality.
+        """
+        if not self.logging_enabled:
+            return
+        if not hasattr(response, 'log_to_db'):
+            return
+
+        db = sqlite_utils.Database(logs_db_path())
+        # Strip terminal context and restore to preserve in-memory history
+        original_prompt = response.prompt._prompt
+        response.prompt._prompt = self._strip_context(original_prompt)
+        try:
+            response.log_to_db(db)
+        finally:
+            response.prompt._prompt = original_prompt
+
+    def _init_conversation(self):
+        """Initialize conversation, optionally loading from database.
+
+        Handles -c (continue most recent) and --cid (continue specific ID) flags.
+        Falls back to creating a new conversation if not continuing or if loading fails.
+        """
+        if self.continue_ or self.conversation_id:
+            cid = self.conversation_id  # None means "most recent"
+            try:
+                from llm.cli import load_conversation
+                import click
+                loaded = load_conversation(cid)
+                if loaded:
+                    self.conversation = loaded
+                    self.model = loaded.model
+                    # Check for linked conversations (squash chain)
+                    self._load_squash_chain_info(loaded.id)
+                    self.console.print(f"[green]Continuing conversation {loaded.id}[/]")
+                    self.console.print(f"  {len(loaded.responses)} previous exchanges loaded")
+                    return
+                else:
+                    self.console.print("[yellow]No previous conversations found, starting fresh[/]")
+            except click.ClickException as e:
+                # load_conversation raises ClickException if specific ID not found
+                self.console.print(f"[red]Could not load conversation: {e.message}[/]")
+                sys.exit(1)
+            except Exception as e:
+                self.console.print(f"[yellow]Warning: Could not load conversation: {e}[/]")
+
+        # Create new conversation
+        self.conversation = llm.Conversation(model=self.model)
+        if self.logging_enabled:
+            self.console.print(f"Session: [cyan]{self.conversation.id}[/]")
+
+    def _record_squash_link(self, old_id, new_id):
+        """Record link between squashed conversations.
+
+        Stores link in ~/.config/io.datasette.llm/squash-links.json
+        to allow tracking conversation history across squash boundaries.
+        """
+        from datetime import datetime
+        llm_config_dir = Path.home() / '.config' / 'io.datasette.llm'
+        links_path = llm_config_dir / 'squash-links.json'
+        llm_config_dir.mkdir(parents=True, exist_ok=True)
+
+        links = {}
+        if links_path.exists():
+            try:
+                links = json.loads(links_path.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass  # Start fresh if file is corrupted
+
+        links[new_id] = {'previous': old_id, 'squashed_at': datetime.utcnow().isoformat()}
+        links_path.write_text(json.dumps(links, indent=2))
+
+    def _load_squash_chain_info(self, conversation_id):
+        """Load info about squash chain for a conversation.
+
+        Displays info if this conversation was created from a squash operation.
+        """
+        llm_config_dir = Path.home() / '.config' / 'io.datasette.llm'
+        links_path = llm_config_dir / 'squash-links.json'
+        if not links_path.exists():
+            return
+
+        try:
+            links = json.loads(links_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            return
+
+        # Check if this conversation has a previous squash
+        if conversation_id in links:
+            prev_id = links[conversation_id].get('previous')
+            if prev_id:
+                self.console.print(f"  (Squashed from: {prev_id})")
 
     def process_fragments(self, prompt: str):
         """
@@ -2220,6 +2342,8 @@ Instructions:
                                     stream=False  # Reduce lock hold time
                                 )
                                 response_text = self._filter_thinking_traces(response.text())
+                                # Log watch mode response to database
+                                self._log_response(response)
                             except Exception as response_error:
                                 # Don't update hash on error - will retry next iteration
                                 self.previous_watch_context_hash = None
@@ -3148,6 +3272,10 @@ Type !fragment <name> [...] to insert fragments""",
                         # Extract tool calls from the response (structured output)
                         tool_calls = list(response.tool_calls())
 
+                        # Log response to database for --continue functionality
+                        # INSIDE lock to prevent race with watch mode reading stripped prompt
+                        self._log_response(response)
+
                     # Display the response OUTSIDE lock (already consumed)
                     # Note: With tool calling, the model's text output is separate from tool calls
                     if response_text.strip():
@@ -3217,6 +3345,10 @@ Type !fragment <name> [...] to insert fragments""",
                                     # Check if the model made more tool calls
                                     more_tool_calls = list(followup_response.tool_calls())
 
+                                    # Log followup response to database
+                                    # INSIDE lock to prevent race with watch mode reading stripped prompt
+                                    self._log_response(followup_response)
+
                                 # Display the AI's response
                                 if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
                                     self.console.print("\n[bold green]llm[/]")
@@ -3255,6 +3387,10 @@ Type !fragment <name> [...] to insert fragments""",
                                     )
                                     response_text = self._filter_thinking_traces(attachment_response.text())
                                     more_calls = list(attachment_response.tool_calls())
+
+                                    # Log attachment response to database
+                                    # INSIDE lock to prevent race with watch mode reading stripped prompt
+                                    self._log_response(attachment_response)
 
                                 # Display response
                                 if response_text.strip():
@@ -3317,6 +3453,23 @@ def main():
         default=800000,
         help='Max context tokens before auto-squash (default: 800000)'
     )
+    # Conversation persistence flags (llm-compatible)
+    parser.add_argument(
+        '-c', '--continue',
+        dest='continue_',  # Underscore because 'continue' is a Python keyword
+        action='store_true',
+        help='Continue the most recent conversation'
+    )
+    parser.add_argument(
+        '--cid', '--conversation',
+        dest='conversation_id',
+        help='Continue conversation with given ID'
+    )
+    parser.add_argument(
+        '--no-log',
+        action='store_true',
+        help='Disable conversation logging to database'
+    )
     args = parser.parse_args()
 
     # Resolve model: -m flag > query > default
@@ -3330,7 +3483,10 @@ def main():
     session = TerminatorAssistantSession(
         model_name=model_name,
         debug=args.debug,
-        max_context_size=args.max_context
+        max_context_size=args.max_context,
+        continue_=args.continue_,
+        conversation_id=args.conversation_id,
+        no_log=args.no_log
     )
     session.run()
 

@@ -1417,6 +1417,9 @@ GEMINI_CONFIGURED=false
 # Clean up stale local plugin paths before upgrade (handles migration from local to git)
 cleanup_stale_local_plugin_paths
 
+# Clear uv cache to remove stale build artifacts (e.g., renamed local plugins)
+uv cache clean --quiet 2>/dev/null || true
+
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
@@ -2123,18 +2126,22 @@ log "Cleaning uv cache..."
 uv cache clean
 
 #############################################################################
-# PHASE 8: Browser Automation (Blueprint MCP)
+# PHASE 8: Browser Automation (Blueprint MCP) - only if Terminator is installed
 #############################################################################
 
-# Firefox is pre-installed on Kali, install if missing
-if ! command -v firefox &>/dev/null; then
-    log "Installing Firefox..."
-    install_apt_package firefox-esr
-fi
+if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+    # Firefox is pre-installed on Kali, install if missing
+    if ! command -v firefox &>/dev/null; then
+        log "Installing Firefox..."
+        install_apt_package firefox-esr
+    fi
 
-# Install/upgrade Blueprint MCP server
-log "Installing/updating Blueprint MCP server..."
-install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
+    # Install/upgrade Blueprint MCP server
+    log "Installing/updating Blueprint MCP server..."
+    install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
+else
+    log "Skipping Browser Automation (Terminator not installed)"
+fi
 
 # TODO: Add Blueprint MCP to MCP config - commented out until MCP integration is working
 # MCP_CONFIG_FILE="$HOME/.llm-tools-mcp/mcp.json"

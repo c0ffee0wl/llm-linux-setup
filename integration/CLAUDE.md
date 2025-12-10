@@ -229,6 +229,11 @@ Model selection (llm-compatible):
 - `-m, --model MODEL` - LLM model to use (e.g., `llm-assistant -m azure/gpt-4.1-mini`)
 - `-q, --query QUERY` - Select model by fuzzy matching (can be used multiple times, e.g., `-q haiku -q claude`)
 
+Conversation persistence (llm-compatible):
+- `-c, --continue` - Continue the most recent conversation
+- `--cid ID` - Continue conversation with given ID
+- `--no-log` - Disable conversation logging to database
+
 Other options:
 - `--debug` - Enable debug output for troubleshooting
 - `--max-context TOKENS` - Max context tokens before auto-squash (default: 800000)
@@ -239,13 +244,42 @@ llm-assistant -m azure/gpt-4.1-mini    # explicit model
 llm-assistant -q opus                   # fuzzy match for "opus"
 llm-assistant -q haiku -q claude        # first model matching both "haiku" AND "claude"
 llm assistant -m gemini-2.5-flash       # via llm wrapper
+llm assistant -c                        # continue most recent conversation
+llm assistant --cid 01abc123def...      # continue specific conversation
 ```
+
+## Conversation Persistence
+
+Conversations are automatically logged to the llm database (`~/.config/io.datasette.llm/logs.db`), enabling:
+
+- **Resume across sessions**: Continue where you left off with `-c` or `--cid`
+- **Search conversation history**: Use `llm logs` to view past assistant interactions
+- **Consistent UX**: Same conversation model as `llm chat`
+
+**What's stored:**
+- User prompts (with terminal context stripped for privacy)
+- AI responses
+- Tool calls and results
+- Token usage and timing
+
+**What's NOT stored:**
+- Terminal context (captured live on each prompt)
+- Watch mode state
+- Loaded knowledge bases
+
+**Context Squashing and Conversation Links:**
+When context is squashed, a new conversation is created and linked to the previous one. Links are stored in `~/.config/io.datasette.llm/squash-links.json`. The assistant displays the link when resuming a conversation that was created from a squash.
+
+**Disabling logging:**
+Use `--no-log` to run without database persistence (conversation won't be resumable).
 
 ## Technical Implementation
 
 - **Content flow**: VTE terminals → Plugin (get_text_range_format) → llm.Conversation → streaming response
 - **Terminal management**: D-Bus `hsplit`, `get_terminals`, `get_focused_terminal` (existing API)
 - **Conversation continuity**: Uses `llm.Conversation()` objects with auto-squashing
+- **Database logging**: Uses `response.log_to_db()` to store conversations in llm's `logs.db`
+- **Context stripping**: Terminal context removed from prompts before database storage (privacy)
 - **Self-awareness**: Filters out `self.chat_terminal_uuid` when capturing context
 - **Tool calling**: Uses llm's tool_calls() for structured command extraction with schema validation
 - **Execution**: `vte.feed_child()` via plugin
@@ -263,6 +297,10 @@ llm assistant -m gemini-2.5-flash       # via llm wrapper
 - `~/.local/bin/llm-assistant` - Application binary
 - `~/.config/terminator/plugins/terminator_assistant.py` - Plugin
 - `~/.config/io.datasette.llm/templates/terminator-assistant.yaml` - Template
+
+### Data Locations
+- `~/.config/io.datasette.llm/logs.db` - Conversation database (shared with llm CLI)
+- `~/.config/io.datasette.llm/squash-links.json` - Conversation squash chain links
 
 ## Troubleshooting
 
