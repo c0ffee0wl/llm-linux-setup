@@ -2018,7 +2018,8 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     mkdir -p "$HOME/.config/terminator/plugins"
     cp "$SCRIPT_DIR/integration/terminator-assistant-plugin/terminator_assistant.py" \
        "$HOME/.config/terminator/plugins/terminator_assistant.py"
-    log "Terminator assistant plugin installed. Enable it in Terminator Preferences > Plugins"
+    log "Terminator assistant plugin installed"
+    warn "Enable plugin: Terminator → Preferences → Plugins → ☑ TerminatorAssistant"
 
     # Install llm-assistant application and its dependencies
     cp "$SCRIPT_DIR/integration/llm-assistant" "$HOME/.local/bin/llm-assistant"
@@ -2054,6 +2055,9 @@ log "Installing/updating additional tools..."
 
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
+
+# Install/update tldr (community-driven man pages with practical examples)
+install_or_upgrade_uv_tool tldr
 
 # Install/update whisper-ctranslate2 (faster-whisper CLI for speech-to-text)
 install_or_upgrade_uv_tool whisper-ctranslate2
@@ -2212,6 +2216,7 @@ log "  - micro (modern terminal text editor with llm-micro plugin for AI integra
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
 log "  - files-to-prompt (file content formatter)"
+log "  - tldr (community-driven man pages with practical examples)"
 log "  - argc (Bash CLI framework, enables optional llm-functions)"
 log "  - asciinema (terminal session recorder)"
 log "  - transcribe (speech-to-text using faster-whisper, 99+ languages)"

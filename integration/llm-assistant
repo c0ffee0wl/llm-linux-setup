@@ -50,10 +50,23 @@ from pathlib import Path
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
-from rich.prompt import Confirm, Prompt
+from rich.prompt import Confirm as _RichConfirm, InvalidResponse, Prompt
 from rich.status import Status
 from rich.text import Text
 from typing import List, Optional, Tuple, Dict
+
+
+class Confirm(_RichConfirm):
+    """Extended Confirm that accepts 'yes'/'no' in addition to 'y'/'n'."""
+
+    def process_response(self, value: str) -> bool:
+        value = value.strip().lower()
+        if value in ("y", "yes"):
+            return True
+        elif value in ("n", "no"):
+            return False
+        else:
+            raise InvalidResponse(self.validate_error_message)
 
 
 # Import shared prompt detection module
@@ -3108,6 +3121,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             try:
                 with Spinner(status_msg, console=self.console):
                     result = impl(**tool_args)
+                self.console.print(f"[dim cyan]{status_msg}[/]")
                 self.console.print(f"[green]✓[/] {tool_name} completed")
 
                 # Handle ToolOutput return type (e.g., capture_screen with attachments)
@@ -3225,8 +3239,9 @@ Type !fragment <name> [...] to insert fragments""",
                     now = time.time()
                     if now - self._last_interrupt_time > 2.0:
                         self._last_interrupt_time = now
+                        self.console.print("[grey70](press again within 2 seconds to exit)[/]", end="")
                         continue
-                    self.console.print("\n[yellow]Exiting...[/]")
+                    self.console.print("\n\n[yellow]Exiting...[/]")
                     break
 
                 # Handle !multi command (start multi-line mode)
@@ -3382,8 +3397,8 @@ Type !fragment <name> [...] to insert fragments""",
                                 tool_results.append(self._process_tool_call(tool_call))
 
                             # After processing all tool calls, send results back to model
-                            # Loop to handle multi-round tool calling (max 5 iterations for safety)
-                            MAX_TOOL_ITERATIONS = 5
+                            # Loop to handle multi-round tool calling (max 10 iterations for safety)
+                            MAX_TOOL_ITERATIONS = 10
                             iteration = 0
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
