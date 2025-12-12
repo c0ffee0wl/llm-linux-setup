@@ -309,7 +309,7 @@ $sshCapability = Get-WindowsCapability -Online | Where-Object { $_.Name -like "O
 if ($sshCapability.State -eq "Installed") {
     Write-Log "OpenSSH Server is already installed"
 } else {
-    Write-Log "Installing OpenSSH Server from Windows Features..."
+    Write-Log "Installing OpenSSH Server from Windows Features (this may take a few minutes)..."
 
     try {
         Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
