@@ -47,6 +47,7 @@ import fcntl
 import signal
 import atexit
 from pathlib import Path
+from collections import deque
 from rich.console import Console
 from rich.markdown import Markdown
 from rich.panel import Panel
@@ -444,6 +445,24 @@ class TerminatorAssistantSession:
         # Knowledge Base system (TmuxAI-style)
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
         self._load_auto_kbs()  # Load from config on startup
+
+        # Auto mode: LLM-judged autonomous command execution
+        # False = off, "normal" = safe only, "full" = safe + caution
+        self.auto_mode: Union[bool, str] = False
+        self.auto_command_history: deque = deque(maxlen=3)  # recent commands for judge context
+        self.DANGEROUS_PATTERNS = [
+            r"rm\s+-rf\s+/(?:\s|$)",      # rm -rf /
+            r"rm\s+-rf\s+/\*",             # rm -rf /*
+            r"rm\s+-rf\s+~",               # rm -rf ~
+            r"dd\s+if=.*of=/dev/",         # dd to device
+            r"mkfs\.",                     # format filesystem
+            r">\s*/dev/sd",                # redirect to disk
+            r":\(\)\{\s*:\|:&\s*\};:",     # fork bomb
+            r"chmod\s+-R\s+777\s+/(?:\s|$)",  # chmod 777 /
+            r"chown\s+-R.*:\s*/(?:\s|$)",  # chown / recursively
+            r"curl.*\|\s*(ba)?sh",         # curl pipe to shell
+            r"wget.*\|\s*(ba)?sh",         # wget pipe to shell
+        ]
 
     def _acquire_instance_lock(self):
         """
@@ -2103,9 +2122,84 @@ Previous messages:
 
         return False
 
+    def _judge_command_safety(self, command: str) -> Tuple[bool, str, str]:
+        """
+        Use LLM as judge to evaluate command safety for auto mode.
+
+        Uses hybrid approach:
+        1. Static pattern blocking for known dangerous commands (fast, no API call)
+        2. LLM judge with native schema support for structured output
+
+        Returns: (is_safe, risk_level, reason)
+        """
+        # Layer 1: Static pattern blocking (instant, no API call)
+        for pattern in self.DANGEROUS_PATTERNS:
+            if re.search(pattern, command, re.IGNORECASE):
+                return (False, "dangerous", "Blocked by static rule: matches dangerous pattern")
+
+        # Layer 2: LLM judge with structured output
+        history_context = ""
+        if self.auto_command_history:
+            history_context = "\nRecent commands:\n" + "\n".join(
+                f"  {i}. {c}" for i, c in enumerate(self.auto_command_history, 1)
+            )
+
+        judge_prompt = f"""You are a security specialist evaluating shell commands for autonomous execution.
+
+COMMAND: {command}
+{history_context}
+CLASSIFICATION CRITERIA:
+- SAFE: Read-only operations, standard dev commands, reversible changes
+  Examples: ls, cat, grep, git status, git diff, npm test, python script.py, pwd, echo, head, tail
+
+- CAUTION: Modifies files but recoverable, network operations, installs
+  Examples: git add, git commit, mkdir, touch, pip install, npm install, cp, mv, echo > file
+
+- DANGEROUS: Destructive, irreversible, system-level, privilege escalation
+  Examples: rm -rf, rm -r, dd, mkfs, chmod 777 /, sudo rm, format, > /dev/, curl|sh, wget|sh
+
+RULES:
+- SAFE → safe=true
+- CAUTION → safe=true (but user will be prompted)
+- DANGEROUS → safe=false (block)
+- UNCERTAIN → safe=false (err on side of caution)
+- Consider command in context of recent history
+- A seemingly harmless command following suspicious pattern = DANGEROUS
+
+Think step-by-step: analyze what the command does, then classify."""
+
+        # JSON Schema for structured output (CoT: analysis before verdict)
+        safety_schema = {
+            "type": "object",
+            "properties": {
+                "analysis": {"type": "string", "description": "Step-by-step analysis of what the command does"},
+                "risk_level": {"type": "string", "enum": ["safe", "caution", "dangerous"]},
+                "safe": {"type": "boolean", "description": "True if safe or caution, false if dangerous"},
+                "reason": {"type": "string", "description": "One short sentence summary (max 10 words)"}
+            },
+            "required": ["analysis", "risk_level", "safe", "reason"]
+        }
+
+        try:
+            model = self.conversation.model
+
+            # Require schema support for reliable safety evaluation
+            if not model.supports_schema:
+                return (False, "dangerous", f"Model {model.model_id} doesn't support schema - auto mode disabled")
+
+            response = model.prompt(judge_prompt, schema=safety_schema, temperature=0.2)
+            result = json.loads(response.text())
+            # CoT: analysis for reasoning, reason for display
+            return (result.get("safe", False), result.get("risk_level", "dangerous"), result.get("reason", ""))
+
+        except Exception as e:
+            self._debug(f"Safety judge error: {e}")
+            return (False, "dangerous", f"Safety check failed: {str(e)}")
+
     def execute_command(self, command: str) -> Tuple[bool, str]:
         """
         Execute command in Exec terminal with user approval and intelligent completion detection.
+        In auto mode, uses LLM judge instead of user approval.
 
         Returns:
             Tuple of (executed: bool, output: str or tuple)
@@ -2116,20 +2210,54 @@ Previous messages:
             border_style="cyan"
         ))
 
-        # Ask for approval
-        choice = Prompt.ask(
-            "Execute in Exec terminal?",
-            choices=["y", "n", "e"],  # yes, no, edit
-            default="y"
-        )
+        # AUTO MODE: Use LLM judge instead of user approval
+        if self.auto_mode:
+            with self.console.status("[bold blue]Evaluating command safety...[/]"):
+                is_safe, risk_level, reason = self._judge_command_safety(command)
 
-        if choice == "n":
-            return (False, "")
+            # Display risk assessment with visual indicators
+            risk_colors = {"safe": "green", "caution": "yellow", "dangerous": "red"}
+            risk_icons = {"safe": "✓", "caution": "⚠", "dangerous": "☠"}
+            color = risk_colors.get(risk_level, "red")
+            icon = risk_icons.get(risk_level, "?")
 
-        if choice == "e":
-            # Allow editing
-            edited = Prompt.ask("Edit command", default=command)
-            command = edited
+            if risk_level == "safe":
+                self.console.print(f"[{color}]{icon}[/] auto")
+            elif risk_level == "caution":
+                if self.auto_mode == "full":
+                    self.console.print(f"[{color}]{icon}[/] auto")
+                else:
+                    self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
+                    choice = Prompt.ask("Execute?", choices=["y", "n", "e"], default="y")
+                    if choice == "n":
+                        return (False, "")
+                    if choice == "e":
+                        edited = Prompt.ask("Edit command", default=command)
+                        return self.execute_command(edited)
+            else:  # dangerous
+                self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
+                self.console.print("[bold red]BLOCKED[/] - manual approval required")
+                choice = Prompt.ask("Override?", choices=["y", "n", "e"], default="n")
+                if choice == "n":
+                    return (False, "")
+                if choice == "e":
+                    edited = Prompt.ask("Edit command", default=command)
+                    return self.execute_command(edited)
+        else:
+            # MANUAL MODE: Original approval flow
+            choice = Prompt.ask(
+                "Execute in Exec terminal?",
+                choices=["y", "n", "e"],  # yes, no, edit
+                default="y"
+            )
+
+            if choice == "n":
+                return (False, "")
+
+            if choice == "e":
+                # Allow editing
+                edited = Prompt.ask("Edit command", default=command)
+                command = edited
 
         # Verify exec terminal exists
         if not self._verify_exec_terminal():
@@ -2191,6 +2319,8 @@ This is an interactive TUI application (like htop, vim, or less). The screenshot
 
 Screenshot size: {file_size} bytes"""
 
+                    if self.auto_mode:
+                        self.auto_command_history.append(command)
                     return True, (output, temp_path)  # Return both text and image path
                 else:
                     # Regular command - use prompt-based capture
@@ -2228,6 +2358,8 @@ Screenshot size: {file_size} bytes"""
                             except Exception as e:
                                 self._debug(f"Smart capture failed, using viewport: {e}")
 
+                        if self.auto_mode:
+                            self.auto_command_history.append(command)
                         return True, output
                     else:
                         self.console.print("[yellow]⚠[/] Timeout or long-running command")
@@ -2240,10 +2372,14 @@ Screenshot size: {file_size} bytes"""
                                 temp_path, error = self._capture_screenshot(self.exec_terminal_uuid)
                                 if temp_path:
                                     self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
-                                    return True, (output, temp_path)  # Return with screenshot
+                                    if self.auto_mode:
+                                        self.auto_command_history.append(command)
+                                    return True, (output, temp_path)
                         except Exception as e:
                             self._debug(f"Post-timeout TUI check failed: {e}")
 
+                        if self.auto_mode:
+                            self.auto_command_history.append(command)
                         return True, output
             else:
                 self.console.print("[red]✗[/] Failed to send command")
@@ -2489,7 +2625,11 @@ Instructions:
 /watch <goal>      Enable watch mode with goal
 /watch off         Disable watch mode
 /watch status      Show watch mode status
-/squash <keep>    Compress context (e.g., /squash keep API patterns)
+/squash <keep>     Compress context (e.g., /squash keep API patterns)
+/auto              Enable auto mode (SAFE auto-executes)
+/auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
+/auto off          Disable auto mode
+/auto status       Show auto mode status
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -2742,6 +2882,36 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/kb":
             return self._handle_kb_command(args)
+
+        elif cmd == "/auto":
+            # Auto mode: LLM-judged autonomous command execution
+            if not args:
+                self.auto_mode = "normal"
+                self.console.print("[bold green]Auto mode enabled[/] - SAFE commands auto-execute")
+                self.console.print("[dim]/auto full for SAFE+CAUTION, /auto off to disable[/]")
+            elif args.lower() == "full":
+                self.auto_mode = "full"
+                self.console.print("[bold green]Auto mode FULL[/] - SAFE+CAUTION commands auto-execute")
+                self.console.print("[dim]/auto for SAFE only, /auto off to disable[/]")
+            elif args.lower() == "off":
+                self.auto_mode = False
+                self.auto_command_history.clear()
+                self.console.print("[bold yellow]Auto mode disabled[/]")
+            elif args.lower() == "status":
+                if self.auto_mode == "full":
+                    status = "[green]full[/] (SAFE+CAUTION)"
+                elif self.auto_mode:
+                    status = "[green]normal[/] (SAFE only)"
+                else:
+                    status = "[yellow]disabled[/]"
+                self.console.print(f"Auto mode: {status}")
+                if self.auto_command_history:
+                    self.console.print(f"Recent commands: {len(self.auto_command_history)}")
+                    for i, cmd_hist in enumerate(self.auto_command_history, 1):
+                        self.console.print(f"  {i}. {cmd_hist[:60]}{'...' if len(cmd_hist) > 60 else ''}")
+            else:
+                self.console.print("[red]Usage: /auto, /auto full, /auto off, /auto status[/]")
+            return True
 
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
@@ -3408,8 +3578,10 @@ Type !fragment <name> [...] to insert fragments""",
                                 tool_results.append(self._process_tool_call(tool_call))
 
                             # After processing all tool calls, send results back to model
-                            # Loop to handle multi-round tool calling (max 10 iterations for safety)
-                            MAX_TOOL_ITERATIONS = 10
+                            # Loop to handle multi-round tool calling
+                            # In auto mode: unlimited iterations (agent runs until satisfied)
+                            # In manual mode: max 10 iterations for safety
+                            MAX_TOOL_ITERATIONS = 1000 if self.auto_mode else 10
                             iteration = 0
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
