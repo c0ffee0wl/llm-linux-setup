@@ -145,14 +145,19 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 
 ## Input Modes
 
-The bottom status bar shows the current input mode and available keybindings:
-
 - **Single-line mode** (default): Press Enter to submit
-- **Multi-line mode**: Press Enter for newlines, Alt+Enter to submit
+- **Multi-line mode**: Type `!multi` to enter, `!end` to finish and submit
 
 **Keybindings:**
-- `Ctrl+Space` - Toggle between single-line and multi-line modes
+- `Ctrl+Space` - Toggle voice input (start/stop recording)
 - `Ctrl+D` - Exit assistant
+- `Ctrl+C` - Double-press within 2 seconds to exit
+
+**Voice Input:**
+- Press `Ctrl+Space` to start recording (shows 🎤 Recording...)
+- Press `Ctrl+Space` again to stop and transcribe
+- Uses onnx-asr with Parakeet TDT model (lazy-loaded on first use)
+- Transcribed text is inserted at cursor position
 
 **Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
@@ -197,6 +202,8 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 - Python 3.8+
 - PyGObject (for GTK/VTE bindings)
 - D-Bus (for terminal management)
+- prompt_toolkit (for keybindings)
+- sounddevice, numpy, onnx-asr (optional, for voice input)
 
 ## Usage Examples
 

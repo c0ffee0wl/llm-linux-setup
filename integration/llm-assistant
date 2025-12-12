@@ -49,12 +49,147 @@ import atexit
 from pathlib import Path
 from collections import deque
 from rich.console import Console
+from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Confirm as _RichConfirm, InvalidResponse, Prompt
 from rich.status import Status
 from rich.text import Text
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Union
+
+# Voice input (optional - graceful degradation if not installed)
+try:
+    import sounddevice as sd
+    import numpy as np
+    VOICE_AVAILABLE = True
+except ImportError:
+    VOICE_AVAILABLE = False
+
+# prompt_toolkit for keybindings (Ctrl+Space for voice)
+from prompt_toolkit import PromptSession
+from prompt_toolkit.key_binding import KeyBindings
+from prompt_toolkit.styles import Style as PTStyle
+
+
+class VoiceInput:
+    """Speech-to-text input using onnx-asr and sounddevice."""
+
+    def __init__(self, console):
+        self.console = console
+        self.recording = False
+        self.audio_chunks = []
+        self.sample_rate = 16000
+        self.model = None
+        self.stream = None
+        self._recording_live = None
+
+    def _lazy_load_model(self) -> bool:
+        """Load ASR model on first use (avoids startup delay)."""
+        if self.model is None:
+            try:
+                import onnx_asr
+            except ImportError:
+                self.console.print("[red]onnx-asr not installed. Re-run install-llm-tools.sh[/]")
+                return False
+            try:
+                # Suppress HuggingFace download progress bars (model cached after first download)
+                os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+                self.model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3")
+            except Exception as e:
+                self.console.print(f"[red]Failed to load speech model: {e}[/]")
+                return False
+        return True
+
+    def _audio_callback(self, indata, frames, time_info, status):
+        """Callback for sounddevice stream."""
+        if self.recording:
+            self.audio_chunks.append(indata.copy())
+
+    def _reprint_prompt(self):
+        """Reprint the input prompt after Live/Status display."""
+        self.console.print("[bold cyan]>[/] ", end="")
+
+    def start(self) -> bool:
+        """Start recording audio."""
+        if not VOICE_AVAILABLE:
+            self.console.print("[red]Voice input unavailable. Re-run install-llm-tools.sh[/]")
+            return False
+
+        if self.recording:
+            return False
+
+        self.audio_chunks = []
+        self.recording = True
+
+        try:
+            self.stream = sd.InputStream(
+                samplerate=self.sample_rate,
+                channels=1,
+                dtype=np.float32,
+                callback=self._audio_callback
+            )
+            self.stream.start()
+            # Show recording indicator
+            self._recording_live = Live(
+                Text("🎤 Recording...", style="dim red"),
+                console=self.console,
+                transient=True
+            )
+            self._recording_live.start()
+            return True
+        except Exception as e:
+            self.console.print(f"[red]Failed to start recording: {e}[/]")
+            self.recording = False
+            return False
+
+    def stop(self) -> Optional[str]:
+        """Stop recording and transcribe."""
+        if not self.recording:
+            return None
+
+        self.recording = False
+
+        # Stop recording indicator
+        if self._recording_live:
+            self._recording_live.stop()
+            self._recording_live = None
+
+        if self.stream:
+            self.stream.stop()
+            self.stream.close()
+            self.stream = None
+
+        if not self.audio_chunks:
+            self._reprint_prompt()
+            return None
+
+        # Combine audio chunks
+        audio = np.concatenate(self.audio_chunks, axis=0).flatten()
+
+        # Load model and transcribe with spinner
+        text = None
+        with self.console.status("[dim]Transcribing...[/]"):
+            if not self._lazy_load_model():
+                pass  # Will return None below
+            else:
+                try:
+                    result = self.model.recognize(audio, sample_rate=self.sample_rate)
+                    text = result.strip() if result else None
+                except Exception as e:
+                    self.console.print(f"[red]Transcription failed: {e}[/]")
+
+        # Reprint prompt after spinner clears
+        self._reprint_prompt()
+        return text
+
+    def toggle(self) -> Tuple[bool, Optional[str]]:
+        """Toggle recording state. Returns (is_recording, transcribed_text)."""
+        if self.recording:
+            text = self.stop()
+            return (False, text)
+        else:
+            started = self.start()
+            return (started, None)
 
 
 class Confirm(_RichConfirm):
@@ -463,6 +598,40 @@ class TerminatorAssistantSession:
             r"curl.*\|\s*(ba)?sh",         # curl pipe to shell
             r"wget.*\|\s*(ba)?sh",         # wget pipe to shell
         ]
+
+        # Voice input (STT) - lazy-loaded
+        self.voice_input = VoiceInput(self.console) if VOICE_AVAILABLE else None
+
+        # prompt_toolkit session with Ctrl+Space voice toggle
+        self.prompt_session = self._create_prompt_session()
+
+    def _create_prompt_session(self) -> PromptSession:
+        """Create prompt_toolkit session with voice toggle keybinding."""
+        kb = KeyBindings()
+
+        # Store reference to self for closure
+        session = self
+
+        @kb.add('c-space')
+        def _(event):
+            """Toggle voice recording on Ctrl+Space."""
+            if not session.voice_input:
+                session.console.print("[dim]Voice input not available[/]")
+                return
+
+            is_recording, text = session.voice_input.toggle()
+
+            if text:
+                # Insert transcribed text into the buffer
+                event.app.current_buffer.insert_text(text)
+
+        # Style for the prompt
+        style = PTStyle.from_dict({
+            'prompt': 'ansicyan bold',
+            'continuation': 'ansigray',
+        })
+
+        return PromptSession(key_bindings=kb, style=style)
 
     def _acquire_instance_lock(self):
         """
@@ -2613,7 +2782,8 @@ Instructions:
         args = parts[1] if len(parts) > 1 else ""
 
         if cmd == "/help":
-            self.console.print(Panel("""
+            voice_status = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
+            self.console.print(Panel(f"""
 [bold]Available Commands:[/]
 
 /help              Show this help message
@@ -2640,6 +2810,7 @@ Instructions:
 - Type messages to chat with AI
 - AI provides commands in <EXECUTE> tags
 - Commands are sent to Exec terminal with approval
+- [bold]Ctrl+Space[/] Toggle voice input ({voice_status})
 """, title="Assistant Help", border_style="cyan"))
             return True
 
@@ -3404,17 +3575,14 @@ Type !fragment <name> [...] to insert fragments""",
                     check_counter = 0
 
                 # Get user input (change prompt based on mode)
+                # Uses prompt_toolkit for Ctrl+Space voice toggle support
                 try:
                     if in_multi:
-                        # Multi-line mode - simple dim prompt
-                        # Use \001...\002 to mark non-printable ANSI sequences for readline
-                        # This fixes cursor positioning when input wraps to next line
-                        user_input = input("\001\033[2m\002...\001\033[0m\002 ")
+                        # Multi-line mode - dim continuation prompt
+                        user_input = self.prompt_session.prompt([('class:continuation', '... ')])
                     else:
                         # Regular mode - cyan > prompt
-                        # Use \001...\002 to mark non-printable ANSI sequences for readline
-                        # This fixes cursor positioning when input wraps to next line
-                        user_input = input("\n\001\033[1;36m\002>\001\033[0m\002 ").strip()
+                        user_input = self.prompt_session.prompt([('class:prompt', '\n> ')]).strip()
                 except (KeyboardInterrupt, EOFError):
                     # Double-press protection
                     now = time.time()

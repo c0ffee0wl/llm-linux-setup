@@ -2031,6 +2031,27 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Injecting dbus-python into llm tool environment..."
     uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" dbus-python
 
+    # Inject voice input and prompt_toolkit dependencies
+    log "Injecting voice input dependencies into llm tool environment..."
+    uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" \
+        prompt_toolkit sounddevice numpy
+
+    # Install onnx-asr with HuggingFace hub support for model downloads
+    if uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" "onnx-asr[hub]" 2>/dev/null; then
+        log "onnx-asr installed successfully"
+        # Preload the Parakeet speech model to avoid first-use delay
+        log "Preloading Parakeet speech model (this may take a minute)..."
+        "$HOME/.local/share/uv/tools/llm/bin/python3" -c "
+import onnx_asr
+print('Downloading model...')
+model = onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3')
+print('Model loaded successfully')
+" 2>&1 || warn "Model preload failed (will download on first use)"
+    else
+        warn "onnx-asr installation failed - voice input will be unavailable"
+        warn "You can try manually: uv pip install --python ~/.local/share/uv/tools/llm/bin/python3 onnx-asr"
+    fi
+
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
         if install_go; then
