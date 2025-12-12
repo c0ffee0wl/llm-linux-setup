@@ -191,18 +191,17 @@ if ([string]::IsNullOrEmpty($runDebloat) -or $runDebloat -eq 'Y' -or $runDebloat
         Write-Log "Executing debloat script (this may take several minutes)..."
         Write-Log "Note: Some errors on non-English Windows are expected and can be ignored."
 
-        # Execute with relaxed error handling (script has issues on non-English Windows)
-        $previousErrorAction = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
+        # Save script to temp file and execute with error handling disabled
+        # This ensures the script continues even when .NET methods throw exceptions
+        $tempScript = Join-Path $env:TEMP "RemoveBloat_$(Get-Random).ps1"
+        $debloatScript | Out-File -FilePath $tempScript -Encoding UTF8
 
-        try {
-            Invoke-Expression $debloatScript
-        } catch {
-            # Catch but continue - partial debloat is better than none
-            Write-WarningLog "Debloat script encountered an error: $($_.Exception.Message)"
-        }
+        # Execute in separate process with error action preference set to continue
+        # The -Command wrapper ensures errors don't terminate execution
+        & powershell.exe -ExecutionPolicy Bypass -NoProfile -Command "& {`$ErrorActionPreference='SilentlyContinue'; . '$tempScript'}"
 
-        $ErrorActionPreference = $previousErrorAction
+        # Cleanup temp file
+        Remove-Item -Path $tempScript -Force -ErrorAction SilentlyContinue
 
         Write-Log "Windows debloat completed (check above for any warnings)"
     } catch {
