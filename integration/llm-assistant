@@ -584,6 +584,9 @@ class TerminatorAssistantSession:
         # Auto mode: LLM-judged autonomous command execution
         # False = off, "normal" = safe only, "full" = safe + caution
         self.auto_mode: Union[bool, str] = False
+
+        # Voice auto-submit: automatically send transcribed text
+        self.voice_auto_submit: bool = False
         self.auto_command_history: deque = deque(maxlen=3)  # recent commands for judge context
         self.DANGEROUS_PATTERNS = [
             r"rm\s+-rf\s+/(?:\s|$)",      # rm -rf /
@@ -624,6 +627,9 @@ class TerminatorAssistantSession:
             if text:
                 # Insert transcribed text into the buffer
                 event.app.current_buffer.insert_text(text)
+                # Auto-submit if enabled
+                if session.voice_auto_submit:
+                    event.app.current_buffer.validate_and_handle()
 
         # Style for the prompt
         style = PTStyle.from_dict({
@@ -2800,6 +2806,9 @@ Instructions:
 /auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
 /auto off          Disable auto mode
 /auto status       Show auto mode status
+/voice             Enable voice auto-submit (transcribed text sends automatically)
+/voice off         Disable voice auto-submit
+/voice status      Show voice input status
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -3082,6 +3091,24 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         self.console.print(f"  {i}. {cmd_hist[:60]}{'...' if len(cmd_hist) > 60 else ''}")
             else:
                 self.console.print("[red]Usage: /auto, /auto full, /auto off, /auto status[/]")
+            return True
+
+        elif cmd == "/voice":
+            # Voice auto-submit mode
+            if not args or args.lower() == "auto":
+                self.voice_auto_submit = True
+                self.console.print("[bold green]Voice auto-submit enabled[/] - transcribed text sends automatically")
+                self.console.print("[dim]/voice off to disable[/]")
+            elif args.lower() == "off":
+                self.voice_auto_submit = False
+                self.console.print("[bold yellow]Voice auto-submit disabled[/]")
+            elif args.lower() == "status":
+                status = "[green]enabled[/]" if self.voice_auto_submit else "[yellow]disabled[/]"
+                voice_avail = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
+                self.console.print(f"Voice auto-submit: {status}")
+                self.console.print(f"Voice input: {voice_avail}")
+            else:
+                self.console.print("[red]Usage: /voice auto, /voice off, /voice status[/]")
             return True
 
         elif cmd in ["/quit", "/exit"]:

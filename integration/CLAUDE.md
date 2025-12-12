@@ -158,6 +158,9 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 - Press `Ctrl+Space` again to stop and transcribe
 - Uses onnx-asr with Parakeet TDT model (lazy-loaded on first use)
 - Transcribed text is inserted at cursor position
+- `/voice` or `/voice auto` - auto-submit transcribed text
+- `/voice off` - disable auto-submit
+- `/voice status` - show voice input status
 
 **Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
