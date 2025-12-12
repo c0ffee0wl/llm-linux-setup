@@ -2403,6 +2403,12 @@ Think step-by-step: analyze what the command does, then classify."""
                     self.console.print(f"[{color}]{icon}[/] auto")
                 else:
                     self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
+                    try:
+                        # Flush input buffer to prevent buffered keystrokes from auto-answering
+                        import termios
+                        termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                    except Exception:
+                        pass
                     choice = Prompt.ask("Execute?", choices=["y", "n", "e"], default="y")
                     if choice == "n":
                         return (False, "")
@@ -2412,10 +2418,16 @@ Think step-by-step: analyze what the command does, then classify."""
             else:  # dangerous
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
                 self.console.print("[bold red]BLOCKED[/] - manual approval required")
-                choice = Prompt.ask("Override?", choices=["y", "n", "e"], default="n")
-                if choice == "n":
+                try:
+                    # Flush input buffer to prevent buffered keystrokes from auto-answering
+                    import termios
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+                except Exception:
+                    pass  # Not a TTY or termios unavailable
+                choice = Prompt.ask("Override?", choices=["yes", "no", "edit"], default="no")
+                if choice == "no":
                     return (False, "")
-                if choice == "e":
+                if choice == "edit":
                     edited = Prompt.ask("Edit command", default=command)
                     return self.execute_command(edited)
         else:
