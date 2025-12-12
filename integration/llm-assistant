@@ -1513,20 +1513,24 @@ Shell: {env_type} {shell_info}
 
     def _capture_last_command_output(self, terminal_uuid: str) -> str:
         """
-        Capture the last command's output intelligently using dynamic extension.
+        Capture recent commands' output intelligently using dynamic extension.
         Starts with viewport-sized capture, expands if needed to find command boundaries.
 
         This ensures that even if the user manually runs a command with output
         exceeding the viewport, the full output is captured (similar to tool execution).
 
+        Captures the last MAX_RECENT_COMMANDS commands to provide context when
+        user runs multiple commands between assistant interactions.
+
         Args:
             terminal_uuid: Terminal UUID to capture from
 
         Returns:
-            String containing the last command's prompt + output
+            String containing recent commands' prompts + outputs
         """
         INITIAL_LINES = 50      # Start with viewport-ish size
         MAX_LINES = 5000        # Hard limit on capture range
+        MAX_RECENT_COMMANDS = 3 # Number of recent commands to capture
 
         try:
             _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
@@ -1550,16 +1554,21 @@ Shell: {env_type} {shell_info}
             # Find prompt lines to identify command boundaries
             prompts = PromptDetector.find_all_prompts(content)
 
-            # Found command boundary (2+ prompts) - extract last command
-            if len(prompts) >= 2:
-                last_cmd_start_line = prompts[-2][0]
-                lines = content.split('\n')
-                return '\n'.join(lines[last_cmd_start_line:])
+            # Check if we should return or continue expanding:
+            # - Need N+1 prompts for N commands (e.g., 4 prompts for 3 commands)
+            # - OR we've reached start of scrollback (can't get more history)
+            have_enough_prompts = len(prompts) >= MAX_RECENT_COMMANDS + 1
+            at_start_of_scrollback = start_row == 0
 
-            # Only one prompt - need more context, double the range
-            if start_row == 0:
-                # Already at beginning of scrollback, return what we have
-                if prompts:
+            if have_enough_prompts or at_start_of_scrollback:
+                # Either we have enough commands, or we've captured all available history
+                if len(prompts) >= 2:
+                    # At least one complete command - extract last N
+                    start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
+                    start_line = prompts[start_idx][0]
+                    lines = content.split('\n')
+                    return '\n'.join(lines[start_line:])
+                elif prompts:
                     lines = content.split('\n')
                     # Check if shell is waiting for input (prompt at end)
                     # If so, the single prompt is the END marker - return content BEFORE it
@@ -1570,16 +1579,18 @@ Shell: {env_type} {shell_info}
                         return '\n'.join(lines[prompts[0][0]:])
                 return content
 
-            lines_to_capture *= 2  # Double and retry
+            # Not enough prompts and not at start - keep expanding
+            lines_to_capture *= 2
 
         # Hit max - capture last MAX_LINES rows (not entire scrollback)
         fallback_start = max(0, cursor_row - MAX_LINES)
         content = self.plugin_dbus.capture_from_row(terminal_uuid, fallback_start)
         prompts = PromptDetector.find_all_prompts(content)
         if len(prompts) >= 2:
-            # Extract from second-to-last prompt (last command start)
+            # Extract last N commands (same logic as main loop)
+            start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
             lines = content.split('\n')
-            return '\n'.join(lines[prompts[-2][0]:])
+            return '\n'.join(lines[prompts[start_idx][0]:])
         elif prompts:
             # Single prompt - check if it's at the end (scrollback exceeded)
             lines = content.split('\n')
