@@ -17,6 +17,10 @@
     .\Prepare-Windows.ps1
     Run the preparation script with all prompts
 
+.EXAMPLE
+    Set-ExecutionPolicy Bypass -Scope Process -Force; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference='SilentlyContinue'; irm "https://raw.githubusercontent.com/c0ffee0wl/llm-linux-setup/main/integration/Prepare-Windows.ps1" | iex
+    Run directly from GitHub (requires Administrator PowerShell)
+
 .NOTES
     Author: c0ffee0wl
     Version: 1.0
@@ -173,24 +177,36 @@ $runDebloat = Read-Host "Run Windows debloat script? (Y/n)"
 if ([string]::IsNullOrEmpty($runDebloat) -or $runDebloat -eq 'Y' -or $runDebloat -eq 'y') {
     Write-Log "Running Windows debloat script..."
 
-    try {
-        # Download and execute Andrew Taylor's debloat script
-        $debloatUrl = "https://raw.githubusercontent.com/andrew-s-taylor/public/main/De-Bloat/RemoveBloat.ps1"
+    $debloatUrl = "https://raw.githubusercontent.com/andrew-s-taylor/public/main/De-Bloat/RemoveBloat.ps1"
 
+    try {
         Write-Log "Downloading debloat script from GitHub..."
 
         # Set TLS 1.2 for HTTPS
         [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
 
-        # Download and execute
+        # Download script
         $debloatScript = (New-Object System.Net.WebClient).DownloadString($debloatUrl)
 
         Write-Log "Executing debloat script (this may take several minutes)..."
-        Invoke-Expression $debloatScript
+        Write-Log "Note: Some errors on non-English Windows are expected and can be ignored."
 
-        Write-Log "Windows debloat completed"
+        # Execute with relaxed error handling (script has issues on non-English Windows)
+        $previousErrorAction = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+
+        try {
+            Invoke-Expression $debloatScript
+        } catch {
+            # Catch but continue - partial debloat is better than none
+            Write-WarningLog "Debloat script encountered an error: $($_.Exception.Message)"
+        }
+
+        $ErrorActionPreference = $previousErrorAction
+
+        Write-Log "Windows debloat completed (check above for any warnings)"
     } catch {
-        Write-WarningLog "Failed to run debloat script: $_"
+        Write-WarningLog "Failed to download/run debloat script: $_"
         Write-WarningLog "You can run it manually later from: $debloatUrl"
     }
 } else {
