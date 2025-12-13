@@ -66,6 +66,14 @@ try:
 except ImportError:
     VOICE_AVAILABLE = False
 
+# TTS output (optional - requires google-cloud-texttospeech and Vertex credentials)
+try:
+    from google.cloud import texttospeech
+    import queue
+    TTS_AVAILABLE = True
+except ImportError:
+    TTS_AVAILABLE = False
+
 # prompt_toolkit for keybindings (Ctrl+Space for voice)
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
@@ -185,6 +193,136 @@ class VoiceInput:
         else:
             started = self.start()
             return (started, None)
+
+
+class SentenceBuffer:
+    """Buffer LLM tokens and yield complete sentences for TTS.
+
+    Accumulates streaming tokens and returns complete sentences when
+    sentence-ending punctuation is detected (.!?).
+    """
+
+    SENTENCE_END = re.compile(r'[.!?]\s*$')
+
+    def __init__(self):
+        self.buffer = ""
+
+    def add(self, token: str) -> Optional[str]:
+        """Add token to buffer. Returns sentence if one is complete."""
+        self.buffer += token
+
+        # Check for sentence boundary
+        if self.SENTENCE_END.search(self.buffer):
+            sentence = self.buffer.strip()
+            self.buffer = ""
+            return sentence
+        return None
+
+    def flush(self) -> Optional[str]:
+        """Flush remaining buffer content (end of response)."""
+        if self.buffer.strip():
+            sentence = self.buffer.strip()
+            self.buffer = ""
+            return sentence
+        return None
+
+
+class SpeechOutput:
+    """Text-to-speech output using Google Cloud TTS (Chirp3-HD).
+
+    Synthesizes sentences as they complete during LLM streaming.
+    Both synthesis and playback happen in background threads to avoid
+    blocking the main LLM streaming loop.
+    """
+
+    def __init__(self, console):
+        self.console = console
+        self.client = None
+        self.voice_name = "de-DE-Chirp3-HD-Laomedeia"  # German HD voice
+        self.language_code = "de-DE"
+        self.enabled = False
+        self.audio_queue = None  # For synthesized audio
+        self.worker_thread = None
+        self._executor = None  # ThreadPoolExecutor for async synthesis
+
+    def _lazy_load_client(self) -> bool:
+        """Initialize TTS client on first use."""
+        if self.client is not None:
+            return True
+
+        if not TTS_AVAILABLE:
+            self.console.print("[red]google-cloud-texttospeech not installed. Re-run install-llm-tools.sh[/]")
+            return False
+
+        try:
+            from concurrent.futures import ThreadPoolExecutor
+            self.client = texttospeech.TextToSpeechClient()
+            self.audio_queue = queue.Queue()
+            self._executor = ThreadPoolExecutor(max_workers=1)  # Must be 1 to preserve sentence order
+            return True
+        except Exception as e:
+            self.console.print(f"[red]Failed to initialize TTS client: {e}[/]")
+            self.console.print("[dim]Run: gcloud auth application-default login[/]")
+            return False
+
+    def _synthesize_and_queue(self, sentence: str):
+        """Synthesize speech and queue for playback (runs in thread pool)."""
+        try:
+            response = self.client.synthesize_speech(
+                input=texttospeech.SynthesisInput(text=sentence),
+                voice=texttospeech.VoiceSelectionParams(
+                    name=self.voice_name,
+                    language_code=self.language_code,
+                ),
+                audio_config=texttospeech.AudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.LINEAR16,
+                    sample_rate_hertz=24000,
+                ),
+            )
+            self.audio_queue.put(response.audio_content)
+        except Exception:
+            pass  # Silently skip on error
+
+    def _playback_loop(self):
+        """Background thread for sequential audio playback."""
+        while True:
+            audio_data = self.audio_queue.get()
+            if audio_data is None:  # Sentinel to stop
+                break
+            try:
+                audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+                sd.play(audio_array, samplerate=24000)
+                sd.wait()
+            except Exception:
+                pass
+
+    def speak_sentence(self, sentence: str):
+        """Queue sentence for async synthesis and playback (non-blocking)."""
+        if not self._lazy_load_client():
+            return
+
+        # Start playback thread if needed
+        if self.worker_thread is None or not self.worker_thread.is_alive():
+            self.worker_thread = threading.Thread(target=self._playback_loop, daemon=True)
+            self.worker_thread.start()
+
+        # Submit synthesis to thread pool (non-blocking)
+        self._executor.submit(self._synthesize_and_queue, sentence)
+
+    def stop(self):
+        """Stop playback and clear queue."""
+        if self.audio_queue:
+            # Clear queue
+            while not self.audio_queue.empty():
+                try:
+                    self.audio_queue.get_nowait()
+                except:
+                    break
+            # Stop current playback
+            try:
+                sd.stop()
+            except:
+                pass
 
 
 class Confirm(_RichConfirm):
@@ -599,6 +737,9 @@ class TerminatorAssistantSession:
 
         # Voice input (STT) - lazy-loaded
         self.voice_input = VoiceInput(self.console) if VOICE_AVAILABLE else None
+
+        # Speech output (TTS) - lazy-loaded, only for Vertex models
+        self.speech_output = SpeechOutput(self.console) if TTS_AVAILABLE else None
 
         # prompt_toolkit session with Ctrl+Space voice toggle
         self.prompt_session = self._create_prompt_session()
@@ -1017,6 +1158,10 @@ class TerminatorAssistantSession:
             return llm.get_default_model()
         except Exception:
             return "azure/gpt-4.1-mini"
+
+    def _is_vertex_model(self) -> bool:
+        """Check if current model is a Vertex AI model (vertex/*)"""
+        return self.model_name.startswith("vertex/")
 
     def _debug(self, msg: str):
         """Print debug message if debug mode is enabled"""
@@ -2399,6 +2544,24 @@ Think step-by-step: analyze what the command does, then classify."""
             self._debug(f"Safety judge error: {e}")
             return (False, "dangerous", f"Safety check failed: {str(e)}")
 
+    def _prepare_for_interactive_prompt(self):
+        """Ensure terminal is ready for Rich Prompt.ask().
+
+        Fixes invisible prompt on first tool call by resetting terminal state.
+        """
+        # Flush output and reset terminal state (show cursor, reset attributes)
+        self.console.file.flush()
+        sys.stdout.write('\x1b[?25h\x1b[0m')
+        sys.stdout.flush()
+        time.sleep(0.05)
+
+        # Clear buffered input
+        try:
+            import termios
+            termios.tcflush(sys.stdin, termios.TCIFLUSH)
+        except Exception:
+            pass
+
     def execute_command(self, command: str) -> Tuple[bool, str]:
         """
         Execute command in Exec terminal with user approval and intelligent completion detection.
@@ -2431,12 +2594,7 @@ Think step-by-step: analyze what the command does, then classify."""
                     self.console.print(f"[{color}]{icon}[/] auto")
                 else:
                     self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
-                    try:
-                        # Flush input buffer to prevent buffered keystrokes from auto-answering
-                        import termios
-                        termios.tcflush(sys.stdin, termios.TCIFLUSH)
-                    except Exception:
-                        pass
+                    self._prepare_for_interactive_prompt()
                     choice = Prompt.ask("Execute?", choices=["y", "n", "e"], default="y")
                     if choice == "n":
                         return (False, "")
@@ -2446,12 +2604,7 @@ Think step-by-step: analyze what the command does, then classify."""
             else:  # dangerous
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
                 self.console.print("[bold red]BLOCKED[/] - manual approval required")
-                try:
-                    # Flush input buffer to prevent buffered keystrokes from auto-answering
-                    import termios
-                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
-                except Exception:
-                    pass  # Not a TTY or termios unavailable
+                self._prepare_for_interactive_prompt()
                 choice = Prompt.ask("Override?", choices=["yes", "no", "edit"], default="no")
                 if choice == "no":
                     return (False, "")
@@ -2460,6 +2613,7 @@ Think step-by-step: analyze what the command does, then classify."""
                     return self.execute_command(edited)
         else:
             # MANUAL MODE: Original approval flow
+            self._prepare_for_interactive_prompt()
             choice = Prompt.ask(
                 "Execute in Exec terminal?",
                 choices=["y", "n", "e"],  # yes, no, edit
@@ -2506,6 +2660,13 @@ Think step-by-step: analyze what the command does, then classify."""
 
             if success:
                 self.console.print("[green]✓[/] Command sent to Exec terminal")
+
+                # Scroll to bottom to ensure prompt detection sees the new prompt
+                # Critical when user has scrolled up in the terminal
+                try:
+                    self.plugin_dbus.scroll_to_bottom(self.exec_terminal_uuid)
+                except Exception as e:
+                    self._debug(f"scroll_to_bottom failed (non-fatal): {e}")
 
                 # Detect if this is a TUI application using hybrid detection
                 # Checks both command name AND terminal state (alternate screen heuristic)
@@ -2622,6 +2783,7 @@ Screenshot size: {file_size} bytes"""
         ))
 
         # Ask for approval
+        self._prepare_for_interactive_prompt()
         choice = Prompt.ask(
             "Send this key(s)?",
             choices=["y", "n", "e"],  # yes, no, edit
@@ -2849,6 +3011,9 @@ Instructions:
 /voice             Enable voice auto-submit (transcribed text sends automatically)
 /voice off         Disable voice auto-submit
 /voice status      Show voice input status
+/speech            Enable TTS output (Vertex models only)
+/speech off        Disable TTS output
+/speech status     Show TTS status
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -3149,6 +3314,36 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print(f"Voice input: {voice_avail}")
             else:
                 self.console.print("[red]Usage: /voice auto, /voice off, /voice status[/]")
+            return True
+
+        elif cmd == "/speech":
+            # Text-to-speech output mode (requires Vertex model)
+            if not self._is_vertex_model():
+                self.console.print("[red]TTS requires a Vertex model (vertex/*)[/]")
+                self.console.print(f"[dim]Current model: {self.model_name}[/]")
+                self.console.print("[dim]Switch with: /model vertex/gemini-2.5-flash[/]")
+            elif not self.speech_output:
+                self.console.print("[red]google-cloud-texttospeech not installed[/]")
+                self.console.print("[dim]Re-run install-llm-tools.sh to install[/]")
+            elif not args or args.lower() == "on":
+                self.speech_output.enabled = True
+                self.console.print("[bold green]Speech output enabled[/] - AI responses will be spoken")
+                self.console.print(f"[dim]Voice: {self.speech_output.voice_name}[/]")
+                self.console.print("[dim]/speech off to disable[/]")
+            elif args.lower() == "off":
+                self.speech_output.enabled = False
+                self.speech_output.stop()  # Stop any playing audio
+                self.console.print("[bold yellow]Speech output disabled[/]")
+            elif args.lower() == "status":
+                status = "[green]enabled[/]" if self.speech_output.enabled else "[yellow]disabled[/]"
+                tts_avail = "[green]available[/]" if TTS_AVAILABLE else "[dim]not installed[/]"
+                vertex = "[green]yes[/]" if self._is_vertex_model() else "[yellow]no[/]"
+                self.console.print(f"Speech output: {status}")
+                self.console.print(f"TTS library: {tts_avail}")
+                self.console.print(f"Vertex model: {vertex}")
+                self.console.print(f"Voice: {self.speech_output.voice_name}")
+            else:
+                self.console.print("[red]Usage: /speech on, /speech off, /speech status[/]")
             return True
 
         elif cmd in ["/quit", "/exit"]:
@@ -3780,7 +3975,34 @@ Type !fragment <name> [...] to insert fragments""",
                         # This trades streaming display for thread safety - response shows all at once
                         # instead of character-by-character, but prevents potential corruption if
                         # watch thread calls conversation.prompt() while we're iterating
-                        response_text = self._filter_thinking_traces(response.text())
+                        #
+                        # TTS streaming: If speech output is enabled, iterate over chunks and
+                        # send sentences to TTS as they complete (for low-latency audio output)
+                        tts_enabled = (self.speech_output and self.speech_output.enabled
+                                       and self._is_vertex_model())
+
+                        if tts_enabled:
+                            # Stream tokens, buffer sentences, send to TTS as they complete
+                            sentence_buffer = SentenceBuffer()
+                            full_text_chunks = []
+
+                            for chunk in response:
+                                full_text_chunks.append(chunk)
+                                # Check if this chunk completes a sentence
+                                sentence = sentence_buffer.add(chunk)
+                                if sentence:
+                                    self.speech_output.speak_sentence(sentence)
+
+                            # Flush any remaining text
+                            remaining = sentence_buffer.flush()
+                            if remaining:
+                                self.speech_output.speak_sentence(remaining)
+
+                            # Join for display
+                            response_text = self._filter_thinking_traces("".join(full_text_chunks))
+                        else:
+                            # Non-TTS path: get full response at once
+                            response_text = self._filter_thinking_traces(response.text())
 
                         # Extract tool calls from the response (structured output)
                         tool_calls = list(response.tool_calls())
@@ -3855,7 +4077,22 @@ Type !fragment <name> [...] to insert fragments""",
                                         tool_results=tool_results,
                                         attachments=followup_attachments if followup_attachments else None
                                     )
-                                    followup_text = self._filter_thinking_traces(followup_response.text())
+
+                                    # TTS streaming for follow-up responses
+                                    if tts_enabled:
+                                        sentence_buffer = SentenceBuffer()
+                                        full_text_chunks = []
+                                        for chunk in followup_response:
+                                            full_text_chunks.append(chunk)
+                                            sentence = sentence_buffer.add(chunk)
+                                            if sentence:
+                                                self.speech_output.speak_sentence(sentence)
+                                        remaining = sentence_buffer.flush()
+                                        if remaining:
+                                            self.speech_output.speak_sentence(remaining)
+                                        followup_text = self._filter_thinking_traces("".join(full_text_chunks))
+                                    else:
+                                        followup_text = self._filter_thinking_traces(followup_response.text())
 
                                     # Check if the model made more tool calls
                                     more_tool_calls = list(followup_response.tool_calls())
@@ -3900,7 +4137,23 @@ Type !fragment <name> [...] to insert fragments""",
                                         tools=ASSISTANT_TOOLS,
                                         attachments=attachments_to_send
                                     )
-                                    response_text = self._filter_thinking_traces(attachment_response.text())
+
+                                    # TTS streaming for attachment responses
+                                    if tts_enabled:
+                                        sentence_buffer = SentenceBuffer()
+                                        full_text_chunks = []
+                                        for chunk in attachment_response:
+                                            full_text_chunks.append(chunk)
+                                            sentence = sentence_buffer.add(chunk)
+                                            if sentence:
+                                                self.speech_output.speak_sentence(sentence)
+                                        remaining = sentence_buffer.flush()
+                                        if remaining:
+                                            self.speech_output.speak_sentence(remaining)
+                                        response_text = self._filter_thinking_traces("".join(full_text_chunks))
+                                    else:
+                                        response_text = self._filter_thinking_traces(attachment_response.text())
+
                                     more_calls = list(attachment_response.tool_calls())
 
                                     # Log attachment response to database

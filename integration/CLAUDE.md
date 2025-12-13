@@ -110,6 +110,9 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
 - `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)
 - `/kb reload` - Reload all loaded knowledge bases
+- `/speech` - Enable TTS output (Vertex models only)
+- `/speech off` - Disable TTS output
+- `/speech status` - Show TTS status
 - `/quit` or `/exit` - Exit assistant
 
 ## Knowledge Base System
@@ -162,6 +165,17 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 - `/voice off` - disable auto-submit
 - `/voice status` - show voice input status
 
+**Speech Output (TTS):**
+- Available only when using Vertex models (`vertex/*`)
+- Uses Google Cloud Text-to-Speech with Chirp3-HD voices
+- Uses Application Default Credentials (run `gcloud auth application-default login`)
+- `/speech` or `/speech on` - enable TTS output
+- `/speech off` - disable TTS output
+- `/speech status` - show TTS status
+- Streaming synthesis: Audio starts playing as sentences complete (low latency)
+- Default voice: `de-DE-Chirp3-HD-Laomedeia` (German)
+- Requires `google-cloud-texttospeech` package (auto-installed)
+
 **Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
 
@@ -207,6 +221,7 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 - D-Bus (for terminal management)
 - prompt_toolkit (for keybindings)
 - sounddevice, numpy, onnx-asr (optional, for voice input)
+- google-cloud-texttospeech (optional, for TTS output with Vertex models)
 
 ## Usage Examples
 

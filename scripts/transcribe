@@ -1,164 +1,163 @@
-#!/bin/bash
-#
-# transcribe - Speech-to-text transcription using faster-whisper
-#
-# A wrapper around whisper-ctranslate2 with sensible defaults for CPU transcription.
-# Supports: mp3, mp4, wav, m4a, flac, ogg, webm (any format supported by ffmpeg)
-#
-# Usage: transcribe <audio_or_video_file> [options]
-#
-# Options:
-#   -m, --model MODEL    Model to use (default: medium)
-#                        Available: tiny, base, small, medium, large-v3, large-v3-turbo
-#   -l, --language LANG  Force language (auto-detect by default)
-#                        Examples: en, de, fr, es, ja, zh, etc.
-#   -f, --format FORMAT  Output format: txt, srt, vtt, json, tsv (default: txt)
-#   -o, --output FILE    Output file path (default: <input_basename>.<format>)
-#   --no-batch           Disable batched inference (slower but may be more accurate)
-#   -h, --help           Show this help message
-#
-# Examples:
-#   transcribe recording.mp3                    # Basic transcription
-#   transcribe video.mp4 -f srt                 # Generate SRT subtitles
-#   transcribe podcast.wav -l de -o german.txt  # German transcription to file
-#   transcribe meeting.m4a --model medium       # Use smaller/faster model
+#!/usr/bin/env python3
+"""
+transcribe - Speech-to-text transcription using onnx-asr with Parakeet TDT
 
-set -e
+A wrapper around onnx-asr using NVIDIA's Parakeet TDT 0.6B V3 model.
+Supports 25 European languages with automatic language detection.
+Supports: mp3, mp4, wav, m4a, flac, ogg, webm (via pydub/ffmpeg conversion)
 
-# Default configuration
-DEFAULT_MODEL="medium"
-DEFAULT_FORMAT="txt"
-COMPUTE_TYPE="int8"
-BATCHED="True"
+Usage: transcribe <audio_file> [options]
 
-# Colors for output
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-NC='\033[0m'
+Options:
+  -o, --output FILE    Output file path (default: stdout)
+  -h, --help           Show this help message
 
-error() {
-    echo -e "${RED}Error:${NC} $1" >&2
-    exit 1
-}
+Examples:
+  transcribe recording.mp3                    # Output to stdout
+  transcribe video.mp4 -o transcript.txt      # Save to file
+  transcribe meeting.m4a 2>/dev/null          # Suppress progress messages
+"""
 
-warn() {
-    echo -e "${YELLOW}Warning:${NC} $1" >&2
-}
+import argparse
+import os
+import sys
+import tempfile
+from pathlib import Path
 
-show_help() {
-    head -25 "$0" | grep "^#" | sed 's/^# \?//'
-    exit 0
-}
+# Audio formats that need conversion (non-WAV)
+CONVERTIBLE_FORMATS = {'.mp3', '.mp4', '.m4a', '.flac', '.ogg', '.webm'}
 
-# Check if whisper-ctranslate2 is installed
-if ! command -v whisper-ctranslate2 &> /dev/null; then
-    error "whisper-ctranslate2 not found. Install it with: uv tool install whisper-ctranslate2"
-fi
 
-# Parse arguments
-INPUT_FILE=""
-MODEL="$DEFAULT_MODEL"
-LANGUAGE=""
-OUTPUT_FORMAT="$DEFAULT_FORMAT"
-OUTPUT_FILE=""
+def convert_to_wav(input_path: Path) -> tuple:
+    """
+    Convert audio file to WAV if needed.
+    onnx-asr only reads WAV files but handles resampling internally.
+    Returns (wav_path, is_temporary).
+    """
+    suffix = input_path.suffix.lower()
 
-while [[ $# -gt 0 ]]; do
-    case $1 in
-        -m|--model)
-            MODEL="$2"
-            shift 2
-            ;;
-        -l|--language)
-            LANGUAGE="$2"
-            shift 2
-            ;;
-        -f|--format)
-            OUTPUT_FORMAT="$2"
-            shift 2
-            ;;
-        -o|--output)
-            OUTPUT_FILE="$2"
-            shift 2
-            ;;
-        --no-batch)
-            BATCHED="False"
-            shift
-            ;;
-        -h|--help)
-            show_help
-            ;;
-        -*)
-            error "Unknown option: $1. Use --help for usage."
-            ;;
-        *)
-            if [ -z "$INPUT_FILE" ]; then
-                INPUT_FILE="$1"
-            else
-                error "Multiple input files not supported. Got: $INPUT_FILE and $1"
-            fi
-            shift
-            ;;
-    esac
-done
+    # WAV files can be used directly - onnx-asr handles resampling
+    if suffix == '.wav':
+        return input_path, False
 
-# Validate input
-if [ -z "$INPUT_FILE" ]; then
-    error "No input file specified. Use --help for usage."
-fi
+    if suffix not in CONVERTIBLE_FORMATS:
+        print(f"Error: Unsupported audio format '{suffix}'", file=sys.stderr)
+        print(f"Supported formats: wav, {', '.join(sorted(CONVERTIBLE_FORMATS))}",
+              file=sys.stderr)
+        sys.exit(1)
 
-if [ ! -f "$INPUT_FILE" ]; then
-    error "Input file not found: $INPUT_FILE"
-fi
+    try:
+        from pydub import AudioSegment
+    except ImportError:
+        print("Error: pydub not installed. Re-run install-llm-tools.sh",
+              file=sys.stderr)
+        sys.exit(1)
 
-# Map format to whisper-ctranslate2 output option
-case "$OUTPUT_FORMAT" in
-    txt)
-        OUTPUT_OPT="--output_format txt"
-        ;;
-    srt)
-        OUTPUT_OPT="--output_format srt"
-        ;;
-    vtt)
-        OUTPUT_OPT="--output_format vtt"
-        ;;
-    json)
-        OUTPUT_OPT="--output_format json"
-        ;;
-    tsv)
-        OUTPUT_OPT="--output_format tsv"
-        ;;
-    *)
-        error "Unknown output format: $OUTPUT_FORMAT. Use txt, srt, vtt, json, or tsv."
-        ;;
-esac
+    print(f"Converting {input_path.name} to WAV...", file=sys.stderr)
 
-# Build command arguments
-ARGS=()
-ARGS+=("$INPUT_FILE")
-ARGS+=(--model "$MODEL")
-ARGS+=(--compute_type "$COMPUTE_TYPE")
-ARGS+=(--batched "$BATCHED")
+    # Load audio file
+    try:
+        if suffix == '.mp3':
+            audio = AudioSegment.from_mp3(str(input_path))
+        elif suffix in {'.mp4', '.m4a'}:
+            audio = AudioSegment.from_file(str(input_path), 'mp4')
+        elif suffix == '.flac':
+            audio = AudioSegment.from_file(str(input_path), 'flac')
+        elif suffix == '.ogg':
+            audio = AudioSegment.from_ogg(str(input_path))
+        elif suffix == '.webm':
+            audio = AudioSegment.from_file(str(input_path), 'webm')
+        else:
+            audio = AudioSegment.from_file(str(input_path))
+    except Exception as e:
+        print(f"Error: Failed to load audio file: {e}", file=sys.stderr)
+        print("Make sure ffmpeg is installed: sudo apt install ffmpeg", file=sys.stderr)
+        sys.exit(1)
 
-# Add language if specified
-if [ -n "$LANGUAGE" ]; then
-    ARGS+=(--language "$LANGUAGE")
-fi
+    # Export to temporary WAV file (onnx-asr handles resampling internally)
+    temp_file = tempfile.NamedTemporaryFile(suffix='.wav', delete=False)
+    audio.export(temp_file.name, format='wav')
 
-# Add output directory if output file specified
-if [ -n "$OUTPUT_FILE" ]; then
-    OUTPUT_DIR=$(dirname "$OUTPUT_FILE")
-    ARGS+=(--output_dir "$OUTPUT_DIR")
-fi
+    return Path(temp_file.name), True
 
-# Run transcription
-whisper-ctranslate2 "${ARGS[@]}" $OUTPUT_OPT
 
-# If output file was specified with different name, rename the output
-if [ -n "$OUTPUT_FILE" ]; then
-    INPUT_BASENAME=$(basename "$INPUT_FILE" | sed 's/\.[^.]*$//')
-    GENERATED_FILE="$(dirname "$OUTPUT_FILE")/${INPUT_BASENAME}.${OUTPUT_FORMAT}"
-    if [ -f "$GENERATED_FILE" ] && [ "$GENERATED_FILE" != "$OUTPUT_FILE" ]; then
-        mv "$GENERATED_FILE" "$OUTPUT_FILE"
-    fi
-fi
+def transcribe(audio_path: Path) -> str:
+    """Transcribe audio file using onnx-asr with Parakeet model."""
+    try:
+        import onnx_asr
+    except ImportError:
+        print("Error: onnx-asr not installed. Re-run install-llm-tools.sh",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Suppress HuggingFace progress bars
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+
+    print("Loading Parakeet TDT model...", file=sys.stderr)
+    try:
+        model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3")
+    except Exception as e:
+        print(f"Error: Failed to load model: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Transcribing {audio_path.name}...", file=sys.stderr)
+    try:
+        result = model.recognize(str(audio_path))
+    except Exception as e:
+        print(f"Error: Transcription failed: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    return result.strip() if result else ""
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description='Speech-to-text transcription using Parakeet TDT model',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Supported Languages (25 European, auto-detected):
+  Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish,
+  French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese,
+  Polish, Portuguese, Romanian, Slovak, Slovenian, Spanish, Swedish,
+  Russian, Ukrainian
+
+Examples:
+  transcribe recording.mp3                    # Output to stdout
+  transcribe video.mp4 -o transcript.txt      # Save to file
+  transcribe meeting.m4a 2>/dev/null          # Suppress progress messages
+"""
+    )
+
+    parser.add_argument('audio_file', type=Path,
+                        help='Audio file to transcribe')
+    parser.add_argument('-o', '--output', type=Path, default=None,
+                        help='Output file (default: stdout)')
+
+    args = parser.parse_args()
+
+    # Validate input file
+    if not args.audio_file.exists():
+        print(f"Error: File not found: {args.audio_file}", file=sys.stderr)
+        sys.exit(1)
+
+    # Convert to WAV if needed
+    wav_path, is_temp = convert_to_wav(args.audio_file)
+
+    try:
+        # Transcribe
+        result = transcribe(wav_path)
+
+        # Output result
+        if args.output:
+            args.output.write_text(result)
+            print(f"Transcript saved to: {args.output}", file=sys.stderr)
+        else:
+            print(result)
+    finally:
+        # Clean up temporary file
+        if is_temp and wav_path.exists():
+            wav_path.unlink()
+
+
+if __name__ == '__main__':
+    main()

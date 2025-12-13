@@ -1051,6 +1051,49 @@ install_go() {
     fi
 }
 
+# Apply PipeWire VM audio fix (WirePlumber configuration)
+# Increases buffer size to prevent audio stuttering in virtual machines
+# Reference: https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Troubleshooting#stuttering-audio-in-virtual-machine
+apply_pipewire_vm_fix() {
+    local config_dir="$HOME/.config/wireplumber/wireplumber.conf.d"
+    local config_file="$config_dir/50-alsa-config.conf"
+
+    # Skip if already configured
+    if [ -f "$config_file" ]; then
+        log "PipeWire VM audio fix already applied"
+        return 0
+    fi
+
+    log "Applying PipeWire VM audio fix..."
+    mkdir -p "$config_dir"
+
+    cat > "$config_file" << 'EOF'
+monitor.alsa.rules = [
+  {
+    matches = [
+      {
+        node.name = "~alsa_output.*"
+      }
+    ]
+    actions = {
+      update-props = {
+        api.alsa.period-size   = 1024
+        api.alsa.headroom      = 8192
+      }
+    }
+  }
+]
+EOF
+
+    # Restart PipeWire services if running
+    if systemctl --user is-active pipewire &>/dev/null; then
+        log "Restarting PipeWire services..."
+        systemctl --user restart wireplumber pipewire pipewire-pulse 2>/dev/null || true
+    fi
+
+    log "PipeWire VM audio fix applied successfully"
+}
+
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -1097,6 +1140,28 @@ else
     log "Terminator not found - skipping assistant components"
 fi
 
+# Detect VM environment (for PipeWire audio fix)
+IS_VM=false
+if command -v systemd-detect-virt &>/dev/null; then
+    VIRT_TYPE=$(systemd-detect-virt 2>/dev/null)
+    if [ "$VIRT_TYPE" != "none" ] && [ -n "$VIRT_TYPE" ]; then
+        IS_VM=true
+        log "VM environment detected ($VIRT_TYPE)"
+    fi
+fi
+
+# Detect PipeWire
+PIPEWIRE_INSTALLED=false
+if command -v pipewire &>/dev/null; then
+    PIPEWIRE_INSTALLED=true
+fi
+
+# Apply PipeWire VM audio fix for Terminator + VM + PipeWire
+if [ "$TERMINATOR_INSTALLED" = "true" ] && [ "$IS_VM" = "true" ] && \
+   [ "$PIPEWIRE_INSTALLED" = "true" ]; then
+    apply_pipewire_vm_fix
+fi
+
 #############################################################################
 # PHASE 1: Install Prerequisites
 #############################################################################
@@ -1141,6 +1206,7 @@ else
 fi
 
 install_apt_package pandoc
+install_apt_package ffmpeg
 
 # Install PyGObject and build dependencies for Terminator assistant integration (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
@@ -1468,7 +1534,7 @@ fi
 
 # Install pymupdf_layout (for improved PDF processing with llm-fragments-pdf)
 log "Installing/updating pymupdf_layout for improved PDF processing..."
-command llm install pymupdf_layout --upgrade 2>/dev/null || command llm install pymupdf_layout
+install_or_upgrade_llm_plugin pymupdf_layout
 
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
@@ -2027,17 +2093,23 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     cp "$SCRIPT_DIR/integration/system_info.py" "$HOME/.local/bin/system_info.py"
     cp "$SCRIPT_DIR/context/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
 
-    # Inject dbus-python dependency into llm tool environment
-    log "Injecting dbus-python into llm tool environment..."
-    uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" dbus-python
+    # Install dbus-python dependency into llm tool environment
+    log "Installing dbus-python into llm tool environment..."
+    install_or_upgrade_llm_plugin dbus-python
 
-    # Inject voice input and prompt_toolkit dependencies
-    log "Injecting voice input dependencies into llm tool environment..."
-    uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" \
-        prompt_toolkit sounddevice numpy
+    # Install voice input and prompt_toolkit dependencies
+    log "Installing voice input dependencies into llm tool environment..."
+    install_or_upgrade_llm_plugin prompt_toolkit
+    install_or_upgrade_llm_plugin sounddevice
+    install_or_upgrade_llm_plugin numpy
+    install_or_upgrade_llm_plugin pydub
+
+    # Install TTS (text-to-speech) dependency for /speech command
+    log "Installing TTS dependencies into llm tool environment..."
+    install_or_upgrade_llm_plugin google-cloud-texttospeech
 
     # Install onnx-asr with HuggingFace hub support for model downloads
-    if uv pip install --python "$HOME/.local/share/uv/tools/llm/bin/python3" "onnx-asr[hub]" 2>/dev/null; then
+    if install_or_upgrade_llm_plugin "onnx-asr[hub]" 2>/dev/null; then
         log "onnx-asr installed successfully"
         # Preload the Parakeet speech model to avoid first-use delay
         log "Preloading Parakeet speech model (this may take a minute)..."
@@ -2049,7 +2121,7 @@ print('Model loaded successfully')
 " 2>&1 || warn "Model preload failed (will download on first use)"
     else
         warn "onnx-asr installation failed - voice input will be unavailable"
-        warn "You can try manually: uv pip install --python ~/.local/share/uv/tools/llm/bin/python3 onnx-asr"
+        warn "You can try manually: llm install 'onnx-asr[hub]'"
     fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
@@ -2080,13 +2152,12 @@ install_or_upgrade_uv_tool gitingest
 # Install/update tldr (community-driven man pages with practical examples)
 install_or_upgrade_uv_tool tldr
 
-# Install/update whisper-ctranslate2 (faster-whisper CLI for speech-to-text)
-install_or_upgrade_uv_tool whisper-ctranslate2
-
-# Install transcribe wrapper script
+# Install transcribe script (uses onnx-asr from llm environment)
 log "Installing transcribe script..."
 if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
-    cp "$SCRIPT_DIR/scripts/transcribe" "$HOME/.local/bin/transcribe"
+    # Copy script with modified shebang to use llm environment Python
+    echo "#!$HOME/.local/share/uv/tools/llm/bin/python3" > "$HOME/.local/bin/transcribe"
+    tail -n +2 "$SCRIPT_DIR/scripts/transcribe" >> "$HOME/.local/bin/transcribe"
     chmod +x "$HOME/.local/bin/transcribe"
     log "transcribe script installed to ~/.local/bin/transcribe"
 else
@@ -2240,7 +2311,7 @@ log "  - files-to-prompt (file content formatter)"
 log "  - tldr (community-driven man pages with practical examples)"
 log "  - argc (Bash CLI framework, enables optional llm-functions)"
 log "  - asciinema (terminal session recorder)"
-log "  - transcribe (speech-to-text using faster-whisper, 99+ languages)"
+log "  - transcribe (speech-to-text using Parakeet TDT, 25 European languages)"
 log ""
 log "Shell integration files created in: $SCRIPT_DIR/integration"
 log "  - integration/llm-integration.bash (for Bash)"

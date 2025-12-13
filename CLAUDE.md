@@ -266,6 +266,11 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`upgrade_npm_global_if_installed(package_name)`**: Conditional upgrade only if package already installed
 - **`prompt_for_session_log_dir()`**: Interactive first-run prompt for session log storage preference (used in Phase 5)
 - **`prompt_for_session_log_silent()`**: Interactive first-run prompt for silent mode preference (used in Phase 5)
+- **`apply_pipewire_vm_fix()`**: Apply WirePlumber configuration to fix audio stuttering in VMs (used after Terminator detection)
+  - Creates `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf`
+  - Sets `api.alsa.period-size = 1024` and `api.alsa.headroom = 8192`
+  - Restarts PipeWire services if running
+  - Only runs when: Terminator installed + VM detected + PipeWire installed
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -565,58 +570,53 @@ See [`integration/CLAUDE.md`](integration/CLAUDE.md) for comprehensive documenta
 
 ### Speech-to-Text Transcription
 
-The repository includes a **speech-to-text transcription tool** using faster-whisper:
+The repository includes a **speech-to-text transcription tool** using onnx-asr with NVIDIA's Parakeet TDT model:
 
 **Components**:
-- **whisper-ctranslate2**: CLI tool installed via `uv tool install` (faster-whisper with CTranslate2 backend)
-- **transcribe**: Wrapper script with sensible defaults for CPU transcription
+- **onnx-asr**: Speech recognition library with ONNX Runtime backend
+- **nemo-parakeet-tdt-0.6b-v3**: NVIDIA's high-quality multilingual ASR model
+- **transcribe**: CLI wrapper script for file transcription
+- **pydub**: Audio format conversion (requires ffmpeg)
 
 **Features**:
-- **99+ languages** with automatic language detection
-- **Direct format support**: mp3, mp4, wav, m4a, flac, ogg, webm (via bundled PyAV/FFmpeg)
-- **CPU optimized**: Uses INT8 quantization and batched inference
-- **Multiple output formats**: txt, srt, vtt, json, tsv
+- **25 European languages** with automatic language detection
+- **High accuracy**: Average WER 6.34% on Hugging Face Open ASR Leaderboard
+- **Auto-punctuation**: Automatic punctuation and capitalization
+- **Format conversion**: mp3, mp4, m4a, flac, ogg, webm via pydub/ffmpeg
 
-**Default Settings** (in `transcribe` wrapper):
-- Model: `medium` (~1.5GB, ~3-4GB RAM, good balance of quality and resource usage)
-- Compute type: `int8` (best CPU performance)
-- Batched inference: enabled (2-4x speed increase)
+**Supported Languages**:
+Bulgarian (bg), Croatian (hr), Czech (cs), Danish (da), Dutch (nl), English (en),
+Estonian (et), Finnish (fi), French (fr), German (de), Greek (el), Hungarian (hu),
+Italian (it), Latvian (lv), Lithuanian (lt), Maltese (mt), Polish (pl), Portuguese (pt),
+Romanian (ro), Slovak (sk), Slovenian (sl), Spanish (es), Swedish (sv), Russian (ru),
+Ukrainian (uk)
 
 **Usage**:
 ```bash
-# Basic transcription (outputs to <filename>.txt)
+# Basic transcription (outputs to stdout)
 transcribe recording.mp3
 
-# Generate SRT subtitles
-transcribe video.mp4 -f srt
+# Save to file
+transcribe video.mp4 -o transcript.txt
 
-# Force German language, custom output
-transcribe podcast.wav -l de -o german.txt
-
-# Use smaller/faster model
-transcribe meeting.m4a --model medium
+# Suppress progress messages
+transcribe meeting.m4a 2>/dev/null | less
 ```
 
-**Direct whisper-ctranslate2 Usage** (without wrapper):
-```bash
-whisper-ctranslate2 file.mp3 --model large-v3-turbo --compute_type int8 --batched True
-```
+**Model Information**:
+- Model: `nemo-parakeet-tdt-0.6b-v3` (600M parameters)
+- Size: ~600MB (auto-downloaded on first use)
+- Cached in: `~/.cache/huggingface/`
+- Audio: Non-WAV formats converted via pydub/ffmpeg; resampling handled by onnx-asr
 
-**Available Models**:
-| Model | Size | Speed | Quality |
-|-------|------|-------|---------|
-| tiny | ~75MB | Fastest | Basic |
-| base | ~150MB | Very fast | Good |
-| small | ~500MB | Fast | Better |
-| medium | ~1.5GB | Moderate | High (default) |
-| large-v3 | ~3GB | Slow | Highest |
-| large-v3-turbo | ~800MB | Fast | High |
+**Comparison with llm-assistant Voice Input**:
+Both `transcribe` and llm-assistant's voice input use the same Parakeet TDT model via onnx-asr.
+The difference is:
+- **transcribe**: File-based transcription for pre-recorded audio
+- **llm-assistant**: Real-time microphone input with streaming
 
-**Note**: Models are automatically downloaded on first use and cached in `~/.cache/huggingface/`.
-
-**Limitations**:
-- `large-v3-turbo` does NOT support translation (only transcription)
-- For speech translation (non-English → English), use `large-v3` model
+**Note**: This tool supports 25 European languages. For 99+ language support (including Asian
+languages), consider using the standalone whisper-ctranslate2 tool: `uv tool install whisper-ctranslate2`
 
 ## Key Files & Components
 
@@ -629,7 +629,7 @@ whisper-ctranslate2 file.mp3 --model large-v3-turbo --compute_type int8 --batche
 - **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
 - **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
 - **`llm-template/wut.yaml`**: Template for explaining terminal command output (used by `wut` function)
-- **`scripts/transcribe`**: Speech-to-text wrapper script using faster-whisper (whisper-ctranslate2)
+- **`scripts/transcribe`**: Speech-to-text Python script using onnx-asr with Parakeet TDT model
 - **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
 ## Common Commands
@@ -750,6 +750,43 @@ llm plugins | grep context
 **Model/template completions not appearing**: Ensure llm is accessible: `which llm` and that you have configured at least one model. The plugin dynamically fetches available models via `llm models list`.
 
 **Completion conflicts or errors**: Delete the plugin and let the script reinstall: `rm -rf "$SCRIPT_DIR/integration/llm-zsh-plugin"` then run `./install-llm-tools.sh`.
+
+### PipeWire VM Audio Fix
+
+When running in a **virtual machine** with **Terminator** and **PipeWire**, the installation script automatically applies a WirePlumber configuration fix to prevent audio stuttering/crackling.
+
+**What it does**:
+- Creates `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf`
+- Sets larger buffer sizes: `api.alsa.period-size = 1024`, `api.alsa.headroom = 8192`
+- Restarts PipeWire services to apply changes
+
+**Conditions** (all must be true):
+1. Terminator terminal is installed
+2. Running in a VM (detected via `systemd-detect-virt`)
+3. PipeWire is installed
+
+**Manual fix** (if automatic fix didn't apply):
+```bash
+mkdir -p ~/.config/wireplumber/wireplumber.conf.d
+cat > ~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf << 'EOF'
+monitor.alsa.rules = [
+  {
+    matches = [
+      { node.name = "~alsa_output.*" }
+    ]
+    actions = {
+      update-props = {
+        api.alsa.period-size   = 1024
+        api.alsa.headroom      = 8192
+      }
+    }
+  }
+]
+EOF
+systemctl --user restart wireplumber pipewire pipewire-pulse
+```
+
+**Reference**: [PipeWire Troubleshooting Wiki](https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Troubleshooting#stuttering-audio-in-virtual-machine)
 
 ### Adding New LLM Plugins
 
@@ -923,6 +960,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 - `~/.local/share/aichat/rags/` - RAG collections and vector databases
+- `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure
 - `install-llm-tools.sh` - Main installation script with 7 phases

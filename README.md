@@ -357,7 +357,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 - **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
-- **[whisper-ctranslate2](https://github.com/Softcatala/whisper-ctranslate2)** - Fast speech-to-text transcription (99+ languages, CPU-optimized)
+- **[onnx-asr](https://github.com/istupakov/onnx-asr)** - Speech-to-text transcription using NVIDIA Parakeet TDT (25 European languages, auto-punctuation)
 - **[llm-assistant](integration/llm-assistant)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
 
 ### Shell Integration
@@ -1570,26 +1570,24 @@ imagemage uses `GEMINI_API_KEY` (automatically exported by this installation scr
 
 ### Speech-to-Text Transcription
 
-Transcribe audio and video files using [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with the `transcribe` wrapper script:
+Transcribe audio and video files using [onnx-asr](https://github.com/istupakov/onnx-asr) with NVIDIA's Parakeet TDT model:
 
 ```bash
-# Basic transcription (outputs to <filename>.txt)
+# Basic transcription (outputs to stdout)
 transcribe recording.mp3
 
-# Generate SRT subtitles from video
-transcribe video.mp4 -f srt
+# Save to file
+transcribe video.mp4 -o transcript.txt
 
-# Force language detection (e.g., German)
-transcribe podcast.wav -l de -o german.txt
+# Suppress progress messages (progress goes to stderr)
+transcribe meeting.m4a 2>/dev/null
 ```
 
-**Features:**
-- 99+ languages with automatic detection
-- Supports mp3, mp4, wav, m4a, flac, ogg, webm
-- CPU-optimized (INT8 quantization, batched inference)
-- Output formats: txt, srt, vtt, json, tsv
+**Supported formats:** mp3, mp4, wav, m4a, flac, ogg, webm (converted via ffmpeg)
 
-**Default model:** `medium` (~1.5GB, good quality). Use `--model large-v3-turbo` for faster/better quality if you have 6GB+ RAM. Models auto-download on first use.
+**Supported languages:** 25 European languages (auto-detected): Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Slovak, Slovenian, Spanish, Swedish, Russian, Ukrainian
+
+**Model:** `nemo-parakeet-tdt-0.6b-v3` (~600MB, auto-downloaded on first use)
 
 For detailed documentation, see [CLAUDE.md - Speech-to-Text Transcription](CLAUDE.md#speech-to-text-transcription).
 
@@ -2682,7 +2680,8 @@ For issues, questions, or suggestions:
 - [Zachary Yedidia](https://github.com/zyedidia/micro) - Micro modern terminal text editor
 - [ShamanicArts](https://github.com/ShamanicArts/llm-micro) - llm-micro plugin for in-editor AI assistance
 - [bodo-run](https://github.com/bodo-run/yek) - yek fast repository converter
-- [Softcatala](https://github.com/Softcatala/whisper-ctranslate2) - whisper-ctranslate2 speech-to-text
+- [istupakov](https://github.com/istupakov/onnx-asr) - onnx-asr speech recognition
+- [NVIDIA](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3) - Parakeet TDT ASR model
 
 ## License
 

@@ -930,6 +930,43 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 self.tui_cache.pop(key, None)
                 self.tui_cache_time.pop(key, None)
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
+    def scroll_to_bottom(self, terminal_uuid):
+        """
+        Scroll a terminal to the bottom of its scrollback buffer.
+
+        This is critical for prompt detection when user has scrolled up -
+        ensures the viewport shows the current prompt, not old content.
+
+        Args:
+            terminal_uuid: UUID of terminal to scroll
+
+        Returns:
+            True on success, False on failure
+        """
+        terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+        if not terminal:
+            err(f'scroll_to_bottom: Terminal {terminal_uuid} not found')
+            return False
+
+        vte = terminal.get_vte()
+        if not vte:
+            err(f'scroll_to_bottom: No VTE for terminal {terminal_uuid}')
+            return False
+
+        try:
+            vadj = vte.get_vadjustment()
+            if vadj:
+                # Calculate bottom position: total height - visible page size
+                bottom = vadj.get_upper() - vadj.get_page_size()
+                vadj.set_value(bottom)
+                dbg(f'scroll_to_bottom: Scrolled {terminal_uuid} to bottom ({bottom})')
+                return True
+            return False
+        except Exception as e:
+            err(f'scroll_to_bottom: Error for {terminal_uuid}: {e}')
+            return False
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='')
     def clear_cache(self):
         """Clear all caches (content and TUI detection, thread-safe)"""
