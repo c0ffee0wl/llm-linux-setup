@@ -2779,6 +2779,9 @@ Screenshot size: {file_size} bytes"""
         Returns:
             True if sent, False if skipped
         """
+        # Prepare terminal state BEFORE printing Panel to ensure immediate visibility
+        self._prepare_for_interactive_prompt()
+
         self.console.print(Panel(
             Text(keypress, style="bold magenta"),
             title="[bold]Keypress to Send[/]",
