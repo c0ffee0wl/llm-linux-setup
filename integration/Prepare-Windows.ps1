@@ -7,9 +7,8 @@
     Prepares a fresh Windows installation for remote management by:
     - Setting ExecutionPolicy to RemoteSigned
     - Optionally running Andrew Taylor's debloat script
-    - Disabling Windows Firewall for Private networks
-    - Enabling Remote Desktop (RDP) with NLA
-    - Installing and configuring OpenSSH Server
+    - Enabling Remote Desktop (RDP) with NLA (Private networks only)
+    - Installing and configuring OpenSSH Server (Private networks only)
     - Setting PowerShell as default SSH shell
     - Installing Chocolatey and essential packages
 
@@ -215,31 +214,16 @@ if ([string]::IsNullOrEmpty($runDebloat) -or $runDebloat -eq 'Y' -or $runDebloat
 Write-Host ""
 
 # ============================================================================
-# Disable Windows Firewall (Private Profile)
+# Windows Firewall Status (informational only - firewall remains enabled)
 # ============================================================================
 
-Write-Log "Configuring Windows Firewall..."
+Write-Log "Checking Windows Firewall status..."
 
-# Check current status
-$privateProfile = Get-NetFirewallProfile -Profile Private
-
-if ($privateProfile.Enabled -eq $false) {
-    Write-Log "Windows Firewall is already disabled for Private profile"
-} else {
-    Write-Log "Disabling Windows Firewall for Private profile..."
-
-    try {
-        Set-NetFirewallProfile -Profile Private -Enabled False
-        Write-Log "Windows Firewall disabled for Private profile"
-    } catch {
-        Write-WarningLog "Failed to disable firewall: $_"
-    }
-}
-
-# Log status of other profiles for reference
+# Log status of all profiles for reference (firewall stays enabled on all profiles)
 $domainProfile = Get-NetFirewallProfile -Profile Domain
+$privateProfile = Get-NetFirewallProfile -Profile Private
 $publicProfile = Get-NetFirewallProfile -Profile Public
-Write-Log "Firewall status: Domain=$($domainProfile.Enabled), Private=$((Get-NetFirewallProfile -Profile Private).Enabled), Public=$($publicProfile.Enabled)"
+Write-Log "Firewall status: Domain=$($domainProfile.Enabled), Private=$($privateProfile.Enabled), Public=$($publicProfile.Enabled)"
 
 Write-Host ""
 
@@ -270,15 +254,19 @@ if ($currentValue.fDenyTSConnections -eq 0) {
     }
 }
 
-# Enable firewall rule for RDP (idempotent - enabling an already-enabled rule is a no-op)
-Write-Log "Ensuring RDP firewall rules are enabled..."
+# Enable firewall rule for RDP (Private profile only for security)
+Write-Log "Configuring RDP firewall rules for Private profile only..."
 
 try {
     # Use rule name pattern - this is language-independent (rule names don't change across locales)
     # Built-in rules: RemoteDesktop-UserMode-In-TCP, RemoteDesktop-UserMode-In-UDP, etc.
+    # Enable the rules first
     Enable-NetFirewallRule -Name "RemoteDesktop-UserMode-In-TCP" -ErrorAction SilentlyContinue
     Enable-NetFirewallRule -Name "RemoteDesktop-UserMode-In-UDP" -ErrorAction SilentlyContinue
-    Write-Log "RDP firewall rules configured"
+    # Restrict to Private profile only (trusted networks)
+    Set-NetFirewallRule -Name "RemoteDesktop-UserMode-In-TCP" -Profile Private -ErrorAction SilentlyContinue
+    Set-NetFirewallRule -Name "RemoteDesktop-UserMode-In-UDP" -Profile Private -ErrorAction SilentlyContinue
+    Write-Log "RDP firewall rules configured (Private only)"
 } catch {
     Write-WarningLog "Failed to configure RDP firewall rules: $_"
     Write-WarningLog "You may need to manually enable the 'Remote Desktop' firewall rule"
@@ -336,8 +324,8 @@ if (Test-ServiceExists "sshd") {
         Write-WarningLog "Failed to configure sshd startup type: $_"
     }
 
-    # Configure firewall rule for SSH
-    Write-Log "Configuring SSH firewall rule..."
+    # Configure firewall rule for SSH (Private profile only for security)
+    Write-Log "Configuring SSH firewall rule for Private profile only..."
 
     # Check for any existing SSH/OpenSSH firewall rules (port 22 inbound)
     $sshFirewallRule = Get-NetFirewallRule -ErrorAction SilentlyContinue | Where-Object {
@@ -345,9 +333,10 @@ if (Test-ServiceExists "sshd") {
     }
 
     if ($sshFirewallRule) {
-        # Ensure existing rules are enabled
+        # Ensure existing rules are enabled and restricted to Private profile
         $sshFirewallRule | Enable-NetFirewallRule -ErrorAction SilentlyContinue
-        Write-Log "SSH firewall rule already exists and enabled"
+        $sshFirewallRule | Set-NetFirewallRule -Profile Private -ErrorAction SilentlyContinue
+        Write-Log "SSH firewall rule configured (Private only)"
     } else {
         try {
             New-NetFirewallRule -Name "OpenSSH-Server-In-TCP" `
@@ -356,8 +345,9 @@ if (Test-ServiceExists "sshd") {
                 -Action Allow `
                 -Direction Inbound `
                 -LocalPort 22 `
+                -Profile Private `
                 -ErrorAction Stop | Out-Null
-            Write-Log "SSH firewall rule created"
+            Write-Log "SSH firewall rule created (Private only)"
         } catch {
             Write-WarningLog "Failed to create SSH firewall rule: $_"
         }
@@ -536,9 +526,9 @@ Write-Host ""
 
 Write-Log "Configured features:"
 Write-Host "  - Execution Policy: RemoteSigned" -ForegroundColor Cyan
-Write-Host "  - Windows Firewall: Disabled for Private profile" -ForegroundColor Cyan
-Write-Host "  - Remote Desktop (RDP): Enabled with NLA" -ForegroundColor Cyan
-Write-Host "  - OpenSSH Server: Installed and running" -ForegroundColor Cyan
+Write-Host "  - Windows Firewall: Enabled on all profiles" -ForegroundColor Cyan
+Write-Host "  - Remote Desktop (RDP): Enabled with NLA (Private networks only)" -ForegroundColor Cyan
+Write-Host "  - OpenSSH Server: Installed and running (Private networks only)" -ForegroundColor Cyan
 Write-Host "  - Default SSH Shell: Windows PowerShell" -ForegroundColor Cyan
 Write-Host ""
 

@@ -2103,11 +2103,6 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     install_or_upgrade_llm_plugin sounddevice
     install_or_upgrade_llm_plugin numpy
     install_or_upgrade_llm_plugin pydub
-
-    # Install TTS (text-to-speech) dependency for /speech command
-    log "Installing TTS dependencies into llm tool environment..."
-    install_or_upgrade_llm_plugin google-cloud-texttospeech
-
     # Install onnx-asr with HuggingFace hub support for model downloads
     if install_or_upgrade_llm_plugin "onnx-asr[hub]" 2>/dev/null; then
         log "onnx-asr installed successfully"
@@ -2123,6 +2118,10 @@ print('Model loaded successfully')
         warn "onnx-asr installation failed - voice input will be unavailable"
         warn "You can try manually: llm install 'onnx-asr[hub]'"
     fi
+
+    # Install TTS (text-to-speech) dependency for /speech command
+    log "Installing TTS dependencies into llm tool environment..."
+    install_or_upgrade_llm_plugin google-cloud-texttospeech
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then

@@ -2570,6 +2570,9 @@ Think step-by-step: analyze what the command does, then classify."""
         Returns:
             Tuple of (executed: bool, output: str or tuple)
         """
+        # Prepare terminal state BEFORE printing Panel to ensure immediate visibility
+        self._prepare_for_interactive_prompt()
+
         self.console.print(Panel(
             Text(command, style="bold cyan"),
             title="[bold]Command to Execute[/]",
