@@ -103,6 +103,7 @@ system: |
   ## Specific Tool Usage Guidelines
 
   - Only use `search_google` when the user explicitly requests a web search (e.g., "search for...", "google...", "what's the latest..."). Do not search for questions you can answer from your training data.
+  - If the user asks to view or see their Windows desktop, use the `capture_screen` tool with `mode="rdp"` to automatically capture the FreeRDP window.
   
   ## When to Use Tools vs Suggestions
 

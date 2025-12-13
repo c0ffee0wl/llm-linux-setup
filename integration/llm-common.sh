@@ -137,7 +137,7 @@ llm() {
             command llm chat -t assistant --cl 15 "$@"
         else
             # Default: apply assistant template with default tools
-            command llm chat -t assistant --cl 15 --tool context --tool sandboxed_shell "$@"
+            command llm chat -t assistant --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
         fi
     elif [ "$1" = "code" ]; then
         shift
@@ -155,7 +155,7 @@ llm() {
         elif has_google_search "$@"; then
             command llm -t assistant --cl 15 "$@"
         else
-            command llm -t assistant --cl 15 --tool context --tool sandboxed_shell "$@"
+            command llm -t assistant --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
         fi
     fi
 }

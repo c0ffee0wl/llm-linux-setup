@@ -462,7 +462,7 @@ class Spinner:
 # =============================================================================
 # External tool plugins that assistant can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'capture_screen', 'imagemage')
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'mcp', 'capture_screen', 'imagemage', 'sandboxed_python')
 
 _all_tools = llm.get_tools()
 
@@ -551,6 +551,8 @@ EXTERNAL_TOOL_DISPLAY = {
     # Extension Management
     'browser_list_extensions': ('', 'Listing extensions', 'List installed browser extensions'),
     'browser_reload_extensions': ('', 'Reloading extensions', 'Reload unpacked extensions'),
+    # Sandboxed Python execution
+    'execute_python': ('code', 'Running Python', 'Execute Python code in sandbox'),
 }
 
 
@@ -3892,6 +3894,11 @@ Type !fragment <name> [...] to insert fragments""",
                         continue
                     self.console.print("\n\n[yellow]Exiting...[/]")
                     break
+
+                # Reset terminal state after prompt_toolkit to ensure clean state for Rich output
+                # prompt_toolkit may leave terminal in a state that prevents immediate display
+                sys.stdout.write('\x1b[?25h\x1b[0m')  # Show cursor, reset SGR
+                sys.stdout.flush()
 
                 # Handle !multi command (start multi-line mode)
                 if user_input.startswith("!multi"):
