@@ -2562,6 +2562,29 @@ Think step-by-step: analyze what the command does, then classify."""
         except Exception:
             pass
 
+    def _force_display(self):
+        """Force immediate display of any buffered Rich output.
+
+        Bypasses Rich's buffering by using print() directly, then flushes
+        all output buffers and gives the terminal time to render.
+        """
+        print(end="", flush=True)  # Bypass Rich buffering
+        self.console.file.flush()
+        sys.stdout.flush()
+        time.sleep(0.02)  # Give terminal time to render
+
+    def _ensure_exec_terminal(self) -> bool:
+        """Verify exec terminal exists, recreate if needed.
+
+        Returns:
+            True if exec terminal is ready, False if recreation failed.
+        """
+        if not self._verify_exec_terminal():
+            self.console.print("[yellow]Exec terminal not found[/]")
+            if not self._recreate_exec_terminal():
+                return False
+        return True
+
     def execute_command(self, command: str) -> Tuple[bool, str]:
         """
         Execute command in Exec terminal with user approval and intelligent completion detection.
@@ -2578,6 +2601,9 @@ Think step-by-step: analyze what the command does, then classify."""
             title="[bold]Command to Execute[/]",
             border_style="cyan"
         ))
+
+        # Force immediate display of Panel
+        self._force_display()
 
         # AUTO MODE: Use LLM judge instead of user approval
         if self.auto_mode:
@@ -2632,10 +2658,8 @@ Think step-by-step: analyze what the command does, then classify."""
                 command = edited
 
         # Verify exec terminal exists
-        if not self._verify_exec_terminal():
-            self.console.print("[yellow]Exec terminal not found[/]")
-            if not self._recreate_exec_terminal():
-                return (False, "")
+        if not self._ensure_exec_terminal():
+            return (False, "")
 
         # Capture terminal content BEFORE sending command (for change detection)
         try:
@@ -2788,6 +2812,9 @@ Screenshot size: {file_size} bytes"""
             border_style="magenta"
         ))
 
+        # Force immediate display of Panel
+        self._force_display()
+
         # Ask for approval
         self._prepare_for_interactive_prompt()
         choice = Prompt.ask(
@@ -2805,10 +2832,8 @@ Screenshot size: {file_size} bytes"""
             keypress = edited
 
         # Verify exec terminal exists
-        if not self._verify_exec_terminal():
-            self.console.print("[yellow]Exec terminal not found[/]")
-            if not self._recreate_exec_terminal():
-                return False
+        if not self._ensure_exec_terminal():
+            return False
 
         # Send keypress to Exec terminal using new D-Bus method
         try:
@@ -4021,6 +4046,8 @@ Type !fragment <name> [...] to insert fragments""",
                     # Note: With tool calling, the model's text output is separate from tool calls
                     if response_text.strip():
                         self.console.print(Markdown(response_text))
+                        # Force display after Markdown to ensure clean terminal state before tool processing
+                        self._force_display()
 
                     stream_success = True
 
