@@ -2120,9 +2120,10 @@ print('Model loaded successfully')
         warn "You can try manually: llm install 'onnx-asr[hub]'"
     fi
 
-    # Install TTS (text-to-speech) dependency for /speech command
+    # Install TTS (text-to-speech) dependencies for /speech command
     log "Installing TTS dependencies into llm tool environment..."
     install_or_upgrade_llm_plugin google-cloud-texttospeech
+    install_or_upgrade_llm_plugin strip-markdown
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then

@@ -153,6 +153,7 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 
 **Keybindings:**
 - `Ctrl+Space` - Toggle voice input (start/stop recording)
+- `Esc` - Stop TTS playback
 - `Ctrl+D` - Exit assistant
 - `Ctrl+C` - Double-press within 2 seconds to exit
 
@@ -168,13 +169,19 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 **Speech Output (TTS):**
 - Available only when using Vertex models (`vertex/*`)
 - Uses Google Cloud Text-to-Speech with Chirp3-HD voices
-- Uses Application Default Credentials (run `gcloud auth application-default login`)
+- Uses EU endpoint (`eu-texttospeech.googleapis.com`) for data residency compliance
+- **Streaming synthesis**: Uses `streaming_synthesize()` API for lower latency
+- **Markdown stripping**: Removes formatting before synthesis (fenced code blocks skipped entirely)
+- **Credential resolution order:**
+  1. `GOOGLE_APPLICATION_CREDENTIALS` env var (service account JSON path)
+  2. `llm vertex set-credentials /path/to/sa.json` (stored in llm config)
+  3. Application Default Credentials (run `gcloud auth application-default login`)
 - `/speech` or `/speech on` - enable TTS output
 - `/speech off` - disable TTS output
-- `/speech status` - show TTS status
-- Streaming synthesis: Audio starts playing as sentences complete (low latency)
+- `/speech status` - show TTS status (including credential method)
+- `Esc` - stop current TTS playback
 - Default voice: `de-DE-Chirp3-HD-Laomedeia` (German)
-- Requires `google-cloud-texttospeech` package (auto-installed)
+- Requires `google-cloud-texttospeech`, `strip-markdown` packages (auto-installed)
 
 **Other input:**
 - `!fragment <name>` - Attach an llm fragment to the conversation
@@ -221,7 +228,7 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 - D-Bus (for terminal management)
 - prompt_toolkit (for keybindings)
 - sounddevice, numpy, onnx-asr (optional, for voice input)
-- google-cloud-texttospeech (optional, for TTS output with Vertex models)
+- google-cloud-texttospeech, google-auth, strip-markdown (optional, for TTS output with Vertex models)
 
 ## Usage Examples
 
