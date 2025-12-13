@@ -462,7 +462,7 @@ class Spinner:
 # =============================================================================
 # External tool plugins that assistant can dispatch (easy to extend)
 # Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'mcp', 'capture_screen', 'imagemage', 'sandboxed_python')
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'capture_screen', 'imagemage', 'sandboxed_python')
 
 _all_tools = llm.get_tools()
 
