@@ -228,6 +228,77 @@ Write-Log "Firewall status: Domain=$($domainProfile.Enabled), Private=$($private
 Write-Host ""
 
 # ============================================================================
+# Configure Windows Explorer Visual Settings
+# ============================================================================
+
+Write-Log "Configuring Windows Explorer visual settings..."
+
+# Registry paths
+$explorerAdvancedPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$themesPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize"
+$visualEffectsPath = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\VisualEffects"
+$desktopPath = "HKCU:\Control Panel\Desktop"
+$desktopMetricsPath = "HKCU:\Control Panel\Desktop\WindowMetrics"
+
+# 1. Always show file extensions
+Write-Log "Enabling file extensions visibility..."
+try {
+    Set-ItemProperty -Path $explorerAdvancedPath -Name "HideFileExt" -Value 0 -Type DWord
+    Write-Log "File extensions will now always be visible"
+} catch {
+    Write-WarningLog "Failed to configure file extensions: $_"
+}
+
+# 2. Disable transparency effects
+Write-Log "Disabling transparency effects..."
+try {
+    # Create path if it doesn't exist
+    if (-not (Test-Path $themesPath)) {
+        New-Item -Path $themesPath -Force | Out-Null
+    }
+    Set-ItemProperty -Path $themesPath -Name "EnableTransparency" -Value 0 -Type DWord
+    Write-Log "Transparency effects disabled"
+} catch {
+    Write-WarningLog "Failed to disable transparency: $_"
+}
+
+# 3. Disable animations (set to "Best Performance")
+Write-Log "Disabling animations..."
+try {
+    # Create paths if they don't exist
+    if (-not (Test-Path $visualEffectsPath)) {
+        New-Item -Path $visualEffectsPath -Force | Out-Null
+    }
+    if (-not (Test-Path $desktopMetricsPath)) {
+        New-Item -Path $desktopMetricsPath -Force | Out-Null
+    }
+    # VisualFXSetting: 2 = Best Performance
+    Set-ItemProperty -Path $visualEffectsPath -Name "VisualFXSetting" -Value 2 -Type DWord
+
+    # Desktop settings (string values)
+    Set-ItemProperty -Path $desktopPath -Name "MenuShowDelay" -Value "200" -Type String
+
+    # UserPreferencesMask: Binary value for comprehensive visual effects control
+    # Value 90,12,03,80,10,00,00,00 disables most animations and effects
+    $userPrefMask = [byte[]](0x90,0x12,0x03,0x80,0x10,0x00,0x00,0x00)
+    Set-ItemProperty -Path $desktopPath -Name "UserPreferencesMask" -Value $userPrefMask -Type Binary
+
+    # Disable minimize/maximize animations
+    Set-ItemProperty -Path $desktopMetricsPath -Name "MinAnimate" -Value "0" -Type String
+
+    # Explorer Advanced settings
+    Set-ItemProperty -Path $explorerAdvancedPath -Name "TaskbarAnimations" -Value 0 -Type DWord
+    Set-ItemProperty -Path $explorerAdvancedPath -Name "ListviewAlphaSelect" -Value 0 -Type DWord
+    Set-ItemProperty -Path $explorerAdvancedPath -Name "ListviewShadow" -Value 0 -Type DWord
+
+    Write-Log "Animations disabled (set to Best Performance)"
+} catch {
+    Write-WarningLog "Failed to disable animations: $_"
+}
+
+Write-Host ""
+
+# ============================================================================
 # Enable Remote Desktop (RDP)
 # ============================================================================
 
@@ -527,6 +598,7 @@ Write-Host ""
 Write-Log "Configured features:"
 Write-Host "  - Execution Policy: RemoteSigned" -ForegroundColor Cyan
 Write-Host "  - Windows Firewall: Enabled on all profiles" -ForegroundColor Cyan
+Write-Host "  - Explorer Settings: Show extensions, no animations/transparency" -ForegroundColor Cyan
 Write-Host "  - Remote Desktop (RDP): Enabled with NLA (Private networks only)" -ForegroundColor Cyan
 Write-Host "  - OpenSSH Server: Installed and running (Private networks only)" -ForegroundColor Cyan
 Write-Host "  - Default SSH Shell: Windows PowerShell" -ForegroundColor Cyan
