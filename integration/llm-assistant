@@ -2547,14 +2547,19 @@ Think step-by-step: analyze what the command does, then classify."""
             return (False, "dangerous", f"Safety check failed: {str(e)}")
 
     def _prepare_for_interactive_prompt(self):
-        """Ensure terminal is ready for Rich Prompt.ask().
+        """Reset terminal state before displaying command/keypress Panel.
 
-        Fixes invisible prompt on first tool call by resetting terminal state.
+        Resets terminal modes that prompt_toolkit may have enabled to ensure
+        Rich output renders correctly.
         """
-        # Flush output and reset terminal state (show cursor, reset attributes)
-        self.console.file.flush()
-        sys.stdout.write('\x1b[?25h\x1b[0m')
+        # Comprehensive terminal state reset:
+        # - \x1b[?2004l  Disable bracketed paste mode (prompt_toolkit enables this)
+        # - \x1b>        Disable application keypad mode (DECKPNM)
+        # - \x1b[?25h    Show cursor (DECTCEM)
+        # - \x1b[0m      Reset all SGR attributes
+        sys.stdout.write('\x1b[?2004l\x1b>\x1b[?25h\x1b[0m')
         sys.stdout.flush()
+        self.console.file.flush()
         time.sleep(0.05)
 
         # Clear buffered input
@@ -2574,6 +2579,34 @@ Think step-by-step: analyze what the command does, then classify."""
         self.console.file.flush()
         sys.stdout.flush()
         time.sleep(0.02)  # Give terminal time to render
+
+    def _ask_confirmation(self, prompt_text: str, choices: List[str], default: str) -> str:
+        """Ask for confirmation, ensuring prompt renders on first call.
+
+        Works around Rich console.input() not rendering on first call after prompt_toolkit.
+        Uses Python's built-in input() with prompt - the most basic I/O approach.
+        """
+        # Build the prompt string with ANSI colors (cyan for choices, green for default)
+        choice_str = "/".join(choices)
+        full_prompt = f"{prompt_text} [\x1b[36m{choice_str}\x1b[0m] (\x1b[32m{default}\x1b[0m): "
+
+        # Flush stdout before the prompt to ensure clean state
+        sys.stdout.flush()
+
+        while True:
+            try:
+                # Use input() with prompt - this is the most basic approach
+                response = input(full_prompt).strip().lower()
+            except EOFError:
+                response = ""
+
+            if not response:
+                return default
+            if response in choices:
+                return response
+
+            # Invalid choice - re-prompt
+            print(f"Please enter one of: {', '.join(choices)}")
 
     def _ensure_exec_terminal(self) -> bool:
         """Verify exec terminal exists, recreate if needed.
@@ -2625,8 +2658,7 @@ Think step-by-step: analyze what the command does, then classify."""
                     self.console.print(f"[{color}]{icon}[/] auto")
                 else:
                     self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
-                    self._prepare_for_interactive_prompt()
-                    choice = Prompt.ask("Execute?", choices=["y", "n", "e"], default="y")
+                    choice = self._ask_confirmation("Execute?", ["y", "n", "e"], "y")
                     if choice == "n":
                         return (False, "")
                     if choice == "e":
@@ -2635,8 +2667,7 @@ Think step-by-step: analyze what the command does, then classify."""
             else:  # dangerous
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
                 self.console.print("[bold red]BLOCKED[/] - manual approval required")
-                self._prepare_for_interactive_prompt()
-                choice = Prompt.ask("Override?", choices=["yes", "no", "edit"], default="no")
+                choice = self._ask_confirmation("Override?", ["yes", "no", "edit"], "no")
                 if choice == "no":
                     return (False, "")
                 if choice == "edit":
@@ -2644,12 +2675,7 @@ Think step-by-step: analyze what the command does, then classify."""
                     return self.execute_command(edited)
         else:
             # MANUAL MODE: Original approval flow
-            self._prepare_for_interactive_prompt()
-            choice = Prompt.ask(
-                "Execute in Exec terminal?",
-                choices=["y", "n", "e"],  # yes, no, edit
-                default="y"
-            )
+            choice = self._ask_confirmation("Execute in Exec terminal?", ["y", "n", "e"], "y")
 
             if choice == "n":
                 return (False, "")
@@ -2818,12 +2844,7 @@ Screenshot size: {file_size} bytes"""
         self._force_display()
 
         # Ask for approval
-        self._prepare_for_interactive_prompt()
-        choice = Prompt.ask(
-            "Send this key(s)?",
-            choices=["y", "n", "e"],  # yes, no, edit
-            default="y"
-        )
+        choice = self._ask_confirmation("Send this key(s)?", ["y", "n", "e"], "y")
 
         if choice == "n":
             return False
@@ -3896,8 +3917,8 @@ Type !fragment <name> [...] to insert fragments""",
                     break
 
                 # Reset terminal state after prompt_toolkit to ensure clean state for Rich output
-                # prompt_toolkit may leave terminal in a state that prevents immediate display
-                sys.stdout.write('\x1b[?25h\x1b[0m')  # Show cursor, reset SGR
+                # prompt_toolkit enables bracketed paste mode and application keypad mode
+                sys.stdout.write('\x1b[?2004l\x1b>\x1b[?25h\x1b[0m')
                 sys.stdout.flush()
 
                 # Handle !multi command (start multi-line mode)
