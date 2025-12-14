@@ -92,11 +92,187 @@ except ImportError:
         """Fallback: just remove code blocks."""
         return _CODE_BLOCK_RE.sub('', text)
 
-# prompt_toolkit for keybindings (Ctrl+Space for voice)
+# prompt_toolkit for keybindings (Ctrl+Space for voice) and completion
 from prompt_toolkit import PromptSession
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PTStyle
+from prompt_toolkit.completion import Completer, Completion
 
+
+# Slash command definitions for tab completion
+# Structure: command -> {subcommands: [...], dynamic: str|None, description: str}
+SLASH_COMMANDS = {
+    "/help": {"subcommands": [], "dynamic": None, "description": "Show help"},
+    "/clear": {"subcommands": [], "dynamic": None, "description": "Clear conversation"},
+    "/reset": {"subcommands": [], "dynamic": None, "description": "Full reset"},
+    "/refresh": {"subcommands": [], "dynamic": None, "description": "Refresh context"},
+    "/info": {"subcommands": [], "dynamic": None, "description": "Session info"},
+    "/quit": {"subcommands": [], "dynamic": None, "description": "Exit"},
+    "/exit": {"subcommands": [], "dynamic": None, "description": "Exit"},
+    "/model": {"subcommands": ["-q"], "dynamic": "models", "description": "Switch or list models"},
+    "/watch": {"subcommands": ["off", "status"], "dynamic": None, "description": "Watch mode control"},
+    "/squash": {"subcommands": [], "dynamic": None, "description": "Compress context"},
+    "/kb": {"subcommands": ["load", "unload", "reload"], "dynamic": "kb", "description": "Knowledge base control"},
+    "/auto": {"subcommands": ["full", "off", "status"], "dynamic": None, "description": "Auto mode control"},
+    "/voice": {"subcommands": ["auto", "off", "status"], "dynamic": None, "description": "Voice input control"},
+    "/speech": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "TTS output control"},
+}
+
+
+class SlashCommandCompleter(Completer):
+    """Tab completion for slash commands in llm-assistant.
+
+    Supports:
+    - Command names (when typing /)
+    - Subcommands (off, status, load, etc.)
+    - Dynamic completions (model names, KB names)
+    """
+
+    def __init__(self, session: 'TerminatorAssistantSession' = None):
+        """Initialize completer with optional session reference.
+
+        Args:
+            session: TerminatorAssistantSession instance for dynamic completions.
+                     Can be set later via set_session().
+        """
+        self.session = session
+
+    def set_session(self, session: 'TerminatorAssistantSession'):
+        """Set session reference (for deferred initialization)."""
+        self.session = session
+
+    def get_completions(self, document, complete_event):
+        """Yield completions based on current input."""
+        text = document.text_before_cursor
+
+        # Only complete if starts with /
+        if not text.startswith('/'):
+            return
+
+        parts = text.split()
+
+        # parts will always have at least 1 element since text starts with '/'
+        # (split() on "/" returns ['/'], on "/mo" returns ['/mo'], etc.)
+
+        if len(parts) == 1 and not text.endswith(' '):
+            # Completing command name: "/" -> all commands, "/mo" -> "/model"
+            yield from self._complete_commands(parts[0])
+
+        elif len(parts) >= 1:
+            # Completing after command: "/model " or "/kb load "
+            cmd = parts[0].lower()
+
+            if cmd not in SLASH_COMMANDS:
+                return
+
+            cmd_info = SLASH_COMMANDS[cmd]
+
+            if len(parts) == 1 and text.endswith(' '):
+                # Just command + space: "/model " - show subcommands or dynamic
+                yield from self._complete_first_arg(cmd, cmd_info, "")
+
+            elif len(parts) == 2 and not text.endswith(' '):
+                # Partial first arg: "/model az" or "/kb lo"
+                partial = parts[1]
+                yield from self._complete_first_arg(cmd, cmd_info, partial)
+
+            elif len(parts) == 2 and text.endswith(' '):
+                # First arg complete, need second: "/kb load "
+                subcommand = parts[1].lower()
+                yield from self._complete_second_arg(cmd, subcommand, "")
+
+            elif len(parts) == 3 and not text.endswith(' '):
+                # Partial second arg: "/kb load pro"
+                subcommand = parts[1].lower()
+                partial = parts[2]
+                yield from self._complete_second_arg(cmd, subcommand, partial)
+
+    def _complete_commands(self, partial: str):
+        """Complete command names."""
+        partial_lower = partial.lower()
+        for cmd, info in SLASH_COMMANDS.items():
+            if cmd.lower().startswith(partial_lower):
+                yield Completion(
+                    cmd,
+                    start_position=-len(partial),
+                    display_meta=info.get("description", "")
+                )
+
+    def _complete_first_arg(self, cmd: str, cmd_info: dict, partial: str):
+        """Complete first argument (subcommand or dynamic value)."""
+        partial_lower = partial.lower()
+
+        # Subcommands first
+        for sub in cmd_info.get("subcommands", []):
+            if sub.lower().startswith(partial_lower):
+                yield Completion(
+                    sub,
+                    start_position=-len(partial)
+                )
+
+        # Dynamic completions
+        dynamic_type = cmd_info.get("dynamic")
+        if dynamic_type == "models":
+            yield from self._complete_models(partial)
+        elif dynamic_type == "kb" and cmd == "/kb":
+            # For /kb without subcommand, don't show KB names yet
+            pass
+
+    def _complete_second_arg(self, cmd: str, subcommand: str, partial: str):
+        """Complete second argument (KB names after load/unload)."""
+        if cmd == "/kb":
+            if subcommand == "load":
+                yield from self._complete_available_kbs(partial)
+            elif subcommand == "unload":
+                yield from self._complete_loaded_kbs(partial)
+
+    def _complete_models(self, partial: str):
+        """Complete model names dynamically."""
+        partial_lower = partial.lower()
+        try:
+            for model in llm.get_models():
+                model_id = model.model_id
+                if model_id.lower().startswith(partial_lower):
+                    yield Completion(
+                        model_id,
+                        start_position=-len(partial)
+                    )
+        except Exception:
+            pass  # Graceful degradation if llm unavailable
+
+    def _complete_available_kbs(self, partial: str):
+        """Complete available KB names for /kb load."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            kb_dir = self.session._get_kb_dir()
+            for kb_file in kb_dir.glob("*.md"):
+                name = kb_file.stem
+                # Only show KBs not already loaded
+                if name not in self.session.loaded_kbs:
+                    if name.lower().startswith(partial_lower):
+                        yield Completion(
+                            name,
+                            start_position=-len(partial)
+                        )
+        except Exception:
+            pass
+
+    def _complete_loaded_kbs(self, partial: str):
+        """Complete loaded KB names for /kb unload."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            for name in self.session.loaded_kbs.keys():
+                if name.lower().startswith(partial_lower):
+                    yield Completion(
+                        name,
+                        start_position=-len(partial)
+                    )
+        except Exception:
+            pass
 
 
 class VoiceInput:
@@ -838,8 +1014,12 @@ class TerminatorAssistantSession:
         # prompt_toolkit session with Ctrl+Space voice toggle
         self.prompt_session = self._create_prompt_session()
 
+        # Set session reference for slash command completer (dynamic completions need access to self)
+        if hasattr(self.prompt_session, 'completer') and self.prompt_session.completer:
+            self.prompt_session.completer.set_session(self)
+
     def _create_prompt_session(self) -> PromptSession:
-        """Create prompt_toolkit session with voice toggle keybinding."""
+        """Create prompt_toolkit session with voice toggle keybinding and slash command completion."""
         kb = KeyBindings()
 
         # Store reference to self for closure
@@ -906,7 +1086,15 @@ class TerminatorAssistantSession:
             'continuation': 'ansigray',
         })
 
-        return PromptSession(key_bindings=kb, style=style)
+        # Create completer for slash commands (session reference set after __init__)
+        completer = SlashCommandCompleter()
+
+        return PromptSession(
+            key_bindings=kb,
+            style=style,
+            completer=completer,
+            complete_while_typing=False,  # Only complete on Tab
+        )
 
     def _acquire_instance_lock(self):
         """
@@ -1282,6 +1470,9 @@ class TerminatorAssistantSession:
         accumulated_text = ""
         sentence_buffer = SentenceBuffer() if tts_enabled else None
 
+        # Blank line before streaming output (separates from tool call results)
+        self.console.print()
+
         with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=False) as live:
             for chunk in response:
                 accumulated_text += chunk
@@ -1422,14 +1613,14 @@ Shell: {env_type} {shell_info}
     # =========================================================================
 
     def _get_kb_dir(self) -> Path:
-        """Get or create KB directory."""
-        kb_dir = Path.home() / ".config" / "llm-assistant" / "kb"
+        """Get or create KB directory in llm's config directory."""
+        kb_dir = llm.user_dir() / "kb"
         kb_dir.mkdir(parents=True, exist_ok=True)
         return kb_dir
 
     def _get_config_file(self) -> Path:
-        """Get config file path."""
-        return Path.home() / ".config" / "llm-assistant" / "config.yaml"
+        """Get config file path in llm's config directory."""
+        return llm.user_dir() / "assistant-config.yaml"
 
     def _load_config(self) -> dict:
         """Load config.yaml if it exists."""
@@ -1721,19 +1912,20 @@ Shell: {env_type} {shell_info}
                     # Filter out chat terminal (already normalized at assignment)
                     other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
-                    # First: Look for existing Assistant Exec pane with ACTIVE process
-                    # (If PID in title is dead, don't reuse - it has wrong PID)
+                    # First: Look for existing Assistant Exec pane
                     for t in other_terminals:
                         title = t.get('title', '')
                         if title.startswith('Assistant: Exec'):
                             pid = self._extract_pid_from_title(title)
-                            # Only reuse if: no PID in title (legacy) OR PID matches current process
-                            if pid is None or pid == os.getpid():
+                            # Reuse if: no PID in title (legacy), PID matches current process,
+                            # or PID is from a dead process (previous session)
+                            pid_is_dead = pid is not None and pid != os.getpid() and not self._process_exists(pid)
+                            if pid is None or pid == os.getpid() or pid_is_dead:
                                 self.exec_terminal_uuid = self._normalize_uuid(t['uuid'])
                                 self._release_instance_lock()  # Release global lock
                                 self.console.print("[green]✓[/] Terminals ready")
                                 return  # Success - reusing existing exec terminal
-                            # Stale title with dead PID - don't reuse (would have wrong PID)
+                            # PID belongs to another active assistant - don't reuse
 
                     # Second: If exactly one other pane, offer to use it
                     if len(other_terminals) == 1:
@@ -2506,13 +2698,11 @@ Previous messages:
     def _record_squash_link(self, old_id, new_id):
         """Record link between squashed conversations.
 
-        Stores link in ~/.config/io.datasette.llm/squash-links.json
+        Stores link in llm's config directory (squash-links.json)
         to allow tracking conversation history across squash boundaries.
         """
         from datetime import datetime
-        llm_config_dir = Path.home() / '.config' / 'io.datasette.llm'
-        links_path = llm_config_dir / 'squash-links.json'
-        llm_config_dir.mkdir(parents=True, exist_ok=True)
+        links_path = llm.user_dir() / 'squash-links.json'
 
         links = {}
         if links_path.exists():
@@ -2529,8 +2719,7 @@ Previous messages:
 
         Displays info if this conversation was created from a squash operation.
         """
-        llm_config_dir = Path.home() / '.config' / 'io.datasette.llm'
-        links_path = llm_config_dir / 'squash-links.json'
+        links_path = llm.user_dir() / 'squash-links.json'
         if not links_path.exists():
             return
 

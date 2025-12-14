@@ -119,14 +119,15 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 
 The assistant supports TmuxAI-style knowledge bases for persistent context:
 
-**Location**: `~/.config/llm-assistant/kb/`
+**Location**: `~/.config/io.datasette.llm/kb/` (in llm's config directory)
 
 **Usage**:
 ```bash
 # Create a KB file
+mkdir -p ~/.config/io.datasette.llm/kb
 echo "## Project Conventions
 - Use Python 3.10+
-- Follow PEP8" > ~/.config/llm-assistant/kb/project.md
+- Follow PEP8" > ~/.config/io.datasette.llm/kb/project.md
 
 # In assistant:
 /kb load project              # Load single KB
@@ -137,7 +138,7 @@ echo "## Project Conventions
 
 **Auto-load config** (optional):
 ```yaml
-# ~/.config/llm-assistant/config.yaml
+# ~/.config/io.datasette.llm/assistant-config.yaml
 knowledge_base:
   auto_load:
     - project
