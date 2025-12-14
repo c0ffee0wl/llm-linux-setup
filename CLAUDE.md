@@ -401,6 +401,8 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 - Config file: `~/.config/io.datasette.llm/azure/config.yaml`
 - Default embedding model: `azure/text-embedding-3-small`
 - Used by llm-tools-rag for RAG functionality
+- **API base difference**: Chat models use full path (`https://RESOURCE.openai.azure.com/openai/v1/`), but embedding models need just the base endpoint (`https://RESOURCE.openai.azure.com`). The install script automatically strips the `/openai/v1/` suffix when generating the embedding config.
+- **API version**: Uses `2024-10-21` (latest GA version; the `AzureOpenAI` client requires explicit api_version)
 - **Why two config files?**: The built-in openai_models plugin doesn't support Azure embeddings. The llm-azure plugin provides native Azure SDK support for embeddings via a separate config file. Both plugins coexist - they read different files and register different model types.
 
 **Google Gemini Configuration:**

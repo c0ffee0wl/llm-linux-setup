@@ -1748,12 +1748,16 @@ EOF
     AZURE_CONFIG_DIR="$LLM_CONFIG_DIR/azure"
     mkdir -p "$AZURE_CONFIG_DIR"
 
+    # llm-azure uses AzureOpenAI client which expects base endpoint without /openai/v1/
+    # Strip /openai/v1/ suffix if present (chat models in extra-openai-models.yaml use full path)
+    AZURE_EMBEDDING_BASE=$(echo "$AZURE_API_BASE" | sed 's|/openai/v1/$||; s|/openai/v1$||')
+
     cat > "$AZURE_CONFIG_DIR/config.yaml" <<EOF
 - model_id: azure/text-embedding-3-small
   model_name: text-embedding-3-small
   embedding_model: true
-  api_base: ${AZURE_API_BASE}
-  api_version: '2023-05-15'
+  api_base: ${AZURE_EMBEDDING_BASE}
+  api_version: '2024-10-21'
 EOF
 
     # Install llm-azure plugin now that config exists
