@@ -1470,9 +1470,6 @@ class TerminatorAssistantSession:
         accumulated_text = ""
         sentence_buffer = SentenceBuffer() if tts_enabled else None
 
-        # Blank line before streaming output (separates from tool call results)
-        self.console.print()
-
         with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=False) as live:
             for chunk in response:
                 accumulated_text += chunk
@@ -4229,9 +4226,13 @@ Type !fragment <name> [...] to insert fragments""",
                     now = time.time()
                     if now - self._last_interrupt_time > 2.0:
                         self._last_interrupt_time = now
-                        self.console.print("[grey70](press again within 2 seconds to exit)[/]", end="")
+                        # Go up to overwrite the > prompt line, clear it, print message
+                        # Then prompt's \n> will show blank line + new >
+                        sys.stdout.write("\033[A\r\033[K")
+                        sys.stdout.write("\033[90m(press again within 2 seconds to exit)\033[0m\n")
+                        sys.stdout.flush()
                         continue
-                    self.console.print("\n\n[yellow]Exiting...[/]")
+                    self.console.print("\n[yellow]Exiting...[/]")
                     break
 
                 # Reset terminal state after prompt_toolkit to ensure clean state for Rich output
@@ -4435,6 +4436,8 @@ Type !fragment <name> [...] to insert fragments""",
                                     )
 
                                     # Stream follow-up response with Live markdown display
+                                    # Blank line separates tool results from AI response
+                                    self.console.print()
                                     followup_text = self._stream_response_with_display(followup_response, tts_enabled=tts_enabled)
 
                                     # Check if the model made more tool calls
