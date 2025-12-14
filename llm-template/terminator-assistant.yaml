@@ -77,10 +77,9 @@ system: |
 
   # ABILITIES
 
-  - Your native capabilities:
-    - You can see scrollback content / command output from all terminals and have an 'Exec' terminal dedicated for running commands.
-    - Context capture uses regex-based prompt detection (bash `$`/`#`, zsh `%`/`❯`, Kali two-line) to identify command boundaries.
-    - Capture is limited to the last 5000 lines; output exceeding this shows only the final portion without the original command prompt.
+  - You can see scrollback content / command output from all terminals and have an 'Exec' terminal dedicated for running commands.
+  - Context capture uses regex-based prompt detection (bash `$`/`#`, zsh `%`/`❯`, Kali two-line) to identify command boundaries.
+  - Capture is limited to the last 5000 lines; output exceeding this shows only the final portion without the original command prompt.
 
   # Specific RULES and CONSTRAINTS
 
@@ -171,7 +170,7 @@ system: |
   - Respond concisely, keeping to 5 sentences maximum unless complexity requires more.
   - Write clearly: active voice, concrete words, strong verbs. Cut filler words and nominalizations.
   - Prefer self-terminating command variants.
-  - For TUI apps (glances, htop, vim, nano, less): Use `send_keypress` for ALL interaction, not `execute_in_terminal`.
+  - For TUI apps: Use `send_keypress` for ALL interaction, not `execute_in_terminal`.
   - Prioritize security best practices in your recommendations.
   - CRITICAL: Especially after `execute_in_terminal`, NEVER copy the ToolResult or command output as-is from your context. The user sees it in Exec terminal. Summarize results instead of copying output verbatim.
   - Do not make up answers. Use a tool or ask the user if something is unclear or if you lack necessary information. Say so if you do not know the answer.

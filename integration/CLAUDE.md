@@ -39,7 +39,7 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
 
 4. **Assistant Tools Plugin** (`llm-tools-assistant/`):
    - Provides structured tool definitions for terminal control
-   - Tools: execute_in_terminal, send_keypress, capture_terminal, refresh_context
+   - Tools: execute_in_terminal, send_keypress, capture_terminal, refresh_context, view_attachment, view_pdf, view_youtube_native
    - Schema validation at model level prevents malformed commands
 
 ## User Workflow
@@ -56,14 +56,14 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
 
 ## Context Capture
 
-- **Visible content only**: Captures 100 lines of scrollback per terminal
+- **Visible content only**: Captures up to 5000 lines of scrollback per terminal
 - **Self-aware**: Excludes Chat terminal (where assistant runs)
 - **All terminals**: Monitors all terminals in current window
 - **Intelligent filtering**: Optionally excludes Exec terminal output
 
 ## Context Management
 
-- **Auto-squashing**: Compresses conversation at 80% of 200k token limit (160k threshold)
+- **Auto-squashing**: Compresses conversation at 80% of 800k token limit (640k threshold)
 - **Manual squashing**: `/squash` command
 - **Token estimation**: Uses API's actual token counts from last response (accurate); falls back to char-based estimation (4 chars = 1 token) if unavailable
 - **Preserves recent context**: Keeps system prompt + last 5 messages + summary
