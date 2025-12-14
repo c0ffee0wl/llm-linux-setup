@@ -777,7 +777,6 @@ update_template_file() {
 # For git-based packages, use install_or_upgrade_cargo_git_tool instead
 # Usage: install_or_upgrade_cargo_tool tool_name
 # Examples:
-#   install_or_upgrade_cargo_tool aichat
 #   install_or_upgrade_cargo_tool argc
 install_or_upgrade_cargo_tool() {
     local tool_name="$1"
@@ -1196,8 +1195,8 @@ else
     log "sha256sum is already installed"
 fi
 
-# Install document processors for aichat RAG
-log "Installing document processors for RAG..."
+# Install document processors
+log "Installing document processors..."
 if ! command -v pdftotext &> /dev/null; then
     log "Installing poppler-utils (provides pdftotext for PDF processing)..."
     sudo apt-get install -y poppler-utils
@@ -1252,7 +1251,7 @@ fi
 
 # Convert version to comparable number (e.g., "1.85" -> 185)
 REPO_RUST_VERSION_NUM=$(echo "$REPO_RUST_VERSION" | awk -F. '{print ($1 * 100) + $2}')
-MINIMUM_RUST_VERSION=185  # Rust 1.85 (aichat/edition2024 requirement)
+MINIMUM_RUST_VERSION=185  # Rust 1.85 (edition2024 requirement for some cargo tools)
 
 log "Repository has Rust version: $REPO_RUST_VERSION (numeric: $REPO_RUST_VERSION_NUM, minimum required: $MINIMUM_RUST_VERSION)"
 
@@ -1295,7 +1294,7 @@ else
                 install_rust_via_rustup
                 log "Rust upgraded successfully. rustup version will take precedence over system version."
             else
-                warn "Continuing with old Rust version. aichat build will fail."
+                warn "Continuing with old Rust version. Some cargo tool builds may fail."
                 warn "To upgrade manually later, run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
             fi
         fi
@@ -1742,6 +1741,25 @@ EOF
 
     # Set default model with automatic migration from old default
     set_or_migrate_default_model "azure/gpt-4.1-mini"
+
+    # Create azure embedding config (llm-azure plugin)
+    # Must be created BEFORE llm-azure plugin is installed (plugin crashes without config)
+    log "Creating Azure embedding model configuration..."
+    AZURE_CONFIG_DIR="$LLM_CONFIG_DIR/azure"
+    mkdir -p "$AZURE_CONFIG_DIR"
+
+    cat > "$AZURE_CONFIG_DIR/config.yaml" <<EOF
+- model_id: azure/text-embedding-3-small
+  model_name: text-embedding-3-small
+  embedding_model: true
+  api_base: ${AZURE_API_BASE}
+  api_version: '2023-05-15'
+EOF
+
+    # Install llm-azure plugin now that config exists
+    install_or_upgrade_llm_plugin "git+https://github.com/c0ffee0wl/llm-azure"
+    # Set as default embedding model (azure/ prefix avoids conflict with OpenAI's model)
+    command llm embed-models default azure/text-embedding-3-small
 else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
@@ -1808,164 +1826,17 @@ else
 fi
 
 #############################################################################
-# Set Default Model and Configure AIChat
+# Set Default Model
 #############################################################################
 
 # Set default model based on configured provider
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     set_or_migrate_default_model "azure/gpt-4.1-mini"
+    # Azure embedding default is set above when llm-azure plugin is installed
 elif [ "$GEMINI_CONFIGURED" = "true" ]; then
     set_or_migrate_default_model "gemini-2.5-flash"
-fi
-
-# Configure aichat with provider settings (mutually exclusive: either Azure OR Gemini)
-aichat_config_dir="$HOME/.config/aichat"
-aichat_config_file="$aichat_config_dir/config.yaml"
-mkdir -p "$aichat_config_dir"
-
-if [ "$AZURE_CONFIGURED" = "true" ]; then
-    # Configure aichat with Azure OpenAI
-    llm_config_dir="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)"
-    extra_models_file="$llm_config_dir/extra-openai-models.yaml"
-
-    # Extract API base from llm config
-    api_base=$(grep -m 1 "^\s*api_base:" "$extra_models_file" | sed 's/.*api_base:\s*//;s/\s*$//')
-    api_base_domain=$(echo "$api_base" | sed 's|\(https\?://[^/]*\).*|\1|')
-
-    # Get API key
-    azure_api_key=$(command llm keys get azure 2>/dev/null || echo "")
-
-    if [ -n "$azure_api_key" ]; then
-        SHOULD_WRITE=true
-
-        if [ -f "$aichat_config_file" ]; then
-            # If using --azure flag, automatically overwrite (user explicitly requested switch)
-            if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
-                cp "$aichat_config_file" "$aichat_config_file.backup.$(date +%Y%m%d-%H%M%S)"
-                log "Backed up existing aichat config"
-                log "Switching to Azure OpenAI configuration..."
-            else
-                # Normal setup - keep existing config, don't prompt
-                log "aichat config already exists, keeping it"
-                SHOULD_WRITE=false
-            fi
-        fi
-
-        if [ "$SHOULD_WRITE" = "true" ]; then
-            # Create Azure-only aichat configuration file (inline)
-            cat > "$aichat_config_file" <<EOF
-# AIChat Configuration - Auto-generated by llm-linux-setup
-# Azure OpenAI Integration
-
-model: azure-openai:gpt-4.1-mini
-
-clients:
-  - type: azure-openai
-    name: azure-openai
-    api_base: ${api_base_domain}
-    api_key: ${azure_api_key}
-    models:
-      - name: gpt-4.1
-        max_input_tokens: 1047576
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-4.1-mini
-        max_input_tokens: 1047576
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-4.1-nano
-        max_input_tokens: 1047576
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-5
-        max_input_tokens: 272000
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-5-mini
-        max_input_tokens: 272000
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-5-nano
-        max_input_tokens: 272000
-        supports_vision: true
-        supports_function_calling: true
-      - name: gpt-5.1
-        max_input_tokens: 272000
-        supports_vision: true
-        supports_function_calling: true
-      - name: o4-mini
-        max_input_tokens: 200000
-        supports_vision: true
-        supports_function_calling: true
-      - name: text-embedding-3-small
-        type: embedding
-        max_tokens_per_chunk: 8192
-        default_chunk_size: 1000
-        max_batch_size: 50
-
-# RAG Configuration
-rag_embedding_model: azure-openai:text-embedding-3-small
-rag_reranker_model: null
-rag_top_k: 5
-rag_chunk_size: 2000
-rag_chunk_overlap: 200
-EOF
-            log "aichat configured with Azure OpenAI at: $aichat_config_file"
-        else
-            log "Keeping existing aichat config"
-        fi
-    else
-        warn "Could not retrieve Azure API key from llm"
-        warn "Run: llm keys set azure"
-    fi
-
-elif [ "$GEMINI_CONFIGURED" = "true" ]; then
-    # Configure aichat with Gemini
-    gemini_api_key=$(command llm keys get gemini 2>/dev/null || echo "")
-
-    if [ -n "$gemini_api_key" ]; then
-        SHOULD_WRITE=true
-
-        if [ -f "$aichat_config_file" ]; then
-            # If using --gemini flag, automatically overwrite (user explicitly requested switch)
-            if [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
-                cp "$aichat_config_file" "$aichat_config_file.backup.$(date +%Y%m%d-%H%M%S)"
-                log "Backed up existing aichat config"
-                log "Switching to Gemini configuration..."
-            else
-                # Normal setup - keep existing config, don't prompt
-                log "aichat config already exists, keeping it"
-                SHOULD_WRITE=false
-            fi
-        fi
-
-        if [ "$SHOULD_WRITE" = "true" ]; then
-            # Create Gemini-only aichat configuration file (inline)
-            cat > "$aichat_config_file" <<EOF
-# AIChat Configuration - Auto-generated by llm-linux-setup
-# Google Gemini Integration
-
-model: gemini:gemini-2.5-flash
-
-clients:
-  - type: gemini
-    api_key: ${gemini_api_key}
-
-# RAG Configuration
-rag_embedding_model: gemini:text-embedding-004
-rag_reranker_model: null
-rag_top_k: 5
-rag_chunk_size: 2000
-rag_chunk_overlap: 200
-EOF
-            log "aichat configured with Gemini at: $aichat_config_file"
-        else
-            log "Keeping existing aichat config"
-        fi
-    else
-        warn "Could not retrieve Gemini API key from llm"
-        warn "Run: llm keys set gemini"
-    fi
+    # Set Gemini embedding as default when Gemini is the primary provider
+    command llm embed-models default gemini-embedding-001-1536
 fi
 
 #############################################################################
@@ -2169,9 +2040,6 @@ fi
 # Install/update files-to-prompt (from fork)
 install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true
 
-# Install/update aichat
-install_or_upgrade_cargo_tool aichat
-
 # Install/update argc (prerequisite for llm-functions if users want to install it)
 install_or_upgrade_cargo_tool argc
 
@@ -2302,7 +2170,6 @@ log ""
 log "Installed tools:"
 log "  - llm (Simon Willison's CLI tool)"
 log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, sandboxed-python, fragments, jq, fabric templates, context, llm-functions bridge)"
-log "  - aichat (All-in-one LLM CLI with RAG functionality)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 log "  - Claude Code Router (proxy for Claude Code)"
 log "  - Blueprint MCP (browser automation for Firefox/Chrome with stealth mode)"

@@ -31,28 +31,6 @@ llm() {
     # Check if first argument is an excluded subcommand
     local first_arg="$1"
 
-    # Special handling for RAG subcommand - route to aichat
-    if [ "$first_arg" = "rag" ]; then
-        shift  # Remove 'rag' from arguments
-
-        if ! command -v aichat &> /dev/null; then
-            echo "Error: aichat is not installed. RAG functionality requires aichat." >&2
-            echo "Run the installation script to install aichat." >&2
-            return 1
-        fi
-
-        # If no arguments, show error (RAG name is required)
-        if [ $# -eq 0 ]; then
-            echo "Error: RAG name required. Usage: llm rag <name>" >&2
-            echo "For interactive mode without RAG, use: aichat" >&2
-            return 1
-        fi
-
-        # Pass all arguments to aichat with --rag flag
-        aichat --rag "$@"
-        return $?
-    fi
-
     # Special handling for chat-google-search (Google Search grounding)
     if [ "$first_arg" = "chat-google-search" ]; then
         shift  # Remove 'chat-google-search' from arguments

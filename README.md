@@ -93,7 +93,7 @@ Automated installation script for [Simon Willison's llm CLI tool](https://github
 - ✅ **Command completion** - Press Ctrl+N for AI command suggestions, Tab for llm autocompletion (Zsh)
 - ✅ **Automatic session recording** - Terminal history captured for AI context
 - ✅ **AI-powered context retrieval** - Query your command history with `context` or `llm -T context`
-- ✅ **RAG document querying** - Query your documents with `llm rag` using AIChat's built-in vector database
+- ✅ **RAG document querying** - Query your documents with `llm rag` using hybrid semantic+keyword search (llm-tools-rag)
 - ✅ **Terminator Assistant** - AI pair programming assistant with command execution (Terminator only)
 
 ## System Requirements
@@ -150,7 +150,7 @@ During first-time installation, you'll be prompted for:
    - **Gemini**: Prompts for API key (free from Google AI Studio)
 2. **Session Log Storage** - Choose between temporary (`/tmp`, cleared on reboot) or permanent (`~/session_logs`, survives reboots)
 
-**Note:** You can only use one provider at a time for AIChat, especially for its RAG feature. To switch providers later, use the appropriate flag.
+**Note:** To switch providers later, use the appropriate flag (`--azure` or `--gemini`).
 
 ### Updating
 
@@ -231,10 +231,10 @@ llm git-commit --tracked             # Generate commit message from all tracked 
 cat names.txt | llm sort --query "Which is more suitable for a pet monkey?"
 llm sort --query "Most technical" --top-k 5 topics.txt
 
-# Query your documents with RAG ('llm rag' is an alias for 'aichat --rag')
-llm rag mydocs                    # Open/create RAG collection for documents
-llm rag mydocs --rebuild-rag      # Rebuild index after changes
-aichat --rag projectdocs          # Direct aichat usage
+# Query your documents with RAG (llm-tools-rag hybrid search)
+llm rag add mydocs /path/to/files # Add documents to collection
+llm rag search mydocs "query"     # Search collection
+llm -T 'rag("mydocs")' "question" # Use RAG as a tool in conversations
 
 # Understand command output
 wut                                  # Explain what just happened
@@ -286,8 +286,6 @@ routed-claude                    # Launch Claude Code through router (alias for 
 
 - [LLM Documentation](https://llm.datasette.io/)
 - [LLM Plugins Directory](https://llm.datasette.io/en/stable/plugins/directory.html)
-- [AIChat Documentation](https://github.com/sigoden/aichat/blob/main/README.md)
-- [AIChat Wiki](https://github.com/sigoden/aichat/wiki)
 - [Gitingest Documentation](https://github.com/coderamp-labs/gitingest)
 - [Files-to-Prompt Documentation](https://github.com/simonw/files-to-prompt)
 - [Claude Code Documentation](https://docs.anthropic.com/en/docs/claude-code/overview)
@@ -297,7 +295,6 @@ routed-claude                    # Launch Claude Code through router (alias for 
 ### Core Tools
 
 - **[llm](https://github.com/c0ffee0wl/llm)** - LLM CLI tool (fork with markdown markup enhancements, originally by Simon Willison - [Documentation](https://llm.datasette.io/))
-- **[AIChat](https://github.com/sigoden/aichat)** - All-in-one LLM CLI with RAG functionality (built-in vector database for document querying)
 - **[Claude Code](https://docs.anthropic.com/en/docs/claude-code)** - Anthropic's official agentic coding CLI
 - **[Claude Code Router](https://github.com/musistudio/claude-code-router)** - Multi-provider routing proxy for Claude Code (Azure + Gemini dual-provider or Gemini-only)
 
@@ -1399,111 +1396,90 @@ This allows AI models to provide context-aware debugging and assistance based on
 
 ### RAG (Document Querying)
 
-Query your documents, codebases, and knowledge bases using AI with AIChat's RAG (Retrieval-Augmented Generation) functionality. The system uses a built-in vector database and automatically syncs with your Azure OpenAI configuration.
-
-`llm rag` is a wrapper that executes `aichat --rag`.
-
-**For detailed documentation**, see the [AIChat RAG Guide](https://github.com/sigoden/aichat/wiki/RAG-Guide).
+Query your documents, codebases, and knowledge bases using AI with llm-tools-rag. The system uses hybrid semantic+keyword search (ChromaDB vectors + BM25) for high-quality retrieval.
 
 **Quick Start:**
 
 ```bash
-# Create/open a RAG collection
-llm rag mydocs
+# Add documents to a collection
+llm rag add mydocs /path/to/files
+llm rag add mydocs /path/to/directory/
+llm rag add mydocs "*.py"              # Glob patterns supported
 
-# 2. Add documents interactively
-> Set chunk size: 2000
-> Set chunk overlay: 200
-> Add documents: https://github.com/sigoden/aichat/wiki/**
+# Search a collection
+llm rag search mydocs "how does authentication work?"
 
-# Ask questions about your documents
-How do I configure the RAG?
-What are the configuration files?
+# Use RAG as a tool in conversations
+llm -T 'rag("mydocs")' "Explain the authentication system"
 
-# Exit (Ctrl+D) and rebuild if source changed or you add more docs
-llm rag mydocs --rebuild-rag
+# List all collections
+llm rag list
 
-# List all RAG collections
-aichat --list-rags
+# View collection info
+llm rag info mydocs
 
-# View RAG collection info
-aichat --rag projectdocs --info
-
-# Launch web playground and query a RAG in browser
-aichat --serve
-xdg-open http://127.0.0.1:8000/playground
+# Rebuild BM25 index after changes
+llm rag rebuild mydocs
 ```
 
-**Interactive RAG Commands** (in REPL):
-
-Within the aichat interactive session:
+**CLI Commands:**
 
 ```bash
-aichat
-.rag mydocs              # Create/switch to RAG collection
-.edit rag-docs           # Add/edit documents in current RAG
-.rebuild rag             # Rebuild RAG index after document changes
-.sources rag             # Show citation sources from last query
-.info rag                # Show RAG configuration details
-.exit rag                # Exit RAG mode
-.help                    # Show all available REPL commands
-.set                     # View/change RAG settings
+llm rag list                          # List all RAG collections
+llm rag add <collection> <path>       # Add document to collection
+llm rag add <collection> <path> --refresh  # Force reindex
+llm rag search <collection> <query>   # Search collection
+llm rag search <collection> <query> --mode vector  # Vector-only search
+llm rag search <collection> <query> --mode keyword # BM25-only search
+llm rag info <collection>             # Show collection statistics
+llm rag documents <collection>        # List documents in collection
+llm rag sources <collection>          # Show sources from last search
+llm rag rebuild <collection>          # Rebuild BM25 index
+llm rag delete <collection>           # Delete collection
+llm rag check-deps                    # Check document loader dependencies
+llm rag repl [collection]             # Interactive REPL mode
 ```
 
-**Document Source Types:**
+**Using RAG as a Tool:**
 
-AIChat can build RAG knowledge bases from a variety of document sources:
+```bash
+# Simple tool usage
+llm -T 'rag("mydocs")' "What does the config file contain?"
+
+# With custom parameters
+llm -T 'rag("mydocs", top_k=10, mode="hybrid")' "Find all API endpoints"
+
+# Search modes: "hybrid" (default), "vector", "keyword"
+```
+
+**Supported Source Types:**
 
 | Source | Example |
 |--------|---------|
-| Files | `/tmp/dir1/file1;/tmp/dir1/file2` |
-| Directory | `/tmp/dir1/` |
-| Directory (extensions) | `/tmp/dir2/**/*.{md,txt}` |
-| Url | `https://sigoden.github.io/mynotes/tools/linux.html` |
-| RecursiveUrl (websites) | `https://sigoden.github.io/mynotes/tools/**` |
+| Files | `/path/to/file.txt` |
+| Glob patterns | `"*.py"`, `"**/*.md"` |
+| URL | `https://example.com/docs/page.html` |
+| RecursiveUrl (websites) | `https://example.com/docs/**` |
 | Git Repository (remote) | `git:https://github.com/user/repo` |
 | Git Repository (local) | `git:/path/to/local/repo` |
-| Git Subdirectory | `git:https://github.com/user/repo/tree/main/src` |
 
 **Supported Document Types:**
 
-The system automatically processes various file types:
+The system automatically processes various file types with intelligent chunking:
 
 - **Text files**: .txt, .md, .rst, .json, .yaml, .py, .js, etc.
-- **PDF files**: Automatically extracted with pdftotext (requires poppler-utils)
-- **DOCX files**: Automatically converted with pandoc
-- **Git repositories**: Full repository context via gitingest
-- **Web URLs**: HTTP/HTTPS URLs are fetched and indexed
-- **Directories**: Recursively index all supported files
+- **PDF files**: Extracted with PyMuPDF (layout-aware)
+- **DOCX files**: Converted with python-docx
+- **Git repositories**: Use `git:` prefix to load source code
 
-**Adding Git Repositories to an existing RAG:**
+**Adding Git Repositories:**
 
 ```bash
-# Enter the name of the RAG collection for your project
-llm rag myproject
+# Remote GitHub repository
+llm rag add mycode git:https://github.com/user/repo
 
-# In the REPL, add documents with .edit rag-docs
-.edit rag-docs
-```
-
-Your editor opens - add sources (one per line):
-
-```
-# Remote GitHub repositories (use git: prefix!)
-git:https://github.com/sigoden/aichat
-
-# Local repositories
-git:/home/user/projects/myapp
-git:./relative-path-to-repo
-```
-
-Save and exit - aichat will process all sources:
-
-```bash
-# Now query your repositories
-Explain the authentication system in this codebase
-What are the main components?
-How does the RAG implementation work?
+# Local repository
+llm rag add mycode git:/path/to/local/repo
 ```
 
 **💡 Why the `git:` prefix is required:**
@@ -1511,18 +1487,25 @@ How does the RAG implementation work?
 - **Without prefix**: `https://github.com/user/repo` → Fetched as a web page (HTML)
 - **With prefix**: `git:https://github.com/user/repo` → Processed as a git repository (source code)
 
-The `git:` prefix explicitly triggers the gitingest document loader, which:
-
+The `git:` prefix triggers the repository loader which:
 - Extracts source code from the repository
 - Respects .gitignore files
-- Provides clean, formatted code for the RAG index
+- Provides clean, formatted code for the index
+
+**Search Modes:**
+
+| Mode | Description |
+|------|-------------|
+| `hybrid` | Combined semantic + keyword search (default, best quality) |
+| `vector` | Semantic search only (good for conceptual queries) |
+| `keyword` | BM25 keyword search only (good for exact matches) |
 
 **Tips:**
 
-- Use descriptive names for RAG collections (e.g., `aws-docs`, `company-policies`, `project-api`)
-- Rebuild the index with `--rebuild-rag` after significant document changes
-- RAG collections are stored in `~/.local/share/aichat/rags/`
-- Use `.set` in REPL to adjust settings like `rag_top_k` (number of results)
+- Use descriptive collection names (e.g., `aws-docs`, `company-policies`, `project-api`)
+- Hybrid mode gives best results for most queries
+- Use `--refresh` flag to reindex documents that have changed
+- Collections are stored in `~/.config/io.datasette.llm/rag/`
 
 ### Image Generation (imagemage)
 
@@ -1709,12 +1692,6 @@ argc build
 # Verify environment is ready (checks dependencies, env vars, etc.)
 argc check
 
-# Link to AIChat 
-# Option 1: Symlink to AIChat's functions directory
-ln -s "$(pwd)" "$(aichat --info | sed -n 's/^functions_dir\s\+//p')"
-
-# Option 2: Use environment variable
-export AICHAT_FUNCTIONS_DIR="$(pwd)"
 ```
 
 **Creating Custom Tools:**
@@ -1759,15 +1736,6 @@ llm -T get_current_weather "What's the weather in Berlin?"
 # In interactive mode
 llm chat -T get_current_weather
 # > What's the weather in Berlin?
-```
-
-**Integration with AIChat:**
-
-llm-functions was originally designed for [AIChat](https://github.com/sigoden/aichat) and is also fully supported there:
-
-```bash
-# Use tools with AIChat
-aichat --role %functions% what is the weather in Paris?
 ```
 
 **Why llm-functions is Optional:**
@@ -1984,7 +1952,7 @@ routed-claude
 - Auto-generated based on available provider keys
 - User modifications preserved via checksum tracking
 
-**Note**: Unlike AIChat (which uses EITHER Azure OR Gemini), CCR can use **both providers simultaneously** in dual-provider mode.
+**Note**: CCR can use **both providers simultaneously** in dual-provider mode (Azure + Gemini).
 
 **For technical details**, see [CLAUDE.md](CLAUDE.md#claude-code-router-flexible-provider-support).
 
@@ -2301,7 +2269,7 @@ Useful for cleaner shell startup or automated environments.
 
 ## Understanding Azure OpenAI Setup
 
-This installation can configure **either** Azure OpenAI (Azure Foundry) **or** Google Gemini. On first run, you'll be asked which provider you want to use. **You can only use one provider at a time** for AIChat.
+This installation can configure **either** Azure OpenAI (Azure Foundry) **or** Google Gemini as your primary provider. On first run, you'll be asked which provider you want to use.
 
 If you choose **Azure OpenAI** (default choice for enterprise/workplace use), the setup differs from standard OpenAI API integration.
 
@@ -2330,11 +2298,6 @@ If you choose **Azure OpenAI** (default choice for enterprise/workplace use), th
   api_base: https://your-resource.openai.azure.com
   api_key_name: azure
 ```
-
-**AIChat Configuration:**
-
-- **Location:** `~/.config/aichat/config.yaml`
-- **Purpose:** Automatically synced with Azure credentials from llm config by the setup script
 
 ### Azure-Specific Limitations
 
@@ -2382,7 +2345,7 @@ This model does not support file content types.", 'type': 'invalid_request_error
 
 For **personal projects, learning, and hobbyist use**, Google's **Gemini 2.5 Flash** offers exceptional value with a generous free tier and competitive performance.
 
-**⚠️ Important:** This script configures **either** Azure OpenAI **or** Gemini - you cannot use both simultaneously for AIChat. Choose the provider that best fits your needs:
+**Choosing between providers:**
 
 - **Azure OpenAI**: Enterprise/workplace environments, compliance requirements
 - **Gemini**: Personal projects, free tier, hobbyist use
@@ -2405,7 +2368,7 @@ To switch from Azure to Gemini or vice versa:
 ./install-llm-tools.sh --azure
 ```
 
-The script will backup your existing AIChat configuration and reconfigure for the selected provider.
+The script will reconfigure the selected provider.
 
 **Temperature Note:** Gemini supports temperature values from 0 to 2.0, while most models use 0 to 1.0. Be mindful when setting temperature values.
 
@@ -2428,12 +2391,8 @@ The script will backup your existing AIChat configuration and reconfigure for th
   - Contains `.cast` files with terminal session recordings
   - Configured via `SESSION_LOG_DIR` environment variable in your shell RC file
 
-- `~/.config/aichat/` - AIChat configuration
-  - `config.yaml` - Auto-configured with Azure OpenAI settings, RAG configuration, and document loaders
-  
-- `~/.local/share/aichat/rags/` - RAG collections and vector databases
-  - Each subdirectory is a named RAG collection
-  - Contains vector embeddings and indexed documents
+- `~/.config/io.datasette.llm/rag/` - RAG collections (llm-tools-rag)
+  - Contains ChromaDB vector databases and BM25 indices
 
 ### Shell Integration Files
 
@@ -2653,7 +2612,7 @@ For issues, questions, or suggestions:
 
 - [Simon Willison](https://github.com/simonw) - Original llm CLI tool and plugins (llm-gemini, llm-anthropic, llm-openrouter, llm-jq, llm-tools-sqlite, llm-tools-quickjs, llm-fragments-github, llm-cmd)
 - [c0ffee0wl](https://github.com/c0ffee0wl) - llm fork with markdown markup enhancements
-- [sigoden](https://github.com/sigoden) - AIChat all-in-one LLM CLI with RAG, argc Bash CLI framework, and llm-functions framework
+- [sigoden](https://github.com/sigoden) - argc Bash CLI framework and llm-functions framework
 - [Anthropic](https://www.anthropic.com/) - Claude Code agentic coding CLI
 - [Astral](https://astral.sh/) - uv Python package manager
 - [Rust Foundation](https://foundation.rust-lang.org/) - Rust programming language and Cargo

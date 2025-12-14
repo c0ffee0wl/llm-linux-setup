@@ -111,7 +111,7 @@ The shell integration uses a **three-file pattern** located in the `integration/
 - Automatically applies templates to prompt commands (chat, code, default prompts)
 - **`llm chat`** → adds `-t assistant` unless user specifies `-t`, `-s`, `-c`, or `--cid`
 - **`llm code`** → always adds `-t code` (outputs clean executable code without markdown)
-- **`llm rag`** → routes to `aichat --rag` for RAG functionality (special handling)
+- **`llm rag`** → subcommand provided by llm-tools-rag plugin for RAG functionality
 - **Default prompts** → adds `-t assistant` unless user specifies template/system prompt/continuation
 - **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, rag, etc.
 - When modifying wrapper logic, update the `exclude_commands` array, `should_skip_template()`, and `has_google_search()` functions
@@ -166,11 +166,11 @@ The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
-2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml`, configure aichat, install pymupdf_layout for enhanced PDF processing
+2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml` (chat) and `azure/config.yaml` (embeddings), install pymupdf_layout for enhanced PDF processing
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (llm-uv-tool intercepts for persistence; includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
 4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
-6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), aichat (cargo), argc (cargo), context script
+6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), argc (cargo), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
 
 ### Plugin Persistence with llm-uv-tool
@@ -228,7 +228,7 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Used in Phase 4 for assistant.yaml and code.yaml templates
 - **`install_or_upgrade_cargo_tool(tool_name)`**: Install/upgrade cargo tools from crates.io (used in Phase 6)
   - Checks if installed, provides feedback, runs `cargo install`
-  - Used for aichat, argc (crates.io packages only)
+  - Used for argc (crates.io packages only)
 - **`install_or_upgrade_cargo_git_tool(tool_name, git_url)`**: Install/upgrade cargo tools from git with commit-hash tracking (used in Phase 6)
   - Stores commit hash in `~/.config/llm-tools/{tool}-commit`
   - Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
@@ -280,15 +280,13 @@ These functions follow the DRY (Don't Repeat Yourself) principle and ensure cons
 
 **When modifying the installation script**: Use these helper functions for consistency rather than duplicating installation logic.
 
-**Note on AIChat Configuration**: AIChat configuration is now created inline in Phase 2 using heredocs directly at the point of use, rather than through separate helper functions. This follows YAGNI (You Aren't Gonna Need It) since each configuration is only created once per provider.
-
 ### Rust/Cargo Installation Strategy
 
 The script uses **intelligent version detection** similar to the Node.js approach:
 
 **Version Detection Pattern:**
 1. Check repository Rust version via `apt-cache policy rustc`
-2. Extract and compare version (minimum required: 1.85 for aichat edition2024)
+2. Extract and compare version (minimum required: 1.85 for edition2024 cargo tools)
 3. Choose installation method based on availability and current state
 
 **Installation Logic:**
@@ -300,9 +298,9 @@ The script uses **intelligent version detection** similar to the Node.js approac
   - Automatically updates via `rustup update stable`
 - **If Rust already installed via apt and version < 1.85:**
   - Prompts user: `"Install Rust 1.85+ via rustup? This will shadow the system installation. (Y/n)"`
-  - Default: Yes (critical for aichat build)
+  - Default: Yes (critical for some cargo tools)
   - If accepted: Installs rustup (shadows system packages via PATH)
-  - If declined: Warns that aichat build will fail
+  - If declined: Warns that some cargo tool builds may fail
 
 **Coexistence Strategy:**
 - rustup installs to `~/.cargo/bin` (already prioritized in PATH)
@@ -310,7 +308,7 @@ The script uses **intelligent version detection** similar to the Node.js approac
 - No package removal needed (consistent with Node.js handling)
 - Uses `-y` flag in rustup installer to prevent blocking prompts
 
-**Why This Matters:** Prevents `cargo install` failures caused by outdated Rust versions. Modern tools like aichat v0.30.0+ require edition2024 support (Rust 1.85+).
+**Why This Matters:** Prevents `cargo install` failures caused by outdated Rust versions. Some modern cargo tools require edition2024 support (Rust 1.85+).
 
 ### Node.js Installation Strategy
 
@@ -362,14 +360,13 @@ The script uses a **simple apt-only approach** for Go installation:
 
 **Why This Matters:** imagemage (Gemini image generation CLI) requires Go 1.22+. The tool is optional, so skipping it on older systems is acceptable.
 
-### Provider Configuration: Azure OpenAI OR Google Gemini
+### Provider Configuration: Azure OpenAI and Google Gemini
 
-The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclusive for AIChat):
+The system supports **Azure OpenAI** and **Google Gemini** providers:
 
 **First-Run Behavior:**
 - Prompts for Azure OpenAI configuration (Y/n) - default choice for enterprise
 - **Only if Azure is declined**: Prompts for Google Gemini configuration (y/N)
-- Users can only configure one provider at a time for AIChat
 
 **Switching Providers:**
 ```bash
@@ -383,21 +380,28 @@ The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclu
 ./install-llm-tools.sh --azure --gemini  # Script will exit with error
 ```
 
-**Mutual Exclusivity Implementation:**
+**Provider Configuration:**
 - **Flag validation**: Script errors out if both `--azure` and `--gemini` are specified (fail fast)
 - When `--azure` flag is used: Sets `GEMINI_CONFIGURED=false`
 - When `--gemini` flag is used: Sets `AZURE_CONFIGURED=false`
-- AIChat config is overwritten (with backup) when switching providers
-- Both providers can coexist for `llm` CLI, but AIChat uses only one
+- Both providers can coexist for `llm` CLI via different model IDs
 
 **Azure OpenAI Configuration:**
 - Model IDs use `azure/` prefix (e.g., `azure/gpt-4.1-mini`, `azure/gpt-4.1-nano`)
 - Default model: `azure/gpt-4.1-mini` (balanced, recommended for most tasks)
 - Available models: `gpt-4.1`, `gpt-4.1-mini`, `gpt-4.1-nano`, `o4-mini`, plus legacy `gpt-5`, `gpt-5-mini`, `gpt-5-nano`
 - Migration logic: Script automatically updates existing `azure/gpt-5*` defaults to `azure/gpt-4.1-mini`
-- Configuration stored in `~/.config/io.datasette.llm/extra-openai-models.yaml`
+- **Chat models**: `~/.config/io.datasette.llm/extra-openai-models.yaml` (OpenAI compatibility layer)
+- **Embedding models**: `~/.config/io.datasette.llm/azure/config.yaml` (llm-azure plugin)
 - API keys managed via `llm keys set azure` (not `openai`)
-- Each model entry requires: `model_id`, `model_name`, `api_base`, `api_key_name: azure`
+- Each chat model entry requires: `model_id`, `model_name`, `api_base`, `api_key_name: azure`
+
+**Azure Embedding Models (llm-azure plugin):**
+- Plugin: `llm-azure` (installed conditionally when Azure is configured)
+- Config file: `~/.config/io.datasette.llm/azure/config.yaml`
+- Default embedding model: `azure/text-embedding-3-small`
+- Used by llm-tools-rag for RAG functionality
+- **Why two config files?**: The built-in openai_models plugin doesn't support Azure embeddings. The llm-azure plugin provides native Azure SDK support for embeddings via a separate config file. Both plugins coexist - they read different files and register different model types.
 
 **Google Gemini Configuration:**
 - Uses `llm-gemini` plugin (installed in Phase 3)
@@ -413,7 +417,7 @@ The system supports **EITHER** Azure OpenAI **OR** Google Gemini (mutually exclu
 
 ### Claude Code Router: Flexible Provider Support
 
-Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provider configurations**:
+**Claude Code Router supports flexible provider configurations**:
 
 **Supported Configurations:**
 1. **Dual-Provider (Azure + Gemini)**: Azure primary for all tasks, Gemini for web search
@@ -459,7 +463,7 @@ Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provi
 **Environment Variables:**
 - Must run `source ~/.profile` to load in current session
 - Automatically available in new login shells
-- Provider keys exported based on availability (not tied to AIChat configuration)
+- Provider keys exported based on availability
 
 **Routing Configurations:**
 
@@ -484,85 +488,6 @@ Unlike AIChat's mutual exclusivity, **Claude Code Router supports flexible provi
   "webSearch": "gemini,gemini-2.5-flash"
 }
 ```
-
-### RAG Integration with aichat
-
-The system integrates **aichat** (https://github.com/sigoden/aichat) for Retrieval-Augmented Generation (RAG) capabilities:
-
-**Architecture**:
-- `aichat` is installed via cargo in Phase 6
-- Automatically configured with the selected provider (Azure OR Gemini)
-- Accessible via both `aichat` command and `llm rag` wrapper
-- Built-in vector database (no external dependencies like ChromaDB)
-
-**Embedding Models by Provider:**
-- **Azure OpenAI**: Uses `azure-openai:text-embedding-3-small`
-- **Google Gemini**: Uses `gemini:text-embedding-004`
-
-**Configuration** (`~/.config/aichat/config.yaml`):
-- Auto-generated inline in Phase 2 during provider configuration (no separate helper functions)
-- Uses heredocs with variable expansion for direct configuration file creation
-- Includes document loaders for Git repos (gitingest)
-- **Config Preservation**:
-  - Normal setup: If config exists, keeps it without prompting (preserves user customizations)
-  - Forced switch (`--azure` or `--gemini`): Automatically overwrites with backup (user explicitly requested provider change)
-- **Provider-specific**: Contains only the selected provider's configuration (mutually exclusive)
-
-**llm Wrapper Integration** (`integration/llm-common.sh`):
-- `llm rag` command routes to `aichat --rag` internally
-- `llm rag` requires a RAG name parameter (consistent with `aichat --rag` behavior)
-- `llm rag <name>` opens/creates RAG collection named `<name>`
-- Arguments passed through: `llm rag mydata --rebuild` → `aichat --rag mydata --rebuild-rag`
-- For interactive mode without RAG, use `aichat` directly
-
-**Document Loaders** (configured in Phase 2):
-- **PDF**: `pdftotext` (from poppler-utils package)
-- **DOCX**: `pandoc` (from pandoc package)
-- **Git Repos**: `gitingest` (already installed in Phase 6)
-
-**Git Repository Loader Configuration**:
-The git document loader is configured in `~/.config/aichat/config.yaml`:
-```yaml
-document_loaders:
-  git: 'gitingest $1 -o -'
-```
-
-**How It Works**:
-- Document loaders are triggered by **explicit prefix syntax** (not file extensions)
-- The `git:` prefix must be used to invoke the gitingest loader
-- Without the prefix, GitHub URLs are treated as regular web pages (HTML fetch)
-- Works with both remote URLs and local paths
-
-**Usage in `.edit rag-docs`**:
-```
-# Correct - uses gitingest loader
-git:https://github.com/user/repo
-git:/path/to/local/repo
-git:https://github.com/user/repo/tree/main/src
-
-# Incorrect - treated as web page, not repository
-https://github.com/user/repo  # This fetches HTML, not source code!
-```
-
-**Gitingest Features**:
-- Automatically clones remote repositories (temporary)
-- Respects `.gitignore` files
-- Extracts source code in LLM-friendly format
-- Supports subdirectories via GitHub tree URLs
-- Outputs to stdout (required for aichat integration)
-
-**RAG Workflow**:
-1. Create RAG collection: `llm rag mydocs` or `aichat --rag mydocs`
-2. Add documents interactively via `.edit rag-docs` command in REPL
-3. Query documents: Ask questions in the interactive session
-4. Manage documents: Use `.rag` commands in REPL (`.help` for details)
-5. Rebuild index: `llm rag mydocs --rebuild` after document changes
-
-**Key Design Decisions**:
-- **Unified credentials**: Single Azure configuration serves both llm and aichat
-- **Dual access**: `llm rag` wrapper for simplicity, `aichat` command for full features
-- **Automatic sync**: Installation script updates aichat config when Azure settings change
-- **No external deps**: aichat includes built-in vector database and full-text search
 
 ### Terminator Assistant Integration
 
@@ -846,7 +771,6 @@ The script automatically upgrades tools on re-run:
 - Plugins: `llm install <plugin> --upgrade`
 - `gitingest`: `install_or_upgrade_uv_tool gitingest` (PyPI package, uses upgrade)
 - `files-to-prompt`: `install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true` (force reinstall)
-- `aichat`: `install_or_upgrade_cargo_tool aichat` (uses helper function)
 - `asciinema`: `install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema` (with commit-hash tracking)
 - Claude Code: `npm install -g @anthropic-ai/claude-code`
 - Claude Code Router: `npm install -g @musistudio/claude-code-router`
@@ -946,9 +870,9 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 ## Important File Locations
 
 ### Configuration Files
-- `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI model definitions for llm
+- `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI chat model definitions
+- `~/.config/io.datasette.llm/azure/config.yaml` - Azure OpenAI embedding model definitions (llm-azure plugin)
 - `~/.config/io.datasette.llm/templates/{assistant,code,terminator-assistant}.yaml` - Custom LLM templates
-- `~/.config/aichat/config.yaml` - aichat configuration with Azure OpenAI and RAG settings
 - `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
 - `~/.claude-code-router/config.json` - Claude Code Router dual-provider configuration (auto-generated with checksum tracking)
 - `~/.claude-code-router/plugins/strip-reasoning.js` - CCR transformer plugin for reasoning token handling
@@ -959,7 +883,6 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
-- `~/.local/share/aichat/rags/` - RAG collections and vector databases
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure
@@ -979,7 +902,6 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 ## Key Constraints & Design Decisions
 
 1. **Provider Configuration Patterns**:
-   - **AIChat: EITHER Azure OR Gemini** (mutually exclusive) - The script validates flags and exits with error if both `--azure` and `--gemini` are specified
    - **Claude Code Router: Flexible** - Supports dual-provider (Azure + Gemini) OR Gemini-only configurations. When both keys exist: Azure serves as primary, Gemini handles web search. When only Gemini exists: all routing uses Gemini
    - **llm CLI: BOTH providers supported** - Can use both providers via different model IDs
    - CCR checks actual key store (`llm keys get`) independent of configuration flags, auto-adapting config based on available providers
@@ -992,7 +914,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 8. **Asciinema Dependency**: Context system requires `asciinema` to be installed for session recording
 9. **Context Script Location**: The `context` script must be in `$PATH` for the `llm-tools-context` plugin to work
 10. **NPM Permissions**: The script detects if npm requires sudo for global installs and adapts accordingly
-11. **Rust Required**: asciinema and aichat are installed via cargo (Rust's package manager); minimum Rust 1.85 required
+11. **Rust Required**: asciinema is installed via cargo (Rust's package manager); minimum Rust 1.85 required
 12. **Rust Version Management**: Script automatically detects outdated Rust and offers to upgrade via rustup with user approval (default: Yes)
 13. **rustup vs apt Coexistence**: rustup and apt-installed Rust can coexist safely; rustup takes precedence via PATH
 14. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
@@ -1016,7 +938,6 @@ Note that several packages use **forks** or specific sources:
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **llm-zsh-plugin**: Forked in-repository from eliyastein/llm-zsh-plugin with custom modifications for `code` and `rag` subcommands
 - **asciinema**: Installed from git source via cargo: `cargo install --locked --git https://github.com/asciinema/asciinema`
-- **aichat**: Installed via cargo from crates.io: `cargo install aichat`
 - **argc**: Installed via cargo from crates.io: `cargo install argc` (prerequisite for llm-functions, also useful standalone for Bash CLI development)
 - **llm-tools-context**: Installed from local directory: `$SCRIPT_DIR/llm-tools-context`
 - **llm-tools-google-search**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-google-search` (Google Search tool using Vertex/Gemini as backend)
@@ -1030,6 +951,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-quickjs**: QuickJS runtime for llm (PyPI)
 - **llm-tools-sqlite**: SQLite query tool (PyPI)
 - **llm-tools-mcp**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-mcp` (MCP client for connecting to Model Context Protocol servers)
+- **llm-azure**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-azure` (Azure OpenAI embedding models; installed conditionally when Azure is configured)
 - llm is installed in the uv environment llm, calling python3 -c "import llm" wont work.
 
 ## MCP Client Integration (llm-tools-mcp)
