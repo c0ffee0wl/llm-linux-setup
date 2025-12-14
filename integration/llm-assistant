@@ -1112,7 +1112,7 @@ class TerminatorAssistantSession:
         style = PTStyle.from_dict({
             'prompt': 'ansicyan bold',
             'prompt.recording': 'ansired',
-            'prompt.transcribing': 'ansired',
+            'prompt.transcribing': '#ff8800',  # orange
             'continuation': 'ansigray',
         })
 

@@ -2130,19 +2130,20 @@ uv cache clean
 # PHASE 8: Browser Automation (Blueprint MCP) - only if Terminator is installed
 #############################################################################
 
-if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    # Firefox is pre-installed on Kali, install if missing
-    if ! command -v firefox &>/dev/null; then
-        log "Installing Firefox..."
-        install_apt_package firefox-esr
-    fi
-
-    # Install/upgrade Blueprint MCP server
-    log "Installing/updating Blueprint MCP server..."
-    install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
-else
-    log "Skipping Browser Automation (Terminator not installed)"
-fi
+# Browser MCP commented out - not currently used
+# if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+#     # Firefox is pre-installed on Kali, install if missing
+#     if ! command -v firefox &>/dev/null; then
+#         log "Installing Firefox..."
+#         install_apt_package firefox-esr
+#     fi
+#
+#     # Install/upgrade Blueprint MCP server
+#     log "Installing/updating Blueprint MCP server..."
+#     install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
+# else
+#     log "Skipping Browser Automation (Terminator not installed)"
+# fi
 
 # TODO: Add Blueprint MCP to MCP config - commented out until MCP integration is working
 # MCP_CONFIG_FILE="$HOME/.llm-tools-mcp/mcp.json"
