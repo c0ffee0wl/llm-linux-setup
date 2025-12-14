@@ -344,7 +344,7 @@ class SpeechOutput:
             return False
 
     def _synthesize_and_queue(self, sentence: str):
-        """Synthesize speech using streaming API and queue for playback."""
+        """Synthesize speech using streaming API and queue chunks for immediate playback."""
         try:
             # Strip markdown formatting (removes code blocks entirely)
             clean_text = strip_markdown_for_tts(sentence).strip()
@@ -368,16 +368,10 @@ class SpeechOutput:
                     input=texttospeech.StreamingSynthesisInput(text=clean_text)
                 )
 
-            # Collect streaming audio chunks
-            audio_chunks = []
+            # Queue each audio chunk immediately as it arrives (true streaming)
             for response in self.client.streaming_synthesize(request_generator()):
                 if response.audio_content:
-                    audio_chunks.append(response.audio_content)
-
-            # Combine and queue for playback
-            if audio_chunks:
-                combined_audio = b''.join(audio_chunks)
-                self.audio_queue.put(combined_audio)
+                    self.audio_queue.put(response.audio_content)
         except Exception:
             pass  # Silently skip on error
 
@@ -908,7 +902,7 @@ class TerminatorAssistantSession:
         style = PTStyle.from_dict({
             'prompt': 'ansicyan bold',
             'prompt.recording': 'ansired',
-            'prompt.transcribing': 'ansicyan',
+            'prompt.transcribing': 'ansired',
             'continuation': 'ansigray',
         })
 
@@ -1274,9 +1268,38 @@ class TerminatorAssistantSession:
         if self.debug:
             self.console.print(f"[dim]DEBUG: {msg}[/dim]")
 
-    def _filter_thinking_traces(self, text: str) -> str:
-        """Return text unchanged (thinking traces filtering removed)."""
-        return text if text else text
+    def _stream_response_with_display(self, response, tts_enabled: bool = False) -> str:
+        """
+        Stream response with Live markdown display and optional TTS.
+
+        Args:
+            response: LLM Response object (iterable)
+            tts_enabled: Whether to queue sentences to TTS
+
+        Returns:
+            Full accumulated response text
+        """
+        accumulated_text = ""
+        sentence_buffer = SentenceBuffer() if tts_enabled else None
+
+        with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=False) as live:
+            for chunk in response:
+                accumulated_text += chunk
+                live.update(Markdown(accumulated_text))
+
+                # Queue TTS if enabled (non-blocking)
+                if tts_enabled and sentence_buffer:
+                    sentence = sentence_buffer.add(chunk)
+                    if sentence:
+                        self.speech_output.speak_sentence(sentence)
+
+        # Flush remaining TTS
+        if tts_enabled and sentence_buffer:
+            remaining = sentence_buffer.flush()
+            if remaining:
+                self.speech_output.speak_sentence(remaining)
+
+        return accumulated_text
 
     def _estimate_tool_schema_tokens(self) -> int:
         """
@@ -2304,8 +2327,8 @@ Shell: {env_type} {shell_info}
                 if hasattr(response, 'prompt') and response.prompt:
                     prompt_text = response.prompt.prompt or ""
 
-                # Extract response text using public API (filter thinking traces)
-                response_text = self._filter_thinking_traces(response.text())
+                # Extract response text using public API
+                response_text = response.text()
 
                 if prompt_text:
                     summary_parts.append(f"{i}. User: {prompt_text[:200]}...")
@@ -2369,7 +2392,7 @@ Previous messages:
 """
 
             summary_response = self.model.prompt(summary_prompt)
-            summary = self._filter_thinking_traces(summary_response.text())
+            summary = summary_response.text()
 
             # Create new conversation and update system prompt
             # Build enhanced system prompt from ORIGINAL, not current
@@ -3112,7 +3135,7 @@ Instructions:
                                     attachments=tui_attachments if tui_attachments else None,
                                     stream=False  # Reduce lock hold time
                                 )
-                                response_text = self._filter_thinking_traces(response.text())
+                                response_text = response.text()
                                 # Log watch mode response to database
                                 self._log_response(response)
                             except Exception as response_error:
@@ -4136,38 +4159,17 @@ Type !fragment <name> [...] to insert fragments""",
                             tools=ASSISTANT_TOOLS
                         )
 
-                        # Consume response INSIDE lock to prevent race condition with watch mode
-                        # This trades streaming display for thread safety - response shows all at once
-                        # instead of character-by-character, but prevents potential corruption if
-                        # watch thread calls conversation.prompt() while we're iterating
+                        # Stream response with Live markdown display INSIDE lock to prevent
+                        # race condition with watch mode - watch thread will block until
+                        # streaming completes, which is the desired behavior.
                         #
-                        # TTS streaming: If speech output is enabled, iterate over chunks and
-                        # send sentences to TTS as they complete (for low-latency audio output)
+                        # TTS: If speech output is enabled, queue sentences to TTS
+                        # as they complete (for low-latency audio output)
                         tts_enabled = (self.speech_output and self.speech_output.enabled
                                        and self._is_vertex_model())
 
-                        if tts_enabled:
-                            # Stream tokens, buffer sentences, send to TTS as they complete
-                            sentence_buffer = SentenceBuffer()
-                            full_text_chunks = []
-
-                            for chunk in response:
-                                full_text_chunks.append(chunk)
-                                # Check if this chunk completes a sentence
-                                sentence = sentence_buffer.add(chunk)
-                                if sentence:
-                                    self.speech_output.speak_sentence(sentence)
-
-                            # Flush any remaining text
-                            remaining = sentence_buffer.flush()
-                            if remaining:
-                                self.speech_output.speak_sentence(remaining)
-
-                            # Join for display
-                            response_text = self._filter_thinking_traces("".join(full_text_chunks))
-                        else:
-                            # Non-TTS path: get full response at once
-                            response_text = self._filter_thinking_traces(response.text())
+                        # Stream response with Live markdown display
+                        response_text = self._stream_response_with_display(response, tts_enabled=tts_enabled)
 
                         # Extract tool calls from the response (structured output)
                         tool_calls = list(response.tool_calls())
@@ -4176,11 +4178,9 @@ Type !fragment <name> [...] to insert fragments""",
                         # INSIDE lock to prevent race with watch mode reading stripped prompt
                         self._log_response(response)
 
-                    # Display the response OUTSIDE lock (already consumed)
-                    # Note: With tool calling, the model's text output is separate from tool calls
+                    # Force display to ensure clean terminal state before tool processing
+                    # (Live already displayed the response during streaming)
                     if response_text.strip():
-                        self.console.print(Markdown(response_text))
-                        # Force display after Markdown to ensure clean terminal state before tool processing
                         self._force_display()
 
                     stream_success = True
@@ -4245,21 +4245,8 @@ Type !fragment <name> [...] to insert fragments""",
                                         attachments=followup_attachments if followup_attachments else None
                                     )
 
-                                    # TTS streaming for follow-up responses
-                                    if tts_enabled:
-                                        sentence_buffer = SentenceBuffer()
-                                        full_text_chunks = []
-                                        for chunk in followup_response:
-                                            full_text_chunks.append(chunk)
-                                            sentence = sentence_buffer.add(chunk)
-                                            if sentence:
-                                                self.speech_output.speak_sentence(sentence)
-                                        remaining = sentence_buffer.flush()
-                                        if remaining:
-                                            self.speech_output.speak_sentence(remaining)
-                                        followup_text = self._filter_thinking_traces("".join(full_text_chunks))
-                                    else:
-                                        followup_text = self._filter_thinking_traces(followup_response.text())
+                                    # Stream follow-up response with Live markdown display
+                                    followup_text = self._stream_response_with_display(followup_response, tts_enabled=tts_enabled)
 
                                     # Check if the model made more tool calls
                                     more_tool_calls = list(followup_response.tool_calls())
@@ -4268,10 +4255,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     # INSIDE lock to prevent race with watch mode reading stripped prompt
                                     self._log_response(followup_response)
 
-                                # Display the AI's response
-                                if followup_text.strip() and followup_text.strip().lower() not in ["ok", "okay", "done"]:
-                                    self.console.print("\n[bold green]llm[/]")
-                                    self.console.print(Markdown(followup_text))
+                                # (Live already displayed the response during streaming)
 
                                 # Process additional tool calls if any
                                 if not more_tool_calls:
@@ -4305,21 +4289,8 @@ Type !fragment <name> [...] to insert fragments""",
                                         attachments=attachments_to_send
                                     )
 
-                                    # TTS streaming for attachment responses
-                                    if tts_enabled:
-                                        sentence_buffer = SentenceBuffer()
-                                        full_text_chunks = []
-                                        for chunk in attachment_response:
-                                            full_text_chunks.append(chunk)
-                                            sentence = sentence_buffer.add(chunk)
-                                            if sentence:
-                                                self.speech_output.speak_sentence(sentence)
-                                        remaining = sentence_buffer.flush()
-                                        if remaining:
-                                            self.speech_output.speak_sentence(remaining)
-                                        response_text = self._filter_thinking_traces("".join(full_text_chunks))
-                                    else:
-                                        response_text = self._filter_thinking_traces(attachment_response.text())
+                                    # Stream attachment response with Live markdown display
+                                    response_text = self._stream_response_with_display(attachment_response, tts_enabled=tts_enabled)
 
                                     more_calls = list(attachment_response.tool_calls())
 
@@ -4327,10 +4298,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     # INSIDE lock to prevent race with watch mode reading stripped prompt
                                     self._log_response(attachment_response)
 
-                                # Display response
-                                if response_text.strip():
-                                    self.console.print("\n[bold green]llm[/]")
-                                    self.console.print(Markdown(response_text))
+                                # (Live already displayed the response during streaming)
 
                                 # Process any tool calls from viewing the attachment
                                 if more_calls:
