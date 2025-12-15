@@ -72,12 +72,14 @@ def send_keypress(keypress: str) -> str:
 
 def capture_terminal(scope: str = "exec") -> str:
     """
-    Capture terminal content or screenshot.
+    Capture screenshot(s) of terminal(s) for visual analysis.
 
-    Retrieves the current visual state of terminal(s) for analysis. For TUI
-    applications (vim, htop, less), captures a screenshot image. For regular
-    command output, captures text content. Use when you need to see what's
-    currently displayed without executing any new commands.
+    Takes a screenshot image of the specified terminal(s). Use when you need
+    to see the exact visual state - layout, colors, TUI applications, or
+    content that doesn't extract well as plain text.
+
+    Note: Terminal text content is automatically included in your context on
+    each turn. Use this tool only when you specifically need a visual capture.
 
     Args:
         scope: Which terminals to capture:
@@ -86,7 +88,7 @@ def capture_terminal(scope: str = "exec") -> str:
 
     Returns:
         JSON indicating capture has been queued.
-        The captured content (text or screenshot) will appear in your next turn.
+        Screenshot attachment(s) will appear in your next turn.
     """
     valid_scopes = ["exec", "all"]
     if scope not in valid_scopes:
@@ -101,17 +103,16 @@ def capture_terminal(scope: str = "exec") -> str:
 
 def refresh_context() -> str:
     """
-    Refresh the terminal context before continuing.
+    Request fresh terminal context in its entirety.
 
-    Use this when you need updated terminal content before deciding
-    what to do next. This is useful when:
-    - You're waiting for a long-running command to complete
-    - You want to see the current state without executing anything
-    - The terminal content may have changed since your last observation
+    Useful when your context shows "[Content unchanged]" placeholders but you
+    need the full terminal content, or when waiting for a background process
+    to produce output. Not needed after execute_in_terminal (output is returned
+    directly in the tool result).
 
     Returns:
         JSON indicating refresh has been queued.
-        Updated context will be provided in the next message.
+        Full terminal context will be provided in the tool result.
     """
     return json.dumps({
         "action": "refresh",
