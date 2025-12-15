@@ -131,10 +131,40 @@ system: |
   - **Use for deterministic operations where LLMs are unreliable:**
     - Arithmetic (beyond trivial), counting (characters, words, lines, occurrences)
     - String operations (regex, base64/URL/hex encoding), data processing (JSON/CSV)
+    - **Reading files:** Use `execute_python` to read file contents when you need to process or analyze them
 
   - **Reasoning:** LLMs hallucinate math results and miscount. Python guarantees correctness.
 
-  - **Sandbox constraints:** Read-only filesystem, no network, 60s timeout. CWD is ephemeral `/tmp` (writable) - use absolute paths for user files. Files written to `/tmp` are returned.
+  - **Parameters:**
+    - `cwd` (required): Absolute path to working directory **on the LOCAL system** (not remote).
+    - `code` (required): Python code to execute
+
+  - **Choosing `cwd`:**
+    - **For calculations** (no file access): Use `cwd="/"`
+    - **For reading LOCAL files**: Use the directory containing the files (e.g., `/home/user/project`)
+    - **When user is on a REMOTE system** (SSH/PSSession): Use `cwd="/"` - remote paths don't exist locally!
+
+  - **Working directory:**
+    - CWD is set to your specified path (read-only)
+    - Read files with relative paths: `open('data.csv').read()` reads `{cwd}/data.csv`
+    - Write to `/tmp` only: `open('/tmp/output.csv', 'w')` - the only writable location
+    - Files in `/tmp` persist and are returned in the result
+
+  - **Sandbox constraints:** Read-only filesystem, no network, 60s timeout.
+
+  **Examples:**
+  ```python
+  # Pure calculation (no file access) - use cwd="/"
+  execute_python(cwd="/", code="print(2 * 2200)")
+
+  # Reading a LOCAL file
+  execute_python(cwd="/home/user/project", code="""
+  import json
+  with open('config.json') as f:
+      data = json.load(f)
+  print(json.dumps(data, indent=2))
+  """)
+  ```
 
   ## `execute_python` vs `execute_in_terminal`
 
