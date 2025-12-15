@@ -117,6 +117,8 @@ SLASH_COMMANDS = {
     "/voice": {"subcommands": ["auto", "off", "status"], "dynamic": None, "description": "Voice input control"},
     "/speech": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "TTS output control"},
     "/rag": {"subcommands": ["add", "search", "rebuild", "delete", "off", "status", "top-k", "mode"], "dynamic": "rag_collections", "description": "RAG search integration"},
+    "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
+    "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
 }
 
 
@@ -885,7 +887,8 @@ class TerminatorAssistantSession:
     """Main assistant session manager for Terminator"""
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000,
-                 continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False):
+                 continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False,
+                 agent_mode: bool = False):
         self.console = Console()
 
         # Debug mode flag
@@ -1017,6 +1020,10 @@ class TerminatorAssistantSession:
         # Auto mode: LLM-judged autonomous command execution
         # False = off, "normal" = safe only, "full" = safe + caution
         self.auto_mode: Union[bool, str] = False
+
+        # Operating mode: "assistant" (conservative) or "agent" (agentic)
+        # Controls tool iteration limits and system prompt content
+        self.mode: str = "agent" if agent_mode else "assistant"
 
         # Voice auto-submit: automatically send transcribed text
         self.voice_auto_submit: bool = False
@@ -1626,13 +1633,45 @@ Shell: {env_type} {shell_info}
 </environment>
 """
 
-        prompt = f"{self.system_prompt}\n{env_section}"
+        # Filter system prompt based on mode BEFORE building final prompt
+        filtered_prompt = self._filter_mode_content(self.system_prompt)
+
+        prompt = f"{filtered_prompt}\n{env_section}"
 
         # Append KB content if any loaded
         kb_content = self._get_loaded_kb_content()
         if kb_content:
             prompt = f"{prompt}\n# Knowledge Base\n\n{kb_content}"
 
+        return prompt
+
+    def _filter_mode_content(self, prompt: str) -> str:
+        """Filter system prompt based on current operating mode.
+
+        Handles two tag types:
+        - <agent_mode>...</agent_mode>: Included only in agent mode
+        - <assistant_mode>...</assistant_mode>: Included only in assistant mode
+
+        Tags must be at the start of a line (possibly with leading whitespace).
+        """
+        if self.mode == "agent":
+            # Agent mode: remove <assistant_mode> blocks entirely, keep <agent_mode> content
+            prompt = re.sub(
+                r'^\s*<assistant_mode>\s*\n.*?^\s*</assistant_mode>\s*\n?',
+                '', prompt, flags=re.MULTILINE | re.DOTALL
+            )
+            # Remove just the agent_mode tags, keep content
+            prompt = re.sub(r'^\s*<agent_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^\s*</agent_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
+        else:
+            # Assistant mode: remove <agent_mode> blocks entirely, keep <assistant_mode> content
+            prompt = re.sub(
+                r'^\s*<agent_mode>\s*\n.*?^\s*</agent_mode>\s*\n?',
+                '', prompt, flags=re.MULTILINE | re.DOTALL
+            )
+            # Remove just the assistant_mode tags, keep content
+            prompt = re.sub(r'^\s*<assistant_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^\s*</assistant_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
         return prompt
 
     # =========================================================================
@@ -2710,10 +2749,13 @@ Shell: {env_type} {shell_info}
         tokens = 0
 
         try:
+            # Use filtered system prompt length (reflects current mode)
+            filtered_prompt_len = len(self._filter_mode_content(self.system_prompt))
+
             if not self.conversation.responses:
                 # No responses yet - estimate system prompt + tools
                 # System prompt chars / 4, plus measured tool overhead
-                base_tokens = len(self.system_prompt) // 4
+                base_tokens = filtered_prompt_len // 4
                 tool_tokens = self._tool_token_overhead  # Already measured in __init__
                 tokens = base_tokens + tool_tokens
                 source = "estimated"
@@ -2733,7 +2775,7 @@ Shell: {env_type} {shell_info}
                     # The conversation is cumulative - each response already contains history
                     # So we only count the LAST exchange, not sum all of them (which would overestimate)
                     source = "estimated"
-                    total_chars = len(self.system_prompt)
+                    total_chars = filtered_prompt_len
                     if self.conversation.responses:
                         last_resp = self.conversation.responses[-1]
                         if hasattr(last_resp, 'prompt') and last_resp.prompt:
@@ -3673,6 +3715,8 @@ Instructions:
 /auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
 /auto off          Disable auto mode
 /auto status       Show auto mode status
+/assistant         Switch to assistant mode (conservative, 10 tool iterations)
+/agent             Switch to agent mode (agentic, 100 tool iterations)
 /voice             Enable voice auto-submit (transcribed text sends automatically)
 /voice off         Disable voice auto-submit
 /voice status      Show voice input status
@@ -3843,16 +3887,20 @@ Instructions:
         elif cmd == "/info":
             tokens, token_source = self.estimate_tokens(with_source=True)
             percentage = (tokens * 100 // self.max_context_size) if self.max_context_size > 0 else 0
-            # System prompt status
+            # System prompt status (show filtered length based on current mode)
             if self.system_prompt:
-                prompt_len = len(self.system_prompt)
+                filtered_prompt = self._filter_mode_content(self.system_prompt)
+                prompt_len = len(filtered_prompt)
                 is_template = "terminal assistant" in self.system_prompt.lower()
                 system_status = f"System prompt: {'terminator-assistant' if is_template else 'fallback'} ({prompt_len:,} chars)"
             else:
                 system_status = "System prompt: NOT LOADED"
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
+            # Mode display
+            mode_display = f"[green]{self.mode}[/]" if self.mode == "assistant" else f"[cyan]{self.mode}[/]"
             self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
+Mode: {mode_display}
 Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%) [{token_source}]
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
@@ -4020,6 +4068,24 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/rag":
             return self._handle_rag_command(args)
+
+        elif cmd == "/assistant":
+            if self.mode == "assistant":
+                self.console.print("[dim]Already in assistant mode[/]")
+            else:
+                self.mode = "assistant"
+                self.console.print("[bold green]Switched to assistant mode[/] - conservative (10 tool iterations)")
+                self.console.print("[dim]/agent for agentic mode (100 iterations)[/]")
+            return True
+
+        elif cmd == "/agent":
+            if self.mode == "agent":
+                self.console.print("[dim]Already in agent mode[/]")
+            else:
+                self.mode = "agent"
+                self.console.print("[bold green]Switched to agent mode[/] - agentic (100 tool iterations)")
+                self.console.print("[dim]/assistant for conservative mode (10 iterations)[/]")
+            return True
 
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
@@ -4723,9 +4789,16 @@ Type !fragment <name> [...] to insert fragments""",
 
                             # After processing all tool calls, send results back to model
                             # Loop to handle multi-round tool calling
-                            # In auto mode: unlimited iterations (agent runs until satisfied)
-                            # In manual mode: max 10 iterations for safety
-                            MAX_TOOL_ITERATIONS = 1000 if self.auto_mode else 10
+                            # Tool iteration limits:
+                            # - auto mode: 1000 (unlimited, overrides mode)
+                            # - agent mode: 100 (agentic)
+                            # - assistant mode: 10 (conservative)
+                            if self.auto_mode:
+                                MAX_TOOL_ITERATIONS = 1000
+                            elif self.mode == "agent":
+                                MAX_TOOL_ITERATIONS = 100
+                            else:  # assistant mode
+                                MAX_TOOL_ITERATIONS = 10
                             iteration = 0
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
@@ -4888,6 +4961,11 @@ def main():
         action='store_true',
         help='Disable conversation logging to database'
     )
+    parser.add_argument(
+        '--agent',
+        action='store_true',
+        help='Start in agent mode (agentic, 100 tool iterations)'
+    )
     args = parser.parse_args()
 
     # Resolve model: -m flag > query > default
@@ -4904,7 +4982,8 @@ def main():
         max_context_size=args.max_context,
         continue_=args.continue_,
         conversation_id=args.conversation_id,
-        no_log=args.no_log
+        no_log=args.no_log,
+        agent_mode=args.agent
     )
     session.run()
 

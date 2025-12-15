@@ -113,6 +113,8 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/speech` - Enable TTS output (Vertex models only)
 - `/speech off` - Disable TTS output
 - `/speech status` - Show TTS status
+- `/assistant` - Switch to assistant mode (conservative, 10 tool iterations)
+- `/agent` - Switch to agent mode (agentic, 100 tool iterations)
 - `/quit` or `/exit` - Exit assistant
 
 ## Knowledge Base System
@@ -256,6 +258,24 @@ Watch mode enabled: monitoring all terminals
 [AI provides proactive suggestions when observing relevant activity]
 ```
 
+## Operating Modes
+
+The assistant supports two mutually exclusive operating modes:
+
+- **Assistant Mode (default)**: Conservative behavior with 10 tool iterations per turn
+  - Asks for clarification when uncertain
+  - Suggests commands before executing state-changing operations
+  - One step at a time approach
+
+- **Agent Mode**: Agentic behavior with 100 tool iterations per turn
+  - Bias for action, keeps working until task resolved
+  - Doesn't ask unnecessary confirmation questions
+  - Breaks down complex tasks and executes step by step
+
+Switch modes at runtime with `/assistant` or `/agent`, or start in agent mode with `--agent` flag.
+
+Mode persists across `/reset` - only explicit `/assistant` or `/agent` commands change it.
+
 ## CLI Arguments
 
 Model selection (llm-compatible):
@@ -270,6 +290,7 @@ Conversation persistence (llm-compatible):
 Other options:
 - `--debug` - Enable debug output for troubleshooting
 - `--max-context TOKENS` - Max context tokens before auto-squash (default: 800000)
+- `--agent` - Start in agent mode (agentic, 100 tool iterations)
 
 Examples:
 ```bash
