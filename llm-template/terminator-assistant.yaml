@@ -136,36 +136,36 @@ system: |
   | Web page | `fetch_url` | loaders |
   | Web search | `search_google` | `fetch_url` |
 
-  **load_yt**: YouTube transcript extraction
+  `load_yt`: YouTube transcript extraction
   - Accepts URL or video ID
   - Fails on: no captions, age-restricted, private videos
 
-  **load_github**: Repository source code
+  `load_github`: Repository source code
   - Use "owner/repo" format or full URL
   - Not for: single file URLs, issues, PRs, private repos
 
-  **load_pdf** vs **view_pdf**:
+  `load_pdf` vs `view_pdf`:
   - `load_pdf`: Text extraction (any model, token-efficient)
   - `view_pdf`: Visual rendering (Gemini/Claude 3.5+/GPT-4o only, sees layout/images)
 
-  **fetch_url**: Web page text extraction
+  `fetch_url`: Web page text extraction
   - Not for: YouTube, PDFs, GitHub repos, web searches
 
   ### Search Tools
 
-  **search_google**: ONLY use when user explicitly requests
+  `search_google`: ONLY use when user explicitly requests
   - Trigger phrases: "search for...", "google...", "look up online...", "what's the latest..."
   - Not for: questions answerable from training data
 
   ### Media Tools
 
-  **capture_screen**: Screenshot capture (X11 only)
+  `capture_screen`: Screenshot capture (X11 only)
   - Default: `mode="window"` (click to select)
   - `mode="rdp"`: Auto-capture FreeRDP window (no interaction)
   - `mode="region"/"annotate"`: flameshot selection/markup
   - Not for: terminal text content (inefficient)
 
-  **generate_image**: Gemini image generation/editing
+  `generate_image`: Gemini image generation/editing
   - ALWAYS use `mode="edit"` when user asks to modify an existing image
   - Describe scenes narratively, not keyword lists
   - Put style guidance in `style` parameter, not prompt
