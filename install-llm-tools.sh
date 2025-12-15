@@ -1522,6 +1522,9 @@ cleanup_stale_local_plugin_paths
 # Must clean BEFORE any llm operations - invalid local paths cause failures
 remove_plugin_from_tracking "llm-tools-sidechat"
 
+# Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
+remove_plugin_from_tracking "llm-azure"
+
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
@@ -1741,29 +1744,6 @@ EOF
 
     # Set default model with automatic migration from old default
     set_or_migrate_default_model "azure/gpt-4.1-mini"
-
-    # Create azure embedding config (llm-azure plugin)
-    # Must be created BEFORE llm-azure plugin is installed (plugin crashes without config)
-    log "Creating Azure embedding model configuration..."
-    AZURE_CONFIG_DIR="$LLM_CONFIG_DIR/azure"
-    mkdir -p "$AZURE_CONFIG_DIR"
-
-    # llm-azure uses AzureOpenAI client which expects base endpoint without /openai/v1/
-    # Strip /openai/v1/ suffix if present (chat models in extra-openai-models.yaml use full path)
-    AZURE_EMBEDDING_BASE=$(echo "$AZURE_API_BASE" | sed 's|/openai/v1/$||; s|/openai/v1$||')
-
-    cat > "$AZURE_CONFIG_DIR/config.yaml" <<EOF
-- model_id: azure/text-embedding-3-small
-  model_name: text-embedding-3-small
-  embedding_model: true
-  api_base: ${AZURE_EMBEDDING_BASE}
-  api_version: '2024-10-21'
-EOF
-
-    # Install llm-azure plugin now that config exists
-    install_or_upgrade_llm_plugin "git+https://github.com/c0ffee0wl/llm-azure"
-    # Set as default embedding model (azure/ prefix avoids conflict with OpenAI's model)
-    command llm embed-models default azure/text-embedding-3-small
 else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
