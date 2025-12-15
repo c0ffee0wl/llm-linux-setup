@@ -80,6 +80,8 @@ except ImportError:
 # Markdown stripping for TTS (removes formatting before speech synthesis)
 # Regex to remove fenced code blocks (```...```) only, preserves inline code
 _CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```', re.MULTILINE)
+# Pattern to match complete code blocks (for preserving code during markdown stripping)
+_CODE_BLOCK_PATTERN = re.compile(r'```\w*\n(.*?)```', re.DOTALL)
 
 try:
     from strip_markdown import strip_markdown as _strip_markdown
@@ -91,6 +93,35 @@ except ImportError:
     def strip_markdown_for_tts(text: str) -> str:
         """Fallback: just remove code blocks."""
         return _CODE_BLOCK_RE.sub('', text)
+
+# Clipboard support for /copy command
+try:
+    import pyperclip
+    CLIPBOARD_AVAILABLE = True
+except ImportError:
+    CLIPBOARD_AVAILABLE = False
+
+def strip_markdown_for_clipboard(text: str) -> str:
+    """Strip markdown but fully preserve code block content."""
+    # Extract code blocks and replace with null-byte placeholders
+    code_blocks = []
+    def save_code(match):
+        code_blocks.append(match.group(1))
+        return f'\x00CODE{len(code_blocks)-1}\x00'
+
+    text_with_placeholders = _CODE_BLOCK_PATTERN.sub(save_code, text)
+
+    # Strip markdown from non-code parts only
+    try:
+        stripped = _strip_markdown(text_with_placeholders)
+    except NameError:
+        stripped = text_with_placeholders
+
+    # Restore code blocks (content only, fences removed)
+    for i, code in enumerate(code_blocks):
+        stripped = stripped.replace(f'\x00CODE{i}\x00', code.rstrip('\n'))
+
+    return stripped
 
 # prompt_toolkit for keybindings (Ctrl+Space for voice) and completion
 from prompt_toolkit import PromptSession
@@ -119,6 +150,7 @@ SLASH_COMMANDS = {
     "/rag": {"subcommands": ["add", "search", "rebuild", "delete", "off", "status", "top-k", "mode"], "dynamic": "rag_collections", "description": "RAG search integration"},
     "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
     "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
+    "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
 }
 
 
@@ -3732,6 +3764,9 @@ Instructions:
 /rag off           Deactivate RAG
 /rag search <collection> <query>  One-shot RAG search
 /rag add <collection> <path>      Add documents to collection
+/copy [n]          Copy last response (or last n) to clipboard (markdown stripped)
+/copy raw [n]      Copy with markdown preserved
+/copy all          Copy entire conversation
 /quit or /exit     Exit assistant
 
 [bold]Usage:[/]
@@ -3787,6 +3822,45 @@ Instructions:
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
                 self.console.print(f"[red]Error resetting: {e}[/]")
+            return True
+
+        elif cmd == "/copy":
+            if not CLIPBOARD_AVAILABLE:
+                self.console.print("[red]Clipboard not available. Install pyperclip: llm install pyperclip[/]")
+                return True
+
+            raw_mode = "raw" in args.lower()
+            copy_all = "all" in args.lower()
+
+            # Extract number if present
+            num_match = re.search(r'\d+', args)
+            count = int(num_match.group()) if num_match else 1
+
+            responses = self.conversation.responses
+            if not responses:
+                self.console.print("[yellow]No responses to copy[/]")
+                return True
+
+            if copy_all:
+                texts = []
+                for r in responses:
+                    prompt_text = r.prompt.prompt if hasattr(r, 'prompt') and r.prompt else "[no prompt]"
+                    texts.append(f"User: {prompt_text}\n\nAssistant: {r.text()}")
+            else:
+                texts = [r.text() for r in responses[-count:]]
+
+            combined = "\n\n---\n\n".join(texts)
+
+            if not raw_mode:
+                combined = strip_markdown_for_clipboard(combined)
+
+            try:
+                pyperclip.copy(combined)
+                what = "conversation" if copy_all else f"{len(texts)} response(s)"
+                mode = "raw markdown" if raw_mode else "plain text"
+                self.console.print(f"[green]✓[/] Copied {what} to clipboard ({mode})")
+            except Exception as e:
+                self.console.print(f"[red]Clipboard error: {e}[/]")
             return True
 
         elif cmd == "/refresh":

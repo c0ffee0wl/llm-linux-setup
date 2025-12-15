@@ -115,6 +115,10 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/speech status` - Show TTS status
 - `/assistant` - Switch to assistant mode (conservative, 10 tool iterations)
 - `/agent` - Switch to agent mode (agentic, 100 tool iterations)
+- `/copy` - Copy last response to clipboard (markdown stripped)
+- `/copy [n]` - Copy last n responses
+- `/copy raw [n]` - Copy with markdown preserved
+- `/copy all` - Copy entire conversation
 - `/quit` or `/exit` - Exit assistant
 
 ## Knowledge Base System

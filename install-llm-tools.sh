@@ -1954,6 +1954,11 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Installing dbus-python into llm tool environment..."
     install_or_upgrade_llm_plugin dbus-python
 
+    # Install general llm-assistant dependencies (used by /copy and /speech commands)
+    log "Installing llm-assistant dependencies into llm tool environment..."
+    install_or_upgrade_llm_plugin strip-markdown
+    install_or_upgrade_llm_plugin pyperclip
+
     # Install voice input and prompt_toolkit dependencies
     log "Installing voice input dependencies into llm tool environment..."
     install_or_upgrade_llm_plugin prompt_toolkit
@@ -1979,7 +1984,6 @@ print('Model loaded successfully')
     # Install TTS (text-to-speech) dependencies for /speech command
     log "Installing TTS dependencies into llm tool environment..."
     install_or_upgrade_llm_plugin google-cloud-texttospeech
-    install_or_upgrade_llm_plugin strip-markdown
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
