@@ -101,6 +101,16 @@ try:
 except ImportError:
     CLIPBOARD_AVAILABLE = False
 
+# Web companion (optional - graceful degradation if not installed)
+try:
+    from fastapi import FastAPI, WebSocket
+    from fastapi.responses import HTMLResponse
+    import uvicorn
+    import webbrowser
+    WEB_AVAILABLE = True
+except ImportError:
+    WEB_AVAILABLE = False
+
 def strip_markdown_for_clipboard(text: str) -> str:
     """Strip markdown but fully preserve code block content."""
     # Extract code blocks and replace with null-byte placeholders
@@ -151,6 +161,7 @@ SLASH_COMMANDS = {
     "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
     "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
     "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
+    "/web": {"subcommands": ["stop"], "dynamic": None, "description": "Open web companion"},
 }
 
 
@@ -1022,6 +1033,13 @@ class TerminatorAssistantSession:
         self.previous_watch_context_hash = None  # SHA256 hash for deduplication
         self.previous_watch_iteration_count = 0   # Track iterations for prompt
 
+        # Web companion (real-time browser view)
+        self.web_server = None          # uvicorn server instance
+        self.web_server_thread = None   # Thread running the server
+        self.web_clients: set = set()   # Connected WebSocket clients
+        self.web_event_loop = None      # Event loop for web server thread
+        self.web_port = 8765            # Default port for web companion
+
         # Per-terminal content hash tracking for deduplication
         # Enables [Content unchanged] placeholder when terminal content hasn't changed
         self.terminal_content_hashes: Dict[str, str] = {}  # uuid -> content hash
@@ -1480,6 +1498,17 @@ class TerminatorAssistantSession:
                 except Exception:
                     pass
 
+            # STEP 3.5: Stop web companion server (if running)
+            if hasattr(self, 'web_server') and self.web_server:
+                try:
+                    self.web_server.should_exit = True
+                    self.web_server = None
+                    self.web_server_thread = None
+                    self.web_event_loop = None
+                    self.web_clients.clear()
+                except Exception:
+                    pass
+
             # STEP 4: Close D-Bus connections (graceful disconnect)
             # D-Bus connections don't need explicit cleanup in Python - garbage collected
             # But we can dereference them to signal intent
@@ -1544,6 +1573,14 @@ class TerminatorAssistantSession:
                 accumulated_text += chunk
                 live.update(Markdown(accumulated_text))
 
+                # Broadcast to web companion (non-blocking)
+                if self.web_clients:
+                    self._broadcast_to_web({
+                        "type": "assistant_chunk",
+                        "content": accumulated_text,
+                        "done": False
+                    })
+
                 # Queue TTS if enabled (non-blocking)
                 if tts_enabled and sentence_buffer:
                     sentence = sentence_buffer.add(chunk)
@@ -1556,7 +1593,648 @@ class TerminatorAssistantSession:
             if remaining:
                 self.speech_output.speak_sentence(remaining)
 
+        # Broadcast completion to web companion
+        if self.web_clients:
+            self._broadcast_to_web({
+                "type": "assistant_complete",
+                "content": accumulated_text,
+                "done": True
+            })
+
         return accumulated_text
+
+    # =========================================================================
+    # Web Companion Methods
+    # =========================================================================
+
+    def _get_web_html(self) -> str:
+        """Return the inline HTML for the web companion interface."""
+        return '''<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>llm-assistant</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f7f7f8;
+            --bg-tertiary: #ececf1;
+            --bg-user: #f0f4ff;
+            --bg-assistant: #ffffff;
+            --text-primary: #1a1a1a;
+            --text-secondary: #6b6b6b;
+            --text-muted: #9a9a9a;
+            --border-color: #e5e5e5;
+            --accent-user: #2563eb;
+            --accent-assistant: #059669;
+            --accent-hover: #1d4ed8;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+            --radius-sm: 6px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            font-size: 90%;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        header {
+            position: sticky;
+            top: 0;
+            background: var(--bg-primary);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .logo {
+            width: 32px;
+            height: 32px;
+            background: linear-gradient(135deg, var(--accent-user), var(--accent-assistant));
+            border-radius: var(--radius-sm);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 14px;
+        }
+        header h1 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        #status {
+            font-size: 0.75rem;
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+        #status.connected {
+            background: #dcfce7;
+            color: #166534;
+        }
+        #status.disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        .header-buttons { display: flex; gap: 8px; }
+        button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.85rem;
+            font-weight: 500;
+            transition: all 0.15s ease;
+        }
+        button:hover {
+            background: var(--accent-user);
+            color: white;
+            border-color: var(--accent-user);
+        }
+        #messages {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .message {
+            padding: 14px 18px;
+            border-radius: var(--radius-md);
+            position: relative;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+            animation: slideIn 0.2s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.user {
+            background: var(--bg-user);
+            border-left: 3px solid var(--accent-user);
+        }
+        .message.assistant {
+            background: var(--bg-assistant);
+            border-left: 3px solid var(--accent-assistant);
+        }
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .role-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .role-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+        }
+        .message.user .role-icon { background: var(--accent-user); }
+        .message.assistant .role-icon { background: var(--accent-assistant); }
+        .role {
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .message.user .role { color: var(--accent-user); }
+        .message.assistant .role { color: var(--accent-assistant); }
+        .content {
+            line-height: 1.7;
+            word-wrap: break-word;
+            color: var(--text-primary);
+        }
+        .content p { margin-bottom: 12px; }
+        .content p:last-child { margin-bottom: 0; }
+        .content ul, .content ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+        .content li { margin-bottom: 6px; }
+        .content strong { font-weight: 600; }
+        .content code:not(pre code) {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .content pre {
+            position: relative;
+            margin: 16px 0;
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            background: #f6f8fa;
+            border: 1px solid var(--border-color);
+        }
+        .content pre code {
+            display: block;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            font-family: 'SF Mono', Consolas, 'Liberation Mono', monospace;
+            background: transparent;
+        }
+        .copy-code-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 4px 10px;
+            font-size: 0.7rem;
+            background: white;
+            opacity: 0;
+            transition: opacity 0.15s;
+            box-shadow: var(--shadow-sm);
+        }
+        .content pre:hover .copy-code-btn { opacity: 1; }
+        .copy-msg-btn {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            background: transparent;
+            border: 1px solid var(--border-color);
+        }
+        .copy-msg-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--text-primary);
+            color: white;
+            padding: 12px 20px;
+            border-radius: var(--radius-sm);
+            font-weight: 500;
+            font-size: 0.9rem;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: var(--shadow-lg);
+            z-index: 1000;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .streaming .content::after {
+            content: '▋';
+            animation: blink 1s infinite;
+            color: var(--accent-assistant);
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <div class="logo">AI</div>
+            <h1>llm-assistant</h1>
+            <span id="status" class="disconnected">Disconnected</span>
+        </div>
+        <div class="header-buttons">
+            <button onclick="copyAll()">Copy All</button>
+        </div>
+    </header>
+    <div id="messages">
+        <div class="empty-state" id="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <p>Waiting for conversation...</p>
+        </div>
+    </div>
+    <div id="toast" class="toast">Copied!</div>
+
+    <script>
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true
+        });
+
+        let ws;
+        let reconnectTimer;
+        const messagesContainer = document.getElementById('messages');
+        const status = document.getElementById('status');
+        const emptyState = document.getElementById('empty-state');
+        let currentAssistantDiv = null;
+
+        function hideEmptyState() {
+            if (emptyState) emptyState.style.display = 'none';
+        }
+
+        function showEmptyState() {
+            if (emptyState) emptyState.style.display = 'block';
+        }
+
+        function connect() {
+            ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+            ws.onopen = () => {
+                status.textContent = 'Connected';
+                status.className = 'connected';
+                clearTimeout(reconnectTimer);
+            };
+
+            ws.onclose = () => {
+                status.textContent = 'Disconnected';
+                status.className = 'disconnected';
+                reconnectTimer = setTimeout(connect, 2000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            };
+        }
+
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'user_message':
+                    addUserMessage(data.content);
+                    break;
+                case 'assistant_chunk':
+                    updateAssistantMessage(data.content, false);
+                    break;
+                case 'assistant_complete':
+                    updateAssistantMessage(data.content, true);
+                    break;
+                case 'clear':
+                    clearMessages();
+                    break;
+                case 'history':
+                    clearMessages();
+                    data.messages.forEach(msg => {
+                        if (msg.role === 'user') {
+                            addUserMessage(msg.content);
+                        } else if (msg.content && msg.content.trim()) {
+                            // Only add non-empty assistant messages
+                            addAssistantMessage(msg.content);
+                        }
+                    });
+                    break;
+            }
+            scrollToBottom();
+        }
+
+        function clearMessages() {
+            // Remove all messages but keep empty state
+            const msgs = messagesContainer.querySelectorAll('.message');
+            msgs.forEach(m => m.remove());
+            currentAssistantDiv = null;
+            showEmptyState();
+        }
+
+        function scrollToBottom() {
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+
+        function addUserMessage(content) {
+            if (!content || !content.trim()) return;
+            hideEmptyState();
+            currentAssistantDiv = null;
+            const div = document.createElement('div');
+            div.className = 'message user';
+            div.innerHTML = `
+                <div class="message-header">
+                    <div class="role-badge">
+                        <div class="role-icon">U</div>
+                        <span class="role">You</span>
+                    </div>
+                    <button class="copy-msg-btn" onclick="copyText(this.closest('.message').querySelector('.content'))">Copy</button>
+                </div>
+                <div class="content">${escapeHtml(content)}</div>
+            `;
+            messagesContainer.appendChild(div);
+        }
+
+        function addAssistantMessage(content) {
+            if (!content || !content.trim()) return;
+            hideEmptyState();
+            currentAssistantDiv = null;
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.innerHTML = `
+                <div class="message-header">
+                    <div class="role-badge">
+                        <div class="role-icon">A</div>
+                        <span class="role">Assistant</span>
+                    </div>
+                    <button class="copy-msg-btn" onclick="copyText(this.closest('.message').querySelector('.content'))">Copy</button>
+                </div>
+                <div class="content">${renderMarkdown(content)}</div>
+            `;
+            messagesContainer.appendChild(div);
+            addCodeCopyButtons(div);
+        }
+
+        function updateAssistantMessage(content, done) {
+            if (!content || !content.trim()) {
+                // Don't create empty message divs
+                if (done && currentAssistantDiv) {
+                    // If done with empty content, remove the streaming div
+                    currentAssistantDiv.remove();
+                    currentAssistantDiv = null;
+                }
+                return;
+            }
+            hideEmptyState();
+
+            if (!currentAssistantDiv) {
+                currentAssistantDiv = document.createElement('div');
+                currentAssistantDiv.className = 'message assistant' + (done ? '' : ' streaming');
+                currentAssistantDiv.innerHTML = `
+                    <div class="message-header">
+                        <div class="role-badge">
+                            <div class="role-icon">A</div>
+                            <span class="role">Assistant</span>
+                        </div>
+                        <button class="copy-msg-btn" onclick="copyText(this.closest('.message').querySelector('.content'))">Copy</button>
+                    </div>
+                    <div class="content"></div>
+                `;
+                messagesContainer.appendChild(currentAssistantDiv);
+            }
+
+            const contentDiv = currentAssistantDiv.querySelector('.content');
+            contentDiv.innerHTML = renderMarkdown(content);
+
+            if (done) {
+                currentAssistantDiv.classList.remove('streaming');
+                addCodeCopyButtons(currentAssistantDiv);
+                currentAssistantDiv = null;
+            }
+        }
+
+        function renderMarkdown(text) {
+            return marked.parse(text);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function addCodeCopyButtons(container) {
+            container.querySelectorAll('pre code').forEach(code => {
+                const pre = code.parentElement;
+                if (!pre.querySelector('.copy-code-btn')) {
+                    const btn = document.createElement('button');
+                    btn.className = 'copy-code-btn';
+                    btn.textContent = 'Copy';
+                    btn.onclick = () => copyCode(code);
+                    pre.style.position = 'relative';
+                    pre.appendChild(btn);
+                }
+            });
+        }
+
+        function copyCode(codeElement) {
+            navigator.clipboard.writeText(codeElement.textContent);
+            showToast('Code copied!');
+        }
+
+        function copyText(element) {
+            navigator.clipboard.writeText(element.innerText);
+            showToast('Copied!');
+        }
+
+        function copyAll() {
+            const msgs = messagesContainer.querySelectorAll('.message');
+            if (msgs.length === 0) {
+                showToast('No messages to copy');
+                return;
+            }
+            let text = '';
+            msgs.forEach(msg => {
+                const role = msg.classList.contains('user') ? 'You' : 'Assistant';
+                const content = msg.querySelector('.content').innerText;
+                if (content.trim()) {
+                    text += role + ':\\n' + content + '\\n\\n---\\n\\n';
+                }
+            });
+            navigator.clipboard.writeText(text);
+            showToast('Conversation copied!');
+        }
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        connect();
+    </script>
+</body>
+</html>'''
+
+    def _start_web_server(self):
+        """Start the web companion server in a background thread."""
+        if not WEB_AVAILABLE:
+            self.console.print("[red]Web companion not available. Install: llm install fastapi uvicorn[/]")
+            return False
+
+        if self.web_server_thread and self.web_server_thread.is_alive():
+            self.console.print(f"[yellow]Web server already running at http://localhost:{self.web_port}[/]")
+            return True
+
+        # Create FastAPI app
+        app = FastAPI()
+        session = self  # Closure reference
+
+        @app.get("/", response_class=HTMLResponse)
+        async def get_index():
+            return session._get_web_html()
+
+        @app.websocket("/ws")
+        async def websocket_endpoint(websocket: WebSocket):
+            await websocket.accept()
+            session.web_clients.add(websocket)
+            try:
+                # Send conversation history on connect
+                history = []
+                for r in session.conversation.responses:
+                    if hasattr(r, 'prompt') and r.prompt:
+                        # Strip terminal context from prompts (same as DB storage)
+                        clean_prompt = session._strip_context(r.prompt.prompt or "")
+                        if clean_prompt and clean_prompt.strip():
+                            history.append({"role": "user", "content": clean_prompt})
+                    assistant_text = r.text()
+                    if assistant_text and assistant_text.strip():
+                        history.append({"role": "assistant", "content": assistant_text})
+                await websocket.send_json({"type": "history", "messages": history})
+
+                # Keep connection alive
+                while True:
+                    try:
+                        await websocket.receive_text()
+                    except Exception:
+                        break
+            finally:
+                session.web_clients.discard(websocket)
+
+        # Configure uvicorn
+        config = uvicorn.Config(
+            app,
+            host="127.0.0.1",
+            port=self.web_port,
+            log_level="warning",
+            access_log=False
+        )
+        self.web_server = uvicorn.Server(config)
+
+        # Run in background thread
+        def run_server():
+            import asyncio
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            # Store loop reference for cross-thread broadcasting
+            session.web_event_loop = loop
+            loop.run_until_complete(self.web_server.serve())
+
+        self.web_server_thread = threading.Thread(target=run_server, daemon=True)
+        self.web_server_thread.start()
+
+        # Give server time to start and event loop to be set
+        time.sleep(0.5)
+        return True
+
+    def _stop_web_server(self):
+        """Stop the web companion server."""
+        if self.web_server:
+            self.web_server.should_exit = True
+            self.web_server = None
+            self.web_server_thread = None
+            self.web_event_loop = None
+            self.web_clients.clear()
+            self.console.print("[green]✓[/] Web server stopped")
+        else:
+            self.console.print("[yellow]Web server is not running[/]")
+
+    def _broadcast_to_web(self, message: dict):
+        """Broadcast a message to all connected web clients.
+
+        Thread-safe: schedules the broadcast on the web server's event loop.
+        """
+        if not self.web_clients or not self.web_event_loop:
+            return
+
+        import asyncio
+
+        async def send_to_all():
+            disconnected = set()
+            # Iterate over a copy to avoid modification during iteration
+            for client in list(self.web_clients):
+                try:
+                    await client.send_json(message)
+                except Exception:
+                    disconnected.add(client)
+            # Remove disconnected clients
+            for client in disconnected:
+                self.web_clients.discard(client)
+
+        # Schedule coroutine on the web server's event loop (thread-safe)
+        try:
+            asyncio.run_coroutine_threadsafe(send_to_all(), self.web_event_loop)
+        except RuntimeError:
+            # Event loop closed or not running
+            pass
 
     def _estimate_tool_schema_tokens(self) -> int:
         """
@@ -3001,14 +3679,26 @@ Previous messages:
         return response
 
     def _strip_context(self, prompt_text):
-        """Remove [Current terminal context] section from prompt before DB storage.
+        """Remove [Current terminal context] section from prompt.
 
         Terminal context is ephemeral and captured fresh on each prompt.
-        Storing it would bloat the DB and expose sensitive terminal content.
+        Stripping it for DB storage preserves privacy; stripping it for
+        web companion shows clean user messages.
+
+        Prompt structure: sections joined by '\\n\\n', context is first section
+        if present, user message is last section.
         """
         if not prompt_text:
             return prompt_text
-        return re.sub(r'\n\[Current terminal context\]\n.*$', '', prompt_text, flags=re.DOTALL)
+
+        # Split by double newline (section separator), filter out context sections
+        sections = prompt_text.split('\n\n')
+        filtered = [
+            s for s in sections
+            if not s.startswith('[Current terminal context]')
+            and not s.startswith('[Previous conversation summary]')
+        ]
+        return '\n\n'.join(filtered)
 
     def _log_response(self, response):
         """Log response to database with context stripping.
@@ -3767,6 +4457,8 @@ Instructions:
 /copy [n]          Copy last response (or last n) to clipboard (markdown stripped)
 /copy raw [n]      Copy with markdown preserved
 /copy all          Copy entire conversation
+/web               Open conversation in web browser (real-time streaming)
+/web stop          Stop web server
 /quit or /exit     Exit assistant
 
 [bold]Usage:[/]
@@ -3783,6 +4475,9 @@ Instructions:
                 self.conversation = llm.Conversation(model=self.model)
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
+                # Broadcast clear to web companion
+                if self.web_clients:
+                    self._broadcast_to_web({"type": "clear"})
                 self.console.print("[green]✓[/] Conversation cleared")
             except Exception as e:
                 self.console.print(f"[red]Error clearing conversation: {e}[/]")
@@ -3818,6 +4513,10 @@ Instructions:
                 # Reset watch mode tracking state
                 self.previous_watch_context_hash = None
                 self.previous_watch_iteration_count = 0
+
+                # Broadcast clear to web companion
+                if self.web_clients:
+                    self._broadcast_to_web({"type": "clear"})
 
                 self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
             except Exception as e:
@@ -3861,6 +4560,24 @@ Instructions:
                 self.console.print(f"[green]✓[/] Copied {what} to clipboard ({mode})")
             except Exception as e:
                 self.console.print(f"[red]Clipboard error: {e}[/]")
+            return True
+
+        elif cmd == "/web":
+            if "stop" in args.lower():
+                self._stop_web_server()
+                return True
+
+            if not WEB_AVAILABLE:
+                self.console.print("[red]Web companion not available. Install: llm install fastapi uvicorn[/]")
+                return True
+
+            if self._start_web_server():
+                url = f"http://localhost:{self.web_port}"
+                try:
+                    webbrowser.open(url)
+                    self.console.print(f"[green]✓[/] Web companion opened at {url}")
+                except Exception as e:
+                    self.console.print(f"[yellow]Web server running at {url} (browser open failed: {e})[/]")
             return True
 
         elif cmd == "/refresh":
@@ -4799,6 +5516,13 @@ Type !fragment <name> [...] to insert fragments""",
 
 {full_prompt}"""
                             self.pending_summary = None
+
+                        # Broadcast user message to web companion
+                        if self.web_clients:
+                            self._broadcast_to_web({
+                                "type": "user_message",
+                                "content": processed_input
+                            })
 
                         # Always pass system prompt on every call (required for Gemini/Vertex
                         # which is stateless - systemInstruction must be sent on every request)

@@ -1954,10 +1954,12 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Installing dbus-python into llm tool environment..."
     install_or_upgrade_llm_plugin dbus-python
 
-    # Install general llm-assistant dependencies (used by /copy and /speech commands)
+    # Install general llm-assistant dependencies (used by /copy, /speech, /web commands)
     log "Installing llm-assistant dependencies into llm tool environment..."
     install_or_upgrade_llm_plugin strip-markdown
     install_or_upgrade_llm_plugin pyperclip
+    install_or_upgrade_llm_plugin fastapi
+    install_or_upgrade_llm_plugin "uvicorn[standard]"
 
     # Install voice input and prompt_toolkit dependencies
     log "Installing voice input dependencies into llm tool environment..."

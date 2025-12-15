@@ -119,6 +119,8 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/copy [n]` - Copy last n responses
 - `/copy raw [n]` - Copy with markdown preserved
 - `/copy all` - Copy entire conversation
+- `/web` - Open conversation in web browser (real-time streaming)
+- `/web stop` - Stop web server
 - `/quit` or `/exit` - Exit assistant
 
 ## Knowledge Base System
@@ -226,6 +228,29 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 - Dependencies: PyGObject, dbus-python conditionally installed (Phase 1, only if Terminator detected)
 - Enable plugin: Terminator Preferences → Plugins → Check "TerminatorAssistant"
 
+## Web Companion
+
+The `/web` command opens a real-time web interface that mirrors the conversation in your browser:
+
+**Features:**
+- Real-time streaming of AI responses via WebSocket
+- Markdown rendering with syntax highlighting
+- Copy buttons:
+  - Per-response copy (strips markdown for clean pasting)
+  - Per-code-block copy
+  - Copy entire conversation
+- Auto-reconnect on connection loss
+- Auto-scroll to latest message
+
+**Usage:**
+```bash
+# Inside llm-assistant:
+/web        # Opens browser at http://localhost:8765
+/web stop   # Stop the web server
+```
+
+**Use case:** View conversation in browser for easy copying to Word/Docs without ANSI escape codes or markdown artifacts.
+
 ## Dependencies
 
 - Terminator terminal emulator
@@ -236,6 +261,7 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 - prompt_toolkit (for keybindings)
 - sounddevice, numpy, onnx-asr (optional, for voice input)
 - google-cloud-texttospeech, google-auth, strip-markdown (optional, for TTS output with Vertex models)
+- fastapi, uvicorn (optional, for web companion)
 
 ## Usage Examples
 
