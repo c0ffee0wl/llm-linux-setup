@@ -5,14 +5,21 @@ import sys
 
 def context(input: str) -> str:
     """
-    Execute the context command to get terminal history including commands and their outputs.
+    Get terminal session history including commands and their outputs.
+
+    Retrieves recent terminal activity from the current asciinema recording session.
+    Useful for understanding what commands were run and what output they produced.
+    Each line in the output is prefixed with '#c#' to distinguish context from other content.
 
     Args:
-        input: empty for last entry, number of recent entries to show, or "all" for entire history
+        input: Controls how much history to retrieve:
+               - "" (empty): Last command and output only
+               - number (e.g., "5"): Last N commands and their outputs
+               - "all": Entire session history
 
     Returns:
-        Session history from the 'context' command, including input and output (commands ran and their outputs).
-        Each line of the history is prefixed with #c#
+        Session history with commands and outputs, each line prefixed with '#c#'.
+        Returns error message if context command not found or session not active.
     """
     args = ["context"]
 

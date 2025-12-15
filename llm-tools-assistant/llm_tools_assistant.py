@@ -18,19 +18,18 @@ def execute_in_terminal(command: str) -> str:
     """
     Execute a shell command in the Exec terminal.
 
-    Use this tool to run commands in the designated execution terminal.
-    The command will be sent to the terminal and its output captured.
-
-    State what you're doing in your response, but do NOT ask the user for
-    permission - simply call this tool. The assistant framework handles approval
-    automatically.
+    Sends commands to the designated execution terminal where output can be captured
+    and observed. Use for any shell operations: file manipulation, git commands,
+    package management, running scripts, etc. The assistant framework handles user
+    approval automatically - state what you're doing but don't ask for permission.
 
     Args:
-        command: The shell command to execute (e.g., "ls -la", "git status")
+        command: The shell command to execute (e.g., "ls -la", "git status",
+                 "python script.py"). Pipes and redirects are supported.
 
     Returns:
         JSON indicating the command has been queued for execution.
-        Actual execution is handled by assistant with user approval (you don't need to ask).
+        Output will be visible in the terminal and captured for your next context.
     """
     return json.dumps({
         "action": "execute",
@@ -43,8 +42,9 @@ def send_keypress(keypress: str) -> str:
     """
     Send a keypress or key sequence to the Exec terminal.
 
-    Use this for interactive applications (TUIs) that need keyboard input,
-    such as vim, less, htop, or any application expecting keypresses.
+    Controls interactive terminal applications (TUIs) like vim, less, htop, or any
+    program expecting keyboard input. For text input, send characters directly
+    (e.g., ":wq" for vim save-and-quit). Always explain your reasoning before use.
 
     Supported special keys:
     - Enter, Escape, Tab, Space, Backspace, Delete
@@ -54,16 +54,14 @@ def send_keypress(keypress: str) -> str:
     - Function keys: F1-F12
     - Page keys: PageUp, PageDown, Home, End
 
-    For regular text input, just use the characters directly (e.g., ":wq" for vim).
-
-    Always explain your reasoning before using this tool.
-
     Args:
-        keypress: The key or key sequence to send (e.g., "Enter", "Ctrl+C", ":wq", "q")
+        keypress: The key or key sequence to send. Examples:
+                  - Special: "Enter", "Ctrl+C", "Escape", "F1"
+                  - Text input: ":wq", "q", "yes"
+                  - Navigation: "j", "k", "gg", "G" (vim-style)
 
     Returns:
-        JSON indicating the keypress has been queued.
-        Actual execution is handled by assistant with user approval.
+        JSON indicating the keypress has been queued for delivery to the terminal.
     """
     return json.dumps({
         "action": "keypress",
@@ -76,18 +74,19 @@ def capture_terminal(scope: str = "exec") -> str:
     """
     Capture terminal content or screenshot.
 
-    Use this to see the current state of the terminal(s). For TUI applications
-    (vim, htop, etc.), this captures a screenshot. For regular command output,
-    it captures the text content.
+    Retrieves the current visual state of terminal(s) for analysis. For TUI
+    applications (vim, htop, less), captures a screenshot image. For regular
+    command output, captures text content. Use when you need to see what's
+    currently displayed without executing any new commands.
 
     Args:
         scope: Which terminals to capture:
                - "exec": Only the Exec terminal (default)
-               - "all": All visible terminals
+               - "all": All visible terminals in the window
 
     Returns:
         JSON indicating capture has been queued.
-        The captured content will be provided in the next context.
+        The captured content (text or screenshot) will appear in your next turn.
     """
     valid_scopes = ["exec", "all"]
     if scope not in valid_scopes:
