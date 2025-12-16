@@ -162,6 +162,8 @@ SLASH_COMMANDS = {
     "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
     "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
     "/web": {"subcommands": ["stop"], "dynamic": None, "description": "Open web companion"},
+    "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
+    "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
 }
 
 
@@ -797,9 +799,14 @@ class Spinner:
 # =============================================================================
 # Tool Setup
 # =============================================================================
-# External tool plugins that assistant can dispatch (easy to extend)
-# Just add the plugin name here to enable a new external tool
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'capture_screen', 'imagemage', 'sandboxed_python')
+# Always-on external tools (always available and auto-dispatch)
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'sandboxed_python')
+
+# Tools available only in agent mode (schema sent to model only in /agent)
+AGENT_MODE_TOOLS = ('capture_screen',)
+
+# Optional tools that can be loaded/unloaded via slash command (/imagemage)
+OPTIONAL_TOOL_PLUGINS = ('imagemage',)
 
 _all_tools = llm.get_tools()
 
@@ -815,20 +822,37 @@ except ImportError:
 except Exception:
     pass  # MCP config missing or server unavailable
 
-# Build ASSISTANT_TOOLS from plugins - includes core assistant tools + external tools
+# Build ASSISTANT_TOOLS - base tools always offered to model
+# (agent-mode and optional tools added dynamically via _get_active_tools())
 ASSISTANT_TOOLS = [
     tool for tool in _all_tools.values()
     if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('assistant',) + EXTERNAL_TOOL_PLUGINS
 ]
 
-# Build dict of external tool implementations for auto-dispatch
-# These are tools with real implementations (not assistant stubs)
+# Build EXTERNAL_TOOLS - base dispatch dict (always-on tools)
 EXTERNAL_TOOLS = {
     name: tool.implementation
     for name, tool in _all_tools.items()
     if isinstance(tool, Tool)
     and hasattr(tool, 'implementation') and tool.implementation is not None
     and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
+}
+
+# Separate dispatch dicts for conditional tools (agent-mode and optional)
+AGENT_EXTERNAL_TOOLS = {
+    name: tool.implementation
+    for name, tool in _all_tools.items()
+    if isinstance(tool, Tool)
+    and hasattr(tool, 'implementation') and tool.implementation is not None
+    and getattr(tool, 'plugin', None) in AGENT_MODE_TOOLS
+}
+
+OPTIONAL_EXTERNAL_TOOLS = {
+    name: tool.implementation
+    for name, tool in _all_tools.items()
+    if isinstance(tool, Tool)
+    and hasattr(tool, 'implementation') and tool.implementation is not None
+    and getattr(tool, 'plugin', None) in OPTIONAL_TOOL_PLUGINS
 }
 
 # Display configuration for external tools: tool_name -> (param_name, action_verb, brief_description)
@@ -1018,6 +1042,16 @@ class TerminatorAssistantSession:
         self.MAX_CAPTURE_BYTES = 10_000_000  # 10MB byte limit
         self.MAX_CAPTURE_CHARS = 2_000_000   # 2M character limit (~500k tokens)
 
+        # Operating mode: "assistant" (conservative) or "agent" (agentic)
+        # Controls tool iteration limits and system prompt content
+        # Must be initialized before _estimate_tool_schema_tokens() which uses _get_active_tools()
+        self.mode: str = "agent" if agent_mode else "assistant"
+
+        # Dynamically loaded optional tools (e.g., {'imagemage'})
+        # Tools here are added to the model's available tools list
+        # Must be initialized before _estimate_tool_schema_tokens()
+        self.loaded_optional_tools: set = set()
+
         # Tool token overhead (estimated at startup, cached for session)
         self._tool_token_overhead = self._estimate_tool_schema_tokens()
 
@@ -1073,9 +1107,8 @@ class TerminatorAssistantSession:
         # False = off, "normal" = safe only, "full" = safe + caution
         self.auto_mode: Union[bool, str] = False
 
-        # Operating mode: "assistant" (conservative) or "agent" (agentic)
-        # Controls tool iteration limits and system prompt content
-        self.mode: str = "agent" if agent_mode else "assistant"
+        # Queued prompt from /capture with inline prompt
+        self._queued_prompt: Optional[str] = None
 
         # Voice auto-submit: automatically send transcribed text
         self.voice_auto_submit: bool = False
@@ -3373,6 +3406,54 @@ class TerminatorAssistantSession:
             "status": status
         })
 
+    def _get_active_tools(self) -> list:
+        """Get currently active tools based on mode and loaded state.
+
+        Returns tools that should be offered to the model. Includes:
+        - Base ASSISTANT_TOOLS (always available)
+        - Agent-mode tools (capture_screen) when in /agent mode
+        - Optional tools (imagemage) when manually loaded via /imagemage
+        """
+        tools = list(ASSISTANT_TOOLS)  # Base tools (always available)
+
+        # Add agent-mode tools if in agent mode
+        if self.mode == "agent":
+            for plugin_name in AGENT_MODE_TOOLS:
+                for tool in _all_tools.values():
+                    if getattr(tool, 'plugin', None) == plugin_name:
+                        tools.append(tool)
+
+        # Add optional tools if manually loaded via /imagemage etc.
+        for plugin_name in self.loaded_optional_tools:
+            for tool in _all_tools.values():
+                if getattr(tool, 'plugin', None) == plugin_name:
+                    tools.append(tool)
+
+        return tools
+
+    def _get_active_external_tools(self) -> dict:
+        """Get dispatch dict for currently active external tools.
+
+        Returns tool implementations for auto-dispatch. Includes:
+        - Base EXTERNAL_TOOLS (always available)
+        - Agent-mode tools when in /agent mode
+        - Optional tools when manually loaded
+        """
+        tools = dict(EXTERNAL_TOOLS)  # Base dispatch (always available)
+
+        # Add agent-mode tools if in agent mode
+        if self.mode == "agent":
+            tools.update(AGENT_EXTERNAL_TOOLS)
+
+        # Add optional tools if loaded
+        for plugin_name in self.loaded_optional_tools:
+            for name, impl in OPTIONAL_EXTERNAL_TOOLS.items():
+                tool = _all_tools.get(name)
+                if tool and getattr(tool, 'plugin', None) == plugin_name:
+                    tools[name] = impl
+
+        return tools
+
     def _estimate_tool_schema_tokens(self) -> int:
         """
         Estimate token count for all tool schemas.
@@ -3386,12 +3467,20 @@ class TerminatorAssistantSession:
         """
         try:
             # Build JSON representation of tool schemas (as sent to API)
+            active_tools = self._get_active_tools()
             tool_schemas = []
-            for tool in ASSISTANT_TOOLS:
+            for tool in active_tools:
+                # Get parameters - handle both input_schema (llm.Tool) and schema (other tools)
+                if hasattr(tool, 'input_schema'):
+                    params = tool.input_schema
+                elif hasattr(tool, 'schema') and isinstance(tool.schema, dict):
+                    params = tool.schema.get('parameters', {})
+                else:
+                    params = {}
                 schema = {
                     'name': tool.name,
                     'description': tool.description or '',
-                    'parameters': tool.schema.get('parameters', {}) if hasattr(tool, 'schema') else {}
+                    'parameters': params
                 }
                 tool_schemas.append(schema)
 
@@ -3399,12 +3488,13 @@ class TerminatorAssistantSession:
 
             # Estimate tokens using char-based method (4 chars = 1 token)
             tokens = len(tools_json) // 4
-            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(ASSISTANT_TOOLS)} tools, {len(tools_json)} chars)")
+            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(active_tools)} tools, {len(tools_json)} chars)")
             return tokens
 
         except Exception as e:
             # Fallback
-            fallback = len(ASSISTANT_TOOLS) * 200
+            active_tools = self._get_active_tools()
+            fallback = len(active_tools) * 200
             self._debug(f"Tool schema measurement exception: {e}, using estimate: {fallback}")
             return fallback
 
@@ -3561,8 +3651,9 @@ Shell: {env_type} {shell_info}
                 pass  # No tool calls or error accessing them
 
         # Build tool definitions (what's sent to the model)
+        # Uses _get_active_tools() to reflect current mode and loaded optional tools
         tools = []
-        for tool in ASSISTANT_TOOLS:
+        for tool in self._get_active_tools():
             tool_info = {
                 "name": tool.name,
                 "description": tool.description or "",
@@ -5701,12 +5792,13 @@ Instructions:
 
             await asyncio.sleep(self.watch_interval)
 
-    def handle_slash_command(self, command: str) -> bool:
+    def handle_slash_command(self, command: str) -> Union[bool, str]:
         """
         Handle slash commands.
 
         Returns:
-            True if should continue REPL, False to exit
+            True if should continue REPL, False to exit,
+            "prompt_queued" if /capture queued a prompt for immediate processing
         """
         parts = command.split(maxsplit=1)
         cmd = parts[0].lower()
@@ -5739,6 +5831,9 @@ Instructions:
 /speech            Enable TTS output (Vertex models only)
 /speech off        Disable TTS output
 /speech status     Show TTS status
+/capture [mode] [prompt]  Capture screenshot (mode: window/region/full/rdp/annotate)
+/imagemage         Load image generation tool (generate_image)
+/imagemage off     Unload image generation tool
 /kb                List available and loaded knowledge bases
 /kb load <names>   Load KB(s) into session (comma-separated)
 /kb unload <names> Remove KB(s) from session (comma-separated)
@@ -5998,9 +6093,17 @@ Instructions:
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
             # Mode display
             mode_display = f"[green]{self.mode}[/]" if self.mode == "assistant" else f"[cyan]{self.mode}[/]"
+            # Active tools display
+            active_tools = self._get_active_tools()
+            tools_info = f"Active tools: {len(active_tools)}"
+            if self.loaded_optional_tools:
+                tools_info += f" (+{', '.join(sorted(self.loaded_optional_tools))})"
+            if self.mode == "agent":
+                tools_info += " [+agent-mode tools]"
             self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
 Mode: {mode_display}
+{tools_info}
 Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%) [{token_source}]
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
@@ -6199,6 +6302,82 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     "model": self.model_name,
                     "mode": self.mode
                 })
+            return True
+
+        elif cmd == "/capture":
+            # Parse: /capture [mode] [prompt...]
+            parts = user_input.split(maxsplit=2)
+            mode = "window"
+            prompt = None
+
+            if len(parts) >= 2:
+                if parts[1] in ("window", "region", "full", "rdp", "annotate"):
+                    mode = parts[1]
+                    prompt = parts[2] if len(parts) > 2 else None
+                else:
+                    # No mode specified, rest is prompt
+                    prompt = " ".join(parts[1:])
+
+            # Execute capture
+            try:
+                from llm_tools_capture_screen import capture_screen
+
+                # Show countdown for interactive modes
+                delay = 5 if mode in ("window", "region", "annotate") else 0
+                if delay > 0:
+                    with Status(f"Capturing ({mode}): {delay}s", console=self.console) as status:
+                        for i in range(delay, 0, -1):
+                            status.update(f"Capturing ({mode}): {i}s")
+                            time.sleep(1)
+
+                result = capture_screen(mode=mode, delay=0)
+
+                if hasattr(result, 'attachments') and result.attachments:
+                    if prompt:
+                        # Immediate analysis - inject attachment and send prompt
+                        self.pending_attachments.extend(result.attachments)
+                        # Process the prompt immediately (return to main loop with prompt)
+                        # We can't directly call prompt() here, so we queue and return special
+                        self._queued_prompt = prompt
+                        return "prompt_queued"  # Special return value to trigger prompt processing
+                    else:
+                        # Queue for next message
+                        self.pending_attachments.extend(result.attachments)
+                        self.console.print(f"[green]✓[/] Screenshot queued (mode={mode})")
+                        self.console.print("[dim]Attached to your next message[/]")
+                else:
+                    self.console.print("[yellow]No screenshot captured[/]")
+            except ImportError:
+                self.console.print("[red]capture_screen tool not installed[/]")
+                self.console.print("[dim]Install: llm install /opt/llm-tools-capture-screen[/]")
+            except Exception as e:
+                self.console.print(f"[red]Capture failed: {e}[/]")
+            return True
+
+        elif cmd == "/imagemage":
+            parts = user_input.split()
+            if len(parts) == 1:
+                # Load imagemage
+                if 'imagemage' in self.loaded_optional_tools:
+                    self.console.print("[yellow]imagemage already loaded[/]")
+                else:
+                    self.loaded_optional_tools.add('imagemage')
+                    self.console.print("[green]✓[/] imagemage loaded (generate_image tool available)")
+                    self.console.print("[dim]/imagemage off to unload[/]")
+            elif parts[1] == "off":
+                if 'imagemage' in self.loaded_optional_tools:
+                    self.loaded_optional_tools.discard('imagemage')
+                    self.console.print("[green]✓[/] imagemage unloaded")
+                else:
+                    self.console.print("[yellow]imagemage not loaded[/]")
+            elif parts[1] == "status":
+                if 'imagemage' in self.loaded_optional_tools:
+                    self.console.print("[green]imagemage: loaded[/] (generate_image available)")
+                else:
+                    self.console.print("[dim]imagemage: not loaded[/]")
+                    self.console.print("[dim]/imagemage to load[/]")
+            else:
+                self.console.print("[red]Usage: /imagemage, /imagemage off, /imagemage status[/]")
             return True
 
         elif cmd in ["/quit", "/exit"]:
@@ -6550,9 +6729,11 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     tool_call_id=tool_call_id
                 )
 
-        elif tool_name in EXTERNAL_TOOLS:
+        # Check if tool is in active external tools (mode-aware dispatch)
+        active_external = self._get_active_external_tools()
+        if tool_name in active_external:
             # Generic auto-dispatch for external tools (google_search, web_fetch, etc.)
-            impl = EXTERNAL_TOOLS[tool_name]
+            impl = active_external[tool_name]
 
             # Special handling for capture_screen with countdown display
             if tool_name == 'capture_screen':
@@ -6670,11 +6851,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
         # Setup terminals
         self.setup_terminals()
 
-        # Build external tools list for display
+        # Build external tools list for display (mode-aware)
         external_tools_list = ""
-        if EXTERNAL_TOOLS:
+        active_external = self._get_active_external_tools()
+        if active_external:
             tools_info = []
-            for name in sorted(EXTERNAL_TOOLS.keys()):
+            for name in sorted(active_external.keys()):
                 if name in EXTERNAL_TOOL_DISPLAY:
                     _, _, desc = EXTERNAL_TOOL_DISPLAY[name]
                     tools_info.append(f"  [dim]•[/] {name}: {desc}")
@@ -6794,10 +6976,16 @@ Type !fragment <name> [...] to insert fragments""",
 
                 # Handle slash commands
                 if user_input.startswith('/'):
-                    should_continue = self.handle_slash_command(user_input)
-                    if not should_continue:
+                    result = self.handle_slash_command(user_input)
+                    if result == "prompt_queued" and self._queued_prompt:
+                        # /capture with inline prompt - continue with the queued prompt
+                        user_input = self._queued_prompt
+                        self._queued_prompt = None
+                        # Fall through to AI processing (don't continue)
+                    elif not result:
                         break
-                    continue
+                    else:
+                        continue
 
                 # Check if we need to squash context (before lock to avoid holding it during squash)
                 self.check_and_squash_context()
@@ -6890,7 +7078,7 @@ Type !fragment <name> [...] to insert fragments""",
                             system=self._build_system_prompt(),
                             fragments=[str(f) for f in fragments] if fragments else None,
                             attachments=all_attachments if all_attachments else None,
-                            tools=ASSISTANT_TOOLS
+                            tools=self._get_active_tools()
                         )
 
                         # Stream response with Live markdown display INSIDE lock to prevent
@@ -6981,7 +7169,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     # Continue conversation with tool results (and attachments)
                                     followup_response = self._prompt(
                                         "",  # Empty prompt - tool results drive the continuation
-                                        tools=ASSISTANT_TOOLS,
+                                        tools=self._get_active_tools(),
                                         tool_results=tool_results,
                                         attachments=followup_attachments if followup_attachments else None
                                     )
@@ -7026,7 +7214,7 @@ Type !fragment <name> [...] to insert fragments""",
                                 with self.watch_lock:
                                     attachment_response = self._prompt(
                                         "",  # Empty prompt - attachments drive the continuation
-                                        tools=ASSISTANT_TOOLS,
+                                        tools=self._get_active_tools(),
                                         attachments=attachments_to_send
                                     )
 
