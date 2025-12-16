@@ -140,6 +140,32 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PTStyle
 from prompt_toolkit.completion import Completer, Completion
 
+# YAML for findings file parsing
+import yaml
+
+# Pydantic for structured LLM output schemas
+from pydantic import BaseModel, Field
+from typing import Literal
+
+
+# Schema for AI-generated pentest findings (OWASP Risk Matrix 1-9)
+class FindingSchema(BaseModel):
+    """Schema for AI-analyzed penetration testing findings."""
+    suggested_title: str = Field(description="Concise vulnerability title (max 60 chars)")
+    severity: int = Field(ge=1, le=9, description="Severity 1-9 per OWASP Risk Matrix (likelihood × impact)")
+    severity_rationale: str = Field(description="Brief explanation of the severity score")
+    description: str = Field(description="Expanded technical description of the vulnerability")
+    remediation: str = Field(description="Step-by-step remediation recommendations")
+
+
+# Schema for command safety evaluation in auto mode
+class SafetySchema(BaseModel):
+    """Schema for LLM judge command safety evaluation."""
+    analysis: str = Field(description="Step-by-step analysis of what the command does")
+    risk_level: Literal["safe", "caution", "dangerous"] = Field(description="Risk classification")
+    safe: bool = Field(description="True if safe or caution, false if dangerous")
+    reason: str = Field(description="One short sentence summary (max 10 words)")
+
 
 # Slash command definitions for tab completion
 # Structure: command -> {subcommands: [...], dynamic: str|None, description: str}
@@ -165,6 +191,7 @@ SLASH_COMMANDS = {
     "/web": {"subcommands": ["stop"], "dynamic": None, "description": "Open web companion"},
     "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
     "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
+    "/finding": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
 }
 
 
@@ -271,7 +298,7 @@ class SlashCommandCompleter(Completer):
             yield from self._complete_rag_collections(partial)
 
     def _complete_second_arg(self, cmd: str, subcommand: str, partial: str):
-        """Complete second argument (KB names after load/unload, RAG collections)."""
+        """Complete second argument (KB names after load/unload, RAG collections, finding IDs)."""
         if cmd == "/kb":
             if subcommand == "load":
                 yield from self._complete_available_kbs(partial)
@@ -280,6 +307,11 @@ class SlashCommandCompleter(Completer):
         elif cmd == "/rag":
             if subcommand in ("add", "search", "rebuild", "delete"):
                 yield from self._complete_rag_collections(partial)
+        elif cmd == "/finding":
+            if subcommand in ("edit", "delete", "severity"):
+                yield from self._complete_findings(partial)
+            elif subcommand in ("open", "init"):
+                yield from self._complete_finding_projects(partial)
 
     def _complete_models(self, partial: str):
         """Complete model names dynamically."""
@@ -345,6 +377,47 @@ class SlashCommandCompleter(Completer):
             pass  # llm-tools-rag not installed
         except Exception:
             pass  # Graceful degradation
+
+    def _complete_findings(self, partial: str):
+        """Complete finding IDs (F001, F002, etc.) for current project."""
+        if not self.session or not self.session.findings_project:
+            return
+        partial_upper = partial.upper()
+        try:
+            project_dir = self.session.findings_base_dir / self.session.findings_project
+            findings_file = project_dir / "findings.md"
+            if findings_file.exists():
+                _, findings = self.session._parse_findings_file(findings_file)
+                for meta, _ in findings:
+                    fid = meta.get('id', '')
+                    if fid.upper().startswith(partial_upper):
+                        title = meta.get('title', '')[:30]
+                        yield Completion(
+                            fid,
+                            start_position=-len(partial),
+                            display_meta=title
+                        )
+        except Exception:
+            pass
+
+    def _complete_finding_projects(self, partial: str):
+        """Complete finding project names for /finding open."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            base_dir = self.session.findings_base_dir
+            if base_dir.exists():
+                for project_dir in base_dir.iterdir():
+                    if project_dir.is_dir():
+                        name = project_dir.name
+                        if name.lower().startswith(partial_lower):
+                            yield Completion(
+                                name,
+                                start_position=-len(partial)
+                            )
+        except Exception:
+            pass
 
 
 class VoiceInput:
@@ -1197,6 +1270,10 @@ class TerminatorAssistantSession:
             r"curl.*\|\s*(ba)?sh",         # curl pipe to shell
             r"wget.*\|\s*(ba)?sh",         # wget pipe to shell
         ]
+
+        # Pentest findings management
+        self.findings_project: Optional[str] = None  # Current project name
+        self.findings_base_dir: Path = llm.user_dir() / "llm-assistant" / "findings"
 
         # Voice input (STT) - lazy-loaded
         self.voice_input = VoiceInput(self.console) if VOICE_AVAILABLE else None
@@ -5508,18 +5585,6 @@ RULES:
 
 Think step-by-step: analyze what the command does, then classify."""
 
-        # JSON Schema for structured output (CoT: analysis before verdict)
-        safety_schema = {
-            "type": "object",
-            "properties": {
-                "analysis": {"type": "string", "description": "Step-by-step analysis of what the command does"},
-                "risk_level": {"type": "string", "enum": ["safe", "caution", "dangerous"]},
-                "safe": {"type": "boolean", "description": "True if safe or caution, false if dangerous"},
-                "reason": {"type": "string", "description": "One short sentence summary (max 10 words)"}
-            },
-            "required": ["analysis", "risk_level", "safe", "reason"]
-        }
-
         try:
             model = self.conversation.model
 
@@ -5527,7 +5592,7 @@ Think step-by-step: analyze what the command does, then classify."""
             if not model.supports_schema:
                 return (False, "dangerous", f"Model {model.model_id} doesn't support schema - auto mode disabled")
 
-            response = model.prompt(judge_prompt, schema=safety_schema, temperature=0.2)
+            response = model.prompt(judge_prompt, schema=SafetySchema, temperature=0.2)
             result = json.loads(response.text())
             # CoT: analysis for reasoning, reason for display
             return (result.get("safe", False), result.get("risk_level", "dangerous"), result.get("reason", ""))
@@ -6078,6 +6143,11 @@ Instructions:
 /copy all          Copy entire conversation
 /web               Open conversation in web browser (real-time streaming)
 /web stop          Stop web server
+/finding <note>    Add pentest finding with AI analysis (OWASP 1-9)
+/finding init <p>  Create new findings project
+/finding list      List findings in current project
+/finding export    Export to Word (docx) via pandoc
+/finding projects  List all projects
 /quit or /exit     Exit assistant
 
 [bold]Usage:[/]
@@ -6625,6 +6695,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[red]Usage: /imagemage, /imagemage off, /imagemage status[/]")
             return True
 
+        elif cmd == "/finding":
+            return self._handle_finding_command(args)
+
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
             return False
@@ -6633,6 +6706,679 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             self.console.print(f"[red]Unknown command: {cmd}[/]")
             self.console.print("Type /help for available commands")
             return True
+
+    # ========== Pentest Finding Management Methods ==========
+
+    def _handle_finding_command(self, args: str) -> bool:
+        """Route /finding subcommands to appropriate handlers."""
+        parts = args.strip().split(maxsplit=1)
+        subcmd = parts[0].lower() if parts else ""
+        subargs = parts[1] if len(parts) > 1 else ""
+
+        if not subcmd:
+            self.console.print("[yellow]Usage: /finding <note> or /finding <subcommand>[/]")
+            self.console.print("[dim]Subcommands: init, list, edit, delete, export, severity, projects, open[/]")
+            return True
+
+        # Dispatch subcommands
+        if subcmd == "init":
+            return self._finding_init(subargs)
+        elif subcmd == "list":
+            return self._finding_list()
+        elif subcmd == "edit":
+            return self._finding_edit(subargs)
+        elif subcmd == "delete":
+            return self._finding_delete(subargs)
+        elif subcmd == "export":
+            return self._finding_export(subargs)
+        elif subcmd == "severity":
+            return self._finding_set_severity(subargs)
+        elif subcmd == "projects":
+            return self._finding_projects()
+        elif subcmd == "open":
+            return self._finding_open(subargs)
+        else:
+            # Not a subcommand - treat entire args as a quick note
+            return self._finding_add(args)
+
+    def _finding_init(self, project_name: str) -> bool:
+        """Initialize a new pentest project."""
+        project_name = project_name.strip()
+        if not project_name:
+            self.console.print("[red]Usage: /finding init <project-name>[/]")
+            return True
+
+        # Sanitize project name (alphanumeric, hyphens, underscores)
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '-', project_name)
+        project_dir = self.findings_base_dir / safe_name
+
+        if project_dir.exists():
+            # Project exists - switch to it
+            self.findings_project = safe_name
+            self.console.print(f"[yellow]Project already exists, switched to:[/] {safe_name}")
+            return True
+
+        # Create project directory and initial findings.md
+        project_dir.mkdir(parents=True, exist_ok=True)
+        (project_dir / "evidence").mkdir(exist_ok=True)
+
+        # Create initial findings.md with project YAML frontmatter
+        from datetime import datetime
+        findings_file = project_dir / "findings.md"
+        initial_content = f"""---
+project: {safe_name}
+created: {datetime.now().strftime('%Y-%m-%d')}
+assessor: Pentest Team
+---
+
+# Penetration Test Findings: {safe_name}
+
+| ID | Severity | Title |
+|----|----------|-------|
+
+"""
+        findings_file.write_text(initial_content)
+
+        self.findings_project = safe_name
+        self.console.print(f"[green]✓[/] Created project: {project_dir}")
+        self.console.print(f"[dim]Add findings with: /finding \"<quick note>\"[/]")
+        return True
+
+    def _finding_add(self, quick_note: str) -> bool:
+        """Add a new finding with AI-assisted analysis."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized. Use /finding init <project>[/]")
+            return True
+
+        quick_note = quick_note.strip().strip('"\'')
+        if not quick_note:
+            self.console.print("[red]Usage: /finding \"<quick note about vulnerability>\"[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            self.console.print(f"[red]Project file not found: {findings_file}[/]")
+            return True
+
+        # Parse existing findings
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        # Safety check: if parsing returned empty project_meta, file may be corrupted
+        if not project_meta:
+            self.console.print(f"[red]Error: Could not parse project file (missing or invalid YAML frontmatter)[/]")
+            self.console.print(f"[dim]Check file manually: {findings_file}[/]")
+            return True
+
+        # Generate next finding ID
+        finding_id = self._get_next_finding_id(findings)
+
+        # Capture evidence (terminal context)
+        evidence = self._capture_finding_evidence(finding_id, project_dir)
+
+        # Get terminal context for AI analysis
+        context = None
+        try:
+            terminals = self._get_all_terminals_with_content()
+            if terminals:
+                context_parts = []
+                for t in terminals:
+                    if t.get('uuid') != self.chat_terminal_uuid:
+                        context_parts.append(f"=== Terminal {t.get('title', 'unknown')} ===\n{t.get('content', '')[:2000]}")
+                context = "\n\n".join(context_parts)[:5000]
+        except Exception:
+            pass
+
+        # AI analysis with schema enforcement
+        self.console.print(f"[dim]Analyzing finding with AI...[/]")
+        try:
+            analysis = self._analyze_finding(quick_note, context)
+        except Exception as e:
+            self.console.print(f"[red]AI analysis failed: {e}[/]")
+            # Fallback to manual entry
+            analysis = {
+                "suggested_title": quick_note[:60],
+                "severity": 5,
+                "severity_rationale": "Manual entry - please review",
+                "description": quick_note,
+                "remediation": "To be determined"
+            }
+
+        # Build finding metadata
+        from datetime import datetime
+        finding_meta = {
+            "id": finding_id,
+            "title": analysis.get("suggested_title", quick_note[:60]),
+            "severity": analysis.get("severity", 5),
+            "severity_rationale": analysis.get("severity_rationale", ""),
+            "created": datetime.now().isoformat(),
+            "evidence": evidence
+        }
+
+        # Build finding markdown body
+        finding_body = f"""
+### Description
+
+{analysis.get('description', quick_note)}
+
+### Evidence
+
+"""
+        if evidence:
+            for ev in evidence:
+                ev_path = ev.get('path', '')
+                finding_body += f"- {ev.get('type', 'file').title()}: [{Path(ev_path).name}]({ev_path})\n"
+        else:
+            finding_body += "(none captured)\n"
+
+        finding_body += f"""
+### Remediation
+
+{analysis.get('remediation', 'To be determined')}
+"""
+
+        # Append to findings list
+        findings.append((finding_meta, finding_body))
+
+        # Write updated file
+        self._write_findings_file(findings_file, project_meta, findings)
+
+        # Display confirmation with severity color
+        severity = finding_meta['severity']
+        sev_color = "red" if severity >= 7 else "yellow" if severity >= 4 else "green"
+        sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
+
+        self.console.print(f"[green]✓[/] Added [{sev_color}]{finding_id}[/] ({severity} {sev_label}): {finding_meta['title']}")
+        return True
+
+    def _analyze_finding(self, quick_note: str, context: Optional[str] = None) -> dict:
+        """Use AI to analyze finding and generate structured output."""
+        model = llm.get_model(self.model_name)
+
+        prompt = f"Quick note from penetration tester: {quick_note}"
+        if context:
+            prompt += f"\n\nTerminal context (recent commands/output):\n{context}"
+
+        system_prompt = "You are a penetration testing expert. Analyze this security finding and provide a structured assessment using the OWASP Risk Matrix. Rate severity 1-9 based on likelihood and impact. Be specific and actionable in your remediation recommendations."
+
+        # Use schema enforcement if model supports it
+        if hasattr(model, 'supports_schema') and model.supports_schema:
+            response = model.prompt(prompt, system=system_prompt, schema=FindingSchema)
+            return json.loads(response.text())
+        else:
+            # Fallback: ask for JSON output without schema enforcement
+            json_prompt = f"""{prompt}
+
+Respond with a JSON object containing these fields:
+- suggested_title: concise vulnerability title (max 60 chars)
+- severity: integer 1-9 per OWASP Risk Matrix
+- severity_rationale: brief explanation of the severity score
+- description: expanded technical description
+- remediation: step-by-step recommendations"""
+            response = model.prompt(json_prompt, system=system_prompt)
+            # Try to extract JSON from response
+            text = response.text()
+            # Handle markdown code blocks
+            if "```json" in text:
+                text = text.split("```json")[1].split("```")[0]
+            elif "```" in text:
+                text = text.split("```")[1].split("```")[0]
+            result = json.loads(text.strip())
+            # Validate and clamp severity to 1-9 range (no schema enforcement)
+            if 'severity' in result:
+                try:
+                    result['severity'] = max(1, min(9, int(result['severity'])))
+                except (ValueError, TypeError):
+                    result['severity'] = 5  # Default to medium if invalid
+            return result
+
+    def _capture_finding_evidence(self, finding_id: str, project_dir: Path) -> List[Dict]:
+        """Capture evidence (terminal context) for a finding."""
+        evidence = []
+        from datetime import datetime
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+
+        evidence_dir = project_dir / "evidence"
+        evidence_dir.mkdir(exist_ok=True)
+
+        # Capture terminal context
+        try:
+            terminals = self._get_all_terminals_with_content()
+            context_parts = []
+            for t in terminals:
+                if t.get('uuid') != self.chat_terminal_uuid:
+                    content = t.get('content', '')[:5000]
+                    if content.strip():
+                        context_parts.append(f"=== Terminal: {t.get('title', 'unknown')} ===\n{content}")
+
+            if context_parts:
+                context_file = evidence_dir / f"{finding_id}_context_{timestamp}.txt"
+                context_file.write_text("\n\n".join(context_parts))
+                evidence.append({
+                    "type": "context",
+                    "path": f"evidence/{context_file.name}"
+                })
+        except Exception:
+            pass
+
+        return evidence
+
+    def _parse_findings_file(self, path: Path) -> Tuple[Dict, List[Tuple[Dict, str]]]:
+        """Parse findings.md: return (project_frontmatter, list of (finding_yaml, finding_body) tuples).
+
+        Note: The file format uses --- as YAML block delimiters. Avoid using bare ---
+        lines in finding descriptions/remediation as they would be incorrectly parsed.
+        """
+        content = path.read_text()
+
+        # Split on YAML frontmatter delimiter
+        parts = content.split('---')
+        if len(parts) < 3:
+            # No valid frontmatter
+            return {}, []
+
+        # First block is project metadata
+        project_meta = yaml.safe_load(parts[1]) or {}
+
+        # Remaining content contains findings
+        remaining = '---'.join(parts[2:])
+
+        # Parse per-finding YAML blocks
+        # Pattern: ---\n<yaml>\n---\n<markdown>
+        findings = []
+
+        # Split by --- delimiters
+        blocks = remaining.split('---')
+
+        # First block is the summary table (skip it)
+        i = 1
+        while i < len(blocks):
+            yaml_block = blocks[i].strip()
+            if yaml_block:
+                # Try to parse as YAML and check for 'id' key (finding metadata)
+                try:
+                    finding_meta = yaml.safe_load(yaml_block)
+                    if isinstance(finding_meta, dict) and 'id' in finding_meta:
+                        # This is a finding YAML block
+                        # Next block is the markdown body
+                        body = blocks[i + 1] if i + 1 < len(blocks) else ""
+                        findings.append((finding_meta, body))
+                        i += 2
+                        continue
+                except yaml.YAMLError:
+                    pass
+            # Not a finding block, skip
+            i += 1
+
+        return project_meta, findings
+
+    def _get_next_finding_id(self, findings: List[Tuple[Dict, str]]) -> str:
+        """Generate next finding ID (F001, F002, ...)."""
+        if not findings:
+            return "F001"
+
+        max_num = 0
+        for meta, _ in findings:
+            fid = meta.get('id', '')
+            if fid.startswith('F') and fid[1:].isdigit():
+                num = int(fid[1:])
+                max_num = max(max_num, num)
+
+        return f"F{max_num + 1:03d}"
+
+    def _md_table_escape(self, value: str) -> str:
+        """Escape a string for use in markdown table cells."""
+        if not value:
+            return value
+        # Escape pipe characters which break table structure
+        return str(value).replace('|', '\\|')
+
+    def _yaml_escape(self, value) -> str:
+        """Escape a value for safe YAML output."""
+        if value is None:
+            return '""'
+        if isinstance(value, bool):
+            return 'true' if value else 'false'  # YAML boolean literals
+        if isinstance(value, (int, float)):
+            return str(value)
+        s = str(value)
+        # Empty string must be quoted to avoid being parsed as null
+        if not s:
+            return '""'
+        # Quote if contains special chars or looks like YAML syntax
+        if any(c in s for c in [':', '#', '"', "'", '\n', '{', '}', '[', ']']) or s.startswith(('-', '!', '&', '*')):
+            # Use double quotes and escape internal quotes/newlines
+            s = s.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n')
+            return f'"{s}"'
+        return s
+
+    def _write_findings_file(self, path: Path, project_meta: Dict, findings: List[Tuple[Dict, str]]):
+        """Write findings.md with project YAML frontmatter + per-finding YAML blocks."""
+        lines = []
+
+        # Project frontmatter
+        lines.append("---")
+        for key, value in project_meta.items():
+            lines.append(f"{key}: {self._yaml_escape(value)}")
+        lines.append("---")
+        lines.append("")
+
+        # Header and summary table
+        project_name = project_meta.get('project', 'Unknown Project')
+        lines.append(f"# Penetration Test Findings: {project_name}")
+        lines.append("")
+        lines.append("| ID | Severity | Title |")
+        lines.append("|----|----------|-------|")
+
+        for meta, _ in findings:
+            fid = meta.get('id', '?')
+            severity = meta.get('severity', 0)
+            title = self._md_table_escape(meta.get('title', 'Untitled'))
+            sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
+            lines.append(f"| {fid} | {severity} ({sev_label}) | {title} |")
+
+        lines.append("")
+
+        # Per-finding YAML blocks + bodies
+        for meta, body in findings:
+            lines.append("---")
+            # Write finding metadata as YAML
+            for key, value in meta.items():
+                if key == 'evidence':
+                    if value:
+                        lines.append("evidence:")
+                        for ev in value:
+                            lines.append(f"  - type: {self._yaml_escape(ev.get('type', 'file'))}")
+                            lines.append(f"    path: {self._yaml_escape(ev.get('path', ''))}")
+                    else:
+                        lines.append("evidence: []")
+                else:
+                    lines.append(f"{key}: {self._yaml_escape(value)}")
+            lines.append("---")
+            lines.append(body.rstrip())
+            lines.append("")
+
+        path.write_text("\n".join(lines))
+
+    def _finding_list(self) -> bool:
+        """List all findings in current project."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized. Use /finding init <project>[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            self.console.print(f"[red]Project file not found: {findings_file}[/]")
+            return True
+
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        if not findings:
+            self.console.print(f"[dim]No findings in project: {self.findings_project}[/]")
+            return True
+
+        self.console.print(f"[bold]Findings for {self.findings_project}:[/]")
+        for meta, _ in findings:
+            fid = meta.get('id', '?')
+            severity = meta.get('severity', 0)
+            title = meta.get('title', 'Untitled')
+            sev_color = "red" if severity >= 7 else "yellow" if severity >= 4 else "green"
+            sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
+            self.console.print(f"  [{sev_color}]{fid}[/]  {severity} ({sev_label})  {title}")
+
+        return True
+
+    def _finding_edit(self, args: str) -> bool:
+        """Open finding for editing."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized.[/]")
+            return True
+
+        finding_id = args.strip().upper()
+        if not finding_id:
+            self.console.print("[red]Usage: /finding edit <id> (e.g., /finding edit F001)[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        self.console.print(f"[dim]Edit the findings file directly:[/]")
+        self.console.print(f"  {findings_file}")
+        return True
+
+    def _finding_delete(self, args: str) -> bool:
+        """Delete a finding by ID."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized.[/]")
+            return True
+
+        finding_id = args.strip().upper()
+        if not finding_id:
+            self.console.print("[red]Usage: /finding delete <id> (e.g., /finding delete F001)[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            self.console.print(f"[red]Project file not found[/]")
+            return True
+
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        # Safety check: refuse to modify corrupted files
+        if not project_meta:
+            self.console.print(f"[red]Error: Could not parse project file (invalid format)[/]")
+            return True
+
+        # Find the finding to delete (to get evidence paths)
+        deleted_finding = None
+        new_findings = []
+        for m, b in findings:
+            if m.get('id', '').upper() == finding_id:
+                deleted_finding = m
+            else:
+                new_findings.append((m, b))
+
+        if deleted_finding is None:
+            self.console.print(f"[yellow]Finding {finding_id} not found[/]")
+            return True
+
+        # Delete associated evidence files
+        evidence_dir = project_dir / "evidence"
+        if evidence_dir.exists():
+            for ev in deleted_finding.get('evidence', []):
+                ev_path = project_dir / ev.get('path', '')
+                if ev_path.exists():
+                    try:
+                        ev_path.unlink()
+                    except Exception:
+                        pass  # Best effort deletion
+
+        self._write_findings_file(findings_file, project_meta, new_findings)
+        self.console.print(f"[green]✓[/] Deleted {finding_id}")
+        return True
+
+    def _finding_set_severity(self, args: str) -> bool:
+        """Override severity for a finding."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized.[/]")
+            return True
+
+        parts = args.strip().split()
+        if len(parts) != 2:
+            self.console.print("[red]Usage: /finding severity <id> <1-9> (e.g., /finding severity F001 8)[/]")
+            return True
+
+        finding_id = parts[0].upper()
+        try:
+            new_severity = int(parts[1])
+            if not 1 <= new_severity <= 9:
+                raise ValueError()
+        except ValueError:
+            self.console.print("[red]Severity must be 1-9[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            self.console.print(f"[red]Project file not found[/]")
+            return True
+
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        # Safety check: refuse to modify corrupted files
+        if not project_meta:
+            self.console.print(f"[red]Error: Could not parse project file (invalid format)[/]")
+            return True
+
+        # Find and update the finding
+        found = False
+        for meta, body in findings:
+            if meta.get('id', '').upper() == finding_id:
+                meta['severity'] = new_severity
+                meta['severity_rationale'] = f"Manually set to {new_severity}"
+                found = True
+                break
+
+        if not found:
+            self.console.print(f"[yellow]Finding {finding_id} not found[/]")
+            return True
+
+        self._write_findings_file(findings_file, project_meta, findings)
+        sev_color = "red" if new_severity >= 7 else "yellow" if new_severity >= 4 else "green"
+        self.console.print(f"[green]✓[/] Updated {finding_id} severity to [{sev_color}]{new_severity}[/]")
+        return True
+
+    def _finding_projects(self) -> bool:
+        """List all finding projects."""
+        if not self.findings_base_dir.exists():
+            self.console.print("[dim]No projects found[/]")
+            return True
+
+        projects = [d for d in self.findings_base_dir.iterdir() if d.is_dir()]
+        if not projects:
+            self.console.print("[dim]No projects found. Use /finding init <name> to create one.[/]")
+            return True
+
+        self.console.print("[bold]Finding Projects:[/]")
+        for project_dir in sorted(projects):
+            name = project_dir.name
+            findings_file = project_dir / "findings.md"
+            count = 0
+            if findings_file.exists():
+                _, findings = self._parse_findings_file(findings_file)
+                count = len(findings)
+
+            active = " [green](active)[/]" if name == self.findings_project else ""
+            self.console.print(f"  {name}{active} - {count} findings")
+
+        return True
+
+    def _finding_open(self, project_name: str) -> bool:
+        """Switch to an existing project."""
+        project_name = project_name.strip()
+        if not project_name:
+            self.console.print("[red]Usage: /finding open <project-name>[/]")
+            return True
+
+        project_dir = self.findings_base_dir / project_name
+
+        if not project_dir.exists():
+            self.console.print(f"[red]Project not found: {project_name}[/]")
+            self.console.print("[dim]Use /finding projects to list available projects[/]")
+            return True
+
+        self.findings_project = project_name
+        self.console.print(f"[green]✓[/] Switched to project: {project_name}")
+        return True
+
+    def _finding_export(self, args: str) -> bool:
+        """Export findings to Word document via pandoc."""
+        if not self.findings_project:
+            self.console.print("[red]No project initialized.[/]")
+            return True
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            self.console.print(f"[red]Project file not found[/]")
+            return True
+
+        # Check pandoc is available
+        import subprocess
+        try:
+            subprocess.run(["pandoc", "--version"], capture_output=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            self.console.print("[red]pandoc not found. Install with: apt install pandoc[/]")
+            return True
+
+        # Create export file (strip per-finding YAML for clean Word output)
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        # Build clean markdown for export (no per-finding YAML)
+        export_lines = []
+        export_lines.append(f"# Penetration Test Findings: {project_meta.get('project', 'Unknown')}")
+        export_lines.append("")
+        export_lines.append(f"**Date:** {project_meta.get('created', 'Unknown')}")
+        export_lines.append(f"**Assessor:** {project_meta.get('assessor', 'Unknown')}")
+        export_lines.append("")
+
+        # Summary table
+        export_lines.append("## Summary")
+        export_lines.append("")
+        export_lines.append("| ID | Severity | Title |")
+        export_lines.append("|----|----------|-------|")
+        for meta, _ in findings:
+            fid = meta.get('id', '?')
+            severity = meta.get('severity', 0)
+            title = self._md_table_escape(meta.get('title', 'Untitled'))
+            sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
+            export_lines.append(f"| {fid} | {severity} ({sev_label}) | {title} |")
+        export_lines.append("")
+
+        # Each finding
+        for meta, body in findings:
+            fid = meta.get('id', '?')
+            title = meta.get('title', 'Untitled')
+            severity = meta.get('severity', 0)
+            rationale = meta.get('severity_rationale', '')
+            sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
+
+            export_lines.append(f"## {fid}: {title}")
+            export_lines.append("")
+            export_lines.append(f"**Severity:** {severity} ({sev_label}) - {rationale}")
+            export_lines.append(body)
+            export_lines.append("")
+
+        # Write temp file and convert
+        export_md = project_dir / "findings_export.md"
+        export_md.write_text("\n".join(export_lines))
+
+        output_file = project_dir / "findings.docx"
+
+        # Check for custom template
+        template_file = llm.user_dir() / "llm-assistant" / "pentest-template.docx"
+        cmd = ["pandoc", str(export_md), "-o", str(output_file)]
+        if template_file.exists():
+            cmd.extend(["--reference-doc", str(template_file)])
+
+        try:
+            subprocess.run(cmd, check=True, capture_output=True)
+            self.console.print(f"[green]✓[/] Exported to: {output_file}")
+        except subprocess.CalledProcessError as e:
+            self.console.print(f"[red]Export failed: {e.stderr.decode() if e.stderr else str(e)}[/]")
+        finally:
+            # Clean up temp file
+            if export_md.exists():
+                export_md.unlink()
+
+        return True
 
     def _process_tool_call(self, tool_call) -> ToolResult:
         """Process a single tool call and return the result.

@@ -121,7 +121,55 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/copy all` - Copy entire conversation
 - `/web` - Open conversation in web browser (real-time streaming)
 - `/web stop` - Stop web server
+- `/finding <note>` - Add pentest finding with AI analysis (OWASP 1-9 severity)
+- `/finding init <project>` - Create new findings project
+- `/finding list` - List findings in current project
+- `/finding edit <id>` - Edit existing finding
+- `/finding delete <id>` - Remove finding
+- `/finding export` - Export to Word (docx) via pandoc
+- `/finding severity <id> <1-9>` - Override severity
+- `/finding projects` - List all projects
+- `/finding open <project>` - Switch to existing project
 - `/quit` or `/exit` - Exit assistant
+
+## Pentest Finding Management
+
+The assistant includes a finding management system for penetration testing workflows:
+
+**Features:**
+- Quick capture: `/finding "SQL injection in login form"`
+- AI auto-generates: title, severity (OWASP 1-9), description, remediation
+- Terminal context captured as evidence
+- Export to Word document via pandoc
+
+**Storage Location**: `~/.config/io.datasette.llm/llm-assistant/findings/`
+
+**File Format**: Single markdown file per project with YAML frontmatter:
+- Project metadata in file frontmatter
+- Per-finding YAML blocks with metadata
+- Markdown body for description/evidence/remediation
+
+**Usage:**
+```bash
+# Start a new pentest project:
+/finding init acme-webapp-2025
+
+# During pentest - quick capture:
+/finding "SQL injection in login - ' OR '1'='1 works"
+# AI generates: severity 8, expanded description, remediation
+
+# View findings:
+/finding list
+
+# Override AI severity:
+/finding severity F001 6
+
+# Export to Word:
+/finding export
+# -> Creates findings.docx via pandoc
+```
+
+**Dependencies**: pandoc for Word export (`apt install pandoc`)
 
 ## Knowledge Base System
 
