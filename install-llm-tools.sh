@@ -1905,6 +1905,7 @@ mkdir -p "$TEMPLATES_DIR"
 update_template_file "assistant"
 update_template_file "code"
 update_template_file "wut"
+update_template_file "assistant-finding"
 
 # Conditionally install Terminator assistant template
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then

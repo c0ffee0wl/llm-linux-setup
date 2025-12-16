@@ -121,8 +121,8 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/copy all` - Copy entire conversation
 - `/web` - Open conversation in web browser (real-time streaming)
 - `/web stop` - Stop web server
-- `/finding <note>` - Add pentest finding with AI analysis (OWASP 1-9 severity)
-- `/finding init <project>` - Create new findings project
+- `/finding <note>` - Add pentest finding with LLM analysis (OWASP 1-9 severity)
+- `/finding init <project> <lang>` - Create new findings project (lang: en, de, es, fr, ...)
 - `/finding list` - List findings in current project
 - `/finding edit <id>` - Edit existing finding
 - `/finding delete <id>` - Remove finding
@@ -138,8 +138,10 @@ The assistant includes a finding management system for penetration testing workf
 
 **Features:**
 - Quick capture: `/finding "SQL injection in login form"`
-- AI auto-generates: title, severity (OWASP 1-9), description, remediation
+- LLM auto-generates: title, severity (OWASP 1-9), description, remediation
+- **Multi-language support**: Findings generated in project's configured language
 - Terminal context captured as evidence
+- Conversation context used for better findings assessment
 - Export to Word document via pandoc
 
 **Storage Location**: `~/.config/io.datasette.llm/llm-assistant/findings/`
@@ -151,23 +153,26 @@ The assistant includes a finding management system for penetration testing workf
 
 **Usage:**
 ```bash
-# Start a new pentest project:
-/finding init acme-webapp-2025
+# Start a new pentest project with language:
+/finding init acme-webapp-2025 en    # English findings
+/finding init client-test de          # German findings
 
 # During pentest - quick capture:
 /finding "SQL injection in login - ' OR '1'='1 works"
-# AI generates: severity 8, expanded description, remediation
+# LLM generates: severity 8, expanded description, remediation (in project's language)
 
 # View findings:
 /finding list
 
-# Override AI severity:
+# Override LLM severity:
 /finding severity F001 6
 
 # Export to Word:
 /finding export
 # -> Creates findings.docx via pandoc
 ```
+
+**Language Codes**: ISO 639-1 codes are supported (de, en, es, fr, it, nl, pl, pt, ru, ja, ko, zh, ar, sv, da, no, fi, cs, hu, tr, el, he, th, vi, uk, and many more).
 
 **Dependencies**: pandoc for Word export (`apt install pandoc`)
 

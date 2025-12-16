@@ -143,14 +143,37 @@ from prompt_toolkit.completion import Completer, Completion
 # YAML for findings file parsing
 import yaml
 
+# ISO 639 language code validation (required for /finding)
+from iso639 import Lang
+from iso639.exceptions import InvalidLanguageValue
+
+
+def validate_language_code(code: str) -> Optional[str]:
+    """Validate ISO 639-1 language code and return full English name.
+
+    Uses iso639-lang library for comprehensive validation.
+    Accepts lowercase input (Pythonic). Returns None if invalid.
+
+    Examples:
+        validate_language_code("de")  # Returns "German"
+        validate_language_code("EN")  # Returns "English"
+        validate_language_code("xx")  # Returns None
+    """
+    try:
+        lang = Lang(code.lower().strip())
+        return lang.name  # Returns English name, e.g., "German"
+    except InvalidLanguageValue:
+        return None
+
+
 # Pydantic for structured LLM output schemas
 from pydantic import BaseModel, Field
 from typing import Literal
 
 
-# Schema for AI-generated pentest findings (OWASP Risk Matrix 1-9)
+# Schema for LLM-generated pentest findings (OWASP Risk Matrix 1-9)
 class FindingSchema(BaseModel):
-    """Schema for AI-analyzed penetration testing findings."""
+    """Schema for LLM-analyzed penetration testing findings."""
     suggested_title: str = Field(description="Concise vulnerability title (max 60 chars)")
     severity: int = Field(ge=1, le=9, description="Severity 1-9 per OWASP Risk Matrix (likelihood × impact)")
     severity_rationale: str = Field(description="Brief explanation of the severity score")
@@ -6143,16 +6166,16 @@ Instructions:
 /copy all          Copy entire conversation
 /web               Open conversation in web browser (real-time streaming)
 /web stop          Stop web server
-/finding <note>    Add pentest finding with AI analysis (OWASP 1-9)
-/finding init <p>  Create new findings project
+/finding <note>    Add pentest finding with LLM analysis (OWASP 1-9)
+/finding init <p> <lang>  Create project (lang: en, de, es, fr, ...)
 /finding list      List findings in current project
 /finding export    Export to Word (docx) via pandoc
 /finding projects  List all projects
 /quit or /exit     Exit assistant
 
 [bold]Usage:[/]
-- Type messages to chat with AI
-- AI provides commands in <EXECUTE> tags
+- Type messages to chat with LLM
+- LLM provides commands in <EXECUTE> tags
 - Commands are sent to Exec terminal with approval
 - [bold]Ctrl+Space[/] Toggle voice input ({voice_status})
 """, title="Assistant Help", border_style="cyan"))
@@ -6741,11 +6764,24 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             # Not a subcommand - treat entire args as a quick note
             return self._finding_add(args)
 
-    def _finding_init(self, project_name: str) -> bool:
-        """Initialize a new pentest project."""
-        project_name = project_name.strip()
-        if not project_name:
-            self.console.print("[red]Usage: /finding init <project-name>[/]")
+    def _finding_init(self, args: str) -> bool:
+        """Initialize a new pentest project with language selection."""
+        parts = args.strip().split(maxsplit=1)
+
+        if len(parts) < 2:
+            self.console.print("[red]Usage: /finding init <project-name> <language-code>[/]")
+            self.console.print("[dim]Example: /finding init acme-webapp-2025 en[/]")
+            self.console.print("[dim]Language codes: en (English), de (German), es (Spanish), fr (French), ...[/]")
+            return True
+
+        project_name = parts[0]
+        lang_code = parts[1].lower().strip()
+
+        # Validate language code using iso639-lang library
+        language_name = validate_language_code(lang_code)
+        if not language_name:
+            self.console.print(f"[red]Invalid language code: {lang_code}[/]")
+            self.console.print("[dim]Use ISO 639-1 codes: en, de, es, fr, it, nl, pt, ru, ja, ko, zh, etc.[/]")
             return True
 
         # Sanitize project name (alphanumeric, hyphens, underscores)
@@ -6762,13 +6798,15 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
         project_dir.mkdir(parents=True, exist_ok=True)
         (project_dir / "evidence").mkdir(exist_ok=True)
 
-        # Create initial findings.md with project YAML frontmatter
+        # Create initial findings.md with project YAML frontmatter including language
         from datetime import datetime
         findings_file = project_dir / "findings.md"
         initial_content = f"""---
 project: {safe_name}
 created: {datetime.now().strftime('%Y-%m-%d')}
 assessor: Pentest Team
+language: {lang_code}
+language_name: {language_name}
 ---
 
 # Penetration Test Findings: {safe_name}
@@ -6780,14 +6818,14 @@ assessor: Pentest Team
         findings_file.write_text(initial_content)
 
         self.findings_project = safe_name
-        self.console.print(f"[green]✓[/] Created project: {project_dir}")
+        self.console.print(f"[green]✓[/] Created project: {project_dir} ({language_name})")
         self.console.print(f"[dim]Add findings with: /finding \"<quick note>\"[/]")
         return True
 
     def _finding_add(self, quick_note: str) -> bool:
-        """Add a new finding with AI-assisted analysis."""
+        """Add a new finding with LLM-assisted analysis."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /finding init <project>[/]")
+            self.console.print("[red]No project initialized. Use /finding init <project> <lang>[/]")
             return True
 
         quick_note = quick_note.strip().strip('"\'')
@@ -6811,13 +6849,16 @@ assessor: Pentest Team
             self.console.print(f"[dim]Check file manually: {findings_file}[/]")
             return True
 
+        # Get language from project metadata (default to English for legacy projects)
+        language_name = project_meta.get('language_name', 'English')
+
         # Generate next finding ID
         finding_id = self._get_next_finding_id(findings)
 
         # Capture evidence (terminal context)
         evidence = self._capture_finding_evidence(finding_id, project_dir)
 
-        # Get terminal context for AI analysis
+        # Get terminal context for LLM analysis
         context = None
         try:
             terminals = self._get_all_terminals_with_content()
@@ -6830,12 +6871,12 @@ assessor: Pentest Team
         except Exception:
             pass
 
-        # AI analysis with schema enforcement
-        self.console.print(f"[dim]Analyzing finding with AI...[/]")
+        # LLM analysis with schema enforcement
+        self.console.print(f"[dim]Analyzing finding ({language_name})...[/]")
         try:
-            analysis = self._analyze_finding(quick_note, context)
+            analysis = self._analyze_finding(quick_note, context, language=language_name)
         except Exception as e:
-            self.console.print(f"[red]AI analysis failed: {e}[/]")
+            self.console.print(f"[red]LLM analysis failed: {e}[/]")
             # Fallback to manual entry
             analysis = {
                 "suggested_title": quick_note[:60],
@@ -6856,11 +6897,15 @@ assessor: Pentest Team
             "evidence": evidence
         }
 
-        # Build finding markdown body
+        # Build finding markdown body (Description -> Remediation -> Evidence)
         finding_body = f"""
 ### Description
 
 {analysis.get('description', quick_note)}
+
+### Remediation
+
+{analysis.get('remediation', 'To be determined')}
 
 ### Evidence
 
@@ -6871,12 +6916,6 @@ assessor: Pentest Team
                 finding_body += f"- {ev.get('type', 'file').title()}: [{Path(ev_path).name}]({ev_path})\n"
         else:
             finding_body += "(none captured)\n"
-
-        finding_body += f"""
-### Remediation
-
-{analysis.get('remediation', 'To be determined')}
-"""
 
         # Append to findings list
         findings.append((finding_meta, finding_body))
@@ -6892,31 +6931,121 @@ assessor: Pentest Team
         self.console.print(f"[green]✓[/] Added [{sev_color}]{finding_id}[/] ({severity} {sev_label}): {finding_meta['title']}")
         return True
 
-    def _analyze_finding(self, quick_note: str, context: Optional[str] = None) -> dict:
-        """Use AI to analyze finding and generate structured output."""
+    def _analyze_finding(self, quick_note: str, context: Optional[str] = None,
+                         language: str = "English") -> dict:
+        """Use LLM to analyze finding with template and conversation context.
+
+        Creates an isolated LLM call (not added to main conversation) that has
+        access to terminal context and conversation history for better assessment.
+        """
+        from llm.cli import load_template
+
         model = llm.get_model(self.model_name)
 
-        prompt = f"Quick note from penetration tester: {quick_note}"
-        if context:
-            prompt += f"\n\nTerminal context (recent commands/output):\n{context}"
+        # Load the finding template with language interpolation
+        try:
+            template = load_template("assistant-finding")
+            # Interpolate language into template - evaluate() returns (prompt, system)
+            _, system_prompt = template.evaluate("", params={"language": language})
+        except Exception as e:
+            self._debug(f"Template load failed: {e}, using inline prompt")
+            system_prompt = f"You are a penetration testing expert. Analyze this security finding and provide a structured assessment using the OWASP Risk Matrix. Rate severity 1-9 based on likelihood and impact. Generate ALL output in {language}. Be specific and actionable in your remediation recommendations."
 
-        system_prompt = "You are a penetration testing expert. Analyze this security finding and provide a structured assessment using the OWASP Risk Matrix. Rate severity 1-9 based on likelihood and impact. Be specific and actionable in your remediation recommendations."
+        # Build prompt with quick note
+        prompt = f"Quick note from penetration tester: {quick_note}"
+
+        # Add terminal context if available
+        if context:
+            prompt += f"\n\n## Terminal Context (recent commands/output):\n{context}"
+
+        # Add entire conversation history for context (excluding only internal tool markers and thinking)
+        # This gives the LLM full awareness of what the tester has been working on
+        # IMPORTANT: Works with /squash - includes pending_summary and <conversation_summary> tags
+        history_parts = []
+        conversation_attachments = []
+
+        # Include pending summary from /squash if finding is created immediately after squash
+        if self.pending_summary:
+            history_parts.append(f"## Previous Conversation Summary:\n{self.pending_summary}")
+
+        if self.conversation.responses:
+            for resp in self.conversation.responses:  # ALL responses, not limited
+                # Get user prompt (if available)
+                if hasattr(resp, 'prompt') and resp.prompt:
+                    user_text = resp.prompt.prompt if hasattr(resp.prompt, 'prompt') else str(resp.prompt)
+
+                    # Extract <conversation_summary> content if present (post-squash)
+                    # This contains the compressed history from earlier in the session
+                    summary_match = re.search(r'<conversation_summary>(.*?)</conversation_summary>', user_text, re.DOTALL)
+                    if summary_match:
+                        # Insert at beginning since it's older context
+                        if history_parts and history_parts[0].startswith("## Previous Conversation Summary:"):
+                            # Already have pending_summary, add this after
+                            history_parts.insert(1, f"## Earlier Conversation Summary:\n{summary_match.group(1).strip()}")
+                        else:
+                            history_parts.insert(0, f"## Previous Conversation Summary:\n{summary_match.group(1).strip()}")
+                        # Remove summary tag from user_text for cleaner processing
+                        user_text = re.sub(r'<conversation_summary>.*?</conversation_summary>\s*', '', user_text, flags=re.DOTALL)
+
+                    # Skip only internal tool-related messages (keep everything else including terminal context)
+                    if user_text and user_text.strip() and not user_text.startswith('<tool'):
+                        history_parts.append(f"User: {user_text.strip()}")
+
+                    # Collect attachments (screenshots, images) for evidence context
+                    if hasattr(resp.prompt, 'attachments') and resp.prompt.attachments:
+                        conversation_attachments.extend(resp.prompt.attachments)
+
+                # Get assistant response text
+                if hasattr(resp, 'text'):
+                    text = resp.text()
+                    # Include all assistant responses (JSON, code blocks are valuable context)
+                    # Only strip <thinking> traces (keep everything else)
+                    if text and text.strip():
+                        # Remove thinking traces but keep the rest
+                        cleaned = re.sub(r'<thinking>.*?</thinking>\s*', '', text, flags=re.DOTALL)
+                        if cleaned.strip():
+                            history_parts.append(f"Assistant: {cleaned.strip()}")
+
+        if history_parts:
+            prompt += f"\n\n## Conversation Context:\n" + "\n\n".join(history_parts)
+
+        # Limit total attachments to avoid token bloat (most recent 5)
+        conversation_attachments = conversation_attachments[-5:] if conversation_attachments else []
+
+        # Only pass attachments if model supports them
+        attachments_to_pass = None
+        if conversation_attachments and hasattr(model, 'attachment_types') and model.attachment_types:
+            # Filter to only supported attachment types
+            attachments_to_pass = [
+                att for att in conversation_attachments
+                if hasattr(att, 'type') and att.type in model.attachment_types
+            ][:3]  # Max 3 attachments
 
         # Use schema enforcement if model supports it
+        # This is an ISOLATED call - does NOT add to self.conversation
         if hasattr(model, 'supports_schema') and model.supports_schema:
-            response = model.prompt(prompt, system=system_prompt, schema=FindingSchema)
+            response = model.prompt(
+                prompt,
+                system=system_prompt,
+                schema=FindingSchema,
+                attachments=attachments_to_pass  # Include screenshots/images if supported
+            )
             return json.loads(response.text())
         else:
-            # Fallback: ask for JSON output without schema enforcement
+            # Fallback with JSON instructions
             json_prompt = f"""{prompt}
 
 Respond with a JSON object containing these fields:
-- suggested_title: concise vulnerability title (max 60 chars)
+- suggested_title: concise vulnerability title (max 60 chars) in {language}
 - severity: integer 1-9 per OWASP Risk Matrix
-- severity_rationale: brief explanation of the severity score
-- description: expanded technical description
-- remediation: step-by-step recommendations"""
-            response = model.prompt(json_prompt, system=system_prompt)
+- severity_rationale: brief explanation in {language}
+- description: expanded technical description in {language}
+- remediation: step-by-step recommendations in {language}"""
+            response = model.prompt(
+                json_prompt,
+                system=system_prompt,
+                attachments=attachments_to_pass
+            )
             # Try to extract JSON from response
             text = response.text()
             # Handle markdown code blocks
@@ -7104,7 +7233,7 @@ Respond with a JSON object containing these fields:
     def _finding_list(self) -> bool:
         """List all findings in current project."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /finding init <project>[/]")
+            self.console.print("[red]No project initialized. Use /finding init <project> <lang>[/]")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -7262,7 +7391,7 @@ Respond with a JSON object containing these fields:
 
         projects = [d for d in self.findings_base_dir.iterdir() if d.is_dir()]
         if not projects:
-            self.console.print("[dim]No projects found. Use /finding init <name> to create one.[/]")
+            self.console.print("[dim]No projects found. Use /finding init <name> <lang> to create one.[/]")
             return True
 
         self.console.print("[bold]Finding Projects:[/]")

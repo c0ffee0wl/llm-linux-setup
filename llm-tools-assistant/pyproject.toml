@@ -21,6 +21,7 @@ dependencies = [
     "pydub",
     "onnx-asr[hub]",
     "google-cloud-texttospeech",
+    "iso639-lang",
 ]
 
 [project.urls]
