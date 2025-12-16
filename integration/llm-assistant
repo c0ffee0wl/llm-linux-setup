@@ -1043,6 +1043,8 @@ class TerminatorAssistantSession:
         # Per-terminal content hash tracking for deduplication
         # Enables [Content unchanged] placeholder when terminal content hasn't changed
         self.terminal_content_hashes: Dict[str, str] = {}  # uuid -> content hash
+        # Track terminals whose hash was updated by tool result (for specific message)
+        self.toolresult_hash_updated: set = set()  # uuid set
 
         # D-Bus connections
         self.dbus_service = None
@@ -4668,11 +4670,20 @@ Shell: {env_type} {shell_info}
                     # Only active after first message (AI needs initial context)
                     if dedupe_unchanged and term_uuid in self.terminal_content_hashes:
                         if self.terminal_content_hashes[term_uuid] == content_hash:
-                            # Content unchanged - emit placeholder
+                            # Choose message based on whether hash came from tool result
+                            if term_uuid in self.toolresult_hash_updated:
+                                placeholder = "[Output already in tool result above]"
+                                self.toolresult_hash_updated.discard(term_uuid)
+                            else:
+                                placeholder = "[Content unchanged]"
                             context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
-[Content unchanged]
+{placeholder}
 </terminal>''')
                             continue
+
+                    # Content changed - clear stale tool result tracking
+                    # (prevents incorrect message if user modified terminal after tool call)
+                    self.toolresult_hash_updated.discard(term_uuid)
 
                     # Always store hash for future comparison (even on first message)
                     self.terminal_content_hashes[term_uuid] = content_hash
@@ -4901,6 +4912,7 @@ Previous messages:
 
             # Clear per-terminal content hashes (summary replaces full history)
             self.terminal_content_hashes.clear()
+            self.toolresult_hash_updated.clear()
 
             self.console.print(f"[green]✓[/] Context squashed")
             self.console.print(f"[cyan]New session: {new_conversation_id}[/]")
@@ -5757,6 +5769,7 @@ Instructions:
                 self.conversation = llm.Conversation(model=self.model)
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
+                self.toolresult_hash_updated.clear()
                 # Broadcast clear to web companion
                 if self.web_clients:
                     self._broadcast_to_web({"type": "clear"})
@@ -5791,6 +5804,7 @@ Instructions:
 
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
+                self.toolresult_hash_updated.clear()
 
                 # Reset watch mode tracking state
                 self.previous_watch_context_hash = None
@@ -5874,6 +5888,7 @@ Instructions:
 
             # Clear per-terminal content hashes to ensure full fresh capture
             self.terminal_content_hashes.clear()
+            self.toolresult_hash_updated.clear()
 
             # Simple snapshot capture (includes exec terminal)
             # Returns (context_text, tui_attachments) tuple for TUI screenshot support
@@ -6261,6 +6276,19 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     self._debug(f"Length: {len(exec_text)} chars")
                 self._debug("═══════════════════════════════")
 
+                # Update terminal hash to current state for deduplication
+                # This prevents the same content from appearing in both ToolResult and next context injection
+                if exec_text and self.exec_terminal_uuid:
+                    try:
+                        current_content = self._capture_last_command_output(self.exec_terminal_uuid)
+                        if current_content and not current_content.startswith('ERROR'):
+                            content_hash = hashlib.sha256(current_content.strip().encode()).hexdigest()
+                            self.terminal_content_hashes[self.exec_terminal_uuid] = content_hash
+                            # Mark this terminal for specific dedup message
+                            self.toolresult_hash_updated.add(self.exec_terminal_uuid)
+                    except Exception:
+                        pass  # Non-critical - deduplication is optimization only
+
                 cwd = self._get_exec_terminal_cwd()
                 return ToolResult(
                     name=tool_call.name,
@@ -6372,6 +6400,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
                 # Clear per-terminal content hashes to ensure full fresh context
                 self.terminal_content_hashes.clear()
+                self.toolresult_hash_updated.clear()
 
                 # Capture fresh context (no deduplication - user/AI explicitly requested refresh)
                 context_text, tui_attachments_refresh = self.capture_context(include_exec_output=True)
