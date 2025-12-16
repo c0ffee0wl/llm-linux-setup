@@ -3611,25 +3611,26 @@ Shell: {env_type} {shell_info}
         - <assistant_mode>...</assistant_mode>: Included only in assistant mode
 
         Tags must be at the start of a line (possibly with leading whitespace).
+        Uses [ \\t]* (horizontal whitespace) instead of \\s* to preserve blank lines.
         """
         if self.mode == "agent":
             # Agent mode: remove <assistant_mode> blocks entirely, keep <agent_mode> content
             prompt = re.sub(
-                r'^\s*<assistant_mode>\s*\n.*?^\s*</assistant_mode>\s*\n?',
+                r'^[ \t]*<assistant_mode>[ \t]*\n.*?^[ \t]*</assistant_mode>[ \t]*\n?',
                 '', prompt, flags=re.MULTILINE | re.DOTALL
             )
             # Remove just the agent_mode tags, keep content
-            prompt = re.sub(r'^\s*<agent_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
-            prompt = re.sub(r'^\s*</agent_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^[ \t]*<agent_mode>[ \t]*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^[ \t]*</agent_mode>[ \t]*\n?', '', prompt, flags=re.MULTILINE)
         else:
             # Assistant mode: remove <agent_mode> blocks entirely, keep <assistant_mode> content
             prompt = re.sub(
-                r'^\s*<agent_mode>\s*\n.*?^\s*</agent_mode>\s*\n?',
+                r'^[ \t]*<agent_mode>[ \t]*\n.*?^[ \t]*</agent_mode>[ \t]*\n?',
                 '', prompt, flags=re.MULTILINE | re.DOTALL
             )
             # Remove just the assistant_mode tags, keep content
-            prompt = re.sub(r'^\s*<assistant_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
-            prompt = re.sub(r'^\s*</assistant_mode>\s*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^[ \t]*<assistant_mode>[ \t]*\n?', '', prompt, flags=re.MULTILINE)
+            prompt = re.sub(r'^[ \t]*</assistant_mode>[ \t]*\n?', '', prompt, flags=re.MULTILINE)
         return prompt
 
     # =========================================================================

@@ -9,7 +9,18 @@ classifiers = [
     "License :: OSI Approved :: Apache Software License"
 ]
 dependencies = [
-    "llm"
+    "llm",
+    "dbus-python",
+    "strip-markdown",
+    "pyperclip",
+    "fastapi",
+    "uvicorn[standard]",
+    "prompt_toolkit",
+    "sounddevice",
+    "numpy",
+    "pydub",
+    "onnx-asr[hub]",
+    "google-cloud-texttospeech",
 ]
 
 [project.urls]

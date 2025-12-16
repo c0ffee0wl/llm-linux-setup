@@ -893,9 +893,9 @@ install_or_upgrade_llm_plugin() {
         command llm install "$plugin_source" 2>/dev/null || command llm install "$plugin_source"
 
     elif [[ "$plugin_source" =~ ^/ ]]; then
-        # Local/editable package -> always reinstall
+        # Local/editable package -> always reinstall with --upgrade to re-resolve dependencies
         log "Reinstalling local plugin $plugin_name..."
-        command llm install "$plugin_source" 2>/dev/null || true
+        command llm install "$plugin_source" --upgrade 2>/dev/null || command llm install "$plugin_source"
 
     elif [[ "$plugin_source" =~ ^git[+] ]] && [ "$source_tracked" = "false" ]; then
         # Git source but URL not tracked -> migration needed
@@ -1216,6 +1216,12 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Build dependencies (for pip installations in isolated environments)
     log "Installing PyGObject build dependencies..."
     sudo apt-get install -y build-essential libdbus-glib-1-dev libcairo2-dev libgirepository-2.0-dev # gobject-introspection
+
+    # Python file format parsing libraries (for llm-assistant structured data handling)
+    log "Installing Python file format parsing libraries..."
+    install_apt_package python3-lxml      # XML/HTML parsing with XPath
+    install_apt_package python3-yaml      # YAML parsing (PyYAML)
+    install_apt_package python3-openpyxl  # Excel/XLSX handling
 
     # Screen capture dependencies (for llm-tools-capture-screen)
     log "Installing screen capture tools..."
@@ -1942,7 +1948,7 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     cp "$SCRIPT_DIR/integration/terminator-assistant-plugin/terminator_assistant.py" \
        "$HOME/.config/terminator/plugins/terminator_assistant.py"
     log "Terminator assistant plugin installed"
-    warn "Enable plugin: Terminator → Preferences → Plugins → ☑ TerminatorAssistant"
+    warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 
     # Install llm-assistant application and its dependencies
     cp "$SCRIPT_DIR/integration/llm-assistant" "$HOME/.local/bin/llm-assistant"
@@ -1950,42 +1956,15 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     cp "$SCRIPT_DIR/integration/system_info.py" "$HOME/.local/bin/system_info.py"
     cp "$SCRIPT_DIR/context/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
 
-    # Install dbus-python dependency into llm tool environment
-    log "Installing dbus-python into llm tool environment..."
-    install_or_upgrade_llm_plugin dbus-python
-
-    # Install general llm-assistant dependencies (used by /copy, /speech, /web commands)
-    log "Installing llm-assistant dependencies into llm tool environment..."
-    install_or_upgrade_llm_plugin strip-markdown
-    install_or_upgrade_llm_plugin pyperclip
-    install_or_upgrade_llm_plugin fastapi
-    install_or_upgrade_llm_plugin "uvicorn[standard]"
-
-    # Install voice input and prompt_toolkit dependencies
-    log "Installing voice input dependencies into llm tool environment..."
-    install_or_upgrade_llm_plugin prompt_toolkit
-    install_or_upgrade_llm_plugin sounddevice
-    install_or_upgrade_llm_plugin numpy
-    install_or_upgrade_llm_plugin pydub
-    # Install onnx-asr with HuggingFace hub support for model downloads
-    if install_or_upgrade_llm_plugin "onnx-asr[hub]" 2>/dev/null; then
-        log "onnx-asr installed successfully"
-        # Preload the Parakeet speech model to avoid first-use delay
-        log "Preloading Parakeet speech model (this may take a minute)..."
-        "$HOME/.local/share/uv/tools/llm/bin/python3" -c "
+    # Preload the Parakeet speech model to avoid first-use delay
+    # (onnx-asr is now installed via llm-tools-assistant pyproject.toml dependencies)
+    log "Preloading Parakeet speech model (this may take a minute)..."
+    "$HOME/.local/share/uv/tools/llm/bin/python3" -c "
 import onnx_asr
 print('Downloading model...')
 model = onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3')
 print('Model loaded successfully')
 " 2>&1 || warn "Model preload failed (will download on first use)"
-    else
-        warn "onnx-asr installation failed - voice input will be unavailable"
-        warn "You can try manually: llm install 'onnx-asr[hub]'"
-    fi
-
-    # Install TTS (text-to-speech) dependencies for /speech command
-    log "Installing TTS dependencies into llm tool environment..."
-    install_or_upgrade_llm_plugin google-cloud-texttospeech
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
