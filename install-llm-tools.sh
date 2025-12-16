@@ -141,7 +141,7 @@ install_or_upgrade_uv_tool() {
         if [ "$is_git_package" = "true" ]; then
             # For git packages, check if already from the same git source using uv command
             # Format: "llm v0.27.1 [required:  git+https://github.com/c0ffee0wl/llm]"
-            local tool_info=$(uv tool list --show-version-specifiers 2>/dev/null | grep "^$tool_name ")
+            local tool_info=$(uv tool list --show-version-specifiers 2>/dev/null | grep "^$tool_name " || true)
 
             # Extract current git URL if present
             local current_git_url=$(echo "$tool_info" | grep -oP '\[required:\s+git\+\K[^\]]+' || echo "")
@@ -337,8 +337,8 @@ configure_codex_cli() {
     log "Configuring Codex CLI with Azure OpenAI..."
 
     # Extract api_base from extra-openai-models.yaml
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
-    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
+    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
 
     if [ -z "$api_base" ]; then
         log "WARNING: Could not extract Azure API base from llm config"
@@ -377,8 +377,8 @@ export_azure_env_vars() {
     log "Exporting Azure environment variables to ~/.profile..."
 
     # Extract api_base and resource name
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
-    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
+    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
 
     if [ -z "$api_base" ]; then
         log "WARNING: Could not extract Azure API base for environment variables"
@@ -514,9 +514,9 @@ EOF
 
         # Extract Azure API base
         local azure_api_base=""
-        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/extra-openai-models.yaml"
+        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
         if [ -f "$EXTRA_MODELS_FILE" ]; then
-            azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+            azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
         fi
 
         # Strip trailing slash if present
@@ -699,7 +699,7 @@ EOF
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
-    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/default_model.txt"
+    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/default_model.txt"
 
     if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
         log "Setting default model to ${new_default}..."
@@ -1035,7 +1035,7 @@ install_go() {
 
     # Check if already installed with sufficient version
     if command -v go &> /dev/null; then
-        local current_version=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+')
+        local current_version=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' || true)
         if [ "$(printf '%s\n' "$MIN_GO_VERSION" "$current_version" | sort -V | head -n1)" = "$MIN_GO_VERSION" ]; then
             log "Go $current_version is already installed (>= $MIN_GO_VERSION)"
             return 0
@@ -1202,7 +1202,7 @@ fi
 # Detect VM environment (for PipeWire audio fix)
 IS_VM=false
 if command -v systemd-detect-virt &>/dev/null; then
-    VIRT_TYPE=$(systemd-detect-virt 2>/dev/null)
+    VIRT_TYPE=$(systemd-detect-virt 2>/dev/null || true)
     if [ "$VIRT_TYPE" != "none" ] && [ -n "$VIRT_TYPE" ]; then
         IS_VM=true
         log "VM environment detected ($VIRT_TYPE)"
@@ -1416,7 +1416,7 @@ if ! command -v node &> /dev/null; then
         nvm alias default 22
     fi
 else
-    CURRENT_NODE_VERSION=$(node --version | grep -oP 'v\K[0-9]+')
+    CURRENT_NODE_VERSION=$(node --version | grep -oP 'v\K[0-9]+' || true)
     log "Node.js is already installed (version $CURRENT_NODE_VERSION)"
 
     # If current version is < 20, warn user
@@ -1608,7 +1608,7 @@ install_or_upgrade_llm_plugin pymupdf_layout
 export PATH=$HOME/.local/bin:$PATH
 
 # Define the extra models file path early so we can check/preserve existing config
-LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)"
+LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
 if [ -z "$LLM_CONFIG_DIR" ] || [ ! -d "$LLM_CONFIG_DIR" ]; then
     error "Failed to get llm configuration directory. Is llm installed correctly?"
 fi
@@ -1722,7 +1722,7 @@ elif [ -f "$EXTRA_MODELS_FILE" ]; then
     log "Azure OpenAI was previously configured, preserving existing configuration"
 
     # Extract the api_base from the first model entry in the YAML
-    EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" | sed 's/.*api_base:\s*//;s/\s*$//')
+    EXISTING_API_BASE=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
     if [ -n "$EXISTING_API_BASE" ]; then
         AZURE_API_BASE="$EXISTING_API_BASE"
         log "Using existing API base: $AZURE_API_BASE"
@@ -1896,7 +1896,7 @@ fi
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname)/templates"
+TEMPLATES_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
