@@ -208,17 +208,52 @@ system: |
     - Read files with relative paths: `open('data.csv').read()` reads `{cwd}/data.csv`
     - Write to `/tmp` only: `open('/tmp/output.csv', 'w')` - files persist and are returned
 
+  - **Structured file formats - use appropriate libraries, not raw text parsing:**
+
+    | Format | Library | Why NOT raw text |
+    |--------|---------|------------------|
+    | CSV/TSV | `csv` module | Handles quoting, escapes, multi-line cells correctly |
+    | JSON | `json` module | Nested structures, string escaping, type preservation |
+    | XML/HTML | `lxml.etree` or `xml.etree.ElementTree` | XPath queries, namespace handling, malformed tolerance |
+    | YAML | `yaml` (PyYAML) | Multi-doc, anchors, complex types |
+    | INI/Config | `configparser` | Section parsing, interpolation |
+    | Excel/XLSX | `openpyxl` or `pandas` | Binary format, formulas, multiple sheets |
+    | SQLite | `sqlite3` | Query language, transactions |
+
+    **Reasoning:** You hallucinate when counting columns, matching quotes, or traversing nested structures.
+    Parser libraries guarantee correctness. Read raw files ONLY for: plain text logs, unknown formats,
+    or when specifically extracting a known substring.
+
+    **Bad:** `content = open('data.csv').read()` then trying to split/parse mentally
+    **Good:** `csv.DictReader(open('data.csv'))` - iterate rows with named columns
+
   **Examples:**
   ```python
   # Pure calculation (no file access) - use cwd="/"
   execute_python(cwd="/", code="print(2 * 2200)")
 
-  # Reading a LOCAL file
+  # Parse CSV with proper library (LOCAL files only - won't work for remote SSH/PSSession paths)
   execute_python(cwd="/home/user/project", code="""
-  import json
-  with open('config.json') as f:
-      data = json.load(f)
-  print(json.dumps(data, indent=2))
+  import csv
+  with open('users.csv') as f:
+      reader = csv.DictReader(f)
+      admins = [row['username'] for row in reader if row['role'] == 'admin']
+  print(f"Found {len(admins)} admins: {admins}")
+  """)
+
+  # Parse XML with lxml (LOCAL files only - use execute_in_terminal for remote files)
+  execute_python(cwd="/etc", code="""
+  from lxml import etree
+  tree = etree.parse('some-config.xml')
+  values = tree.xpath('//setting[@name="debug"]/text()')
+  print(f"Debug setting: {values[0] if values else 'not found'}")
+  """)
+
+  # Raw read for unstructured text (LOCAL files only - remote logs need cat/Get-Content via terminal)
+  execute_python(cwd="/var/log", code="""
+  with open('syslog') as f:
+      errors = [line for line in f if 'ERROR' in line][-10:]
+  print(f"Last 10 errors:\\n" + '\\n'.join(errors))
   """)
   ```
 
