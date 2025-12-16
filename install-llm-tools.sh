@@ -3,12 +3,13 @@
 # LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)
 # Installs Simon Willison's llm CLI tool and related AI/LLM command-line utilities
 #
-# Usage: ./install-llm-tools.sh [--azure] [--gemini]
+# Usage: ./install-llm-tools.sh [--azure] [--gemini] [--clear-cache]
 #
 # Options:
-#   --azure    Force (re)configuration of Azure OpenAI, even if already configured
-#   --gemini   Force (re)configuration of Google Gemini, even if already configured
-#   --help     Show help message
+#   --azure        Force (re)configuration of Azure OpenAI, even if already configured
+#   --gemini       Force (re)configuration of Google Gemini, even if already configured
+#   --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space
+#   --help         Show help message
 #
 # Re-run to update all tools
 
@@ -53,6 +54,7 @@ fi
 
 FORCE_AZURE_CONFIG=false
 FORCE_GEMINI_CONFIG=false
+CLEAR_CACHE=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -64,20 +66,26 @@ while [[ $# -gt 0 ]]; do
             FORCE_GEMINI_CONFIG=true
             shift
             ;;
+        --clear-cache)
+            CLEAR_CACHE=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)"
             echo ""
             echo "Options:"
-            echo "  --azure    Force (re)configuration of Azure OpenAI, even if already configured"
-            echo "  --gemini   Force (re)configuration of Google Gemini, even if already configured"
-            echo "  --help     Show this help message"
+            echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
+            echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
+            echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
+            echo "  --help         Show this help message"
             echo ""
             echo "Examples:"
             echo "  $0              # Normal installation/update"
             echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
             echo "  $0 --gemini     # Reconfigure Google Gemini settings"
+            echo "  $0 --clear-cache  # Clear all package caches"
             exit 0
             ;;
         *)
@@ -1093,6 +1101,58 @@ EOF
     log "PipeWire VM audio fix applied successfully"
 }
 
+# Clear package manager caches to reclaim disk space
+clear_package_caches() {
+    log "Clearing package manager caches..."
+
+    # npm cache (~/.npm/_cacache)
+    if command -v npm &>/dev/null; then
+        log "Clearing npm cache..."
+        npm cache clean --force 2>/dev/null || warn "npm cache clean failed"
+    fi
+
+    # Go module cache (~/go/pkg/mod)
+    if command -v go &>/dev/null; then
+        log "Clearing Go module cache..."
+        go clean -modcache 2>/dev/null || warn "go clean -modcache failed"
+    fi
+
+    # pip cache (~/.cache/pip)
+    # Using python3 -m pip for robustness (works even if only pip3 exists)
+    if python3 -m pip --version &>/dev/null 2>&1; then
+        log "Clearing pip cache..."
+        python3 -m pip cache purge 2>/dev/null || warn "pip cache purge failed"
+    fi
+
+    # pipx cache (~/.cache/pipx for XDG-compliant pipx 1.2.0+) - no built-in command yet
+    if command -v pipx &>/dev/null && [ -d "$HOME/.cache/pipx" ]; then
+        log "Clearing pipx cache..."
+        rm -rf "$HOME/.cache/pipx" 2>/dev/null || warn "pipx cache removal failed"
+    fi
+
+    # cargo cache (~/.cargo/registry, ~/.cargo/git)
+    # Note: cargo clean gc exists but is unstable (requires -Z gc nightly flag)
+    # Using manual removal as it works on all Rust versions
+    if command -v cargo &>/dev/null; then
+        log "Clearing cargo cache..."
+        rm -rf "$HOME/.cargo/registry/cache" "$HOME/.cargo/registry/src" "$HOME/.cargo/git/checkouts" 2>/dev/null || warn "cargo cache removal failed"
+    fi
+
+    # uv cache
+    if command -v uv &>/dev/null; then
+        log "Clearing uv cache..."
+        uv cache clean 2>/dev/null || warn "uv cache clean failed"
+    fi
+
+    log "Cache cleanup complete!"
+}
+
+# Run cache cleanup if requested as standalone operation
+if [ "$CLEAR_CACHE" = "true" ]; then
+    clear_package_caches
+    exit 0
+fi
+
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -2087,9 +2147,8 @@ upgrade_npm_global_if_installed @google/gemini-cli
 # Update OpenCode if already installed (no automatic installation)
 upgrade_npm_global_if_installed opencode-ai
 
-# Clean up uv cache to reclaim disk space
-log "Cleaning uv cache..."
-uv cache clean
+# Clean up package caches to reclaim disk space
+clear_package_caches
 
 #############################################################################
 # PHASE 8: Browser Automation (Blueprint MCP) - only if Terminator is installed
