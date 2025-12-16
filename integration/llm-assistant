@@ -1568,10 +1568,14 @@ class TerminatorAssistantSession:
         accumulated_text = ""
         sentence_buffer = SentenceBuffer() if tts_enabled else None
 
-        with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=False) as live:
+        # Use transient=True initially, switch to False only if we have content
+        with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=True) as live:
             for chunk in response:
                 accumulated_text += chunk
                 live.update(Markdown(accumulated_text))
+                # Once we have content, make it persistent
+                if accumulated_text.strip():
+                    live.transient = False
 
                 # Broadcast to web companion (non-blocking)
                 if self.web_clients:
@@ -1593,15 +1597,16 @@ class TerminatorAssistantSession:
             if remaining:
                 self.speech_output.speak_sentence(remaining)
 
-        # Broadcast completion to web companion
+        # Broadcast completion to web companion (always send for cleanup, web UI filters empty)
         if self.web_clients:
             self._broadcast_to_web({
                 "type": "assistant_complete",
                 "content": accumulated_text,
                 "done": True
             })
-            # Update token usage bar after response
-            self._broadcast_token_update()
+            # Update token usage bar after response (only if non-empty)
+            if accumulated_text.strip():
+                self._broadcast_token_update()
 
         return accumulated_text
 
@@ -1687,18 +1692,6 @@ class TerminatorAssistantSession:
             display: flex;
             align-items: center;
             gap: 12px;
-        }
-        .logo {
-            width: 32px;
-            height: 32px;
-            background: linear-gradient(135deg, var(--accent-user), var(--accent-assistant));
-            border-radius: var(--radius-sm);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            color: white;
-            font-weight: 700;
-            font-size: 14px;
         }
         header h1 {
             font-size: 1.1rem;
@@ -2179,7 +2172,6 @@ class TerminatorAssistantSession:
 <body>
     <header>
         <div class="header-left">
-            <div class="logo">AI</div>
             <h1>llm-assistant</h1>
             <div class="header-badges">
                 <span id="status" class="disconnected">Disconnected</span>
@@ -2487,7 +2479,7 @@ class TerminatorAssistantSession:
                 <div class="message-header">
                     <div class="role-badge">
                         <div class="role-icon">U</div>
-                        <span class="role">You</span>
+                        <span class="role">User</span>
                     </div>
                     <button class="copy-msg-btn" onclick="copyMessageText('${msgId}')">Copy</button>
                 </div>
@@ -6435,8 +6427,6 @@ Type !fragment <name> [...] to insert fragments""",
                                     )
 
                                     # Stream follow-up response with Live markdown display
-                                    # Blank line separates tool results from AI response
-                                    self.console.print()
                                     followup_text = self._stream_response_with_display(followup_response, tts_enabled=tts_enabled)
 
                                     # Check if the model made more tool calls
