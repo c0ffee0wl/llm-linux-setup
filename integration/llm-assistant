@@ -2158,6 +2158,207 @@ class TerminatorAssistantSession:
             0%, 50% { opacity: 1; }
             51%, 100% { opacity: 0; }
         }
+        /* Debug modal styles */
+        .debug-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 200;
+        }
+        .debug-modal-overlay.active { display: flex; justify-content: center; align-items: center; }
+        .debug-modal {
+            background: var(--bg-primary);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 900px;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .debug-modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .debug-modal-header h2 { font-size: 1rem; font-weight: 600; }
+        .debug-modal-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .debug-section {
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+        }
+        .debug-section-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            background: var(--bg-tertiary);
+            user-select: none;
+        }
+        .debug-section-header:hover { background: var(--bg-secondary); }
+        .debug-section-title { font-weight: 600; font-size: 0.85rem; }
+        .debug-section-expand {
+            margin-left: auto;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+        .debug-section.expanded .debug-section-expand { transform: rotate(90deg); }
+        .debug-section-body {
+            display: none;
+            padding: 12px;
+            background: var(--bg-code);
+            border-top: 1px solid var(--border-color);
+        }
+        .debug-section.expanded .debug-section-body { display: block; }
+        .debug-section-body pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.75rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .debug-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+            font-size: 0.8rem;
+        }
+        .debug-meta-item {
+            background: var(--bg-tertiary);
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
+        }
+        .debug-meta-label { color: var(--text-secondary); }
+        .debug-msg {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: var(--radius-sm);
+            border-left: 3px solid;
+        }
+        .debug-msg.user { background: var(--bg-user); border-color: var(--accent-user); }
+        .debug-msg.assistant { background: var(--bg-assistant); border-color: var(--accent-assistant); }
+        .debug-msg.tool { background: #f5f3ff; border-color: var(--accent-tool); }
+        .debug-msg.tool-result { background: #fef3c7; border-color: #f59e0b; }
+        [data-theme="dark"] .debug-msg.tool { background: #2d2640; }
+        [data-theme="dark"] .debug-msg.tool-result { background: #422d1a; }
+        .token-info {
+            font-size: 0.6rem;
+            background: var(--bg-tertiary);
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+            color: var(--text-secondary);
+        }
+        .debug-msg-role {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .debug-msg-content {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .context-badge {
+            font-size: 0.6rem;
+            background: var(--accent-tool);
+            color: white;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+        }
+        .attachment-badge {
+            font-size: 0.6rem;
+            background: #3b82f6;
+            color: white;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+        }
+        .debug-attachments {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border-color);
+        }
+        .debug-attachment {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.7rem;
+            padding: 2px 0;
+        }
+        .debug-attachment-type {
+            background: var(--bg-tertiary);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .debug-attachment-source {
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+        /* Tool definitions styling */
+        .debug-tool {
+            margin: 8px 0;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+        }
+        .debug-tool-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+        .debug-tool-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--accent-tool);
+        }
+        .tool-plugin-badge {
+            font-size: 0.6rem;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            padding: 1px 6px;
+            border-radius: 8px;
+        }
+        .debug-tool-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .debug-tool-schema {
+            margin: 0;
+            padding: 8px;
+            background: var(--bg-code);
+            border-radius: var(--radius-sm);
+            font-size: 0.7rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .debug-tool-schema code {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
         .empty-state {
             text-align: center;
             padding: 60px 20px;
@@ -2181,8 +2382,9 @@ class TerminatorAssistantSession:
             </div>
         </div>
         <div class="header-buttons">
-            <button class="icon-btn" onclick="toggleTheme()" id="theme-btn" title="Toggle theme">🌙</button>
             <button class="icon-btn" onclick="toggleSearch()" title="Search (Ctrl+F)">🔍</button>
+            <button class="icon-btn" onclick="openDebugModal()" title="Debug info">🐛</button>
+            <button class="icon-btn" onclick="toggleTheme()" id="theme-btn" title="Toggle theme">🌙</button>
             <div class="copy-dropdown">
                 <button onclick="toggleCopyMenu(this)">Copy All ▾</button>
                 <div class="copy-dropdown-menu">
@@ -2215,6 +2417,17 @@ class TerminatorAssistantSession:
         </div>
     </div>
     <div id="toast" class="toast">Copied!</div>
+    <div class="debug-modal-overlay" id="debug-modal-overlay" onclick="closeDebugModal(event)">
+        <div class="debug-modal" onclick="event.stopPropagation()">
+            <div class="debug-modal-header">
+                <h2>Debug Info</h2>
+                <button class="icon-btn" onclick="closeDebugModal()">&times;</button>
+            </div>
+            <div class="debug-modal-content" id="debug-modal-content">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+    </div>
 
     <script>
         // Store original markdown for copy-as-markdown feature
@@ -2336,6 +2549,9 @@ class TerminatorAssistantSession:
                 case 'tool_call':
                     addToolCall(data.tool_name, data.arguments, data.result, data.status);
                     break;
+                case 'debug_info':
+                    renderDebugInfo(data);
+                    break;
             }
             scrollToBottom();
         }
@@ -2383,6 +2599,162 @@ class TerminatorAssistantSession:
             if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
             if (n >= 1000) return (n / 1000).toFixed(0) + 'k';
             return n.toString();
+        }
+
+        function formatBytes(bytes) {
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        // Debug modal functions
+        let debugRefreshInterval = null;
+        let lastDebugDataHash = null;
+
+        function openDebugModal() {
+            lastDebugDataHash = null;  // Reset hash on open
+            document.getElementById('debug-modal-overlay').classList.add('active');
+            // Clear any existing interval first (safety)
+            if (debugRefreshInterval) {
+                clearInterval(debugRefreshInterval);
+            }
+            // Request debug info from server
+            requestDebugInfo();
+            // Auto-refresh every 2 seconds while modal is open
+            debugRefreshInterval = setInterval(requestDebugInfo, 2000);
+        }
+
+        function requestDebugInfo() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('debug_request');
+            }
+        }
+
+        function closeDebugModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('debug-modal-overlay').classList.remove('active');
+                // Stop auto-refresh
+                if (debugRefreshInterval) {
+                    clearInterval(debugRefreshInterval);
+                    debugRefreshInterval = null;
+                }
+            }
+        }
+
+        function renderDebugInfo(data) {
+            // Skip re-render if data hasn't changed (preserves text selection)
+            const dataHash = JSON.stringify(data);
+            if (dataHash === lastDebugDataHash) {
+                return;
+            }
+            lastDebugDataHash = dataHash;
+
+            const container = document.getElementById('debug-modal-content');
+
+            // Meta info row
+            const optionsStr = data.options && Object.keys(data.options).length > 0
+                ? Object.entries(data.options).map(([k, v]) => `${k}=${v}`).join(', ')
+                : '';
+            let html = `<div class="debug-meta">
+                <div class="debug-meta-item"><span class="debug-meta-label">Model:</span> ${escapeHtml(data.model)}</div>
+                <div class="debug-meta-item"><span class="debug-meta-label">Mode:</span> ${escapeHtml(data.mode)}</div>
+                <div class="debug-meta-item"><span class="debug-meta-label">Tokens:</span> ${formatTokens(data.current_tokens)} / ${formatTokens(data.max_context)}</div>
+                ${optionsStr ? `<div class="debug-meta-item"><span class="debug-meta-label">Options:</span> ${escapeHtml(optionsStr)}</div>` : ''}
+                ${data.loaded_kbs && data.loaded_kbs.length ? `<div class="debug-meta-item"><span class="debug-meta-label">KBs:</span> ${data.loaded_kbs.join(', ')}</div>` : ''}
+                ${data.active_rag ? `<div class="debug-meta-item"><span class="debug-meta-label">RAG:</span> ${escapeHtml(data.active_rag)}</div>` : ''}
+            </div>`;
+
+            // System Prompt section (expanded by default)
+            html += `<div class="debug-section expanded">
+                <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                    <span class="debug-section-title">System Prompt</span>
+                    <span class="debug-section-expand">▶</span>
+                </div>
+                <div class="debug-section-body">
+                    <pre><code>${escapeHtml(data.system_prompt)}</code></pre>
+                </div>
+            </div>`;
+
+            // Tools section (collapsed by default)
+            if (data.tools && data.tools.length > 0) {
+                html += `<div class="debug-section">
+                    <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                        <span class="debug-section-title">Tools (${data.tools.length})</span>
+                        <span class="debug-section-expand">▶</span>
+                    </div>
+                    <div class="debug-section-body">`;
+                data.tools.forEach(tool => {
+                    const pluginBadge = tool.plugin ? `<span class="tool-plugin-badge">${escapeHtml(tool.plugin)}</span>` : '';
+                    html += `<div class="debug-tool">
+                        <div class="debug-tool-header">
+                            <span class="debug-tool-name">${escapeHtml(tool.name)}</span>
+                            ${pluginBadge}
+                        </div>
+                        <div class="debug-tool-desc">${escapeHtml(tool.description)}</div>
+                        <pre class="debug-tool-schema"><code>${escapeHtml(JSON.stringify(tool.parameters, null, 2))}</code></pre>
+                    </div>`;
+                });
+                html += `</div></div>`;
+            }
+
+            // Conversation section
+            html += `<div class="debug-section expanded">
+                <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                    <span class="debug-section-title">Conversation (${data.messages.length} messages)</span>
+                    <span class="debug-section-expand">▶</span>
+                </div>
+                <div class="debug-section-body">`;
+
+            data.messages.forEach((msg, i) => {
+                if (msg.role === 'user') {
+                    const contextBadge = msg.has_context ? '<span class="context-badge">has context</span>' : '';
+                    const attachBadge = (msg.attachments && msg.attachments.length > 0)
+                        ? `<span class="attachment-badge">📎 ${msg.attachments.length}</span>` : '';
+                    const tokenInfo = (msg.input_tokens || msg.output_tokens)
+                        ? `<span class="token-info">${msg.input_tokens || 0}→${msg.output_tokens || 0}</span>` : '';
+                    // Build attachments detail if present
+                    let attachmentsHtml = '';
+                    if (msg.attachments && msg.attachments.length > 0) {
+                        attachmentsHtml = '<div class="debug-attachments">';
+                        msg.attachments.forEach(att => {
+                            const sizeInfo = att.size ? ` (${formatBytes(att.size)})` : '';
+                            const source = att.path || att.url || (att.inline ? 'inline' : '');
+                            attachmentsHtml += `<div class="debug-attachment">
+                                <span class="debug-attachment-type">${escapeHtml(att.type)}</span>
+                                ${source ? `<span class="debug-attachment-source">${escapeHtml(source)}${sizeInfo}</span>` : ''}
+                            </div>`;
+                        });
+                        attachmentsHtml += '</div>';
+                    }
+                    html += `<div class="debug-msg user">
+                        <div class="debug-msg-role">user${contextBadge}${attachBadge}${tokenInfo}</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                        ${attachmentsHtml}
+                    </div>`;
+                } else if (msg.role === 'assistant') {
+                    html += `<div class="debug-msg assistant">
+                        <div class="debug-msg-role">assistant</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                    </div>`;
+                } else if (msg.role === 'tool_call') {
+                    html += `<div class="debug-msg tool">
+                        <div class="debug-msg-role">tool_call: ${escapeHtml(msg.tool_name)}</div>
+                        <div class="debug-msg-content">${escapeHtml(JSON.stringify(msg.arguments, null, 2))}</div>
+                    </div>`;
+                } else if (msg.role === 'tool_result') {
+                    html += `<div class="debug-msg tool-result">
+                        <div class="debug-msg-role">tool_result: ${escapeHtml(msg.tool_name)}</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                    </div>`;
+                }
+            });
+
+            html += `</div></div>`;
+            container.innerHTML = html;
+        }
+
+        function toggleDebugSection(el) {
+            el.classList.toggle('expanded');
         }
 
         // Track pending tool calls for update
@@ -2874,10 +3246,29 @@ class TerminatorAssistantSession:
                         history.append({"role": "assistant", "content": assistant_text})
                 await websocket.send_json({"type": "history", "messages": history})
 
-                # Keep connection alive
+                # Keep connection alive and handle requests
                 while True:
                     try:
-                        await websocket.receive_text()
+                        msg = await websocket.receive_text()
+                        # Handle debug info request
+                        if msg == "debug_request":
+                            try:
+                                debug_data = session._get_debug_info()
+                                await websocket.send_json({"type": "debug_info", **debug_data})
+                            except Exception as e:
+                                await websocket.send_json({
+                                    "type": "debug_info",
+                                    "system_prompt": f"Error getting debug info: {e}",
+                                    "tools": [],
+                                    "messages": [],
+                                    "model": "unknown",
+                                    "mode": "unknown",
+                                    "options": {},
+                                    "max_context": 0,
+                                    "current_tokens": 0,
+                                    "loaded_kbs": [],
+                                    "active_rag": None
+                                })
                     except Exception:
                         break
             finally:
@@ -3098,6 +3489,119 @@ Shell: {env_type} {shell_info}
             prompt = f"{prompt}\n# Knowledge Base\n\n{kb_content}"
 
         return prompt
+
+    def _get_debug_info(self) -> dict:
+        """Return debug information for the web companion."""
+        # Build current system prompt (what would be sent on next request)
+        current_system_prompt = self._build_system_prompt()
+
+        # Build full conversation with ALL context (unstripped)
+        messages = []
+        for r in self.conversation.responses:
+            if hasattr(r, 'prompt') and r.prompt:
+                # Include FULL prompt (not stripped) - use .prompt property
+                full_prompt = r.prompt.prompt or ""
+                # Also capture the system prompt used for this turn
+                turn_system = r.prompt.system or ""
+
+                # Build attachments info
+                attachments_info = []
+                if r.prompt.attachments:
+                    for att in r.prompt.attachments:
+                        att_info = {"type": att.type or "unknown"}
+                        if att.path:
+                            att_info["path"] = att.path
+                        elif att.url:
+                            att_info["url"] = att.url
+                        else:
+                            att_info["inline"] = True
+                        # Include content size if available
+                        if att.content:
+                            att_info["size"] = len(att.content)
+                        attachments_info.append(att_info)
+
+                messages.append({
+                    "role": "user",
+                    "content": full_prompt,
+                    "system": turn_system,  # System prompt for this turn
+                    "has_context": "<terminal_context>" in full_prompt,
+                    "attachments": attachments_info,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens
+                })
+
+                # Include tool results if present (tool outputs sent as input)
+                if r.prompt.tool_results:
+                    for tr in r.prompt.tool_results:
+                        messages.append({
+                            "role": "tool_result",
+                            "tool_name": tr.name,
+                            "content": tr.output or "",
+                            "tool_call_id": tr.tool_call_id
+                        })
+
+            # Assistant response
+            assistant_text = r.text()
+            if assistant_text:
+                messages.append({"role": "assistant", "content": assistant_text})
+
+            # Tool calls made by assistant
+            try:
+                tool_calls = list(r.tool_calls())
+                for tc in tool_calls:
+                    messages.append({
+                        "role": "tool_call",
+                        "tool_name": tc.name,
+                        "arguments": tc.arguments,
+                        "tool_call_id": tc.tool_call_id
+                    })
+            except Exception:
+                pass  # No tool calls or error accessing them
+
+        # Build tool definitions (what's sent to the model)
+        tools = []
+        for tool in ASSISTANT_TOOLS:
+            tool_info = {
+                "name": tool.name,
+                "description": tool.description or "",
+            }
+            # Get input schema - different attribute names depending on tool type
+            if hasattr(tool, 'input_schema'):
+                tool_info["parameters"] = tool.input_schema
+            elif hasattr(tool, 'schema') and isinstance(tool.schema, dict):
+                tool_info["parameters"] = tool.schema.get('parameters', {})
+            else:
+                tool_info["parameters"] = {}
+            # Include plugin source if available
+            if hasattr(tool, 'plugin') and tool.plugin:
+                tool_info["plugin"] = tool.plugin
+            tools.append(tool_info)
+
+        # Get model options from most recent response (or empty if no responses yet)
+        options = {}
+        if self.conversation.responses:
+            last_response = self.conversation.responses[-1]
+            if hasattr(last_response, 'prompt') and last_response.prompt:
+                try:
+                    options = {
+                        k: v for k, v in dict(last_response.prompt.options).items()
+                        if v is not None
+                    }
+                except Exception:
+                    pass
+
+        return {
+            "system_prompt": current_system_prompt,
+            "tools": tools,
+            "messages": messages,
+            "model": self.model_name or "unknown",
+            "mode": self.mode,
+            "options": options,
+            "max_context": self.max_context_size,
+            "current_tokens": self.estimate_tokens(),
+            "loaded_kbs": list(self.loaded_kbs.keys()) if self.loaded_kbs else [],
+            "active_rag": self.active_rag_collection
+        }
 
     def _filter_mode_content(self, prompt: str) -> str:
         """Filter system prompt based on current operating mode.
