@@ -4962,6 +4962,26 @@ Previous messages:
 
         return result.strip()
 
+    def _format_tool_result(self, name: str, content: str, cwd: str = None) -> str:
+        """Format tool result with XML tags, timestamp, and optional cwd.
+
+        Tool results use <tool_result> tags (distinct from <terminal> context tags)
+        to provide structured immediate feedback in the tool calling loop.
+        """
+        from datetime import datetime
+        timestamp = datetime.now().isoformat(timespec='seconds')
+        cwd_attr = f' cwd="{cwd}"' if cwd else ''
+        return f'<tool_result name="{name}"{cwd_attr} timestamp="{timestamp}">\n{content}\n</tool_result>'
+
+    def _get_exec_terminal_cwd(self) -> str:
+        """Get the current working directory of the exec terminal."""
+        try:
+            terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
+            exec_term = next((t for t in terminals if str(t['uuid']) == self.exec_terminal_uuid), None)
+            return exec_term['cwd'] if exec_term else "unknown"
+        except Exception:
+            return "unknown"
+
     def _log_response(self, response):
         """Log response to database with context stripping.
 
@@ -6241,9 +6261,14 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     self._debug(f"Length: {len(exec_text)} chars")
                 self._debug("═══════════════════════════════")
 
+                cwd = self._get_exec_terminal_cwd()
                 return ToolResult(
                     name=tool_call.name,
-                    output=f"Command executed: {cmd}\n\nOutput:\n{exec_text}",
+                    output=self._format_tool_result(
+                        "execute_in_terminal",
+                        f"Command executed: {cmd}\n\nOutput:\n{exec_text}",
+                        cwd=cwd
+                    ),
                     attachments=result_attachments,
                     tool_call_id=tool_call_id
                 )
@@ -6268,9 +6293,10 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             executed = self.execute_keypress(kp)
 
             if executed:
+                cwd = self._get_exec_terminal_cwd()
                 return ToolResult(
                     name=tool_call.name,
-                    output=f"Keypress sent: {kp}",
+                    output=self._format_tool_result("send_keypress", f"Keypress sent: {kp}", cwd=cwd),
                     tool_call_id=tool_call_id
                 )
             else:
