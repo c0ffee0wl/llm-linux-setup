@@ -1644,11 +1644,17 @@ class TerminatorAssistantSession:
 
         # Broadcast completion to web companion (always send for cleanup, web UI filters empty)
         if self.web_clients:
-            self._broadcast_to_web({
+            complete_msg = {
                 "type": "assistant_complete",
                 "content": accumulated_text,
                 "done": True
-            })
+            }
+            # Include thinking traces if available
+            if hasattr(response, 'response_json') and response.response_json:
+                thinking = response.response_json.get("thinking_traces", [])
+                if thinking:
+                    complete_msg["thinking_traces"] = thinking
+            self._broadcast_to_web(complete_msg)
             # Update token usage bar after response (only if non-empty)
             if accumulated_text.strip():
                 self._broadcast_token_update()
@@ -2413,6 +2419,66 @@ class TerminatorAssistantSession:
             font-size: 48px;
             margin-bottom: 16px;
         }
+        /* Thinking traces - regular conversation view */
+        .thinking-section {
+            margin-bottom: 8px;
+        }
+        .thinking-details {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+        .thinking-details summary {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .thinking-details summary:hover {
+            color: var(--text-primary);
+        }
+        .thinking-content {
+            margin-top: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .thinking-trace {
+            margin: 8px 0;
+            border-left: 3px solid var(--accent);
+            padding-left: 12px;
+        }
+        .thinking-trace pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        /* Thinking traces - debug modal */
+        .debug-msg .thinking-traces {
+            margin-bottom: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        .debug-msg .thinking-traces summary {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+        .thinking-trace-header {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        .thinking-badge {
+            background: var(--accent);
+            color: white;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            margin-left: 4px;
+        }
     </style>
 </head>
 <body>
@@ -2565,7 +2631,7 @@ class TerminatorAssistantSession:
                     updateAssistantMessage(data.content, false);
                     break;
                 case 'assistant_complete':
-                    updateAssistantMessage(data.content, true);
+                    updateAssistantMessage(data.content, true, data.thinking_traces);
                     break;
                 case 'clear':
                     clearMessages();
@@ -2578,7 +2644,7 @@ class TerminatorAssistantSession:
                         } else if (msg.role === 'tool_call') {
                             addToolCall(msg.tool_name, msg.arguments, msg.result, msg.status);
                         } else if (msg.content && msg.content.trim()) {
-                            addAssistantMessage(msg.content);
+                            addAssistantMessage(msg.content, msg.thinking_traces);
                         }
                     });
                     break;
@@ -2777,8 +2843,24 @@ class TerminatorAssistantSession:
                         ${attachmentsHtml}
                     </div>`;
                 } else if (msg.role === 'assistant') {
+                    let thinkingHtml = '';
+                    if (msg.thinking_traces && msg.thinking_traces.length > 0) {
+                        thinkingHtml = `<details class="thinking-traces" open>
+                            <summary>💭 Thinking (${msg.thinking_traces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${msg.thinking_traces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <div class="thinking-trace-header">Trace ${i + 1}${t.thoughtSignature ? ' (has signature)' : ''}</div>
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>`;
+                    }
+                    const thinkingBadge = msg.thinking_traces && msg.thinking_traces.length > 0 ? ' <span class="thinking-badge">thinking</span>' : '';
                     html += `<div class="debug-msg assistant">
-                        <div class="debug-msg-role">assistant</div>
+                        <div class="debug-msg-role">assistant${thinkingBadge}</div>
+                        ${thinkingHtml}
                         <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
                     </div>`;
                 } else if (msg.role === 'tool_call') {
@@ -2906,7 +2988,7 @@ class TerminatorAssistantSession:
             messagesContainer.appendChild(div);
         }
 
-        function addAssistantMessage(content) {
+        function addAssistantMessage(content, thinkingTraces) {
             if (!content || !content.trim()) return;
             hideEmptyState();
             currentAssistantDiv = null;
@@ -2915,6 +2997,26 @@ class TerminatorAssistantSession:
             const div = document.createElement('div');
             div.className = 'message assistant';
             div.id = msgId;
+
+            // Build thinking section if traces exist
+            let thinkingHtml = '';
+            if (thinkingTraces && thinkingTraces.length > 0) {
+                thinkingHtml = `
+                    <div class="thinking-section">
+                        <details class="thinking-details">
+                            <summary>💭 Thinking (${thinkingTraces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${thinkingTraces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    </div>
+                `;
+            }
+
             div.innerHTML = `
                 <div class="message-header">
                     <div class="role-badge">
@@ -2929,6 +3031,7 @@ class TerminatorAssistantSession:
                         </div>
                     </div>
                 </div>
+                ${thinkingHtml}
                 <div class="content">${renderMarkdown(content)}</div>
             `;
             messageMarkdown.set(msgId, content);
@@ -2936,7 +3039,7 @@ class TerminatorAssistantSession:
             addCodeCopyButtons(div);
         }
 
-        function updateAssistantMessage(content, done) {
+        function updateAssistantMessage(content, done, thinkingTraces) {
             if (!content || !content.trim()) {
                 if (done && currentAssistantDiv) {
                     currentAssistantDiv.remove();
@@ -2966,6 +3069,7 @@ class TerminatorAssistantSession:
                             </div>
                         </div>
                     </div>
+                    <div class="thinking-section" style="display:none;"></div>
                     <div class="content"></div>
                 `;
                 messagesContainer.appendChild(currentAssistantDiv);
@@ -2979,6 +3083,25 @@ class TerminatorAssistantSession:
                 currentAssistantDiv.classList.remove('streaming');
                 addCodeCopyButtons(currentAssistantDiv);
                 messageMarkdown.set(currentAssistantDiv.id, currentAssistantMarkdown);
+
+                // Show thinking traces on completion (collapsed by default)
+                if (thinkingTraces && thinkingTraces.length > 0) {
+                    const thinkingSection = currentAssistantDiv.querySelector('.thinking-section');
+                    thinkingSection.style.display = 'block';
+                    thinkingSection.innerHTML = `
+                        <details class="thinking-details">
+                            <summary>💭 Thinking (${thinkingTraces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${thinkingTraces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    `;
+                }
+
                 currentAssistantDiv = null;
                 currentAssistantMarkdown = '';
             }
@@ -3281,6 +3404,10 @@ class TerminatorAssistantSession:
                 # Send conversation history on connect
                 history = []
                 for r in session.conversation.responses:
+                    # Skip responses that are still streaming - they'll be sent via live broadcast
+                    # text() calls _force() which blocks until done, causing connection delays
+                    if not getattr(r, '_done', False):
+                        continue
                     if hasattr(r, 'prompt') and r.prompt:
                         # Strip terminal context from prompts (same as DB storage)
                         clean_prompt = session._strip_context(r.prompt.prompt or "")
@@ -3288,7 +3415,13 @@ class TerminatorAssistantSession:
                             history.append({"role": "user", "content": clean_prompt})
                     assistant_text = r.text()
                     if assistant_text and assistant_text.strip():
-                        history.append({"role": "assistant", "content": assistant_text})
+                        assistant_msg = {"role": "assistant", "content": assistant_text}
+                        # Include thinking traces if available
+                        if hasattr(r, 'response_json') and r.response_json:
+                            thinking = r.response_json.get("thinking_traces", [])
+                            if thinking:
+                                assistant_msg["thinking_traces"] = thinking
+                        history.append(assistant_msg)
                 await websocket.send_json({"type": "history", "messages": history})
 
                 # Keep connection alive and handle requests
@@ -3607,6 +3740,9 @@ Shell: {env_type} {shell_info}
         # Build full conversation with ALL context (unstripped)
         messages = []
         for r in self.conversation.responses:
+            # Skip responses that are still streaming to avoid blocking
+            if not getattr(r, '_done', False):
+                continue
             if hasattr(r, 'prompt') and r.prompt:
                 # Include FULL prompt (not stripped) - use .prompt property
                 full_prompt = r.prompt.prompt or ""
@@ -3652,7 +3788,13 @@ Shell: {env_type} {shell_info}
             # Assistant response
             assistant_text = r.text()
             if assistant_text:
-                messages.append({"role": "assistant", "content": assistant_text})
+                assistant_msg = {"role": "assistant", "content": assistant_text}
+                # Include thinking traces if available
+                if hasattr(r, 'response_json') and r.response_json:
+                    thinking = r.response_json.get("thinking_traces", [])
+                    if thinking:
+                        assistant_msg["thinking_traces"] = thinking
+                messages.append(assistant_msg)
 
             # Tool calls made by assistant
             try:
@@ -4859,7 +5001,13 @@ Shell: {env_type} {shell_info}
                         if hasattr(last_resp, 'prompt') and last_resp.prompt:
                             if last_resp.prompt.prompt:
                                 total_chars += len(last_resp.prompt.prompt)
-                        total_chars += len(last_resp.text())
+                        # Use _chunks directly to avoid blocking on in-progress responses
+                        # text() calls _force() which blocks until done
+                        if getattr(last_resp, '_done', False):
+                            total_chars += len(last_resp.text())
+                        else:
+                            # In-progress: use accumulated chunks
+                            total_chars += len("".join(getattr(last_resp, '_chunks', [])))
                     # Add measured tool overhead
                     tool_tokens = self._tool_token_overhead  # Use measured value
                     tokens = (total_chars // 4) + tool_tokens
