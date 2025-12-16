@@ -808,6 +808,10 @@ AGENT_MODE_TOOLS = ('capture_screen',)
 # Optional tools that can be loaded/unloaded via slash command (/imagemage)
 OPTIONAL_TOOL_PLUGINS = ('imagemage',)
 
+# Tools that require Gemini/Vertex models (native video/audio processing)
+# These are excluded from base tools and added dynamically when using Gemini
+GEMINI_ONLY_TOOL_NAMES = ('view_youtube_native',)
+
 _all_tools = llm.get_tools()
 
 # Pre-load MCP tools from llm-tools-mcp plugin (dynamic toolbox)
@@ -823,10 +827,12 @@ except Exception:
     pass  # MCP config missing or server unavailable
 
 # Build ASSISTANT_TOOLS - base tools always offered to model
-# (agent-mode and optional tools added dynamically via _get_active_tools())
+# (agent-mode, optional, and Gemini-only tools added dynamically via _get_active_tools())
 ASSISTANT_TOOLS = [
     tool for tool in _all_tools.values()
-    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) in ('assistant',) + EXTERNAL_TOOL_PLUGINS
+    if isinstance(tool, Tool)
+    and getattr(tool, 'plugin', None) in ('assistant',) + EXTERNAL_TOOL_PLUGINS
+    and tool.name not in GEMINI_ONLY_TOOL_NAMES  # Exclude Gemini-only tools from base
 ]
 
 # Build EXTERNAL_TOOLS - base dispatch dict (always-on tools)
@@ -1583,6 +1589,10 @@ class TerminatorAssistantSession:
     def _is_vertex_model(self) -> bool:
         """Check if current model is a Vertex AI model (vertex/*)"""
         return self.model_name.startswith("vertex/")
+
+    def _is_gemini_model(self) -> bool:
+        """Check if current model is a Gemini model (vertex/* or gemini-*)"""
+        return self.model_name.startswith("vertex/") or self.model_name.startswith("gemini-")
 
     def _debug(self, msg: str):
         """Print debug message if debug mode is enabled"""
@@ -3407,12 +3417,13 @@ class TerminatorAssistantSession:
         })
 
     def _get_active_tools(self) -> list:
-        """Get currently active tools based on mode and loaded state.
+        """Get currently active tools based on mode, model, and loaded state.
 
         Returns tools that should be offered to the model. Includes:
         - Base ASSISTANT_TOOLS (always available)
         - Agent-mode tools (capture_screen) when in /agent mode
         - Optional tools (imagemage) when manually loaded via /imagemage
+        - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
         """
         tools = list(ASSISTANT_TOOLS)  # Base tools (always available)
 
@@ -3427,6 +3438,12 @@ class TerminatorAssistantSession:
         for plugin_name in self.loaded_optional_tools:
             for tool in _all_tools.values():
                 if getattr(tool, 'plugin', None) == plugin_name:
+                    tools.append(tool)
+
+        # Add Gemini-only tools if using Gemini/Vertex model
+        if self._is_gemini_model():
+            for tool in _all_tools.values():
+                if tool.name in GEMINI_ONLY_TOOL_NAMES:
                     tools.append(tool)
 
         return tools
@@ -6049,6 +6066,8 @@ Instructions:
                             self.model = llm.get_model(resolved)
                             self.model_name = resolved
                             self.conversation.model = self.model
+                            # Recalculate tool token overhead (tools change with model)
+                            self._tool_token_overhead = self._estimate_tool_schema_tokens()
                             self.console.print(f"[green]✓[/] Switched to model: {resolved}")
                             # Notify web companion of model change
                             self._broadcast_to_web({
@@ -6065,10 +6084,11 @@ Instructions:
                 try:
                     self.model = llm.get_model(args)
                     self.model_name = args
-                    self.console.print(f"[green]✓[/] Switched to model: {args}")
-
                     # Update conversation model
                     self.conversation.model = self.model
+                    # Recalculate tool token overhead (tools change with model)
+                    self._tool_token_overhead = self._estimate_tool_schema_tokens()
+                    self.console.print(f"[green]✓[/] Switched to model: {args}")
                     # Notify web companion of model change
                     self._broadcast_to_web({
                         "type": "session_info",
@@ -6100,6 +6120,8 @@ Instructions:
                 tools_info += f" (+{', '.join(sorted(self.loaded_optional_tools))})"
             if self.mode == "agent":
                 tools_info += " [+agent-mode tools]"
+            if self._is_gemini_model():
+                tools_info += " [+gemini-only tools]"
             self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
 Mode: {mode_display}
@@ -6306,7 +6328,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/capture":
             # Parse: /capture [mode] [prompt...]
-            parts = user_input.split(maxsplit=2)
+            parts = command.split(maxsplit=2)
             mode = "window"
             prompt = None
 
@@ -6355,7 +6377,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             return True
 
         elif cmd == "/imagemage":
-            parts = user_input.split()
+            parts = command.split()
             if len(parts) == 1:
                 # Load imagemage
                 if 'imagemage' in self.loaded_optional_tools:
