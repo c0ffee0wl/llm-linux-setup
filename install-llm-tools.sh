@@ -955,21 +955,23 @@ cleanup_stale_local_plugin_paths() {
 
     # Clean up uv-receipt.toml (uv's internal tracking)
     # Two-pass approach: first identify stale plugins, then remove ALL their entries
+    # Note: TOML has name and directory on separate lines, so we track state across lines
     if [ -f "$uv_receipt_file" ]; then
         local stale_plugins=()
+        local current_name=""
 
         # Pass 1: Find plugins with stale local paths
         while IFS= read -r line; do
-            # Check if line contains a directory reference (flexible spacing)
+            # Track plugin name (comes before directory in TOML)
+            if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
+                current_name="${BASH_REMATCH[1]}"
+            fi
+            # Check if directory exists (directory line comes after name line)
             if [[ "$line" =~ directory[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
                 local dir_path="${BASH_REMATCH[1]}"
-                if [ ! -d "$dir_path" ]; then
-                    # Extract plugin name from same line
-                    if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-                        local plugin_name="${BASH_REMATCH[1]}"
-                        log "Found stale local path for $plugin_name: $dir_path"
-                        stale_plugins+=("$plugin_name")
-                    fi
+                if [ ! -d "$dir_path" ] && [ -n "$current_name" ]; then
+                    log "Found stale local path for $current_name: $dir_path"
+                    stale_plugins+=("$current_name")
                 fi
             fi
         done < "$uv_receipt_file"
@@ -1587,10 +1589,6 @@ cleanup_stale_local_plugin_paths
 # Remove old llm plugin from both tracking files
 # Must clean BEFORE any llm operations - invalid local paths cause failures
 remove_plugin_from_tracking "llm-tools-sidechat"
-
-# Remove llm-tools-assistant from tracking (path changed: llm-tools-assistant/ -> llm-assistant/llm-tools-assistant/)
-# Will be reinstalled from new location in Phase 3
-remove_plugin_from_tracking "llm-tools-assistant"
 
 # Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
 remove_plugin_from_tracking "llm-azure"
