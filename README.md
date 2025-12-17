@@ -175,13 +175,13 @@ The script will:
 
 1. Pull the latest version of the repository (and itself) from git.
 2. Update llm, its plugins, and all applications installed by the llm-setup.
-3. Update custom templates ([assistant.yaml](llm-template/assistant.yaml), [code.yaml](llm-template/code.yaml)).
+3. Update custom templates ([llm.yaml](llm-templates/llm.yaml), [llm-code.yaml](llm-templates/llm-code.yaml)).
 4. Refresh shell integration files.
 5. Preserve existing provider and session log configurations (unless switching providers).
 
 ## Quick Reference
 
-**⚡ Most Common Commands** (no need to specify `-t assistant` - it's the default!)
+**⚡ Most Common Commands** (no need to specify `-t llm` - it's the default!)
 
 ```bash
 # Ask questions (assistant template auto-applied)
@@ -205,7 +205,7 @@ llm "What does 'ls -1aG' do?"
 # Type: find pdf files larger than 20MB
 # Press: Ctrl+N
 
-# Generate clean code ('llm code' is an alias for 'llm -t code')
+# Generate clean code ('llm code' is an alias for 'llm -t llm-code')
 llm code "python function to..." | tee output.py
 
 # You can iterate on generated code by continuing the last conversation
@@ -340,10 +340,10 @@ routed-claude                    # Launch Claude Code through router (alias for 
 
 ### LLM Templates
 
-- **[assistant.yaml](llm-template/assistant.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
-- **[code.yaml](llm-template/code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
-- **[wut.yaml](llm-template/wut.yaml)** - Command-line assistant for explaining terminal output and troubleshooting (concise 5-sentence responses, uses `context` tool automatically)
-- **[terminator-assistant.yaml](llm-template/terminator-assistant.yaml)** - AI pair programming template for Terminator terminal (provides intelligent debugging, command suggestions, and automatic execution in split panes)
+- **[llm.yaml](llm-templates/llm.yaml)** - Custom assistant template with security/IT expertise configuration (Optimized for cybersecurity and Linux tasks, includes `context` and `sandboxed_shell` tools by default)
+- **[llm-code.yaml](llm-templates/llm-code.yaml)** - Code-only generation template (outputs clean, executable code without markdown)
+- **[llm-wut.yaml](llm-templates/llm-wut.yaml)** - Command-line assistant for explaining terminal output and troubleshooting (concise 5-sentence responses, uses `context` tool automatically)
+- **[llm-assistant.yaml](llm-templates/llm-assistant.yaml)** - AI pair programming template for Terminator terminal (provides intelligent debugging, command suggestions, and automatic execution in split panes)
 
 ### Additional Tools
 
@@ -351,11 +351,11 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[yek](https://github.com/bodo-run/yek)** - Fast repository to LLM-friendly text converter (230x faster than alternatives, written in Rust)
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
-- **[context](context/context)** - Python script for extracting terminal history from asciinema recordings
+- **[context](scripts/context)** - Python script for extracting terminal history from asciinema recordings
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 - **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
 - **[onnx-asr](https://github.com/istupakov/onnx-asr)** - Speech-to-text transcription using NVIDIA Parakeet TDT (25 European languages, auto-punctuation)
-- **[llm-assistant](integration/llm-assistant)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
+- **[llm-assistant](llm-assistant/llm-assistant)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
 
 ### Shell Integration
 
@@ -385,8 +385,8 @@ llm prompt --help
 llm chat --help
 
 # View your assistant template configuration
-xdg-open ~/.config/io.datasette.llm/templates/assistant.yaml  # Linux
-open ~/.config/io.datasette.llm/templates/assistant.yaml  # macOS
+xdg-open ~/.config/io.datasette.llm/templates/llm.yaml  # Linux
+open ~/.config/io.datasette.llm/templates/llm.yaml  # macOS
 
 # View installed plugins
 llm plugins
@@ -394,7 +394,7 @@ llm plugins
 
 ### Basic Prompts
 
-**💡 Important**: All `llm` and `llm chat` commands automatically use the **[assistant template](llm-template/assistant.yaml)** by default. You don't need to specify `-t assistant`!
+**💡 Important**: All `llm` and `llm chat` commands automatically use the **[assistant template](llm-templates/llm.yaml)** by default. You don't need to specify `-t llm`!
 
 The assistant template is configured for security/IT expertise - perfect for cybersecurity and Linux tasks.
 
@@ -735,7 +735,7 @@ Templates are pre-configured prompt patterns that you can reuse. This setup incl
 
 ```bash
 # ❌ Don't do this (assistant is already default)
-# llm -t assistant "Your question here"
+# llm -t llm "Your question here"
 
 # ✅ Just use llm directly for the default assistant template
 llm "Your question here"
@@ -1000,7 +1000,7 @@ llm -c "Follow-up question"
 
 ### Code Generation
 
-Generate clean, executable code without markdown formatting using the `llm code` command (a convenient shorthand for `llm -t code`).
+Generate clean, executable code without markdown formatting using the `llm code` command (a convenient shorthand for `llm -t llm-code`).
 
 The `code` template outputs **pure code without explanations or markdown blocks**, making it perfect for piping to files or direct execution. It infers the scripting/programming language from context, but it is better explicitly state it.
 
@@ -1785,7 +1785,7 @@ Options:
 
 Examples:
   llm write a bash function to list files
-  llm -t code implement binary search in python
+  llm -t llm-code implement binary search in python
   llm --system "you are a python expert" optimize this loop
   llm fix the syntax error in this code
 ```
@@ -1830,7 +1830,7 @@ llm write a function to calculate fibonacci
 llm add error handling to this function
 
 # Use specific template
-llm -t code implement quicksort in python
+llm -t llm-code implement quicksort in python
 
 # Custom system prompt
 llm -s "you are a security expert" review this code for vulnerabilities
@@ -1838,7 +1838,7 @@ llm -s "you are a security expert" review this code for vulnerabilities
 
 **Tips**:
 - Set `llm.default_template` to your most-used template for faster workflow
-- Use `-t code` template for clean, executable code without explanations
+- Use `-t llm-code` template for clean, executable code without explanations
 - Adjust `llm.context_lines` based on your needs (more context = better understanding, but slower)
 - View plugin logs: Press `Ctrl+E`, type `log` to see debug output
 
@@ -2134,7 +2134,7 @@ llm -m gemini-2.5-flash "test prompt"
 
 ## Understanding the Shell Integration
 
-The installation adds a **smart wrapper function** around the `llm` command that automatically applies templates based on context. This means you rarely need to specify `-t assistant` explicitly!
+The installation adds a **smart wrapper function** around the `llm` command that automatically applies templates based on context. This means you rarely need to specify `-t llm` explicitly!
 
 ### How Automatic Templates Work
 
@@ -2161,7 +2161,7 @@ If you need to execute the original `llm` command without the shell wrapper func
 command llm "Your question"
 
 # Useful for debugging or when you want exact control
-command llm -t assistant "Your question"  # You must specify -t explicitly
+command llm -t llm "Your question"  # You must specify -t explicitly
 ```
 
 **When to use `command llm`:**
@@ -2176,7 +2176,7 @@ command llm -t assistant "Your question"  # You must specify -t explicitly
 
 ```bash
 # ❌ Unnecessary (assistant is already default)
-llm -t assistant "What is Docker?"
+llm -t llm "What is Docker?"
 
 # ✅ Correct (just omit -t)
 llm "What is Docker?"
@@ -2188,7 +2188,7 @@ llm -t fabric:analyze_threat_report -a report.pdf
 
 ### Key Benefits
 
-**What does the assistant template do?** See the [assistant.yaml source](llm-template/assistant.yaml) - it configures the AI with:
+**What does the assistant template do?** See the [llm.yaml source](llm-templates/llm.yaml) - it configures the AI with:
 
 - Security/IT/Linux expertise (20 years experience)
 - Cybersecurity focus (ethical hacking, forensics, incident response)
@@ -2378,8 +2378,8 @@ The script will reconfigure the selected provider.
 
 - `~/.config/io.datasette.llm/` - LLM configuration directory
   - `extra-openai-models.yaml` - Azure OpenAI model definitions
-  - `templates/assistant.yaml` - Custom [assistant template](llm-template/assistant.yaml) with security/IT expertise (cybersecurity focus)
-  - `templates/code.yaml` - [Code-only generation template](llm-template/code.yaml) (no markdown, no explanations)
+  - `templates/llm.yaml` - Custom [assistant template](llm-templates/llm.yaml) with security/IT expertise (cybersecurity focus)
+  - `templates/llm-code.yaml` - [Code-only generation template](llm-templates/llm-code.yaml) (no markdown, no explanations)
   - `default_model.txt` - Currently selected default model
   - API keys stored securely via llm's key management
 
@@ -2658,9 +2658,9 @@ To modify or extend this installation, see [CLAUDE.md](CLAUDE.md) for detailed a
 
 - [`install-llm-tools.sh`](install-llm-tools.sh) - Main installation script (7 phases, self-updating)
 - [`integration/llm-common.sh`](integration/llm-common.sh) - Shell wrapper function, auto-recording
-- [`context/context`](context/context) - Terminal history extraction script
+- [`scripts/context`](scripts/context) - Terminal history extraction script
 - [`llm-tools-context/`](llm-tools-context/) - LLM plugin for context tool
-- [`llm-template/`](llm-template/) - Custom template sources
+- [`llm-templates/`](llm-templates/) - Custom template sources
 
 **Development workflow:**
 

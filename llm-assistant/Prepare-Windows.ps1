@@ -17,7 +17,7 @@
     Run the preparation script with all prompts
 
 .EXAMPLE
-    Set-ExecutionPolicy Bypass -Scope Process -Force; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference='SilentlyContinue'; irm "https://raw.githubusercontent.com/c0ffee0wl/llm-linux-setup/main/integration/Prepare-Windows.ps1" | iex
+    Set-ExecutionPolicy Bypass -Scope Process -Force; [Net.ServicePointManager]::SecurityProtocol=[Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference='SilentlyContinue'; irm "https://raw.githubusercontent.com/c0ffee0wl/llm-linux-setup/main/llm-assistant/Prepare-Windows.ps1" | iex
     Run directly from GitHub (requires Administrator PowerShell)
 
 .NOTES

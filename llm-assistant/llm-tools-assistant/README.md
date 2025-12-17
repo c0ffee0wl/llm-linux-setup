@@ -24,13 +24,13 @@ These are "stub" tools - they return structured JSON to indicate intent, but the
 ## Installation
 
 ```bash
-llm install /path/to/llm-tools-assistant
+llm install /path/to/llm-assistant/llm-tools-assistant
 ```
 
 Or install in development mode:
 
 ```bash
-llm install -e /path/to/llm-tools-assistant
+llm install -e /path/to/llm-assistant/llm-tools-assistant
 ```
 
 ## Usage

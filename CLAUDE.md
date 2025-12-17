@@ -35,7 +35,7 @@ The repository includes an **automatic session recording and context extraction 
    - Creates timestamp-based filenames
    - Exports `$SESSION_LOG_FILE` for the context tool to locate the current recording
 
-2. **Context Extraction** (`context/context`): Python script that parses asciinema recordings
+2. **Context Extraction** (`scripts/context`): Python script that parses asciinema recordings
    - Finds current session's `.cast` file via `$SESSION_LOG_FILE` or most recent file in log directory
    - Converts binary `.cast` format to text using `asciinema convert`
    - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.), handles Kali two-line prompts
@@ -43,7 +43,7 @@ The repository includes an **automatic session recording and context extraction 
    - Filters out previous `context` command outputs (lines starting with `#c#`) to avoid recursion
    - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
 
-3. **Prompt Detection Module** (`context/prompt_detection.py`): Shared Python module
+3. **Prompt Detection Module** (`shared/prompt_detection.py`): Shared Python module
    - PromptDetector class used by both context tool and llm-assistant
    - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
    - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
@@ -109,10 +109,10 @@ The shell integration uses a **three-file pattern** located in the `integration/
 
 **LLM Wrapper Function** (`integration/llm-common.sh`):
 - Automatically applies templates to prompt commands (chat, code, default prompts)
-- **`llm chat`** → adds `-t assistant` unless user specifies `-t`, `-s`, `-c`, or `--cid`
-- **`llm code`** → always adds `-t code` (outputs clean executable code without markdown)
+- **`llm chat`** → adds `-t llm` unless user specifies `-t`, `-s`, `-c`, or `--cid`
+- **`llm code`** → always adds `-t llm-code` (outputs clean executable code without markdown)
 - **`llm rag`** → subcommand provided by llm-tools-rag plugin for RAG functionality
-- **Default prompts** → adds `-t assistant` unless user specifies template/system prompt/continuation
+- **Default prompts** → adds `-t llm` unless user specifies template/system prompt/continuation
 - **Excluded subcommands** (no template): models, keys, plugins, templates, tools, schemas, fragments, collections, embed, rag, etc.
 - When modifying wrapper logic, update the `exclude_commands` array, `should_skip_template()`, and `has_google_search()` functions
 
@@ -151,7 +151,7 @@ The shell integration uses a **three-file pattern** located in the `integration/
 **`wut` Function** (`integration/llm-common.sh`):
 - Explains the output of the last command using the context tool
 - Usage: `wut` (no arguments needed)
-- Uses `-t wut` template for structured explanations
+- Uses `-t llm-wut` template for structured explanations
 - Captures terminal context and sends to LLM for analysis
 
 **When adding new shell features**:
@@ -168,7 +168,7 @@ The script is organized into numbered phases:
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
 2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml` (chat) and `azure/config.yaml` (embeddings), install pymupdf_layout for enhanced PDF processing
 3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (llm-uv-tool intercepts for persistence; includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
-4. **LLM Templates**: Install/update custom templates from `llm-template/` directory to `~/.config/io.datasette.llm/templates/`
+4. **LLM Templates**: Install/update custom templates from `llm-templates/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), argc (cargo), context script
 7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
@@ -225,7 +225,7 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Stores checksums in `~/.config/llm-tools/template-checksums`
   - Auto-updates if user hasn't modified the file (installed checksum = stored checksum)
   - Prompts user if local modifications detected (installed checksum ≠ stored checksum)
-  - Used in Phase 4 for assistant.yaml and code.yaml templates
+  - Used in Phase 4 for llm.yaml and llm-code.yaml templates
 - **`install_or_upgrade_cargo_tool(tool_name)`**: Install/upgrade cargo tools from crates.io (used in Phase 6)
   - Checks if installed, provides feedback, runs `cargo install`
   - Used for argc (crates.io packages only)
@@ -493,7 +493,7 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 
 ### Terminator Assistant Integration
 
-See [`integration/CLAUDE.md`](integration/CLAUDE.md) for comprehensive documentation on the llm-assistant terminal assistant, including architecture, components, usage, and troubleshooting.
+See [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md) for comprehensive documentation on the llm-assistant terminal assistant, including architecture, components, usage, and troubleshooting.
 
 ### Speech-to-Text Transcription
 
@@ -551,11 +551,11 @@ languages), consider using the standalone whisper-ctranslate2 tool: `uv tool ins
 - **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias, code subcommand handler
 - **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion) and tab completion setup
 - **`integration/llm-zsh-plugin/`**: Fork of llm-zsh-plugin with custom extensions for `code` and `rag` subcommands
-- **`context/context`**: Python script for extracting terminal history from asciinema recordings
+- **`scripts/context`**: Python script for extracting terminal history from asciinema recordings
 - **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
-- **`llm-template/assistant.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
-- **`llm-template/code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
-- **`llm-template/wut.yaml`**: Template for explaining terminal command output (used by `wut` function)
+- **`llm-templates/llm.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
+- **`llm-templates/llm-code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
+- **`llm-templates/llm-wut.yaml`**: Template for explaining terminal command output (used by `wut` function)
 - **`scripts/transcribe`**: Speech-to-text Python script using onnx-asr with Parakeet TDT model
 - **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
@@ -748,7 +748,7 @@ When adding new functionality to `install-llm-tools.sh`:
 4. **Test with syntax check**: `bash -n install-llm-tools.sh`
 5. **Preserve self-update logic**: Never move or remove Phase 0
 
-**Adding new templates**: Simply add a new YAML file to `llm-template/` and add one line to Phase 4: `update_template_file "newtemplate"`
+**Adding new templates**: Simply add a new YAML file to `llm-templates/` and add one line to Phase 4: `update_template_file "newtemplate"`
 
 ### Modifying Shell Integration
 
@@ -874,14 +874,14 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 ### Configuration Files
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI chat model definitions
 - `~/.config/io.datasette.llm/azure/config.yaml` - Azure OpenAI embedding model definitions (llm-azure plugin)
-- `~/.config/io.datasette.llm/templates/{assistant,code,terminator-assistant}.yaml` - Custom LLM templates
+- `~/.config/io.datasette.llm/templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-finding}.yaml` - Custom LLM templates
 - `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
 - `~/.claude-code-router/config.json` - Claude Code Router dual-provider configuration (auto-generated with checksum tracking)
 - `~/.claude-code-router/plugins/strip-reasoning.js` - CCR transformer plugin for reasoning token handling
 - `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
-- `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
+- `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
@@ -893,11 +893,12 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
 - `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
-- `integration/llm-assistant`, `integration/terminator-assistant-plugin/` - Assistant components (see [`integration/CLAUDE.md`](integration/CLAUDE.md))
-- `context/context` - Python script for extracting terminal history from recordings
+- `llm-assistant/` - Assistant components: llm-assistant, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
+- `shared/` - Common Python modules: prompt_detection.py, system_info.py
+- `scripts/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)
-- `llm-template/{assistant,code,terminator-assistant}.yaml` - Template sources installed to user config
+- `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-finding}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
 

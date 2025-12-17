@@ -721,7 +721,7 @@ set_or_migrate_default_model() {
 # Update template file with smart checksum-based update logic
 update_template_file() {
     local template_name="$1"
-    local source_file="$SCRIPT_DIR/llm-template/${template_name}.yaml"
+    local source_file="$SCRIPT_DIR/llm-templates/${template_name}.yaml"
     local dest_file="$TEMPLATES_DIR/${template_name}.yaml"
 
     if [ ! -f "$source_file" ]; then
@@ -1588,6 +1588,10 @@ cleanup_stale_local_plugin_paths
 # Must clean BEFORE any llm operations - invalid local paths cause failures
 remove_plugin_from_tracking "llm-tools-sidechat"
 
+# Remove llm-tools-assistant from tracking (path changed: llm-tools-assistant/ -> llm-assistant/llm-tools-assistant/)
+# Will be reinstalled from new location in Phase 3
+remove_plugin_from_tracking "llm-tools-assistant"
+
 # Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
 remove_plugin_from_tracking "llm-azure"
 
@@ -1902,16 +1906,17 @@ TEMPLATES_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>
 mkdir -p "$TEMPLATES_DIR"
 
 # Copy templates from repository (with smart update check)
-update_template_file "assistant"
-update_template_file "code"
-update_template_file "wut"
-update_template_file "assistant-finding"
+update_template_file "llm"
+update_template_file "llm-code"
+update_template_file "llm-wut"
+update_template_file "llm-assistant-finding"
 
 # Conditionally install Terminator assistant template
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    update_template_file "terminator-assistant"
-    # Remove old template if it exists
+    update_template_file "llm-assistant"
+    # Remove old templates if they exist
     rm -f "$TEMPLATES_DIR/terminator-sidechat.yaml"
+    rm -f "$TEMPLATES_DIR/terminator-assistant.yaml"
 fi
 
 #############################################################################
@@ -1977,19 +1982,19 @@ update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh
 # Install context script
 log "Installing context script..."
 mkdir -p "$HOME/.local/bin"
-cp "$SCRIPT_DIR/context/context" "$HOME/.local/bin/context"
+cp "$SCRIPT_DIR/scripts/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
 # Install shared Python module for prompt detection (PEP 420 namespace package)
 log "Installing shared prompt detection module..."
 PYTHON_USER_SITE=$(python3 -m site --user-site)
 mkdir -p "$PYTHON_USER_SITE/llm_tools"
-cp "$SCRIPT_DIR/context/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
+cp "$SCRIPT_DIR/shared/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
 # Install Terminator assistant components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     PLUGINS=(
-        "$SCRIPT_DIR/llm-tools-assistant"
+        "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
         "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
         "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
     )
@@ -2006,16 +2011,16 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
 
     # Install Terminator assistant plugin
     mkdir -p "$HOME/.config/terminator/plugins"
-    cp "$SCRIPT_DIR/integration/terminator-assistant-plugin/terminator_assistant.py" \
+    cp "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
        "$HOME/.config/terminator/plugins/terminator_assistant.py"
     log "Terminator assistant plugin installed"
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 
     # Install llm-assistant application and its dependencies
-    cp "$SCRIPT_DIR/integration/llm-assistant" "$HOME/.local/bin/llm-assistant"
+    cp "$SCRIPT_DIR/llm-assistant/llm-assistant" "$HOME/.local/bin/llm-assistant"
     chmod +x "$HOME/.local/bin/llm-assistant"
-    cp "$SCRIPT_DIR/integration/system_info.py" "$HOME/.local/bin/system_info.py"
-    cp "$SCRIPT_DIR/context/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
+    cp "$SCRIPT_DIR/shared/system_info.py" "$HOME/.local/bin/system_info.py"
+    cp "$SCRIPT_DIR/shared/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
 
     # Preload the Parakeet speech model to avoid first-use delay
     # (onnx-asr is now installed via llm-tools-assistant pyproject.toml dependencies)

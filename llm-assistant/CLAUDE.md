@@ -32,7 +32,7 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
    - Tool-based command execution with structured output
    - Asyncio-based watch mode
 
-3. **Assistant Template** (`llm-template/terminator-assistant.yaml`):
+3. **Assistant Template** (`llm-templates/llm-assistant.yaml`):
    - System prompt optimized for Terminator environment
    - Instructs AI on tool usage for terminal interaction
    - Explains context awareness and watch mode
@@ -250,7 +250,7 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 
 ## AI Tool Interface
 
-The AI uses structured tool calling to interact with terminals. See the `terminator-assistant.yaml` template for full documentation:
+The AI uses structured tool calling to interact with terminals. See the `llm-assistant.yaml` template for full documentation:
 - `execute_in_terminal(command: str)` - Execute shell command in Exec terminal
 - `send_keypress(keypress: str)` - Send keypresses (for TUI apps like vim, htop)
 - `capture_terminal(scope: str)` - Screenshot capture ("exec" or "all")
@@ -275,7 +275,7 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 
 ## Installation
 
-- Template: `terminator-assistant.yaml` installed (Phase 4)
+- Template: `llm-assistant.yaml` installed (Phase 4)
 - Plugin: Copied to `~/.config/terminator/plugins/` (Phase 5)
 - Application: `llm-assistant` installed to `~/.local/bin/` (Phase 5)
 - Dependencies: PyGObject, dbus-python conditionally installed (Phase 1, only if Terminator detected)
@@ -425,15 +425,15 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 ## File Locations
 
 ### Repository Files
-- `integration/llm-assistant` - Standalone application
-- `integration/terminator-assistant-plugin/terminator_assistant.py` - Terminator plugin
-- `llm-template/terminator-assistant.yaml` - System prompt template
-- `llm-tools-assistant/` - LLM plugin for structured tool definitions
+- `llm-assistant/llm-assistant` - Standalone application
+- `llm-assistant/terminator-assistant-plugin/terminator_assistant.py` - Terminator plugin
+- `llm-templates/llm-assistant.yaml` - System prompt template
+- `llm-assistant/llm-tools-assistant/` - LLM plugin for structured tool definitions
 
 ### Installed Locations
 - `~/.local/bin/llm-assistant` - Application binary
 - `~/.config/terminator/plugins/terminator_assistant.py` - Plugin
-- `~/.config/io.datasette.llm/templates/terminator-assistant.yaml` - Template
+- `~/.config/io.datasette.llm/templates/llm-assistant.yaml` - Template
 
 ### Data Locations
 - `~/.config/io.datasette.llm/logs.db` - Conversation database (shared with llm CLI)

@@ -43,7 +43,7 @@ llm() {
                 model="gemini-2.5-flash"
             fi
             if [ -n "$model" ]; then
-                command llm chat -t assistant --cl 15 -m "$model" -o google_search 1 --md "$@"
+                command llm chat -t llm --cl 15 -m "$model" -o google_search 1 --md "$@"
                 return $?
             fi
         fi
@@ -112,14 +112,14 @@ llm() {
             command llm chat --cl 15 "$@"
         elif has_google_search "$@"; then
             # google_search incompatible with non-search tools: template only, no tools
-            command llm chat -t assistant --cl 15 "$@"
+            command llm chat -t llm --cl 15 "$@"
         else
             # Default: apply assistant template with default tools
-            command llm chat -t assistant --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
+            command llm chat -t llm --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
         fi
     elif [ "$1" = "code" ]; then
         shift
-        command llm -t code --cl 15 "$@"
+        command llm -t llm-code --cl 15 "$@"
     elif [ "$1" = "assistant" ]; then
         shift
         llm-assistant "$@"
@@ -131,9 +131,9 @@ llm() {
         if should_skip_template "$@"; then
             command llm --cl 15 "$@"
         elif has_google_search "$@"; then
-            command llm -t assistant --cl 15 "$@"
+            command llm -t llm --cl 15 "$@"
         else
-            command llm -t assistant --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
+            command llm -t llm --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
         fi
     fi
 }
@@ -149,10 +149,10 @@ wut() {
 
     # If no arguments provided, ask for explanation of last command
     if [ $# -eq 0 ]; then
-        command llm -t wut "Explain the output of my last command" --md
+        command llm -t llm-wut "Explain the output of my last command" --md
     else
         # Pass user's question to llm with context tool
-        command llm -t wut "$*" --md
+        command llm -t llm-wut "$*" --md
     fi
 }
 

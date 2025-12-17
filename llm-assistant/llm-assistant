@@ -1180,14 +1180,14 @@ class TerminatorAssistantSession:
 
         # Store system prompt separately for reuse
         try:
-            template = load_template("terminator-assistant")
+            template = load_template("llm-assistant")
             # Use system if available, otherwise use prompt
             self.system_prompt = template.system or template.prompt
             if not self.system_prompt:
                 raise ValueError("Template has no system or prompt field")
-            self._debug(f"Template loaded: terminator-assistant ({len(self.system_prompt)} chars)")
+            self._debug(f"Template loaded: llm-assistant ({len(self.system_prompt)} chars)")
         except Exception as e:
-            self.console.print(f"[yellow]⚠ Could not load terminator-assistant template: {e}[/]")
+            self.console.print(f"[yellow]⚠ Could not load llm-assistant template: {e}[/]")
             self.console.print("[yellow]Using basic system prompt. Install template with: ./install-llm-tools.sh[/]")
             self._debug(f"Template load failed: {e}")
             self.system_prompt = "You are an AI terminal assistant. Provide commands in <EXECUTE>command</EXECUTE> XML tags."
@@ -6423,7 +6423,7 @@ Instructions:
                 filtered_prompt = self._filter_mode_content(self.system_prompt)
                 prompt_len = len(filtered_prompt)
                 is_template = "terminal assistant" in self.system_prompt.lower()
-                system_status = f"System prompt: {'terminator-assistant' if is_template else 'fallback'} ({prompt_len:,} chars)"
+                system_status = f"System prompt: {'llm-assistant' if is_template else 'fallback'} ({prompt_len:,} chars)"
             else:
                 system_status = "System prompt: NOT LOADED"
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
@@ -6944,7 +6944,7 @@ language_name: {language_name}
 
         # Load the finding template with language interpolation
         try:
-            template = load_template("assistant-finding")
+            template = load_template("llm-assistant-finding")
             # Interpolate language into template - evaluate() returns (prompt, system)
             _, system_prompt = template.evaluate("", params={"language": language})
         except Exception as e:
