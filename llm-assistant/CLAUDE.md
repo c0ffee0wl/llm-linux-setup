@@ -36,6 +36,7 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
    - System prompt optimized for Terminator environment
    - Instructs AI on tool usage for terminal interaction
    - Explains context awareness and watch mode
+   - **Important**: Template loading uses explicit `template_dir() / "llm-assistant.yaml"` path to avoid conflict with the `llm-assistant/` directory in the repo (llm's `load_template()` checks cwd first)
 
 4. **Assistant Tools Plugin** (`llm-tools-assistant/`):
    - Provides structured tool definitions for terminal control
@@ -446,3 +447,4 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - **D-Bus errors**: Ensure D-Bus enabled in Terminator config
 - **No terminals captured**: Enable plugin in Terminator Preferences → Plugins
 - **Watch mode not working**: Check asyncio compatibility, ensure Python 3.8+
+- **Template loading fails**: The code uses explicit `template_dir() / "llm-assistant.yaml"` to avoid conflicts with directories named `llm-assistant` in cwd. If template not found, run `./install-llm-tools.sh` to install templates. Never use bare `load_template("llm-assistant")` as it conflicts with the repo's `llm-assistant/` directory.

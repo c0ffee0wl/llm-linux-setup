@@ -211,7 +211,7 @@ SLASH_COMMANDS = {
     "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
     "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
     "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
-    "/web": {"subcommands": ["stop"], "dynamic": None, "description": "Open web companion"},
+    "/web": {"subcommands": ["stop", "off"], "dynamic": None, "description": "Open web companion"},
     "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
     "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
     "/finding": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
@@ -1179,18 +1179,21 @@ class TerminatorAssistantSession:
         self._init_conversation()
 
         # Store system prompt separately for reuse
+        # Use explicit path to avoid conflict with llm-assistant/ directory in cwd
+        from llm.cli import template_dir
+        template_path = template_dir() / "llm-assistant.yaml"
         try:
-            template = load_template("llm-assistant")
+            template = load_template(str(template_path))
             # Use system if available, otherwise use prompt
             self.system_prompt = template.system or template.prompt
             if not self.system_prompt:
                 raise ValueError("Template has no system or prompt field")
             self._debug(f"Template loaded: llm-assistant ({len(self.system_prompt)} chars)")
         except Exception as e:
-            self.console.print(f"[yellow]⚠ Could not load llm-assistant template: {e}[/]")
-            self.console.print("[yellow]Using basic system prompt. Install template with: ./install-llm-tools.sh[/]")
-            self._debug(f"Template load failed: {e}")
-            self.system_prompt = "You are an AI terminal assistant. Provide commands in <EXECUTE>command</EXECUTE> XML tags."
+            self.console.print(f"[red]✗ Could not load llm-assistant template: {e}[/]")
+            self.console.print(f"[red]Expected at: {template_path}[/]")
+            self.console.print("[red]Install template with: ./install-llm-tools.sh[/]")
+            raise SystemExit(1)
 
         # Store original system prompt for context squashing
         # This prevents infinite growth when squashing multiple times
@@ -2941,21 +2944,28 @@ class TerminatorAssistantSession:
             </div>`;
 
             // System Prompt section (expanded by default)
+            const sysPromptChars = data.system_prompt ? data.system_prompt.length : 0;
+            const sysPromptTokens = Math.ceil(sysPromptChars / 4);
             html += `<div class="debug-section expanded">
                 <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
                     <span class="debug-section-title">System Prompt</span>
+                    <span class="token-info">${sysPromptChars} chars, ~${sysPromptTokens} tokens</span>
                     <span class="debug-section-expand">▶</span>
                 </div>
                 <div class="debug-section-body">
-                    <pre><code>${escapeHtml(data.system_prompt)}</code></pre>
+                    <pre><code>${escapeHtml(data.system_prompt || '')}</code></pre>
                 </div>
             </div>`;
 
             // Tools section (collapsed by default)
             if (data.tools && data.tools.length > 0) {
+                const toolsJson = JSON.stringify(data.tools);
+                const toolsChars = toolsJson.length;
+                const toolsTokens = Math.ceil(toolsChars / 4);
                 html += `<div class="debug-section">
                     <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
                         <span class="debug-section-title">Tools (${data.tools.length})</span>
+                        <span class="token-info">${toolsChars} chars, ~${toolsTokens} tokens</span>
                         <span class="debug-section-expand">▶</span>
                     </div>
                     <div class="debug-section-body">`;
@@ -2986,8 +2996,10 @@ class TerminatorAssistantSession:
                     const contextBadge = msg.has_context ? '<span class="context-badge">has context</span>' : '';
                     const attachBadge = (msg.attachments && msg.attachments.length > 0)
                         ? `<span class="attachment-badge">📎 ${msg.attachments.length}</span>` : '';
+                    const contentChars = msg.content ? msg.content.length : 0;
                     const tokenInfo = (msg.input_tokens || msg.output_tokens)
-                        ? `<span class="token-info">${msg.input_tokens || 0}→${msg.output_tokens || 0}</span>` : '';
+                        ? `<span class="token-info">${contentChars} chars | ${msg.input_tokens || 0}→${msg.output_tokens || 0} tokens</span>`
+                        : `<span class="token-info">${contentChars} chars, ~${Math.ceil(contentChars / 4)} tokens</span>`;
                     // Build attachments detail if present
                     let attachmentsHtml = '';
                     if (msg.attachments && msg.attachments.length > 0) {
@@ -3004,7 +3016,7 @@ class TerminatorAssistantSession:
                     }
                     html += `<div class="debug-msg user">
                         <div class="debug-msg-role">user${contextBadge}${attachBadge}${tokenInfo}</div>
-                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content || '')}</div>
                         ${attachmentsHtml}
                     </div>`;
                 } else if (msg.role === 'assistant') {
@@ -3023,20 +3035,29 @@ class TerminatorAssistantSession:
                         </details>`;
                     }
                     const thinkingBadge = msg.thinking_traces && msg.thinking_traces.length > 0 ? ' <span class="thinking-badge">thinking</span>' : '';
+                    const assistantChars = msg.content ? msg.content.length : 0;
+                    const assistantTokensEst = Math.ceil(assistantChars / 4);
+                    const assistantTokenInfo = `<span class="token-info">${assistantChars} chars, ~${assistantTokensEst} tokens</span>`;
                     html += `<div class="debug-msg assistant">
-                        <div class="debug-msg-role">assistant${thinkingBadge}</div>
+                        <div class="debug-msg-role">assistant${thinkingBadge}${assistantTokenInfo}</div>
                         ${thinkingHtml}
-                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content || '')}</div>
                     </div>`;
                 } else if (msg.role === 'tool_call') {
+                    const argsStr = JSON.stringify(msg.arguments || {}, null, 2);
+                    const argsChars = argsStr.length;
+                    const argsTokens = Math.ceil(argsChars / 4);
                     html += `<div class="debug-msg tool">
-                        <div class="debug-msg-role">tool_call: ${escapeHtml(msg.tool_name)}</div>
-                        <div class="debug-msg-content">${escapeHtml(JSON.stringify(msg.arguments, null, 2))}</div>
+                        <div class="debug-msg-role">tool_call: ${escapeHtml(msg.tool_name)}<span class="token-info">${argsChars} chars, ~${argsTokens} tokens</span></div>
+                        <div class="debug-msg-content">${escapeHtml(argsStr)}</div>
                     </div>`;
                 } else if (msg.role === 'tool_result') {
+                    const resultContent = msg.content || '';
+                    const contentChars = resultContent.length;
+                    const contentTokens = Math.ceil(contentChars / 4);
                     html += `<div class="debug-msg tool-result">
-                        <div class="debug-msg-role">tool_result: ${escapeHtml(msg.tool_name)}</div>
-                        <div class="debug-msg-content">${escapeHtml(msg.content)}</div>
+                        <div class="debug-msg-role">tool_result: ${escapeHtml(msg.tool_name)}<span class="token-info">${contentChars} chars, ~${contentTokens} tokens</span></div>
+                        <div class="debug-msg-content">${escapeHtml(resultContent)}</div>
                     </div>`;
                 }
             });
@@ -6277,7 +6298,7 @@ Instructions:
             return True
 
         elif cmd == "/web":
-            if "stop" in args.lower():
+            if "stop" in args.lower() or "off" in args.lower():
                 self._stop_web_server()
                 return True
 
@@ -6938,18 +6959,16 @@ language_name: {language_name}
         Creates an isolated LLM call (not added to main conversation) that has
         access to terminal context and conversation history for better assessment.
         """
-        from llm.cli import load_template
+        from llm.cli import load_template, template_dir
 
         model = llm.get_model(self.model_name)
 
         # Load the finding template with language interpolation
-        try:
-            template = load_template("llm-assistant-finding")
-            # Interpolate language into template - evaluate() returns (prompt, system)
-            _, system_prompt = template.evaluate("", params={"language": language})
-        except Exception as e:
-            self._debug(f"Template load failed: {e}, using inline prompt")
-            system_prompt = f"You are a penetration testing expert. Analyze this security finding and provide a structured assessment using the OWASP Risk Matrix. Rate severity 1-9 based on likelihood and impact. Generate ALL output in {language}. Be specific and actionable in your remediation recommendations."
+        # Use explicit path to avoid potential directory conflicts
+        template_path = template_dir() / "llm-assistant-finding.yaml"
+        template = load_template(str(template_path))
+        # Interpolate language into template - evaluate() returns (prompt, system)
+        _, system_prompt = template.evaluate("", params={"language": language})
 
         # Build prompt with quick note
         prompt = f"Quick note from penetration tester: {quick_note}"
