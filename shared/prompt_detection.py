@@ -11,6 +11,12 @@ from typing import List, Tuple, Union
 class PromptDetector:
     """Detect shell prompts in terminal output"""
 
+    # Invisible Unicode markers for 100% reliable prompt detection in VTE terminals
+    # These zero-width characters survive VTE's get_text_range_format(Vte.Format.TEXT)
+    # Used by llm-assistant for local prompt detection (context tool uses regex-only)
+    PROMPT_START_MARKER = '\u200B\u200D\u200B'  # ZWS+ZWJ+ZWS - before PS1
+    INPUT_START_MARKER = '\u200D\u200B\u200D'   # ZWJ+ZWS+ZWJ - after PS1
+
     # Patterns to match shell prompts. More specific than just "ends with $"
     # to avoid false positives on output containing $ (like currency) or # (shell comments)
     PROMPT_PATTERNS = [
@@ -75,6 +81,8 @@ class PromptDetector:
         """Check if a single line matches a prompt pattern"""
         if not line.strip():
             return False
+        # Strip Unicode markers before regex matching - they break ^ anchored patterns
+        line = line.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
         # Check standard patterns (includes PowerShell)
         if any(p.search(line) for p in cls.PROMPT_PATTERNS):
             return True
@@ -84,35 +92,36 @@ class PromptDetector:
         return False
 
     @classmethod
-    def detect_prompt_at_end(cls, text: str, debug: bool = False) -> bool:
+    def has_unicode_markers(cls, text: str) -> bool:
+        """Check if text contains Unicode prompt markers (VTE terminals only)
+
+        Returns True only if INPUT_START_MARKER is present, since that's what
+        we use for marker-based detection. If only PROMPT_START is present
+        (edge case), we should fall through to pure regex instead.
         """
-        Check if text ends with an EMPTY shell prompt (ready for input).
+        return cls.INPUT_START_MARKER in text
 
-        Unlike is_prompt_line(), this does NOT match prompts with commands
-        after them. Used for completion detection to distinguish between:
-        - "$ command" (executing) - does NOT match
-        - "$ " (ready for input) - MATCHES
-
-        Args:
-            text: Terminal output text
-            debug: If True, print diagnostic info about pattern matching
-
-        Returns:
-            True if text ends with an empty prompt ready for input
+    @classmethod
+    def _detect_prompt_regex(cls, text: str, debug: bool = False) -> bool:
+        """
+        Internal: Check if text ends with an empty prompt using regex patterns.
+        This is the original detection logic, extracted for hybrid detection.
         """
         if not text or not text.strip():
             if debug:
-                print("[PromptDetector] Empty or whitespace-only text")
+                print("[PromptDetector] Empty or whitespace-only text (regex)")
             return False
+
+        # Strip Unicode markers before regex matching - they break ^ anchored patterns
+        # (e.g., Kali prompt ^[┌╭] won't match if line starts with invisible \u200B)
+        text = text.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
 
         lines = text.strip().split('\n')
         last = lines[-1]
 
         if debug:
-            print(f"[PromptDetector] Checking {len(lines)} lines")
+            print(f"[PromptDetector] Regex checking {len(lines)} lines")
             print(f"[PromptDetector] Last line: {last!r}")
-            if len(lines) >= 2:
-                print(f"[PromptDetector] Prev line: {lines[-2]!r}")
 
         # Check empty prompt patterns (ready for input, no command after)
         for i, p in enumerate(cls.EMPTY_PROMPT_PATTERNS):
@@ -133,8 +142,63 @@ class PromptDetector:
                 return True
 
         if debug:
-            print("[PromptDetector] No pattern matched")
+            print("[PromptDetector] No regex pattern matched")
         return False
+
+    @classmethod
+    def detect_prompt_at_end(cls, text: str, debug: bool = False) -> bool:
+        """
+        Check if text ends with an EMPTY shell prompt (ready for input).
+
+        Uses hybrid detection:
+        1. Priority 1: Unicode markers (100% reliable for VTE terminals)
+        2. Priority 2: Regex fallback (SSH sessions, non-VTE terminals)
+
+        Unlike is_prompt_line(), this does NOT match prompts with commands
+        after them. Used for completion detection to distinguish between:
+        - "$ command" (executing) - does NOT match
+        - "$ " (ready for input) - MATCHES
+
+        Args:
+            text: Terminal output text
+            debug: If True, print diagnostic info about pattern matching
+
+        Returns:
+            True if text ends with an empty prompt ready for input
+        """
+        if not text or not text.strip():
+            if debug:
+                print("[PromptDetector] Empty or whitespace-only text")
+            return False
+
+        # Priority 1: Unicode markers (100% reliable for VTE local prompts)
+        if cls.has_unicode_markers(text):
+            if debug:
+                print("[PromptDetector] Unicode markers detected, using marker-based detection")
+
+            # Find last INPUT_START_MARKER (marks where user types after prompt)
+            last_input_pos = text.rfind(cls.INPUT_START_MARKER)
+            if last_input_pos != -1:
+                # Check what comes after the marker
+                after = text[last_input_pos + len(cls.INPUT_START_MARKER):]
+                if debug:
+                    print(f"[PromptDetector] Text after INPUT_START_MARKER: {after!r}")
+
+                if not after.strip():
+                    if debug:
+                        print("[PromptDetector] Marker + nothing after = ready for input (100%)")
+                    return True  # Marker + nothing = ready for input (100% reliable)
+                else:
+                    # Text after marker - could be SSH session with remote prompt
+                    # Use regex to detect if the text after marker ends with a prompt
+                    if debug:
+                        print("[PromptDetector] Text after marker, checking with regex fallback")
+                    return cls._detect_prompt_regex(after, debug)
+
+        # Priority 2: Regex fallback (SSH sessions, non-VTE terminals, no markers)
+        if debug:
+            print("[PromptDetector] No Unicode markers, using regex fallback")
+        return cls._detect_prompt_regex(text, debug)
 
     @classmethod
     def find_all_prompts(cls, text_or_lines: Union[str, List[str]]) -> List[Tuple[int, str]]:
@@ -163,7 +227,9 @@ class PromptDetector:
         # Adjust for Kali two-line prompts (include header line)
         adjusted = []
         for line_num, line_content in prompt_lines:
-            if line_num > 0 and cls.KALI_HEADER.search(lines[line_num - 1]):
+            # Strip Unicode markers before KALI_HEADER check - they break ^ anchored patterns
+            prev_line = lines[line_num - 1].replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
+            if line_num > 0 and cls.KALI_HEADER.search(prev_line):
                 adjusted.append((line_num - 1, lines[line_num - 1]))
             else:
                 adjusted.append((line_num, line_content))

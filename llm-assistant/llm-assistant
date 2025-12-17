@@ -1117,10 +1117,60 @@ def is_tui_command(command: str) -> bool:
     return base_cmd in TUI_COMMANDS
 
 
+# Model-specific context limits (input tokens)
+# Based on provider documentation as of 2025-12
+MODEL_CONTEXT_LIMITS = {
+    # Azure OpenAI / OpenAI - GPT-4.1 series (1M context)
+    "gpt-4.1": 1000000,
+    "gpt-4.1-mini": 1000000,
+    "gpt-4.1-nano": 1000000,
+
+    # Azure OpenAI / OpenAI - GPT-4o series (128k context)
+    "gpt-4o": 128000,
+    "gpt-4o-mini": 128000,
+
+    # Azure OpenAI / OpenAI - GPT-5 series (272k context)
+    "gpt-5": 270000,
+    "gpt-5-mini": 270000,
+    "gpt-5-nano": 270000,
+    "gpt-5-chat": 110000,
+    "gpt-5.1": 270000,
+    "gpt-5.1-chat": 110000,
+    "gpt-5.1-codex": 270000,
+    "gpt-5.1-codex-mini": 270000,
+    "gpt-5.1-codex-max": 270000,
+    "gpt-5.2": 270000,
+    "gpt-5.2-chat": 110000,
+
+    # Azure OpenAI / OpenAI - Reasoning models (o-series)
+    "o1": 200000,
+    "o1-preview": 128000,
+    "o1-mini": 128000,
+    "o3": 200000,
+    "o3-mini": 200000,
+    "o3-pro": 200000,
+    "o4-mini": 200000,
+    "codex-mini": 200000,
+}
+
+# Default limits by provider prefix (fallback when model not in explicit list)
+# Gemini/Vertex models have 1M, Claude models have 200k
+PROVIDER_DEFAULT_LIMITS = {
+    "azure/": 200000,       # Conservative default for unknown Azure models
+    "vertex/": 1000000,     # Vertex models have 1M
+    "gemini-": 1000000,     # Gemini models have 1M
+    "claude-": 200000,      # Claude models have 200k (1M beta requires special header)
+    "openai/": 128000,      # Conservative for unknown OpenAI models
+}
+
+# Absolute fallback
+DEFAULT_CONTEXT_LIMIT = 200000
+
+
 class TerminatorAssistantSession:
     """Main assistant session manager for Terminator"""
 
-    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: int = 800000,
+    def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: Optional[int] = None,
                  continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False,
                  agent_mode: bool = False):
         self.console = Console()
@@ -1204,7 +1254,12 @@ class TerminatorAssistantSession:
         self.exec_terminal_uuid = None
 
         # Context management (like tmuxai)
-        self.max_context_size = max_context_size  # from CLI --max-context
+        # Resolve context limit: CLI override > model-specific > default
+        if max_context_size is not None:
+            self.max_context_size = max_context_size
+        else:
+            self.max_context_size = self._get_model_context_limit(self.model_name)
+        self._debug(f"Context limit for {self.model_name}: {self.max_context_size:,} tokens")
         self.context_squash_threshold = 0.8  # 80%
 
         # Capture size limits (prevent memory exhaustion)
@@ -1761,6 +1816,32 @@ class TerminatorAssistantSession:
     def _is_gemini_model(self) -> bool:
         """Check if current model is a Gemini model (vertex/* or gemini-*)"""
         return self.model_name.startswith("vertex/") or self.model_name.startswith("gemini-")
+
+    def _get_model_context_limit(self, model_name: str) -> int:
+        """
+        Get the appropriate context limit for a model.
+
+        Resolution order:
+        1. Explicit model name in MODEL_CONTEXT_LIMITS (with azure/ prefix stripped)
+        2. Provider prefix default from PROVIDER_DEFAULT_LIMITS
+        3. DEFAULT_CONTEXT_LIMIT fallback
+        """
+        # Strip azure/ prefix for lookup (azure/gpt-4.1 -> gpt-4.1)
+        lookup_name = model_name
+        if model_name.startswith("azure/"):
+            lookup_name = model_name[6:]  # Remove "azure/"
+
+        # Check explicit model limit
+        if lookup_name in MODEL_CONTEXT_LIMITS:
+            return MODEL_CONTEXT_LIMITS[lookup_name]
+
+        # Check provider prefix defaults
+        for prefix, limit in PROVIDER_DEFAULT_LIMITS.items():
+            if model_name.startswith(prefix):
+                return limit
+
+        # Absolute fallback
+        return DEFAULT_CONTEXT_LIMIT
 
     def _debug(self, msg: str):
         """Print debug message if debug mode is enabled"""
@@ -4973,6 +5054,28 @@ Shell: {env_type} {shell_info}
             # Find prompt lines to identify command boundaries
             prompts = PromptDetector.find_all_prompts(content)
 
+            # Filter out false positives: in VTE terminals with Unicode markers,
+            # only prompts containing INPUT_START_MARKER are real shell prompts.
+            # Command output (like README content) won't have markers.
+            # Note: For Kali two-line prompts, find_all_prompts returns the header line,
+            # but INPUT_START_MARKER is on the next line, so check line and line+1.
+            # DON'T check line-1: that would find markers from PREVIOUS commands.
+            if PromptDetector.has_unicode_markers(content):
+                lines = content.split('\n')
+                real_prompts = []
+                for line_num, line_content in prompts:
+                    # Check this line and next line for marker (handles Kali header → prompt)
+                    has_marker = False
+                    for offset in [0, 1]:  # Check line and line+1 only
+                        check_line = line_num + offset
+                        if 0 <= check_line < len(lines):
+                            if PromptDetector.INPUT_START_MARKER in lines[check_line]:
+                                has_marker = True
+                                break
+                    if has_marker:
+                        real_prompts.append((line_num, line_content))
+                prompts = real_prompts
+
             # Check if we should return or continue expanding:
             # - Need N+1 prompts for N commands (e.g., 4 prompts for 3 commands)
             # - OR we've reached start of scrollback (can't get more history)
@@ -5005,6 +5108,24 @@ Shell: {env_type} {shell_info}
         fallback_start = max(0, cursor_row - MAX_LINES)
         content = self.plugin_dbus.capture_from_row(terminal_uuid, fallback_start)
         prompts = PromptDetector.find_all_prompts(content)
+
+        # Filter out false positives using Unicode markers (same as main loop)
+        if PromptDetector.has_unicode_markers(content):
+            lines_list = content.split('\n')
+            real_prompts = []
+            for line_num, line_content in prompts:
+                # Check this line and next line for marker (handles Kali header → prompt)
+                has_marker = False
+                for offset in [0, 1]:  # Don't check -1: would find previous command's marker
+                    check_line = line_num + offset
+                    if 0 <= check_line < len(lines_list):
+                        if PromptDetector.INPUT_START_MARKER in lines_list[check_line]:
+                            has_marker = True
+                            break
+                if has_marker:
+                    real_prompts.append((line_num, line_content))
+            prompts = real_prompts
+
         if len(prompts) >= 2:
             # Extract last N commands (same logic as main loop)
             start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
@@ -8424,8 +8545,8 @@ def main():
     parser.add_argument(
         '--max-context',
         type=int,
-        default=800000,
-        help='Max context tokens before auto-squash (default: 800000)'
+        default=None,
+        help='Max context tokens before auto-squash (default: auto-detected from model)'
     )
     # Conversation persistence flags (llm-compatible)
     parser.add_argument(

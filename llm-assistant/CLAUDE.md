@@ -64,8 +64,10 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
 
 ## Context Management
 
-- **Auto-squashing**: Compresses conversation at 80% of 800k token limit (640k threshold)
+- **Model-specific limits**: Context limit auto-detected from model (e.g., GPT-4.1: 1M, GPT-4o: 128k, Claude: 200k, Gemini: 1M)
+- **Auto-squashing**: Compresses conversation at 80% of context limit
 - **Manual squashing**: `/squash` command
+- **CLI override**: Use `--max-context TOKENS` to override auto-detection
 - **Token estimation**: Uses API's actual token counts from last response (accurate); falls back to char-based estimation (4 chars = 1 token) if unavailable
 - **Preserves recent context**: Keeps system prompt + last 5 messages + summary
 
@@ -373,7 +375,7 @@ Conversation persistence (llm-compatible):
 
 Other options:
 - `--debug` - Enable debug output for troubleshooting
-- `--max-context TOKENS` - Max context tokens before auto-squash (default: 800000)
+- `--max-context TOKENS` - Max context tokens before auto-squash (default: auto-detected from model)
 - `--agent` - Start in agent mode (agentic, 100 tool iterations)
 
 Examples:

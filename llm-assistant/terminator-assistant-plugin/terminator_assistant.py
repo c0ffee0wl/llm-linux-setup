@@ -869,6 +869,13 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                                 del self.tui_cache_time[terminal_uuid]
                         return False  # Don't re-cache result - let next call rebuild
 
+                    # Second check: If Unicode markers present but no prompt, command is running
+                    # TUI apps use alternate screen buffer which is FRESH (no markers)
+                    # Running commands stay in main buffer which HAS markers from the prompt
+                    if PromptDetector.has_unicode_markers(content):
+                        dbg(f'TUI detection for {terminal_uuid}: markers present, no prompt = running command, not TUI')
+                        return False
+
             # Fallback: vadjustment heuristic for alternate screen detection
             vadj = vte.get_vadjustment()
             if not vadj:

@@ -45,8 +45,16 @@ The repository includes an **automatic session recording and context extraction 
 
 3. **Prompt Detection Module** (`shared/prompt_detection.py`): Shared Python module
    - PromptDetector class used by both context tool and llm-assistant
-   - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
-   - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
+   - **Hybrid detection** for llm-assistant:
+     - **Priority 1**: Unicode markers (100% reliable in VTE terminals)
+     - **Priority 2**: Regex fallback (SSH sessions, non-VTE terminals)
+   - **Unicode markers** (`\u200B\u200D\u200B` and `\u200D\u200B\u200D`):
+     - Invisible zero-width characters injected into PS1/PROMPT
+     - Only in VTE terminals (Terminator, GNOME Terminal, Tilix)
+     - Survives VTE's `get_text_range_format(Vte.Format.TEXT)`
+   - **Regex patterns** for fallback:
+     - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
+     - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
    - Installed to Python user site-packages (`python3 -m site --user-site`)/llm_tools/ in Phase 5
 
 4. **LLM Integration** (`llm-tools-context/`): LLM plugin exposing context as a tool
@@ -134,6 +142,17 @@ The shell integration uses a **three-file pattern** located in the `integration/
 | `llm -o google_search 1 "prompt"` | assistant | (none) |
 | `llm chat -t custom` | custom | (none) |
 | `llm chat -s "system"` | (none) | (none) |
+
+**VTE Unicode Marker Injection** (`integration/llm-common.sh`):
+- Injects invisible Unicode markers into shell prompts for 100% reliable detection
+- **VTE-only**: Only injected when `$VTE_VERSION` is set (Terminator, GNOME Terminal, Tilix)
+- **Why VTE-only**: Kitty and Windows Terminal render zero-width chars as visible spaces
+- **Markers**:
+  - `PROMPT_START_MARKER` (`\u200B\u200D\u200B`): Before PS1 content
+  - `INPUT_START_MARKER` (`\u200D\u200B\u200D`): After PS1, where user types
+- **Injection mechanism**: Uses `PROMPT_COMMAND` (Bash) or `precmd_functions` (Zsh)
+- **Prompt framework compatibility**: Appends to run LAST, after Starship/Powerlevel10k
+- **Detection**: `PromptDetector.has_unicode_markers()` and `detect_prompt_at_end()` use hybrid detection
 
 **Command Completion (Ctrl+N)**:
 - Uses `llm cmdcomp` command from **llm-cmd-comp** plugin (git: `c0ffee0wl/llm-cmd-comp`)

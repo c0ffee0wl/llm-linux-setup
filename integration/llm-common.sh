@@ -176,6 +176,37 @@ if [ -n "$VTE_VERSION" ]; then
   done
 fi
 
+# Invisible Unicode markers for 100% reliable prompt detection in VTE terminals
+# ONLY inject in VTE terminals (Terminator, GNOME Terminal, Tilix, etc.)
+# Other terminals (Kitty, Windows Terminal) render zero-width chars as visible spaces
+# These markers are detected by llm-assistant via PromptDetector.has_unicode_markers()
+if [ -n "$VTE_VERSION" ]; then
+    # \u200B = Zero Width Space, \u200D = Zero Width Joiner
+    _PROMPT_START_MARKER=$'\u200B\u200D\u200B'  # Before PS1
+    _INPUT_START_MARKER=$'\u200D\u200B\u200D'   # After PS1
+
+    # Use PROMPT_COMMAND/precmd to add markers DYNAMICALLY
+    # CRITICAL: Must APPEND to run LAST (after Starship/Powerlevel10k modify PS1)
+    if [ -n "${BASH_VERSION:-}" ]; then
+        __add_prompt_markers() {
+            # Idempotency: only add if not already present
+            if [[ "$PS1" != *$'\u200B\u200D\u200B'* ]]; then
+                PS1="${_PROMPT_START_MARKER}${PS1}${_INPUT_START_MARKER}"
+            fi
+        }
+        # APPEND to run LAST (after Starship/Powerlevel10k)
+        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__add_prompt_markers"
+    elif [ -n "${ZSH_VERSION:-}" ]; then
+        __add_prompt_markers() {
+            if [[ "$PROMPT" != *$'\u200B\u200D\u200B'* ]]; then
+                PROMPT="${_PROMPT_START_MARKER}${PROMPT}${_INPUT_START_MARKER}"
+            fi
+        }
+        # APPEND to run LAST in precmd_functions array
+        precmd_functions=($precmd_functions __add_prompt_markers)
+    fi
+fi
+
 # -- Automatic asciinema session recording --
 if command -v asciinema &> /dev/null; then
   # Only run if this is an interactive shell and we're not already in asciinema
