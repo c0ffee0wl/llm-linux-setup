@@ -980,58 +980,25 @@ cleanup_stale_local_plugin_paths() {
             fi
         done < "$uv_receipt_file"
 
-        # Pass 2: Remove entire TOML blocks for stale plugins
-        # Each [[tool.requirements]] block spans from header to next header (or EOF)
+        # Pass 2: Remove lines containing stale plugin names
+        # Handles both inline tables { name = "..." } and multi-line entries
         if [ ${#stale_plugins[@]} -gt 0 ]; then
             local temp_file="${uv_receipt_file}.tmp"
-            local current_block=""
-            local current_block_name=""
-            local skip_current_block=false
 
-            {
-                while IFS= read -r line || [ -n "$line" ]; do
-                    # Check if new block starts
-                    if [[ "$line" =~ ^\[\[tool\.requirements\]\] ]]; then
-                        # Output previous block if not stale
-                        if [ -n "$current_block" ] && [ "$skip_current_block" = false ]; then
-                            printf '%s\n' "$current_block"
-                        fi
-                        # Start new block
-                        current_block="$line"
-                        current_block_name=""
-                        skip_current_block=false
-                    elif [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-                        # Only process as block content if we're inside a [[tool.requirements]] block
-                        if [ -n "$current_block" ]; then
-                            current_block_name="${BASH_REMATCH[1]}"
-                            current_block="$current_block"$'\n'"$line"
-                            # Check if this plugin is stale
-                            for plugin in "${stale_plugins[@]}"; do
-                                if [ "$current_block_name" = "$plugin" ]; then
-                                    log "Removing TOML block for stale plugin: $plugin" >&2
-                                    skip_current_block=true
-                                    break
-                                fi
-                            done
-                        else
-                            # name = ... line before any [[tool.requirements]] block (e.g., [tool] section)
-                            printf '%s\n' "$line"
-                        fi
-                    else
-                        # Append line to current block, or output directly if before first block
-                        if [ -n "$current_block" ]; then
-                            current_block="$current_block"$'\n'"$line"
-                        else
-                            printf '%s\n' "$line"
-                        fi
+            while IFS= read -r line || [ -n "$line" ]; do
+                local skip_line=false
+                for plugin in "${stale_plugins[@]}"; do
+                    # Match: name = "plugin-name" (with optional surrounding content)
+                    if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"${plugin}\" ]]; then
+                        log "Removing line for stale plugin: $plugin"
+                        skip_line=true
+                        break
                     fi
-                done < "$uv_receipt_file"
-
-                # Output last block if not stale
-                if [ -n "$current_block" ] && [ "$skip_current_block" = false ]; then
-                    printf '%s\n' "$current_block"
+                done
+                if [ "$skip_line" = false ]; then
+                    printf '%s\n' "$line"
                 fi
-            } > "$temp_file"
+            done < "$uv_receipt_file" > "$temp_file"
 
             mv "$temp_file" "$uv_receipt_file"
             log "Cleaned ${#stale_plugins[@]} stale plugin(s) from uv-receipt.toml"
