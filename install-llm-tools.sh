@@ -966,12 +966,15 @@ cleanup_stale_local_plugin_paths() {
             if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
                 current_name="${BASH_REMATCH[1]}"
             fi
-            # Check if directory exists (directory line comes after name line)
+            # Check if directory is a valid Python project (directory line comes after name line)
             if [[ "$line" =~ directory[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
                 local dir_path="${BASH_REMATCH[1]}"
-                if [ ! -d "$dir_path" ] && [ -n "$current_name" ]; then
-                    log "Found stale local path for $current_name: $dir_path"
-                    stale_plugins+=("$current_name")
+                # Stale if: doesn't exist OR missing pyproject.toml/setup.py (not a valid Python project)
+                if [ -n "$current_name" ]; then
+                    if [ ! -d "$dir_path" ] || { [ ! -f "$dir_path/pyproject.toml" ] && [ ! -f "$dir_path/setup.py" ]; }; then
+                        log "Found stale local path for $current_name: $dir_path"
+                        stale_plugins+=("$current_name")
+                    fi
                 fi
             fi
         done < "$uv_receipt_file"
