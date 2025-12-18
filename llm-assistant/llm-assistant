@@ -1304,6 +1304,9 @@ class TerminatorAssistantSession:
         self.terminal_content_hashes: Dict[str, str] = {}  # uuid -> content hash
         # Track terminals whose hash was updated by tool result (for specific message)
         self.toolresult_hash_updated: set = set()  # uuid set
+        # Per-terminal block hashes from previous capture (for delta diffing)
+        # Only send command blocks that weren't in the previous capture
+        self.previous_capture_block_hashes: Dict[str, Set[str]] = {}  # uuid -> set of block hashes
 
         # D-Bus connections
         self.dbus_service = None
@@ -5142,6 +5145,34 @@ Shell: {env_type} {shell_info}
                 return '\n'.join(lines[prompts[0][0]:])
         return content
 
+    def _split_into_command_blocks(self, content: str) -> List[str]:
+        """
+        Split terminal content into individual command blocks.
+
+        Each block contains: prompt + command + output (until next prompt).
+        Used for granular deduplication - skip blocks that were in previous capture.
+
+        Args:
+            content: Terminal content string
+
+        Returns:
+            List of command blocks. If splitting fails, returns [content] as fallback.
+        """
+        prompts = PromptDetector.find_all_prompts(content)
+        if len(prompts) < 2:
+            return [content]  # Can't split meaningfully, return as-is
+
+        lines = content.split('\n')
+        blocks = []
+        for i, (line_num, _) in enumerate(prompts):
+            # Block extends from this prompt to the next (or end of content)
+            end = prompts[i + 1][0] if i + 1 < len(prompts) else len(lines)
+            block = '\n'.join(lines[line_num:end])
+            if block.strip():
+                blocks.append(block)
+
+        return blocks if blocks else [content]
+
     def capture_context(self, include_exec_output=False, dedupe_unchanged=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture visible content from all terminals (like tmuxai).
@@ -5244,6 +5275,35 @@ Shell: {env_type} {shell_info}
 
                     # Always store hash for future comparison (even on first message)
                     self.terminal_content_hashes[term_uuid] = content_hash
+
+                    # Block-level deduplication: only send command blocks not in previous capture
+                    # This prevents re-sending old command outputs that accumulate in scrollback
+                    blocks = self._split_into_command_blocks(content)
+                    prev_hashes = self.previous_capture_block_hashes.get(term_uuid, set())
+
+                    # Compute current block hashes (always, for next comparison)
+                    current_hashes = set()
+                    new_blocks = []
+                    for block in blocks:
+                        block_hash = hashlib.sha256(block.strip().encode()).hexdigest()
+                        current_hashes.add(block_hash)
+                        if block_hash not in prev_hashes:
+                            new_blocks.append(block)
+
+                    # Update previous = current for next capture
+                    self.previous_capture_block_hashes[term_uuid] = current_hashes
+
+                    # Apply block filtering only when deduplication is active
+                    if dedupe_unchanged and prev_hashes:
+                        # Use filtered content if we have new blocks
+                        if new_blocks:
+                            content = '\n'.join(new_blocks)
+                        elif blocks:
+                            # All blocks same as previous - use placeholder
+                            context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
+[Content unchanged]
+</terminal>''')
+                            continue
 
                     # Format like tmux-fragments
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
@@ -5492,6 +5552,7 @@ Previous messages:
             # Clear per-terminal content hashes (summary replaces full history)
             self.terminal_content_hashes.clear()
             self.toolresult_hash_updated.clear()
+            self.previous_capture_block_hashes.clear()
 
             self.console.print(f"[green]✓[/] Context squashed")
             self.console.print(f"[cyan]New session: {new_conversation_id}[/]")
@@ -6347,6 +6408,7 @@ Instructions:
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
                 self.toolresult_hash_updated.clear()
+                self.previous_capture_block_hashes.clear()
                 # Broadcast clear to web companion
                 if self.web_clients:
                     self._broadcast_to_web({"type": "clear"})
@@ -6382,6 +6444,7 @@ Instructions:
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
                 self.toolresult_hash_updated.clear()
+                self.previous_capture_block_hashes.clear()
 
                 # Reset watch mode tracking state
                 self.previous_watch_context_hash = None
@@ -6476,6 +6539,7 @@ Instructions:
             # Clear per-terminal content hashes to ensure full fresh capture
             self.terminal_content_hashes.clear()
             self.toolresult_hash_updated.clear()
+            self.previous_capture_block_hashes.clear()
 
             # Simple snapshot capture (includes exec terminal)
             # Returns (context_text, tui_attachments) tuple for TUI screenshot support
@@ -7742,6 +7806,12 @@ Respond with a JSON object containing these fields:
                             self.terminal_content_hashes[self.exec_terminal_uuid] = content_hash
                             # Mark this terminal for specific dedup message
                             self.toolresult_hash_updated.add(self.exec_terminal_uuid)
+                            # Also update block hashes for granular deduplication
+                            # This prevents tool output from being re-sent in next context capture
+                            blocks = self._split_into_command_blocks(current_content)
+                            block_hashes = {hashlib.sha256(b.strip().encode()).hexdigest()
+                                            for b in blocks if b.strip()}
+                            self.previous_capture_block_hashes[self.exec_terminal_uuid] = block_hashes
                     except Exception:
                         pass  # Non-critical - deduplication is optimization only
 
@@ -7857,6 +7927,7 @@ Respond with a JSON object containing these fields:
                 # Clear per-terminal content hashes to ensure full fresh context
                 self.terminal_content_hashes.clear()
                 self.toolresult_hash_updated.clear()
+                self.previous_capture_block_hashes.clear()
 
                 # Capture fresh context (no deduplication - user/AI explicitly requested refresh)
                 context_text, tui_attachments_refresh = self.capture_context(include_exec_output=True)
