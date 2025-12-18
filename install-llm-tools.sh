@@ -1522,6 +1522,63 @@ npm_install() {
     return 1
 }
 
+# Wrapper function for npm global uninstalls with ENOTEMPTY handling
+# Usage: npm_uninstall_global package_name [binary_name]
+# binary_name defaults to basename of package (e.g., "claude-code" from "@anthropic-ai/claude-code")
+npm_uninstall_global() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    local npm_stderr pkg_dir
+
+    npm_stderr=$(mktemp)
+
+    # First attempt
+    set +e
+    if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+        sudo npm uninstall -g "$package" 2>"$npm_stderr"
+    else
+        npm uninstall -g "$package" 2>"$npm_stderr"
+    fi
+    local exit_code=$?
+    set -e
+
+    if [ $exit_code -eq 0 ]; then
+        rm -f "$npm_stderr"
+        return 0
+    fi
+
+    # Check for ENOTEMPTY error
+    if grep -q "ENOTEMPTY" "$npm_stderr"; then
+        warn "ENOTEMPTY error during uninstall, force-removing package directory..."
+        pkg_dir="$NPM_PREFIX/lib/node_modules/$package"
+
+        if [ -d "$pkg_dir" ]; then
+            if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+                sudo rm -rf "$pkg_dir"
+            else
+                rm -rf "$pkg_dir"
+            fi
+        fi
+
+        # Also remove the binary
+        if [ -f "$NPM_PREFIX/bin/$bin_name" ]; then
+            if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+                sudo rm -f "$NPM_PREFIX/bin/$bin_name"
+            else
+                rm -f "$NPM_PREFIX/bin/$bin_name"
+            fi
+        fi
+
+        rm -f "$npm_stderr"
+        return 0
+    fi
+
+    # Other error - show it
+    cat "$npm_stderr" >&2
+    rm -f "$npm_stderr"
+    return $exit_code
+}
+
 # Install or upgrade npm global package only if newer version available
 # Usage: install_or_upgrade_npm_global package_name
 install_or_upgrade_npm_global() {
@@ -2120,11 +2177,7 @@ if [ -x "$NATIVE_CLAUDE" ]; then
     # Clean up npm version if it still exists (migration from older script)
     if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
         log "Removing legacy npm Claude Code package..."
-        if [ "$NPM_NEEDS_SUDO" = "true" ]; then
-            sudo npm uninstall -g @anthropic-ai/claude-code
-        else
-            npm uninstall -g @anthropic-ai/claude-code
-        fi
+        npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove legacy npm package, continuing..."
     fi
 else
     # First run: bootstrap via npm, then install native, then remove npm version
@@ -2146,11 +2199,7 @@ else
         if [ -x "$NATIVE_CLAUDE" ]; then
             # Remove npm version
             log "Removing npm bootstrap package..."
-            if [ "$NPM_NEEDS_SUDO" = "true" ]; then
-                sudo npm uninstall -g @anthropic-ai/claude-code
-            else
-                npm uninstall -g @anthropic-ai/claude-code
-            fi
+            npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove npm bootstrap package, continuing..."
             log "Claude Code native installation complete"
         else
             warn "Native Claude binary not found after install, keeping npm version"
