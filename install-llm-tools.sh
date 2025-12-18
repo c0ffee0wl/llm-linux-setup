@@ -2108,9 +2108,57 @@ fi
 # PHASE 7: Agentic CLI (coding) tools
 #############################################################################
 
-# Install/update Claude Code
-log "Installing/updating Claude Code..."
-install_or_upgrade_npm_global @anthropic-ai/claude-code
+# Install/update Claude Code using native installation
+NATIVE_CLAUDE="$HOME/.local/bin/claude"
+NPM_CLAUDE="$NPM_PREFIX/bin/claude"
+
+if [ -x "$NATIVE_CLAUDE" ]; then
+    # Native version exists - just update
+    log "Updating Claude Code (native)..."
+    "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
+
+    # Clean up npm version if it still exists (migration from older script)
+    if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
+        log "Removing legacy npm Claude Code package..."
+        if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+            sudo npm uninstall -g @anthropic-ai/claude-code
+        else
+            npm uninstall -g @anthropic-ai/claude-code
+        fi
+    fi
+else
+    # First run: bootstrap via npm, then install native, then remove npm version
+    log "Installing Claude Code (native bootstrap)..."
+
+    # Check if npm version exists (for migration from previous installs)
+    if ! npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
+        # Install npm version temporarily to get the `claude install` command
+        log "Installing npm bootstrap package..."
+        npm_install install -g @anthropic-ai/claude-code
+    fi
+
+    # Verify npm binary exists before running
+    if [ ! -x "$NPM_CLAUDE" ]; then
+        warn "npm claude binary not found at $NPM_CLAUDE, cannot install native version"
+    # Run native installation (use full path, handle failure gracefully)
+    elif "$NPM_CLAUDE" install; then
+        # Verify native installation succeeded
+        if [ -x "$NATIVE_CLAUDE" ]; then
+            # Remove npm version
+            log "Removing npm bootstrap package..."
+            if [ "$NPM_NEEDS_SUDO" = "true" ]; then
+                sudo npm uninstall -g @anthropic-ai/claude-code
+            else
+                npm uninstall -g @anthropic-ai/claude-code
+            fi
+            log "Claude Code native installation complete"
+        else
+            warn "Native Claude binary not found after install, keeping npm version"
+        fi
+    else
+        warn "Native Claude installation failed, keeping npm version"
+    fi
+fi
 
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
