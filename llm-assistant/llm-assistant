@@ -4981,7 +4981,7 @@ Shell: {env_type} {shell_info}
 
         Returns:
             Tuple of (prompt_detected, content, detection_method)
-            detection_method is "unicode", "regex", or "" if not detected
+            detection_method is "marker", "regex", or "" if not detected
         """
         # Configuration
         initial_delay = 0.3
@@ -6592,9 +6592,7 @@ Instructions:
 
         if cmd == "/help":
             voice_status = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
-            self.console.print(Panel(f"""
-[bold]Available Commands:[/]
-
+            self.console.print(Panel(rf"""[bold]Available Commands:[/]
 /help              Show this help message
 /clear             Clear conversation history
 /reset             Full reset: clear history and remove squash summaries
@@ -6605,7 +6603,7 @@ Instructions:
 /watch off         Disable watch mode
 /watch status      Show watch mode status
 /squash <keep>     Compress context (e.g., /squash keep API patterns)
-/rewind [n]        Rewind to previous turn (n=turn number, or interactive picker)
+/rewind \[n]        Rewind to previous turn (n=turn number, or interactive picker)
 /rewind undo       Restore last rewound turns
 /auto              Enable auto mode (SAFE auto-executes)
 /auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
@@ -6613,13 +6611,13 @@ Instructions:
 /auto status       Show auto mode status
 /assistant         Switch to assistant mode (conservative, 10 tool iterations)
 /agent             Switch to agent mode (agentic, 100 tool iterations)
-/voice             Enable voice auto-submit (transcribed text sends automatically)
+/voice             Enable voice auto-submit (auto-sends transcribed text)
 /voice off         Disable voice auto-submit
 /voice status      Show voice input status
 /speech            Enable TTS output (Vertex models only)
 /speech off        Disable TTS output
 /speech status     Show TTS status
-/capture [mode] [prompt]  Capture screenshot (mode: window/region/full/rdp/annotate)
+/capture \[mode] \[prompt]  Capture screenshot (window/region/full/rdp/annotate)
 /imagemage         Load image generation tool (generate_image)
 /imagemage off     Unload image generation tool
 /kb                List available and loaded knowledge bases
@@ -6631,8 +6629,8 @@ Instructions:
 /rag off           Deactivate RAG
 /rag search <collection> <query>  One-shot RAG search
 /rag add <collection> <path>      Add documents to collection
-/copy [n]          Copy last response (or last n) to clipboard (markdown stripped)
-/copy raw [n]      Copy with markdown preserved
+/copy \[n]          Copy last response (or last n) to clipboard
+/copy raw \[n]      Copy with markdown preserved
 /copy all          Copy entire conversation
 /web               Open conversation in web browser (real-time streaming)
 /web stop          Stop web server
@@ -6645,10 +6643,8 @@ Instructions:
 
 [bold]Usage:[/]
 - Type messages to chat with LLM
-- LLM provides commands in <EXECUTE> tags
 - Commands are sent to Exec terminal with approval
-- [bold]Ctrl+Space[/] Toggle voice input ({voice_status})
-""", title="Assistant Help", border_style="cyan"))
+- [bold]Ctrl+Space[/] Toggle voice input ({voice_status})""", title="Assistant Help", border_style="cyan"))
             return True
 
         elif cmd == "/clear":
@@ -8477,7 +8473,6 @@ Respond with a JSON object containing these fields:
 
 [bold]Commands:[/]
 Type /help for slash commands
-Type 'exit' or 'quit' to exit
 Type !multi to enter multiple lines, then !end to finish
 Type !fragment <name> [...] to insert fragments""",
             title="llm-assistant",

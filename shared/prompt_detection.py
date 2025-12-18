@@ -166,7 +166,7 @@ class PromptDetector:
 
         Returns:
             Tuple of (detected: bool, method: str) where method is:
-            - "unicode" if detected via Unicode markers
+            - "marker" if detected via Unicode markers
             - "regex" if detected via regex patterns
             - "" if not detected
         """
@@ -191,7 +191,7 @@ class PromptDetector:
                 if not after.strip():
                     if debug:
                         print("[PromptDetector] Marker + nothing after = ready for input (100%)")
-                    return (True, "unicode")  # Marker + nothing = ready for input (100% reliable)
+                    return (True, "marker")  # Marker + nothing = ready for input (100% reliable)
                 else:
                     # Text after marker - could be SSH session with remote prompt
                     # Use regex to detect if the text after marker ends with a prompt
