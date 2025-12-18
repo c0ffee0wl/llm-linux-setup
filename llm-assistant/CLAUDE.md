@@ -109,6 +109,9 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/watch off` - Disable watch mode
 - `/watch status` - Show watch mode status (same as `/watch`)
 - `/squash` - Manually compress conversation context
+- `/rewind` - Interactive picker to rewind conversation to previous turn
+- `/rewind [n]` - Quick rewind to turn n (negative numbers rewind n turns back)
+- `/rewind undo` - Restore last rewound turns (one-time)
 - `/kb` - List available and loaded knowledge bases
 - `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
 - `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)

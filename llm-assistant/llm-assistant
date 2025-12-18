@@ -203,6 +203,7 @@ SLASH_COMMANDS = {
     "/model": {"subcommands": ["-q"], "dynamic": "models", "description": "Switch or list models"},
     "/watch": {"subcommands": ["off", "status"], "dynamic": None, "description": "Watch mode control"},
     "/squash": {"subcommands": [], "dynamic": None, "description": "Compress context"},
+    "/rewind": {"subcommands": ["undo"], "dynamic": None, "description": "Rewind to previous turn"},
     "/kb": {"subcommands": ["load", "unload", "reload"], "dynamic": "kb", "description": "Knowledge base control"},
     "/auto": {"subcommands": ["full", "off", "status"], "dynamic": None, "description": "Auto mode control"},
     "/voice": {"subcommands": ["auto", "off", "status"], "dynamic": None, "description": "Voice input control"},
@@ -319,6 +320,14 @@ class SlashCommandCompleter(Completer):
         elif dynamic_type == "rag_collections" and cmd == "/rag":
             # For /rag without subcommand, show collection names for activation
             yield from self._complete_rag_collections(partial)
+        elif cmd == "/rewind":
+            # Show recent turn numbers for quick rewind
+            if self.session and self.session.conversation.responses:
+                total = len(self.session.conversation.responses)
+                for i in range(max(1, total - 5), total):
+                    num_str = str(i)
+                    if num_str.startswith(partial):
+                        yield Completion(num_str, start_position=-len(partial))
 
     def _complete_second_arg(self, cmd: str, subcommand: str, partial: str):
         """Complete second argument (KB names after load/unload, RAG collections, finding IDs)."""
@@ -1320,6 +1329,9 @@ class TerminatorAssistantSession:
 
         # Pending summary from context squash (prepended to next user message)
         self.pending_summary: Optional[str] = None
+
+        # Undo buffer for /rewind command (stores removed responses for single undo)
+        self.rewind_undo_buffer: Optional[List] = None
 
         # Knowledge Base system (TmuxAI-style)
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
@@ -5557,6 +5569,9 @@ Previous messages:
             self.toolresult_hash_updated.clear()
             self.previous_capture_block_hashes.clear()
 
+            # Clear rewind undo buffer (new conversation = no undo)
+            self.rewind_undo_buffer = None
+
             self.console.print(f"[green]✓[/] Context squashed")
             self.console.print(f"[cyan]New session: {new_conversation_id}[/]")
             self.console.print(f"[dim](Previous: {old_conversation_id})[/]")
@@ -5564,6 +5579,235 @@ Previous messages:
 
         except Exception as e:
             self.console.print(f"[red]Error squashing context: {e}[/]")
+
+    def handle_rewind_command(self, args: str) -> bool:
+        """Handle /rewind command with interactive picker and undo support."""
+        args = args.strip() if args else ""
+        responses = self.conversation.responses
+
+        # Handle /rewind undo
+        if args == 'undo':
+            return self._handle_rewind_undo()
+
+        if not responses:
+            self.console.print("[yellow]No conversation history to rewind.[/yellow]")
+            return True
+
+        # Handle quick rewind: /rewind N or /rewind -N
+        if args:
+            try:
+                n = int(args)
+                return self._quick_rewind(n)
+            except ValueError:
+                self.console.print(f"[red]Invalid argument: {args}. Use 'undo', a turn number, or no argument for picker.[/red]")
+                return True
+
+        # Interactive picker mode
+        return self._interactive_rewind_picker()
+
+    def _interactive_rewind_picker(self) -> bool:
+        """Display interactive picker for selecting rewind point.
+
+        Uses Rich Panel for display + simple input() for selection.
+        This avoids raw tty manipulation that could conflict with prompt_toolkit.
+        """
+        responses = self.conversation.responses
+        total_turns = len(responses)
+
+        if total_turns < 2:
+            self.console.print("[yellow]Need at least 2 turns to rewind.[/yellow]")
+            return True
+
+        # Build turn list with token counts
+        turns = []
+        total_tokens = 0
+        for i, response in enumerate(responses, 1):
+            prompt_preview = self._extract_user_prompt_preview(response)
+            turn_tokens = (response.input_tokens or 0) + (response.output_tokens or 0)
+            total_tokens += turn_tokens
+            turns.append({
+                'num': i,
+                'tokens': turn_tokens,
+                'preview': prompt_preview,
+                'is_current': i == total_turns
+            })
+
+        # Display picker
+        self._draw_rewind_picker(turns, total_tokens)
+
+        # Get selection via simple input
+        max_valid = total_turns - 1  # Can't rewind to current turn
+        try:
+            selection = input(f"Select turn to rewind to (1-{max_valid}), or q to cancel: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            self.console.print("[dim]Rewind cancelled.[/dim]")
+            return True
+
+        if selection.lower() == 'q' or selection == '':
+            self.console.print("[dim]Rewind cancelled.[/dim]")
+            return True
+
+        try:
+            target_turn = int(selection)
+        except ValueError:
+            self.console.print(f"[red]Invalid selection: {selection}[/red]")
+            return True
+
+        # Validate range
+        if target_turn < 1 or target_turn >= total_turns:
+            self.console.print(f"[red]Turn must be between 1 and {max_valid}[/red]")
+            return True
+
+        # Calculate impact
+        tokens_freed = sum(t['tokens'] for t in turns[target_turn:])
+        turns_removed = total_turns - target_turn
+
+        # Confirm
+        self.console.print(f"\n[cyan]Rewinding to {target_turn} removes {turns_removed} turn(s), freeing ~{tokens_freed:,} tokens.[/cyan]")
+        confirm = input("Proceed? [Y/n] ").strip().lower()
+        if confirm and confirm != 'y':
+            self.console.print("[dim]Rewind cancelled.[/dim]")
+            return True
+
+        self._perform_rewind(target_turn)
+        self.console.print(f"[green]✓ Rewound to turn {target_turn}. Use /rewind undo to restore.[/green]")
+        return True
+
+    def _draw_rewind_picker(self, turns: list, total_tokens: int):
+        """Draw the picker panel showing conversation turns."""
+        # Build content (Panel and Text already imported at top level)
+        lines = Text()
+
+        # Show last 10 turns (or all if fewer)
+        display_start = max(0, len(turns) - 10)
+        if display_start > 0:
+            lines.append(f"  ... ({display_start} earlier turns)\n", style="dim")
+
+        # Filter out current turn and build display lines
+        display_turns = [t for t in turns[display_start:] if not t['is_current']]
+        for i, turn in enumerate(display_turns):
+            line = f"  {turn['num']:3}. [{turn['tokens']:5} tok] \"{turn['preview']}\""
+            # Add newline except for last line (avoids empty line before border)
+            if i < len(display_turns) - 1:
+                line += "\n"
+            lines.append(line)
+
+        panel = Panel(
+            lines,
+            title=f"Rewind Conversation ({len(turns)} turns, ~{total_tokens:,} tokens)",
+            border_style="cyan"
+        )
+
+        self.console.print(panel)
+
+    def _quick_rewind(self, n: int) -> bool:
+        """Handle quick rewind: /rewind N or /rewind -N."""
+        responses = self.conversation.responses
+        total_turns = len(responses)
+
+        # Handle negative indexing
+        if n < 0:
+            target_turn = total_turns + n
+        else:
+            target_turn = n
+
+        # Validate
+        if target_turn < 1:
+            self.console.print(f"[red]Invalid turn: must be >= 1 (got {n} → {target_turn})[/red]")
+            return True
+        if target_turn >= total_turns:
+            self.console.print(f"[yellow]Already at turn {total_turns}. Nothing to rewind.[/yellow]")
+            return True
+
+        # Calculate impact
+        tokens_freed = sum(
+            (r.input_tokens or 0) + (r.output_tokens or 0)
+            for r in responses[target_turn:]
+        )
+        turns_removed = total_turns - target_turn
+
+        # Confirm
+        self.console.print(f"[cyan]Rewind to turn {target_turn}? Removes {turns_removed} turn(s), frees ~{tokens_freed:,} tokens.[/cyan]")
+        confirm = input("Proceed? [Y/n] ").strip().lower()
+        if confirm and confirm != 'y':
+            self.console.print("[dim]Rewind cancelled.[/dim]")
+            return True
+
+        self._perform_rewind(target_turn)
+        self.console.print(f"[green]✓ Rewound to turn {target_turn}. Use /rewind undo to restore.[/green]")
+        return True
+
+    def _perform_rewind(self, target_turn: int):
+        """Truncate conversation and save undo buffer."""
+        responses = self.conversation.responses
+
+        # Save removed turns for undo (single undo only)
+        self.rewind_undo_buffer = list(responses[target_turn:])
+
+        # Truncate
+        self.conversation.responses = responses[:target_turn]
+
+        # Clear pending summary (may be stale)
+        self.pending_summary = None
+
+        # Clear deduplication hashes
+        self.terminal_content_hashes.clear()
+        self.toolresult_hash_updated.clear()
+        self.previous_capture_block_hashes.clear()
+
+        # Broadcast to web companion
+        if self.web_clients:
+            self._broadcast_to_web({
+                "type": "rewind",
+                "turn": target_turn,
+                "total_turns": len(self.conversation.responses)
+            })
+
+    def _handle_rewind_undo(self) -> bool:
+        """Restore last rewound turns."""
+        if not self.rewind_undo_buffer:
+            self.console.print("[yellow]No rewind to undo.[/yellow]")
+            return True
+
+        # Restore
+        restored_count = len(self.rewind_undo_buffer)
+        self.conversation.responses.extend(self.rewind_undo_buffer)
+        self.rewind_undo_buffer = None
+
+        new_total = len(self.conversation.responses)
+        self.console.print(f"[green]✓ Restored {restored_count} turn(s). Back to turn {new_total}.[/green]")
+
+        # Broadcast to web companion
+        if self.web_clients:
+            self._broadcast_to_web({
+                "type": "rewind_undo",
+                "total_turns": new_total
+            })
+
+        return True
+
+    def _extract_user_prompt_preview(self, response) -> str:
+        """Extract compact preview of user's prompt (50 chars max)."""
+        # Defensive access to prompt text (matches pattern in squash_context)
+        if hasattr(response, 'prompt') and response.prompt:
+            prompt_text = response.prompt.prompt or ""
+        else:
+            prompt_text = "[no prompt]"
+
+        # Strip context tags
+        cleaned = re.sub(r'<terminal_context>.*?</terminal_context>', '', prompt_text, flags=re.DOTALL)
+        cleaned = re.sub(r'<conversation_summary>.*?</conversation_summary>', '', cleaned, flags=re.DOTALL)
+        cleaned = re.sub(r'<rag_context>.*?</rag_context>', '', cleaned, flags=re.DOTALL)
+        cleaned = cleaned.strip()
+
+        # Handle empty prompts (context-only submissions)
+        if not cleaned:
+            return "[context only]"
+
+        # Truncate
+        if len(cleaned) > 47:
+            return cleaned[:47] + "..."
+        return cleaned
 
     def _prompt(self, *args, **kwargs):
         """
@@ -6361,6 +6605,8 @@ Instructions:
 /watch off         Disable watch mode
 /watch status      Show watch mode status
 /squash <keep>     Compress context (e.g., /squash keep API patterns)
+/rewind [n]        Rewind to previous turn (n=turn number, or interactive picker)
+/rewind undo       Restore last rewound turns
 /auto              Enable auto mode (SAFE auto-executes)
 /auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
 /auto off          Disable auto mode
@@ -6413,6 +6659,8 @@ Instructions:
                 self.terminal_content_hashes.clear()
                 self.toolresult_hash_updated.clear()
                 self.previous_capture_block_hashes.clear()
+                # Clear rewind undo buffer (fresh start = no undo)
+                self.rewind_undo_buffer = None
                 # Broadcast clear to web companion
                 if self.web_clients:
                     self._broadcast_to_web({"type": "clear"})
@@ -6450,6 +6698,9 @@ Instructions:
                 self.toolresult_hash_updated.clear()
                 self.previous_capture_block_hashes.clear()
 
+                # Clear rewind undo buffer (full reset = no undo)
+                self.rewind_undo_buffer = None
+
                 # Reset watch mode tracking state
                 self.previous_watch_context_hash = None
                 self.previous_watch_iteration_count = 0
@@ -6462,6 +6713,9 @@ Instructions:
             except Exception as e:
                 self.console.print(f"[red]Error resetting: {e}[/]")
             return True
+
+        elif cmd == "/rewind":
+            return self.handle_rewind_command(args)
 
         elif cmd == "/copy":
             if not CLIPBOARD_AVAILABLE:
