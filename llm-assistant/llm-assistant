@@ -6633,7 +6633,7 @@ Instructions:
 /copy raw \[n]      Copy with markdown preserved
 /copy all          Copy entire conversation
 /web               Open conversation in web browser (real-time streaming)
-/web stop          Stop web server
+/web off           Stop web server
 /finding <note>    Add pentest finding with LLM analysis (OWASP 1-9)
 /finding init <p> <lang>  Create project (lang: en, de, es, fr, ...)
 /finding list      List findings in current project
