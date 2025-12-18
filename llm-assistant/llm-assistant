@@ -5983,6 +5983,7 @@ Screenshot size: {file_size} bytes"""
 
                     if prompt_detected:
                         self.console.print("[green]✓[/] Command completed (prompt detected)")
+                        self.console.print()  # Blank line for visual separation
 
                         # Smart full-output capture: capture from command start row
                         # This ensures we get complete output even if it scrolled past viewport
