@@ -4947,7 +4947,7 @@ Shell: {env_type} {shell_info}
         self._debug(f"TUI render wait timed out after {max_wait}s")
         return False  # Timeout - proceed anyway
 
-    def prompt_based_capture(self, terminal_uuid, max_wait=60, initial_content=None) -> Tuple[bool, str]:
+    def prompt_based_capture(self, terminal_uuid, max_wait=60, initial_content=None) -> Tuple[bool, str, str]:
         """
         Capture terminal content using prompt detection instead of stability checks.
 
@@ -4968,7 +4968,8 @@ Shell: {env_type} {shell_info}
             initial_content: Terminal content before command was sent (for change detection)
 
         Returns:
-            Tuple of (prompt_detected, content)
+            Tuple of (prompt_detected, content, detection_method)
+            detection_method is "unicode", "regex", or "" if not detected
         """
         # Configuration
         initial_delay = 0.3
@@ -4994,8 +4995,10 @@ Shell: {env_type} {shell_info}
                             self._debug("Content changed from initial state")
 
                     # Only check for prompt after content has changed
-                    if content_changed and content and PromptDetector.detect_prompt_at_end(content):
-                        return (True, content)
+                    if content_changed and content:
+                        detected, method = PromptDetector.detect_prompt_at_end_with_method(content)
+                        if detected:
+                            return (True, content, method)
 
                     # Visual feedback with dynamic status
                     elapsed = initial_delay + (attempt * poll_interval)
@@ -5006,13 +5009,13 @@ Shell: {env_type} {shell_info}
 
                 except dbus.exceptions.DBusException as e:
                     self.console.print(f"[red]Plugin D-Bus error during capture: {e}[/]")
-                    return (False, "")
+                    return (False, "", "")
                 except Exception as e:
                     self.console.print(f"[red]Prompt-based capture error ({type(e).__name__}): {e}[/]")
-                    return (False, "")
+                    return (False, "", "")
 
         # Timeout - return last content
-        return (False, content if content else "")
+        return (False, content if content else "", "")
 
     def _capture_last_command_output(self, terminal_uuid: str) -> str:
         """
@@ -6052,14 +6055,15 @@ Screenshot size: {file_size} bytes"""
                     return True, (output, temp_path)  # Return both text and image path
                 else:
                     # Regular command - use prompt-based capture
-                    prompt_detected, output = self.prompt_based_capture(
+                    prompt_detected, output, detection_method = self.prompt_based_capture(
                         self.exec_terminal_uuid,
                         max_wait=60,
                         initial_content=initial_content
                     )
 
                     if prompt_detected:
-                        self.console.print("[green]✓[/] Command completed (prompt detected)")
+                        method_label = f"via {detection_method}" if detection_method else ""
+                        self.console.print(f"[green]✓[/] Command completed (prompt detected {method_label})")
                         self.console.print()  # Blank line for visual separation
 
                         # Smart full-output capture: capture from command start row

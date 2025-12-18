@@ -146,6 +146,69 @@ class PromptDetector:
         return False
 
     @classmethod
+    def detect_prompt_at_end_with_method(cls, text: str, debug: bool = False) -> Tuple[bool, str]:
+        """
+        Check if text ends with an EMPTY shell prompt (ready for input).
+        Returns both the detection result and the method used.
+
+        Uses hybrid detection:
+        1. Priority 1: Unicode markers (100% reliable for VTE terminals)
+        2. Priority 2: Regex fallback (SSH sessions, non-VTE terminals)
+
+        Unlike is_prompt_line(), this does NOT match prompts with commands
+        after them. Used for completion detection to distinguish between:
+        - "$ command" (executing) - does NOT match
+        - "$ " (ready for input) - MATCHES
+
+        Args:
+            text: Terminal output text
+            debug: If True, print diagnostic info about pattern matching
+
+        Returns:
+            Tuple of (detected: bool, method: str) where method is:
+            - "unicode" if detected via Unicode markers
+            - "regex" if detected via regex patterns
+            - "" if not detected
+        """
+        if not text or not text.strip():
+            if debug:
+                print("[PromptDetector] Empty or whitespace-only text")
+            return (False, "")
+
+        # Priority 1: Unicode markers (100% reliable for VTE local prompts)
+        if cls.has_unicode_markers(text):
+            if debug:
+                print("[PromptDetector] Unicode markers detected, using marker-based detection")
+
+            # Find last INPUT_START_MARKER (marks where user types after prompt)
+            last_input_pos = text.rfind(cls.INPUT_START_MARKER)
+            if last_input_pos != -1:
+                # Check what comes after the marker
+                after = text[last_input_pos + len(cls.INPUT_START_MARKER):]
+                if debug:
+                    print(f"[PromptDetector] Text after INPUT_START_MARKER: {after!r}")
+
+                if not after.strip():
+                    if debug:
+                        print("[PromptDetector] Marker + nothing after = ready for input (100%)")
+                    return (True, "unicode")  # Marker + nothing = ready for input (100% reliable)
+                else:
+                    # Text after marker - could be SSH session with remote prompt
+                    # Use regex to detect if the text after marker ends with a prompt
+                    if debug:
+                        print("[PromptDetector] Text after marker, checking with regex fallback")
+                    if cls._detect_prompt_regex(after, debug):
+                        return (True, "regex")
+                    return (False, "")
+
+        # Priority 2: Regex fallback (SSH sessions, non-VTE terminals, no markers)
+        if debug:
+            print("[PromptDetector] No Unicode markers, using regex fallback")
+        if cls._detect_prompt_regex(text, debug):
+            return (True, "regex")
+        return (False, "")
+
+    @classmethod
     def detect_prompt_at_end(cls, text: str, debug: bool = False) -> bool:
         """
         Check if text ends with an EMPTY shell prompt (ready for input).
@@ -166,39 +229,8 @@ class PromptDetector:
         Returns:
             True if text ends with an empty prompt ready for input
         """
-        if not text or not text.strip():
-            if debug:
-                print("[PromptDetector] Empty or whitespace-only text")
-            return False
-
-        # Priority 1: Unicode markers (100% reliable for VTE local prompts)
-        if cls.has_unicode_markers(text):
-            if debug:
-                print("[PromptDetector] Unicode markers detected, using marker-based detection")
-
-            # Find last INPUT_START_MARKER (marks where user types after prompt)
-            last_input_pos = text.rfind(cls.INPUT_START_MARKER)
-            if last_input_pos != -1:
-                # Check what comes after the marker
-                after = text[last_input_pos + len(cls.INPUT_START_MARKER):]
-                if debug:
-                    print(f"[PromptDetector] Text after INPUT_START_MARKER: {after!r}")
-
-                if not after.strip():
-                    if debug:
-                        print("[PromptDetector] Marker + nothing after = ready for input (100%)")
-                    return True  # Marker + nothing = ready for input (100% reliable)
-                else:
-                    # Text after marker - could be SSH session with remote prompt
-                    # Use regex to detect if the text after marker ends with a prompt
-                    if debug:
-                        print("[PromptDetector] Text after marker, checking with regex fallback")
-                    return cls._detect_prompt_regex(after, debug)
-
-        # Priority 2: Regex fallback (SSH sessions, non-VTE terminals, no markers)
-        if debug:
-            print("[PromptDetector] No Unicode markers, using regex fallback")
-        return cls._detect_prompt_regex(text, debug)
+        detected, _ = cls.detect_prompt_at_end_with_method(text, debug)
+        return detected
 
     @classmethod
     def find_all_prompts(cls, text_or_lines: Union[str, List[str]]) -> List[Tuple[int, str]]:
