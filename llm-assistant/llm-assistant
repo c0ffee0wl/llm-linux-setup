@@ -5250,6 +5250,22 @@ Shell: {env_type} {shell_info}
 {content}
 </terminal>''')
 
+            # Check if ALL context parts are placeholders (no real content)
+            # Placeholders: "[Content unchanged]", "[Output already in tool result above]"
+            PLACEHOLDER_MARKERS = frozenset(['[Content unchanged]', '[Output already in tool result above]'])
+
+            def is_placeholder_only(part: str) -> bool:
+                """Check if a terminal context part contains only placeholder content."""
+                # Extract content between terminal tags
+                lines = part.split('\n')
+                content_lines = [l for l in lines if not l.startswith('<terminal') and not l.startswith('</terminal') and l.strip()]
+                # Exact match only - avoids false positives from user content containing placeholder text
+                return len(content_lines) == 1 and content_lines[0] in PLACEHOLDER_MARKERS
+
+            # If ALL parts are placeholders, return minimal marker instead of full XML
+            if context_parts and all(is_placeholder_only(p) for p in context_parts):
+                return "[Context: unchanged]", attachments
+
             combined_context = "\n\n".join(context_parts)
             # Truncate if needed to prevent memory/token issues
             combined_context = self._truncate_capture_if_needed(combined_context, "terminal context")
