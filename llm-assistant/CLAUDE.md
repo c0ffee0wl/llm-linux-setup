@@ -127,15 +127,15 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/copy all` - Copy entire conversation
 - `/web` - Open conversation in web browser (real-time streaming)
 - `/web stop` - Stop web server
-- `/finding <note>` - Add pentest finding with LLM analysis (OWASP 1-9 severity)
-- `/finding init <project> <lang>` - Create new findings project (lang: en, de, es, fr, ...)
-- `/finding list` - List findings in current project
-- `/finding edit <id>` - Edit existing finding
-- `/finding delete <id>` - Remove finding
-- `/finding export` - Export to Word (docx) via pandoc
-- `/finding severity <id> <1-9>` - Override severity
-- `/finding projects` - List all projects
-- `/finding open <project>` - Switch to existing project
+- `/report <note>` - Add pentest finding with LLM analysis (OWASP 1-9 severity)
+- `/report init <project> <lang>` - Create new findings project (lang: en, de, es, fr, ...)
+- `/report list` - List findings in current project
+- `/report edit <id>` - Edit existing finding
+- `/report delete <id>` - Remove finding
+- `/report export` - Export to Word (docx) via pandoc
+- `/report severity <id> <1-9>` - Override severity
+- `/report projects` - List all projects
+- `/report open <project>` - Switch to existing project
 - `/quit` or `/exit` - Exit assistant
 
 ## Pentest Finding Management
@@ -143,7 +143,7 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 The assistant includes a finding management system for penetration testing workflows:
 
 **Features:**
-- Quick capture: `/finding "SQL injection in login form"`
+- Quick capture: `/report "SQL injection in login form"`
 - LLM auto-generates: title, severity (OWASP 1-9), description, remediation
 - **Multi-language support**: Findings generated in project's configured language
 - Terminal context captured as evidence
@@ -160,21 +160,21 @@ The assistant includes a finding management system for penetration testing workf
 **Usage:**
 ```bash
 # Start a new pentest project with language:
-/finding init acme-webapp-2025 en    # English findings
-/finding init client-test de          # German findings
+/report init acme-webapp-2025 en    # English findings
+/report init client-test de          # German findings
 
 # During pentest - quick capture:
-/finding "SQL injection in login - ' OR '1'='1 works"
+/report "SQL injection in login - ' OR '1'='1 works"
 # LLM generates: severity 8, expanded description, remediation (in project's language)
 
 # View findings:
-/finding list
+/report list
 
 # Override LLM severity:
-/finding severity F001 6
+/report severity F001 6
 
 # Export to Word:
-/finding export
+/report export
 # -> Creates findings.docx via pandoc
 ```
 

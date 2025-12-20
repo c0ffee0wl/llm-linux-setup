@@ -143,7 +143,7 @@ from prompt_toolkit.completion import Completer, Completion
 # YAML for findings file parsing
 import yaml
 
-# ISO 639 language code validation (required for /finding)
+# ISO 639 language code validation (required for /report)
 from iso639 import Lang
 from iso639.exceptions import InvalidLanguageValue
 
@@ -215,7 +215,7 @@ SLASH_COMMANDS = {
     "/web": {"subcommands": ["stop", "off"], "dynamic": None, "description": "Open web companion"},
     "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
     "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
-    "/finding": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
+    "/report": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
 }
 
 
@@ -339,11 +339,11 @@ class SlashCommandCompleter(Completer):
         elif cmd == "/rag":
             if subcommand in ("add", "search", "rebuild", "delete"):
                 yield from self._complete_rag_collections(partial)
-        elif cmd == "/finding":
+        elif cmd == "/report":
             if subcommand in ("edit", "delete", "severity"):
                 yield from self._complete_findings(partial)
             elif subcommand in ("open", "init"):
-                yield from self._complete_finding_projects(partial)
+                yield from self._complete_report_projects(partial)
 
     def _complete_models(self, partial: str):
         """Complete model names dynamically."""
@@ -432,8 +432,8 @@ class SlashCommandCompleter(Completer):
         except Exception:
             pass
 
-    def _complete_finding_projects(self, partial: str):
-        """Complete finding project names for /finding open."""
+    def _complete_report_projects(self, partial: str):
+        """Complete report project names for /report open."""
         if not self.session:
             return
         partial_lower = partial.lower()
@@ -970,10 +970,10 @@ class Spinner:
 # Tool Setup
 # =============================================================================
 # Always-on external tools (always available and auto-dispatch)
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'sandboxed_python')
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'sandboxed_python', 'capture_screen')
 
 # Tools available only in agent mode (schema sent to model only in /agent)
-AGENT_MODE_TOOLS = ('capture_screen',)
+AGENT_MODE_TOOLS = ()
 
 # Optional tools that can be loaded/unloaded via slash command (/imagemage)
 OPTIONAL_TOOL_PLUGINS = ('imagemage',)
@@ -3835,8 +3835,8 @@ class TerminatorAssistantSession:
         """Get currently active tools based on mode, model, and loaded state.
 
         Returns tools that should be offered to the model. Includes:
-        - Base ASSISTANT_TOOLS (always available)
-        - Agent-mode tools (capture_screen) when in /agent mode
+        - Base ASSISTANT_TOOLS (always available, includes capture_screen)
+        - Agent-mode tools when in /agent mode (currently none)
         - Optional tools (imagemage) when manually loaded via /imagemage
         - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
         """
@@ -5390,25 +5390,25 @@ Shell: {env_type} {shell_info}
                     tokens = last_response.input_tokens
                 else:
                     # Fallback: char-based estimation for current context
-                    # The conversation is cumulative - each response already contains history
-                    # So we only count the LAST exchange, not sum all of them (which would overestimate)
+                    # Sum ALL responses - mirrors how build_messages() reconstructs history
                     source = "estimated"
-                    total_chars = filtered_prompt_len
-                    if self.conversation.responses:
-                        last_resp = self.conversation.responses[-1]
-                        if hasattr(last_resp, 'prompt') and last_resp.prompt:
-                            if last_resp.prompt.prompt:
-                                total_chars += len(last_resp.prompt.prompt)
-                        # Use _chunks directly to avoid blocking on in-progress responses
-                        # text() calls _force() which blocks until done
-                        if getattr(last_resp, '_done', False):
-                            total_chars += len(last_resp.text())
+                    total_chars = filtered_prompt_len  # System prompt
+
+                    # Sum ALL responses (each API call sends full history)
+                    for resp in self.conversation.responses:
+                        # User prompt
+                        if hasattr(resp, 'prompt') and resp.prompt and resp.prompt.prompt:
+                            total_chars += len(resp.prompt.prompt)
+
+                        # Assistant response - handle in-progress for last response
+                        if resp is self.conversation.responses[-1] and not getattr(resp, '_done', False):
+                            # In-progress: use accumulated chunks to avoid blocking
+                            total_chars += len("".join(getattr(resp, '_chunks', [])))
                         else:
-                            # In-progress: use accumulated chunks
-                            total_chars += len("".join(getattr(last_resp, '_chunks', [])))
+                            total_chars += len(resp.text())
+
                     # Add measured tool overhead
-                    tool_tokens = self._tool_token_overhead  # Use measured value
-                    tokens = (total_chars // 4) + tool_tokens
+                    tokens = (total_chars // 4) + self._tool_token_overhead
 
         except Exception as e:
             self.console.print(f"[yellow]Warning: Token estimation failed: {e}[/]")
@@ -6634,11 +6634,11 @@ Instructions:
 /copy all          Copy entire conversation
 /web               Open conversation in web browser (real-time streaming)
 /web off           Stop web server
-/finding <note>    Add pentest finding with LLM analysis (OWASP 1-9)
-/finding init <p> <lang>  Create project (lang: en, de, es, fr, ...)
-/finding list      List findings in current project
-/finding export    Export to Word (docx) via pandoc
-/finding projects  List all projects
+/report <note>     Add pentest finding with LLM analysis (OWASP 1-9)
+/report init <p> <lang>  Create project (lang: en, de, es, fr, ...)
+/report list       List findings in current project
+/report export     Export to Word (docx) via pandoc
+/report projects   List all projects
 /quit or /exit     Exit assistant
 
 [bold]Usage:[/]
@@ -7195,8 +7195,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[red]Usage: /imagemage, /imagemage off, /imagemage status[/]")
             return True
 
-        elif cmd == "/finding":
-            return self._handle_finding_command(args)
+        elif cmd == "/report":
+            return self._handle_report_command(args)
 
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
@@ -7209,45 +7209,45 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
     # ========== Pentest Finding Management Methods ==========
 
-    def _handle_finding_command(self, args: str) -> bool:
-        """Route /finding subcommands to appropriate handlers."""
+    def _handle_report_command(self, args: str) -> bool:
+        """Route /report subcommands to appropriate handlers."""
         parts = args.strip().split(maxsplit=1)
         subcmd = parts[0].lower() if parts else ""
         subargs = parts[1] if len(parts) > 1 else ""
 
         if not subcmd:
-            self.console.print("[yellow]Usage: /finding <note> or /finding <subcommand>[/]")
+            self.console.print("[yellow]Usage: /report <note> or /report <subcommand>[/]")
             self.console.print("[dim]Subcommands: init, list, edit, delete, export, severity, projects, open[/]")
             return True
 
         # Dispatch subcommands
         if subcmd == "init":
-            return self._finding_init(subargs)
+            return self._report_init(subargs)
         elif subcmd == "list":
-            return self._finding_list()
+            return self._report_list()
         elif subcmd == "edit":
-            return self._finding_edit(subargs)
+            return self._report_edit(subargs)
         elif subcmd == "delete":
-            return self._finding_delete(subargs)
+            return self._report_delete(subargs)
         elif subcmd == "export":
-            return self._finding_export(subargs)
+            return self._report_export(subargs)
         elif subcmd == "severity":
-            return self._finding_set_severity(subargs)
+            return self._report_set_severity(subargs)
         elif subcmd == "projects":
-            return self._finding_projects()
+            return self._report_projects()
         elif subcmd == "open":
-            return self._finding_open(subargs)
+            return self._report_open(subargs)
         else:
             # Not a subcommand - treat entire args as a quick note
-            return self._finding_add(args)
+            return self._report_add(args)
 
-    def _finding_init(self, args: str) -> bool:
+    def _report_init(self, args: str) -> bool:
         """Initialize a new pentest project with language selection."""
         parts = args.strip().split(maxsplit=1)
 
         if len(parts) < 2:
-            self.console.print("[red]Usage: /finding init <project-name> <language-code>[/]")
-            self.console.print("[dim]Example: /finding init acme-webapp-2025 en[/]")
+            self.console.print("[red]Usage: /report init <project-name> <language-code>[/]")
+            self.console.print("[dim]Example: /report init acme-webapp-2025 en[/]")
             self.console.print("[dim]Language codes: en (English), de (German), es (Spanish), fr (French), ...[/]")
             return True
 
@@ -7296,18 +7296,18 @@ language_name: {language_name}
 
         self.findings_project = safe_name
         self.console.print(f"[green]✓[/] Created project: {project_dir} ({language_name})")
-        self.console.print(f"[dim]Add findings with: /finding \"<quick note>\"[/]")
+        self.console.print(f"[dim]Add findings with: /report \"<quick note>\"[/]")
         return True
 
-    def _finding_add(self, quick_note: str) -> bool:
+    def _report_add(self, quick_note: str) -> bool:
         """Add a new finding with LLM-assisted analysis."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /finding init <project> <lang>[/]")
+            self.console.print("[red]No project initialized. Use /report init <project> <lang>[/]")
             return True
 
         quick_note = quick_note.strip().strip('"\'')
         if not quick_note:
-            self.console.print("[red]Usage: /finding \"<quick note about vulnerability>\"[/]")
+            self.console.print("[red]Usage: /report \"<quick note about vulnerability>\"[/]")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -7333,7 +7333,7 @@ language_name: {language_name}
         finding_id = self._get_next_finding_id(findings)
 
         # Capture evidence (terminal context)
-        evidence = self._capture_finding_evidence(finding_id, project_dir)
+        evidence = self._capture_report_evidence(finding_id, project_dir)
 
         # Get terminal context for LLM analysis
         context = None
@@ -7421,7 +7421,7 @@ language_name: {language_name}
 
         # Load the finding template with language interpolation
         # Use explicit path to avoid potential directory conflicts
-        template_path = template_dir() / "llm-assistant-finding.yaml"
+        template_path = template_dir() / "llm-assistant-report.yaml"
         template = load_template(str(template_path))
         # Interpolate language into template - evaluate() returns (prompt, system)
         _, system_prompt = template.evaluate("", params={"language": language})
@@ -7537,7 +7537,7 @@ Respond with a JSON object containing these fields:
                     result['severity'] = 5  # Default to medium if invalid
             return result
 
-    def _capture_finding_evidence(self, finding_id: str, project_dir: Path) -> List[Dict]:
+    def _capture_report_evidence(self, finding_id: str, project_dir: Path) -> List[Dict]:
         """Capture evidence (terminal context) for a finding."""
         evidence = []
         from datetime import datetime
@@ -7705,10 +7705,10 @@ Respond with a JSON object containing these fields:
 
         path.write_text("\n".join(lines))
 
-    def _finding_list(self) -> bool:
+    def _report_list(self) -> bool:
         """List all findings in current project."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /finding init <project> <lang>[/]")
+            self.console.print("[red]No project initialized. Use /report init <project> <lang>[/]")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -7735,7 +7735,7 @@ Respond with a JSON object containing these fields:
 
         return True
 
-    def _finding_edit(self, args: str) -> bool:
+    def _report_edit(self, args: str) -> bool:
         """Open finding for editing."""
         if not self.findings_project:
             self.console.print("[red]No project initialized.[/]")
@@ -7743,7 +7743,7 @@ Respond with a JSON object containing these fields:
 
         finding_id = args.strip().upper()
         if not finding_id:
-            self.console.print("[red]Usage: /finding edit <id> (e.g., /finding edit F001)[/]")
+            self.console.print("[red]Usage: /report edit <id> (e.g., /report edit F001)[/]")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -7753,7 +7753,7 @@ Respond with a JSON object containing these fields:
         self.console.print(f"  {findings_file}")
         return True
 
-    def _finding_delete(self, args: str) -> bool:
+    def _report_delete(self, args: str) -> bool:
         """Delete a finding by ID."""
         if not self.findings_project:
             self.console.print("[red]No project initialized.[/]")
@@ -7761,7 +7761,7 @@ Respond with a JSON object containing these fields:
 
         finding_id = args.strip().upper()
         if not finding_id:
-            self.console.print("[red]Usage: /finding delete <id> (e.g., /finding delete F001)[/]")
+            self.console.print("[red]Usage: /report delete <id> (e.g., /report delete F001)[/]")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -7806,7 +7806,7 @@ Respond with a JSON object containing these fields:
         self.console.print(f"[green]✓[/] Deleted {finding_id}")
         return True
 
-    def _finding_set_severity(self, args: str) -> bool:
+    def _report_set_severity(self, args: str) -> bool:
         """Override severity for a finding."""
         if not self.findings_project:
             self.console.print("[red]No project initialized.[/]")
@@ -7814,7 +7814,7 @@ Respond with a JSON object containing these fields:
 
         parts = args.strip().split()
         if len(parts) != 2:
-            self.console.print("[red]Usage: /finding severity <id> <1-9> (e.g., /finding severity F001 8)[/]")
+            self.console.print("[red]Usage: /report severity <id> <1-9> (e.g., /report severity F001 8)[/]")
             return True
 
         finding_id = parts[0].upper()
@@ -7858,7 +7858,7 @@ Respond with a JSON object containing these fields:
         self.console.print(f"[green]✓[/] Updated {finding_id} severity to [{sev_color}]{new_severity}[/]")
         return True
 
-    def _finding_projects(self) -> bool:
+    def _report_projects(self) -> bool:
         """List all finding projects."""
         if not self.findings_base_dir.exists():
             self.console.print("[dim]No projects found[/]")
@@ -7866,7 +7866,7 @@ Respond with a JSON object containing these fields:
 
         projects = [d for d in self.findings_base_dir.iterdir() if d.is_dir()]
         if not projects:
-            self.console.print("[dim]No projects found. Use /finding init <name> <lang> to create one.[/]")
+            self.console.print("[dim]No projects found. Use /report init <name> <lang> to create one.[/]")
             return True
 
         self.console.print("[bold]Finding Projects:[/]")
@@ -7883,25 +7883,25 @@ Respond with a JSON object containing these fields:
 
         return True
 
-    def _finding_open(self, project_name: str) -> bool:
+    def _report_open(self, project_name: str) -> bool:
         """Switch to an existing project."""
         project_name = project_name.strip()
         if not project_name:
-            self.console.print("[red]Usage: /finding open <project-name>[/]")
+            self.console.print("[red]Usage: /report open <project-name>[/]")
             return True
 
         project_dir = self.findings_base_dir / project_name
 
         if not project_dir.exists():
             self.console.print(f"[red]Project not found: {project_name}[/]")
-            self.console.print("[dim]Use /finding projects to list available projects[/]")
+            self.console.print("[dim]Use /report projects to list available projects[/]")
             return True
 
         self.findings_project = project_name
         self.console.print(f"[green]✓[/] Switched to project: {project_name}")
         return True
 
-    def _finding_export(self, args: str) -> bool:
+    def _report_export(self, args: str) -> bool:
         """Export findings to Word document via pandoc."""
         if not self.findings_project:
             self.console.print("[red]No project initialized.[/]")

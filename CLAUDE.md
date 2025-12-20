@@ -893,7 +893,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 ### Configuration Files
 - `~/.config/io.datasette.llm/extra-openai-models.yaml` - Azure OpenAI chat model definitions
 - `~/.config/io.datasette.llm/azure/config.yaml` - Azure OpenAI embedding model definitions (llm-azure plugin)
-- `~/.config/io.datasette.llm/templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-finding}.yaml` - Custom LLM templates
+- `~/.config/io.datasette.llm/templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-report}.yaml` - Custom LLM templates
 - `~/.codex/config.toml` - Codex CLI configuration with Azure OpenAI credentials (auto-generated)
 - `~/.claude-code-router/config.json` - Claude Code Router dual-provider configuration (auto-generated with checksum tracking)
 - `~/.claude-code-router/plugins/strip-reasoning.js` - CCR transformer plugin for reasoning token handling
@@ -917,7 +917,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `scripts/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)
-- `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-finding}.yaml` - Template sources installed to user config
+- `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-report}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
 

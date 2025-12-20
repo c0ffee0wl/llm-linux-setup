@@ -1969,7 +1969,7 @@ mkdir -p "$TEMPLATES_DIR"
 update_template_file "llm"
 update_template_file "llm-code"
 update_template_file "llm-wut"
-update_template_file "llm-assistant-finding"
+update_template_file "llm-assistant-report"
 
 # Conditionally install Terminator assistant template
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
