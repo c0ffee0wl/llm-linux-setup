@@ -18,11 +18,10 @@ License: GPL v2 only
 
 import time
 import base64
-import heapq
+import tempfile
 import os
 import math
 import threading
-import traceback
 import gi
 gi.require_version('Vte', '2.91')
 gi.require_version('Gdk', '3.0')
@@ -51,77 +50,6 @@ PLUGIN_VERSION = "3.3-cache-eviction"
 CACHE_MAX_SIZE = 100
 
 AVAILABLE = ['TerminatorAssistant']
-
-# Pre-normalized special key mappings (lowercase keys for O(1) lookup)
-SPECIAL_KEYS = {
-    # Basic navigation and editing
-    'enter': b'\r',
-    'return': b'\r',
-    'escape': b'\x1b',
-    'esc': b'\x1b',
-    'tab': b'\t',
-    'backspace': b'\x7f',
-    'delete': b'\x1b[3~',
-    'insert': b'\x1b[2~',
-    'home': b'\x1b[H',
-    'end': b'\x1b[F',
-    'pageup': b'\x1b[5~',
-    'pagedown': b'\x1b[6~',
-    'up': b'\x1b[A',
-    'down': b'\x1b[B',
-    'right': b'\x1b[C',
-    'left': b'\x1b[D',
-    'space': b' ',
-    # Function keys (F1-F12) - VT sequences
-    'f1': b'\x1bOP',
-    'f2': b'\x1bOQ',
-    'f3': b'\x1bOR',
-    'f4': b'\x1bOS',
-    'f5': b'\x1b[15~',
-    'f6': b'\x1b[17~',
-    'f7': b'\x1b[18~',
-    'f8': b'\x1b[19~',
-    'f9': b'\x1b[20~',
-    'f10': b'\x1b[21~',
-    'f11': b'\x1b[23~',
-    'f12': b'\x1b[24~',
-    # Control keys (ASCII control codes)
-    'ctrl+a': b'\x01',
-    'ctrl+b': b'\x02',
-    'ctrl+c': b'\x03',
-    'ctrl+d': b'\x04',
-    'ctrl+e': b'\x05',
-    'ctrl+f': b'\x06',
-    'ctrl+g': b'\x07',
-    'ctrl+h': b'\x08',
-    'ctrl+i': b'\t',   # Same as Tab
-    'ctrl+j': b'\n',   # Same as Enter
-    'ctrl+k': b'\x0b',
-    'ctrl+l': b'\x0c',
-    'ctrl+m': b'\r',   # Carriage return
-    'ctrl+n': b'\x0e',
-    'ctrl+o': b'\x0f',
-    'ctrl+p': b'\x10',
-    'ctrl+q': b'\x11',
-    'ctrl+r': b'\x12',
-    'ctrl+s': b'\x13',
-    'ctrl+t': b'\x14',
-    'ctrl+u': b'\x15',
-    'ctrl+v': b'\x16',
-    'ctrl+w': b'\x17',
-    'ctrl+x': b'\x18',
-    'ctrl+y': b'\x19',
-    'ctrl+z': b'\x1a',
-    # Alt/Meta combinations (ESC prefix)
-    'alt+b': b'\x1bb',
-    'alt+f': b'\x1bf',
-    'alt+d': b'\x1bd',
-    'alt+backspace': b'\x1b\x7f',
-    'alt+left': b'\x1b[1;3D',
-    'alt+right': b'\x1b[1;3C',
-    # Shift combinations
-    'shift+tab': b'\x1b[Z',
-}
 
 
 class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
@@ -270,11 +198,19 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                     capture_end = math.floor(scroll_pos + lines) - 1
                     dbg(f'Using vadjustment: scroll_pos={scroll_pos}, capture range=[{capture_start}, {capture_end}]')
                 else:
-                    # Fallback if vadjustment returns None: use top of buffer
-                    dbg('vadjustment returned None, using top of buffer fallback')
-                    capture_start = 0
-                    capture_end = lines - 1
-                    dbg(f'Using fallback: range=[{capture_start}, {capture_end}]')
+                    # Fallback if vadjustment returns None
+                    dbg('vadjustment returned None, using fallback')
+                    # Try scrollback position as fallback
+                    try:
+                        scrollback = vte.get_scrollback_lines()
+                        capture_start = scrollback
+                        capture_end = scrollback + lines - 1
+                        dbg(f'Using scrollback fallback: scrollback={scrollback}, range=[{capture_start}, {capture_end}]')
+                    except Exception:
+                        # Ultimate fallback: top of buffer
+                        capture_start = 0
+                        capture_end = lines - 1
+                        dbg(f'Using ultimate fallback: range=[{capture_start}, {capture_end}]')
             except Exception as e:
                 # Exception during vadjustment access
                 dbg(f'vadjustment exception: {type(e).__name__}: {e}')
@@ -488,21 +424,37 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 err(f'Failed to capture pixbuf from terminal {terminal_uuid}')
                 return f"ERROR: Screenshot capture failed (pixbuf is None)"
 
-            # Convert pixbuf to PNG in memory (avoids disk I/O)
+            # Save to temporary file
+            temp_path = None
             try:
-                success, buffer = pixbuf.save_to_bufferv("png", [], [])
-                if not success:
-                    err(f'Failed to encode pixbuf as PNG for terminal {terminal_uuid}')
-                    return f"ERROR: Failed to encode screenshot as PNG"
+                # Create temp file with .png extension
+                temp_fd, temp_path = tempfile.mkstemp(suffix='.png', prefix='terminator_screenshot_')
+                os.close(temp_fd)  # Close the file descriptor, we'll use the path
 
-                base64_data = base64.b64encode(buffer).decode('utf-8')
+                # Save pixbuf to PNG
+                pixbuf.savev(temp_path, "png", [], [])
 
-                dbg(f'Screenshot captured: {len(base64_data)} base64 chars ({len(buffer)} bytes PNG)')
+                dbg(f'Screenshot saved to {temp_path}')
+
+                # Read file and encode as base64
+                with open(temp_path, 'rb') as f:
+                    image_data = f.read()
+
+                base64_data = base64.b64encode(image_data).decode('utf-8')
+
+                dbg(f'Screenshot captured: {len(base64_data)} base64 chars ({len(image_data)} bytes PNG)')
                 return base64_data
 
             except Exception as e:
-                err(f'Error encoding screenshot: {e}')
-                return f"ERROR: Failed to encode screenshot: {str(e)}"
+                err(f'Error saving screenshot: {e}')
+                return f"ERROR: Failed to save screenshot: {str(e)}"
+            finally:
+                # Guaranteed cleanup of temp file
+                if temp_path:
+                    try:
+                        os.unlink(temp_path)
+                    except OSError:
+                        pass  # Ignore cleanup errors (file may not exist)
 
         except Exception as e:
             err(f'TerminatorAssistant: Error capturing screenshot: {e}')
@@ -563,6 +515,81 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
         Returns:
             True on success, False on error
         """
+        # Special key mappings to escape sequences
+        special_keys = {
+            # Basic navigation and editing
+            'Enter': b'\r',
+            'Return': b'\r',
+            'Escape': b'\x1b',
+            'Esc': b'\x1b',
+            'Tab': b'\t',
+            'Backspace': b'\x7f',
+            'Delete': b'\x1b[3~',
+            'Insert': b'\x1b[2~',
+            'Home': b'\x1b[H',
+            'End': b'\x1b[F',
+            'PageUp': b'\x1b[5~',
+            'PageDown': b'\x1b[6~',
+            'Up': b'\x1b[A',
+            'Down': b'\x1b[B',
+            'Right': b'\x1b[C',
+            'Left': b'\x1b[D',
+            'Space': b' ',
+
+            # Function keys (F1-F12) - VT sequences
+            'F1': b'\x1bOP',
+            'F2': b'\x1bOQ',
+            'F3': b'\x1bOR',
+            'F4': b'\x1bOS',
+            'F5': b'\x1b[15~',
+            'F6': b'\x1b[17~',
+            'F7': b'\x1b[18~',
+            'F8': b'\x1b[19~',
+            'F9': b'\x1b[20~',
+            'F10': b'\x1b[21~',
+            'F11': b'\x1b[23~',
+            'F12': b'\x1b[24~',
+
+            # Control keys (ASCII control codes)
+            'Ctrl+A': b'\x01',
+            'Ctrl+B': b'\x02',
+            'Ctrl+C': b'\x03',
+            'Ctrl+D': b'\x04',
+            'Ctrl+E': b'\x05',
+            'Ctrl+F': b'\x06',
+            'Ctrl+G': b'\x07',
+            'Ctrl+H': b'\x08',
+            'Ctrl+I': b'\t',   # Same as Tab
+            'Ctrl+J': b'\n',   # Same as Enter
+            'Ctrl+K': b'\x0b',
+            'Ctrl+L': b'\x0c',
+            'Ctrl+M': b'\r',   # Carriage return
+            'Ctrl+N': b'\x0e',
+            'Ctrl+O': b'\x0f',
+            'Ctrl+P': b'\x10',
+            'Ctrl+Q': b'\x11',
+            'Ctrl+R': b'\x12',
+            'Ctrl+S': b'\x13',
+            'Ctrl+T': b'\x14',
+            'Ctrl+U': b'\x15',
+            'Ctrl+V': b'\x16',
+            'Ctrl+W': b'\x17',
+            'Ctrl+X': b'\x18',
+            'Ctrl+Y': b'\x19',
+            'Ctrl+Z': b'\x1a',
+
+            # Alt/Meta combinations (ESC prefix)
+            'Alt+B': b'\x1bb',
+            'Alt+F': b'\x1bf',
+            'Alt+D': b'\x1bd',
+            'Alt+Backspace': b'\x1b\x7f',
+            'Alt+Left': b'\x1b[1;3D',
+            'Alt+Right': b'\x1b[1;3C',
+
+            # Shift combinations
+            'Shift+Tab': b'\x1b[Z',
+        }
+
         try:
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
             if not terminal:
@@ -574,12 +601,16 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 err(f'Could not access VTE for terminal {terminal_uuid}')
                 return False
 
-            # O(1) lookup using module-level SPECIAL_KEYS constant (case-insensitive)
-            keypress_bytes = SPECIAL_KEYS.get(keypress.lower())
-            if keypress_bytes is not None:
-                dbg(f'Mapped special key "{keypress}" to escape sequence')
-            else:
-                # Not a special key, send as literal text
+            # Check if it's a special key (case-insensitive)
+            keypress_bytes = None
+            for special_name, special_seq in special_keys.items():
+                if keypress.lower() == special_name.lower():
+                    keypress_bytes = special_seq
+                    dbg(f'Mapped special key "{keypress}" to escape sequence')
+                    break
+
+            # If not a special key, send as literal text
+            if keypress_bytes is None:
                 keypress_bytes = keypress.encode('utf-8')
 
             # Feed keypress to VTE (NO automatic newline)
@@ -645,6 +676,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             return terminals_info
 
         except Exception as e:
+            import traceback
             err(f'TerminatorAssistant: Error getting terminals metadata: {e}')
             err(f'Traceback: {traceback.format_exc()}')
             return []
@@ -754,6 +786,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             return terminals_info
 
         except Exception as e:
+            import traceback
             err(f'[SIDECHAT-PLUGIN] Error getting terminals in same tab: {e}')
             err(f'[SIDECHAT-PLUGIN] Traceback: {traceback.format_exc()}')
             return []
@@ -883,6 +916,8 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
         Optimized: O(n log n) instead of O(n²) by sorting once and deleting in batch.
         """
+        import heapq
+
         # Evict content cache entries - find all entries to evict in one pass
         excess_content = len(self.content_cache) - CACHE_MAX_SIZE
         if excess_content > 0 and self.last_capture:
