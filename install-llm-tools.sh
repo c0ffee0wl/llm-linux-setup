@@ -1969,14 +1969,15 @@ mkdir -p "$TEMPLATES_DIR"
 update_template_file "llm"
 update_template_file "llm-code"
 update_template_file "llm-wut"
-update_template_file "llm-assistant-report"
+# Note: llm-assistant and llm-assistant-report templates are now bundled
+# as Jinja2 templates inside the llm-assistant package
 
-# Conditionally install Terminator assistant template
+# Clean up old Terminator assistant templates if they exist
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    update_template_file "llm-assistant"
-    # Remove old templates if they exist
     rm -f "$TEMPLATES_DIR/terminator-sidechat.yaml"
     rm -f "$TEMPLATES_DIR/terminator-assistant.yaml"
+    rm -f "$TEMPLATES_DIR/llm-assistant.yaml"
+    rm -f "$TEMPLATES_DIR/llm-assistant-report.yaml"
 fi
 
 #############################################################################
@@ -2046,10 +2047,11 @@ cp "$SCRIPT_DIR/scripts/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
 # Install shared Python module for prompt detection (PEP 420 namespace package)
+# Source: llm-assistant package (canonical location for this module)
 log "Installing shared prompt detection module..."
 PYTHON_USER_SITE=$(python3 -m site --user-site)
 mkdir -p "$PYTHON_USER_SITE/llm_tools"
-cp "$SCRIPT_DIR/shared/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
+cp "$SCRIPT_DIR/llm-assistant/llm_assistant/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
 # Install Terminator assistant components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
@@ -2076,11 +2078,18 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     log "Terminator assistant plugin installed"
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 
-    # Install llm-assistant application and its dependencies
-    cp "$SCRIPT_DIR/llm-assistant/llm-assistant" "$HOME/.local/bin/llm-assistant"
+    # Install llm-assistant package into llm's environment
+    log "Installing llm-assistant package..."
+    install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
+
+    # Create wrapper script that calls into llm's environment
+    cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
+#!/bin/sh
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_assistant "$@"
+EOF
     chmod +x "$HOME/.local/bin/llm-assistant"
-    cp "$SCRIPT_DIR/shared/system_info.py" "$HOME/.local/bin/system_info.py"
-    cp "$SCRIPT_DIR/shared/prompt_detection.py" "$HOME/.local/bin/prompt_detection.py"
+
+    # Note: system_info.py and prompt_detection.py are now bundled in the package
 
     # Preload the Parakeet speech model to avoid first-use delay
     # (onnx-asr is now installed via llm-tools-assistant pyproject.toml dependencies)

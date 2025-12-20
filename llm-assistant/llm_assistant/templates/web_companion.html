@@ -1,0 +1,1703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>llm-assistant</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github.min.css" id="hljs-light">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" id="hljs-dark" disabled>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <style>
+        :root {
+            --bg-primary: #ffffff;
+            --bg-secondary: #f7f7f8;
+            --bg-tertiary: #ececf1;
+            --bg-user: #f0f4ff;
+            --bg-assistant: #ffffff;
+            --bg-code: #f6f8fa;
+            --text-primary: #1a1a1a;
+            --text-secondary: #6b6b6b;
+            --text-muted: #9a9a9a;
+            --border-color: #e5e5e5;
+            --accent-user: #2563eb;
+            --accent-assistant: #059669;
+            --accent-hover: #1d4ed8;
+            --accent-watch: #f59e0b;
+            --accent-tool: #8b5cf6;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.04);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.12);
+            --radius-sm: 6px;
+            --radius-md: 12px;
+            --radius-lg: 16px;
+        }
+        [data-theme="dark"] {
+            --bg-primary: #1a1a2e;
+            --bg-secondary: #16213e;
+            --bg-tertiary: #0f3460;
+            --bg-user: #1e3a5f;
+            --bg-assistant: #1a1a2e;
+            --bg-code: #0d1117;
+            --text-primary: #e5e5e5;
+            --text-secondary: #a0a0a0;
+            --text-muted: #6b6b6b;
+            --border-color: #2d4a6f;
+            --accent-user: #60a5fa;
+            --accent-assistant: #34d399;
+            --shadow-sm: 0 1px 2px rgba(0,0,0,0.2);
+            --shadow-md: 0 4px 12px rgba(0,0,0,0.3);
+            --shadow-lg: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+            font-size: 90%;
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.5;
+        }
+        header {
+            position: sticky;
+            top: 0;
+            background: var(--bg-primary);
+            padding: 12px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            box-shadow: var(--shadow-sm);
+            z-index: 100;
+        }
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        header h1 {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+        .header-badges {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #status {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            border-radius: 20px;
+            font-weight: 500;
+        }
+        #status.connected {
+            background: #dcfce7;
+            color: #166534;
+        }
+        [data-theme="dark"] #status.connected {
+            background: #166534;
+            color: #dcfce7;
+        }
+        #status.disconnected {
+            background: #fee2e2;
+            color: #991b1b;
+        }
+        [data-theme="dark"] #status.disconnected {
+            background: #991b1b;
+            color: #fee2e2;
+        }
+        .model-badge {
+            font-size: 0.7rem;
+            padding: 3px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 12px;
+            color: var(--text-secondary);
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .mode-badge {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .mode-badge.assistant {
+            background: #dbeafe;
+            color: #1e40af;
+        }
+        [data-theme="dark"] .mode-badge.assistant {
+            background: #1e40af;
+            color: #dbeafe;
+        }
+        .mode-badge.agent {
+            background: #fef3c7;
+            color: #92400e;
+        }
+        [data-theme="dark"] .mode-badge.agent {
+            background: #92400e;
+            color: #fef3c7;
+        }
+        .watch-badge {
+            font-size: 0.65rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-weight: 500;
+            display: none;
+            align-items: center;
+            gap: 4px;
+        }
+        .watch-badge.active {
+            display: inline-flex;
+            background: #fef3c7;
+            color: #92400e;
+        }
+        [data-theme="dark"] .watch-badge.active {
+            background: #92400e;
+            color: #fef3c7;
+        }
+        .watch-badge .pulse {
+            width: 6px;
+            height: 6px;
+            background: var(--accent-watch);
+            border-radius: 50%;
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.2); }
+        }
+        .header-buttons { display: flex; gap: 6px; align-items: center; }
+        button {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            padding: 6px 12px;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            font-size: 0.8rem;
+            font-weight: 500;
+            transition: all 0.15s ease;
+        }
+        button:hover {
+            background: var(--accent-user);
+            color: white;
+            border-color: var(--accent-user);
+        }
+        .icon-btn {
+            padding: 6px 8px;
+            font-size: 1rem;
+            line-height: 1;
+        }
+        .icon-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        /* Token Usage Bar */
+        .token-bar-container {
+            background: var(--bg-primary);
+            border-bottom: 1px solid var(--border-color);
+            padding: 6px 20px;
+            display: none;
+        }
+        .token-bar-container.visible { display: block; }
+        .token-bar {
+            max-width: 860px;
+            margin: 0 auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .token-bar-label {
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+            white-space: nowrap;
+        }
+        .token-bar-track {
+            flex: 1;
+            height: 4px;
+            background: var(--bg-tertiary);
+            border-radius: 2px;
+            overflow: hidden;
+        }
+        .token-bar-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent-assistant), var(--accent-user));
+            border-radius: 2px;
+            transition: width 0.3s ease;
+            width: 0%;
+        }
+        .token-bar-fill.warning { background: linear-gradient(90deg, #f59e0b, #ef4444); }
+        .token-bar-text {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            font-family: 'SF Mono', Consolas, monospace;
+            min-width: 120px;
+            text-align: right;
+        }
+        /* Search Bar */
+        .search-bar {
+            position: fixed;
+            top: 60px;
+            right: 20px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            padding: 8px 12px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+            box-shadow: var(--shadow-md);
+            z-index: 200;
+        }
+        .search-bar.visible { display: flex; }
+        .search-bar input {
+            border: none;
+            background: transparent;
+            color: var(--text-primary);
+            font-size: 0.85rem;
+            width: 200px;
+            outline: none;
+        }
+        .search-bar input::placeholder { color: var(--text-muted); }
+        .search-count {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            white-space: nowrap;
+        }
+        .search-bar button {
+            padding: 4px 8px;
+            font-size: 0.75rem;
+        }
+        mark {
+            background: #fef08a;
+            color: #1a1a1a;
+            padding: 1px 2px;
+            border-radius: 2px;
+        }
+        [data-theme="dark"] mark {
+            background: #854d0e;
+            color: #fef08a;
+        }
+        mark.current {
+            background: #fb923c;
+            color: white;
+        }
+        /* Copy Dropdown */
+        .copy-dropdown {
+            position: relative;
+            display: inline-flex;
+        }
+        .copy-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            margin-top: 4px;
+            background: var(--bg-primary);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            box-shadow: var(--shadow-md);
+            display: none;
+            z-index: 50;
+            white-space: nowrap;
+        }
+        .copy-dropdown-menu.show { display: block; }
+        .copy-dropdown-menu button {
+            display: block;
+            width: 100%;
+            border: none;
+            border-radius: 0;
+            padding: 8px 12px;
+            font-size: 0.75rem;
+            white-space: nowrap;
+            text-align: left;
+        }
+        .copy-dropdown-menu button:first-child { border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+        .copy-dropdown-menu button:last-child { border-radius: 0 0 var(--radius-sm) var(--radius-sm); }
+        .copy-dropdown-menu button:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+        }
+        #messages {
+            max-width: 860px;
+            margin: 0 auto;
+            padding: 16px 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+        .message {
+            padding: 14px 18px;
+            border-radius: var(--radius-md);
+            position: relative;
+            box-shadow: var(--shadow-sm);
+            border: 1px solid var(--border-color);
+            animation: slideIn 0.2s ease-out;
+        }
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateY(8px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .message.user {
+            background: var(--bg-user);
+            border-left: 3px solid var(--accent-user);
+        }
+        .message.assistant {
+            background: var(--bg-assistant);
+            border-left: 3px solid var(--accent-assistant);
+        }
+        .message-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .role-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .role-icon {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+        }
+        .message.user .role-icon { background: var(--accent-user); }
+        .message.assistant .role-icon { background: var(--accent-assistant); }
+        .role {
+            font-weight: 600;
+            font-size: 0.85rem;
+        }
+        .message.user .role { color: var(--accent-user); }
+        .message.assistant .role { color: var(--accent-assistant); }
+        .content {
+            line-height: 1.7;
+            word-wrap: break-word;
+            color: var(--text-primary);
+        }
+        .content p { margin-bottom: 12px; }
+        .content p:last-child { margin-bottom: 0; }
+        .content ul, .content ol {
+            margin: 12px 0;
+            padding-left: 24px;
+        }
+        .content li { margin-bottom: 6px; }
+        .content strong { font-weight: 600; }
+        .content code:not(pre code) {
+            background: var(--bg-tertiary);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 0.9em;
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .content pre {
+            position: relative;
+            margin: 16px 0;
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            background: var(--bg-code);
+            border: 1px solid var(--border-color);
+        }
+        .content pre code {
+            display: block;
+            padding: 16px;
+            overflow-x: auto;
+            font-size: 0.875rem;
+            line-height: 1.5;
+            font-family: 'SF Mono', Consolas, 'Liberation Mono', monospace;
+            background: transparent;
+        }
+        .copy-code-btn {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 4px 10px;
+            font-size: 0.7rem;
+            background: var(--bg-primary);
+            opacity: 0;
+            transition: opacity 0.15s;
+            box-shadow: var(--shadow-sm);
+        }
+        .content pre:hover .copy-code-btn { opacity: 1; }
+        .copy-msg-btn {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            background: transparent;
+            border: 1px solid var(--border-color);
+        }
+        .copy-msg-btn:hover {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--border-color);
+        }
+        /* Tool Call Visualization */
+        .tool-call {
+            margin: 12px 0;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+            background: var(--bg-tertiary);
+        }
+        .tool-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 8px 12px;
+            cursor: pointer;
+            user-select: none;
+            transition: background 0.15s;
+        }
+        .tool-header:hover { background: var(--bg-secondary); }
+        .tool-icon { font-size: 14px; }
+        .tool-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--accent-tool);
+        }
+        .tool-status {
+            font-size: 0.7rem;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: auto;
+        }
+        .tool-status.success { background: #dcfce7; color: #166534; }
+        .tool-status.error { background: #fee2e2; color: #991b1b; }
+        .tool-status.pending { background: #fef3c7; color: #92400e; }
+        [data-theme="dark"] .tool-status.success { background: #166534; color: #dcfce7; }
+        [data-theme="dark"] .tool-status.error { background: #991b1b; color: #fee2e2; }
+        [data-theme="dark"] .tool-status.pending { background: #92400e; color: #fef3c7; }
+        .tool-expand {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+        .tool-call.expanded .tool-expand { transform: rotate(90deg); }
+        .tool-body {
+            display: none;
+            padding: 12px;
+            border-top: 1px solid var(--border-color);
+            background: var(--bg-primary);
+        }
+        .tool-call.expanded .tool-body { display: block; }
+        .tool-section {
+            margin-bottom: 12px;
+        }
+        .tool-section:last-child { margin-bottom: 0; }
+        .tool-section-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .tool-section pre {
+            margin: 0;
+            padding: 8px;
+            background: var(--bg-code);
+            border-radius: 4px;
+            font-size: 0.75rem;
+            overflow-x: auto;
+        }
+        .tool-section pre code {
+            background: transparent;
+            padding: 0;
+        }
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            background: var(--text-primary);
+            color: var(--bg-primary);
+            padding: 12px 20px;
+            border-radius: var(--radius-sm);
+            font-weight: 500;
+            font-size: 0.9rem;
+            transform: translateY(80px);
+            opacity: 0;
+            transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+            box-shadow: var(--shadow-lg);
+            z-index: 1000;
+        }
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+        .streaming .content::after {
+            content: '▋';
+            animation: blink 1s infinite;
+            color: var(--accent-assistant);
+            margin-left: 2px;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0; }
+        }
+        /* Debug modal styles */
+        .debug-modal-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 200;
+        }
+        .debug-modal-overlay.active { display: flex; justify-content: center; align-items: center; }
+        .debug-modal {
+            background: var(--bg-primary);
+            border-radius: var(--radius-lg);
+            box-shadow: var(--shadow-lg);
+            width: 90%;
+            max-width: 900px;
+            max-height: 85vh;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+        .debug-modal-header {
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .debug-modal-header h2 { font-size: 1rem; font-weight: 600; }
+        .debug-modal-content {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+        }
+        .debug-section {
+            margin-bottom: 20px;
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-sm);
+            overflow: hidden;
+        }
+        .debug-section-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
+            cursor: pointer;
+            background: var(--bg-tertiary);
+            user-select: none;
+        }
+        .debug-section-header:hover { background: var(--bg-secondary); }
+        .debug-section-title { font-weight: 600; font-size: 0.85rem; }
+        .debug-section-expand {
+            margin-left: auto;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            transition: transform 0.2s;
+        }
+        .debug-section.expanded .debug-section-expand { transform: rotate(90deg); }
+        .debug-section-body {
+            display: none;
+            padding: 12px;
+            background: var(--bg-code);
+            border-top: 1px solid var(--border-color);
+        }
+        .debug-section.expanded .debug-section-body { display: block; }
+        .debug-section-body pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.75rem;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .debug-meta {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 12px;
+            margin-bottom: 16px;
+            font-size: 0.8rem;
+        }
+        .debug-meta-item {
+            background: var(--bg-tertiary);
+            padding: 4px 10px;
+            border-radius: var(--radius-sm);
+        }
+        .debug-meta-label { color: var(--text-secondary); }
+        .debug-msg {
+            margin: 8px 0;
+            padding: 8px 12px;
+            border-radius: var(--radius-sm);
+            border-left: 3px solid;
+        }
+        .debug-msg.user { background: var(--bg-user); border-color: var(--accent-user); }
+        .debug-msg.assistant { background: var(--bg-assistant); border-color: var(--accent-assistant); }
+        .debug-msg.tool { background: #f5f3ff; border-color: var(--accent-tool); }
+        .debug-msg.tool-result { background: #fef3c7; border-color: #f59e0b; }
+        [data-theme="dark"] .debug-msg.tool { background: #2d2640; }
+        [data-theme="dark"] .debug-msg.tool-result { background: #422d1a; }
+        .token-info {
+            font-size: 0.6rem;
+            background: var(--bg-tertiary);
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+            color: var(--text-secondary);
+        }
+        .debug-msg-role {
+            font-size: 0.7rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        .debug-msg-content {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-size: 0.75rem;
+            white-space: pre-wrap;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .context-badge {
+            font-size: 0.6rem;
+            background: var(--accent-tool);
+            color: white;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+        }
+        .attachment-badge {
+            font-size: 0.6rem;
+            background: #3b82f6;
+            color: white;
+            padding: 1px 5px;
+            border-radius: 8px;
+            margin-left: 6px;
+        }
+        .debug-attachments {
+            margin-top: 8px;
+            padding-top: 8px;
+            border-top: 1px dashed var(--border-color);
+        }
+        .debug-attachment {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.7rem;
+            padding: 2px 0;
+        }
+        .debug-attachment-type {
+            background: var(--bg-tertiary);
+            padding: 1px 6px;
+            border-radius: 4px;
+            font-family: 'SF Mono', Consolas, monospace;
+        }
+        .debug-attachment-source {
+            color: var(--text-secondary);
+            word-break: break-all;
+        }
+        /* Tool definitions styling */
+        .debug-tool {
+            margin: 8px 0;
+            padding: 10px 12px;
+            border-radius: var(--radius-sm);
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+        }
+        .debug-tool-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+        .debug-tool-name {
+            font-family: 'SF Mono', Consolas, monospace;
+            font-weight: 600;
+            font-size: 0.8rem;
+            color: var(--accent-tool);
+        }
+        .tool-plugin-badge {
+            font-size: 0.6rem;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+            padding: 1px 6px;
+            border-radius: 8px;
+        }
+        .debug-tool-desc {
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+        .debug-tool-schema {
+            margin: 0;
+            padding: 8px;
+            background: var(--bg-code);
+            border-radius: var(--radius-sm);
+            font-size: 0.7rem;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .debug-tool-schema code {
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: var(--text-muted);
+        }
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+        /* Thinking traces - regular conversation view */
+        .thinking-section {
+            margin-bottom: 8px;
+        }
+        .thinking-details {
+            background: var(--bg-tertiary);
+            border-radius: 6px;
+            padding: 8px 12px;
+        }
+        .thinking-details summary {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            font-weight: 500;
+        }
+        .thinking-details summary:hover {
+            color: var(--text-primary);
+        }
+        .thinking-content {
+            margin-top: 8px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .thinking-trace {
+            margin: 8px 0;
+            border-left: 3px solid var(--accent);
+            padding-left: 12px;
+        }
+        .thinking-trace pre {
+            margin: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        /* Thinking traces - debug modal */
+        .debug-msg .thinking-traces {
+            margin-bottom: 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+            padding: 4px 8px;
+        }
+        .debug-msg .thinking-traces summary {
+            cursor: pointer;
+            color: var(--text-secondary);
+            font-size: 0.9em;
+        }
+        .thinking-trace-header {
+            font-size: 0.85em;
+            color: var(--text-secondary);
+            margin-bottom: 4px;
+        }
+        .thinking-badge {
+            background: var(--accent);
+            color: white;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-size: 0.75em;
+            margin-left: 4px;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <h1>llm-assistant</h1>
+            <div class="header-badges">
+                <span id="status" class="disconnected">Disconnected</span>
+                <span id="model-badge" class="model-badge" style="display:none;"></span>
+                <span id="mode-badge" class="mode-badge" style="display:none;"></span>
+                <span id="watch-badge" class="watch-badge"><span class="pulse"></span><span id="watch-text">Watch</span></span>
+            </div>
+        </div>
+        <div class="header-buttons">
+            <button class="icon-btn" onclick="toggleSearch()" title="Search (Ctrl+F)">🔍</button>
+            <button class="icon-btn" onclick="openDebugModal()" title="Debug info">🐛</button>
+            <button class="icon-btn" onclick="toggleTheme()" id="theme-btn" title="Toggle theme">🌙</button>
+            <div class="copy-dropdown">
+                <button onclick="toggleCopyMenu(this)">Copy All ▾</button>
+                <div class="copy-dropdown-menu">
+                    <button onclick="copyAllText()">Copy as Text</button>
+                    <button onclick="copyAllMarkdown()">Copy as Markdown</button>
+                </div>
+            </div>
+        </div>
+    </header>
+    <div class="token-bar-container" id="token-bar-container">
+        <div class="token-bar">
+            <span class="token-bar-label">Context:</span>
+            <div class="token-bar-track">
+                <div class="token-bar-fill" id="token-bar-fill"></div>
+            </div>
+            <span class="token-bar-text" id="token-bar-text">0 / 0</span>
+        </div>
+    </div>
+    <div class="search-bar" id="search-bar">
+        <input type="text" id="search-input" placeholder="Search..." oninput="doSearch()">
+        <span class="search-count" id="search-count">0/0</span>
+        <button onclick="searchPrev()">↑</button>
+        <button onclick="searchNext()">↓</button>
+        <button onclick="closeSearch()">✕</button>
+    </div>
+    <div id="messages">
+        <div class="empty-state" id="empty-state">
+            <div class="empty-state-icon">💬</div>
+            <p>Waiting for conversation...</p>
+        </div>
+    </div>
+    <div id="toast" class="toast">Copied!</div>
+    <div class="debug-modal-overlay" id="debug-modal-overlay" onclick="closeDebugModal(event)">
+        <div class="debug-modal" onclick="event.stopPropagation()">
+            <div class="debug-modal-header">
+                <h2>Debug Info</h2>
+                <button class="icon-btn" onclick="closeDebugModal()">&times;</button>
+            </div>
+            <div class="debug-modal-content" id="debug-modal-content">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Store original markdown for copy-as-markdown feature
+        const messageMarkdown = new Map();
+        let messageIdCounter = 0;
+
+        marked.setOptions({
+            highlight: function(code, lang) {
+                if (lang && hljs.getLanguage(lang)) {
+                    return hljs.highlight(code, { language: lang }).value;
+                }
+                return hljs.highlightAuto(code).value;
+            },
+            breaks: true
+        });
+
+        let ws;
+        let reconnectTimer;
+        const messagesContainer = document.getElementById('messages');
+        const status = document.getElementById('status');
+        const emptyState = document.getElementById('empty-state');
+        let currentAssistantDiv = null;
+        let currentAssistantMarkdown = '';
+
+        // Search state
+        let searchMatches = [];
+        let currentMatchIndex = -1;
+
+        // Theme handling
+        function getTheme() {
+            return localStorage.getItem('theme') || 'light';
+        }
+
+        function setTheme(theme) {
+            document.documentElement.setAttribute('data-theme', theme);
+            localStorage.setItem('theme', theme);
+            document.getElementById('theme-btn').textContent = theme === 'dark' ? '☀️' : '🌙';
+            // Switch highlight.js theme
+            document.getElementById('hljs-light').disabled = theme === 'dark';
+            document.getElementById('hljs-dark').disabled = theme === 'light';
+        }
+
+        function toggleTheme() {
+            const current = getTheme();
+            setTheme(current === 'light' ? 'dark' : 'light');
+        }
+
+        // Initialize theme
+        setTheme(getTheme());
+
+        function hideEmptyState() {
+            if (emptyState) emptyState.style.display = 'none';
+        }
+
+        function showEmptyState() {
+            if (emptyState) emptyState.style.display = 'block';
+        }
+
+        function connect() {
+            ws = new WebSocket('ws://' + window.location.host + '/ws');
+
+            ws.onopen = () => {
+                status.textContent = 'Connected';
+                status.className = 'connected';
+                clearTimeout(reconnectTimer);
+            };
+
+            ws.onclose = () => {
+                status.textContent = 'Disconnected';
+                status.className = 'disconnected';
+                reconnectTimer = setTimeout(connect, 2000);
+            };
+
+            ws.onerror = () => {
+                ws.close();
+            };
+
+            ws.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                handleMessage(data);
+            };
+        }
+
+        function handleMessage(data) {
+            switch(data.type) {
+                case 'user_message':
+                    addUserMessage(data.content);
+                    break;
+                case 'assistant_chunk':
+                    updateAssistantMessage(data.content, false);
+                    break;
+                case 'assistant_complete':
+                    updateAssistantMessage(data.content, true, data.thinking_traces);
+                    break;
+                case 'clear':
+                    clearMessages();
+                    break;
+                case 'history':
+                    clearMessages();
+                    data.messages.forEach(msg => {
+                        if (msg.role === 'user') {
+                            addUserMessage(msg.content);
+                        } else if (msg.role === 'tool_call') {
+                            addToolCall(msg.tool_name, msg.arguments, msg.result, msg.status);
+                        } else if (msg.content && msg.content.trim()) {
+                            addAssistantMessage(msg.content, msg.thinking_traces);
+                        }
+                    });
+                    break;
+                case 'session_info':
+                    updateSessionInfo(data);
+                    break;
+                case 'watch_status':
+                    updateWatchStatus(data);
+                    break;
+                case 'token_update':
+                    updateTokenBar(data);
+                    break;
+                case 'tool_call':
+                    addToolCall(data.tool_name, data.arguments, data.result, data.status);
+                    break;
+                case 'debug_info':
+                    renderDebugInfo(data);
+                    break;
+            }
+            scrollToBottom();
+        }
+
+        function updateSessionInfo(data) {
+            const modelBadge = document.getElementById('model-badge');
+            const modeBadge = document.getElementById('mode-badge');
+            if (data.model) {
+                modelBadge.textContent = data.model;
+                modelBadge.style.display = 'inline';
+            }
+            if (data.mode) {
+                modeBadge.textContent = data.mode;
+                modeBadge.className = 'mode-badge ' + data.mode;
+                modeBadge.style.display = 'inline';
+            }
+        }
+
+        function updateWatchStatus(data) {
+            const watchBadge = document.getElementById('watch-badge');
+            const watchText = document.getElementById('watch-text');
+            if (data.active) {
+                watchBadge.classList.add('active');
+                watchText.textContent = data.goal ? 'Watch: ' + data.goal.substring(0, 20) + (data.goal.length > 20 ? '...' : '') : 'Watch';
+                watchText.title = data.goal || '';
+            } else {
+                watchBadge.classList.remove('active');
+            }
+        }
+
+        function updateTokenBar(data) {
+            const container = document.getElementById('token-bar-container');
+            const fill = document.getElementById('token-bar-fill');
+            const text = document.getElementById('token-bar-text');
+            container.classList.add('visible');
+            const pct = Math.min(100, data.percentage || 0);
+            fill.style.width = pct + '%';
+            fill.classList.toggle('warning', pct > 80);
+            const current = formatTokens(data.current_tokens || 0);
+            const max = formatTokens(data.max_tokens || 0);
+            text.textContent = current + ' / ' + max + ' (' + Math.round(pct) + '%)';
+        }
+
+        function formatTokens(n) {
+            if (n >= 1000000) return (n / 1000000).toFixed(1) + 'M';
+            if (n >= 1000) return (n / 1000).toFixed(0) + 'k';
+            return n.toString();
+        }
+
+        function formatBytes(bytes) {
+            if (bytes >= 1048576) return (bytes / 1048576).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        // Debug modal functions
+        let debugRefreshInterval = null;
+        let lastDebugDataHash = null;
+
+        function openDebugModal() {
+            lastDebugDataHash = null;  // Reset hash on open
+            document.getElementById('debug-modal-overlay').classList.add('active');
+            // Clear any existing interval first (safety)
+            if (debugRefreshInterval) {
+                clearInterval(debugRefreshInterval);
+            }
+            // Request debug info from server
+            requestDebugInfo();
+            // Auto-refresh every 2 seconds while modal is open
+            debugRefreshInterval = setInterval(requestDebugInfo, 2000);
+        }
+
+        function requestDebugInfo() {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send('debug_request');
+            }
+        }
+
+        function closeDebugModal(event) {
+            if (!event || event.target === event.currentTarget) {
+                document.getElementById('debug-modal-overlay').classList.remove('active');
+                // Stop auto-refresh
+                if (debugRefreshInterval) {
+                    clearInterval(debugRefreshInterval);
+                    debugRefreshInterval = null;
+                }
+            }
+        }
+
+        function renderDebugInfo(data) {
+            // Skip re-render if data hasn't changed (preserves text selection)
+            const dataHash = JSON.stringify(data);
+            if (dataHash === lastDebugDataHash) {
+                return;
+            }
+            lastDebugDataHash = dataHash;
+
+            const container = document.getElementById('debug-modal-content');
+
+            // Meta info row
+            const optionsStr = data.options && Object.keys(data.options).length > 0
+                ? Object.entries(data.options).map(([k, v]) => `${k}=${v}`).join(', ')
+                : '';
+            let html = `<div class="debug-meta">
+                <div class="debug-meta-item"><span class="debug-meta-label">Model:</span> ${escapeHtml(data.model)}</div>
+                <div class="debug-meta-item"><span class="debug-meta-label">Mode:</span> ${escapeHtml(data.mode)}</div>
+                <div class="debug-meta-item"><span class="debug-meta-label">Tokens:</span> ${formatTokens(data.current_tokens)} / ${formatTokens(data.max_context)}</div>
+                ${optionsStr ? `<div class="debug-meta-item"><span class="debug-meta-label">Options:</span> ${escapeHtml(optionsStr)}</div>` : ''}
+                ${data.loaded_kbs && data.loaded_kbs.length ? `<div class="debug-meta-item"><span class="debug-meta-label">KBs:</span> ${data.loaded_kbs.join(', ')}</div>` : ''}
+                ${data.active_rag ? `<div class="debug-meta-item"><span class="debug-meta-label">RAG:</span> ${escapeHtml(data.active_rag)}</div>` : ''}
+            </div>`;
+
+            // System Prompt section (expanded by default)
+            const sysPromptChars = data.system_prompt ? data.system_prompt.length : 0;
+            const sysPromptTokens = Math.ceil(sysPromptChars / 4);
+            html += `<div class="debug-section expanded">
+                <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                    <span class="debug-section-title">System Prompt</span>
+                    <span class="token-info">${sysPromptChars} chars, ~${sysPromptTokens} tokens</span>
+                    <span class="debug-section-expand">▶</span>
+                </div>
+                <div class="debug-section-body">
+                    <pre><code>${escapeHtml(data.system_prompt || '')}</code></pre>
+                </div>
+            </div>`;
+
+            // Tools section (collapsed by default)
+            if (data.tools && data.tools.length > 0) {
+                const toolsJson = JSON.stringify(data.tools);
+                const toolsChars = toolsJson.length;
+                const toolsTokens = Math.ceil(toolsChars / 4);
+                html += `<div class="debug-section">
+                    <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                        <span class="debug-section-title">Tools (${data.tools.length})</span>
+                        <span class="token-info">${toolsChars} chars, ~${toolsTokens} tokens</span>
+                        <span class="debug-section-expand">▶</span>
+                    </div>
+                    <div class="debug-section-body">`;
+                data.tools.forEach(tool => {
+                    const pluginBadge = tool.plugin ? `<span class="tool-plugin-badge">${escapeHtml(tool.plugin)}</span>` : '';
+                    html += `<div class="debug-tool">
+                        <div class="debug-tool-header">
+                            <span class="debug-tool-name">${escapeHtml(tool.name)}</span>
+                            ${pluginBadge}
+                        </div>
+                        <div class="debug-tool-desc">${escapeHtml(tool.description)}</div>
+                        <pre class="debug-tool-schema"><code>${escapeHtml(JSON.stringify(tool.parameters, null, 2))}</code></pre>
+                    </div>`;
+                });
+                html += `</div></div>`;
+            }
+
+            // Conversation section
+            html += `<div class="debug-section expanded">
+                <div class="debug-section-header" onclick="toggleDebugSection(this.parentElement)">
+                    <span class="debug-section-title">Conversation (${data.messages.length} messages)</span>
+                    <span class="debug-section-expand">▶</span>
+                </div>
+                <div class="debug-section-body">`;
+
+            data.messages.forEach((msg, i) => {
+                if (msg.role === 'user') {
+                    const contextBadge = msg.has_context ? '<span class="context-badge">has context</span>' : '';
+                    const attachBadge = (msg.attachments && msg.attachments.length > 0)
+                        ? `<span class="attachment-badge">📎 ${msg.attachments.length}</span>` : '';
+                    const contentChars = msg.content ? msg.content.length : 0;
+                    const tokenInfo = (msg.input_tokens || msg.output_tokens)
+                        ? `<span class="token-info">${contentChars} chars | ${msg.input_tokens || 0}→${msg.output_tokens || 0} tokens</span>`
+                        : `<span class="token-info">${contentChars} chars, ~${Math.ceil(contentChars / 4)} tokens</span>`;
+                    // Build attachments detail if present
+                    let attachmentsHtml = '';
+                    if (msg.attachments && msg.attachments.length > 0) {
+                        attachmentsHtml = '<div class="debug-attachments">';
+                        msg.attachments.forEach(att => {
+                            const sizeInfo = att.size ? ` (${formatBytes(att.size)})` : '';
+                            const source = att.path || att.url || (att.inline ? 'inline' : '');
+                            attachmentsHtml += `<div class="debug-attachment">
+                                <span class="debug-attachment-type">${escapeHtml(att.type)}</span>
+                                ${source ? `<span class="debug-attachment-source">${escapeHtml(source)}${sizeInfo}</span>` : ''}
+                            </div>`;
+                        });
+                        attachmentsHtml += '</div>';
+                    }
+                    html += `<div class="debug-msg user">
+                        <div class="debug-msg-role">user${contextBadge}${attachBadge}${tokenInfo}</div>
+                        <div class="debug-msg-content">${escapeHtml(msg.content || '')}</div>
+                        ${attachmentsHtml}
+                    </div>`;
+                } else if (msg.role === 'assistant') {
+                    let thinkingHtml = '';
+                    if (msg.thinking_traces && msg.thinking_traces.length > 0) {
+                        thinkingHtml = `<details class="thinking-traces" open>
+                            <summary>💭 Thinking (${msg.thinking_traces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${msg.thinking_traces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <div class="thinking-trace-header">Trace ${i + 1}${t.thoughtSignature ? ' (has signature)' : ''}</div>
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>`;
+                    }
+                    const thinkingBadge = msg.thinking_traces && msg.thinking_traces.length > 0 ? ' <span class="thinking-badge">thinking</span>' : '';
+                    const assistantChars = msg.content ? msg.content.length : 0;
+                    const assistantTokensEst = Math.ceil(assistantChars / 4);
+                    const assistantTokenInfo = `<span class="token-info">${assistantChars} chars, ~${assistantTokensEst} tokens</span>`;
+                    html += `<div class="debug-msg assistant">
+                        <div class="debug-msg-role">assistant${thinkingBadge}${assistantTokenInfo}</div>
+                        ${thinkingHtml}
+                        <div class="debug-msg-content">${escapeHtml(msg.content || '')}</div>
+                    </div>`;
+                } else if (msg.role === 'tool_call') {
+                    const argsStr = JSON.stringify(msg.arguments || {}, null, 2);
+                    const argsChars = argsStr.length;
+                    const argsTokens = Math.ceil(argsChars / 4);
+                    html += `<div class="debug-msg tool">
+                        <div class="debug-msg-role">tool_call: ${escapeHtml(msg.tool_name)}<span class="token-info">${argsChars} chars, ~${argsTokens} tokens</span></div>
+                        <div class="debug-msg-content">${escapeHtml(argsStr)}</div>
+                    </div>`;
+                } else if (msg.role === 'tool_result') {
+                    const resultContent = msg.content || '';
+                    const contentChars = resultContent.length;
+                    const contentTokens = Math.ceil(contentChars / 4);
+                    html += `<div class="debug-msg tool-result">
+                        <div class="debug-msg-role">tool_result: ${escapeHtml(msg.tool_name)}<span class="token-info">${contentChars} chars, ~${contentTokens} tokens</span></div>
+                        <div class="debug-msg-content">${escapeHtml(resultContent)}</div>
+                    </div>`;
+                }
+            });
+
+            html += `</div></div>`;
+            container.innerHTML = html;
+        }
+
+        function toggleDebugSection(el) {
+            el.classList.toggle('expanded');
+        }
+
+        // Track pending tool calls for update
+        let pendingToolCall = null;
+
+        function addToolCall(toolName, args, result, toolStatus) {
+            hideEmptyState();
+            const statusClass = toolStatus === 'success' ? 'success' : toolStatus === 'error' ? 'error' : 'pending';
+            const statusText = toolStatus === 'success' ? '✓' : toolStatus === 'error' ? '✗' : '...';
+
+            // If this is an update to a pending tool call (same name, not pending status)
+            if (pendingToolCall && toolStatus !== 'pending') {
+                // Update existing element
+                const statusEl = pendingToolCall.querySelector('.tool-status');
+                statusEl.className = 'tool-status ' + statusClass;
+                statusEl.textContent = statusText;
+
+                // Add result section if provided
+                if (result) {
+                    const body = pendingToolCall.querySelector('.tool-body');
+                    const resultDiv = document.createElement('div');
+                    resultDiv.className = 'tool-section';
+                    resultDiv.innerHTML = `
+                        <div class="tool-section-label">Result</div>
+                        <pre><code>${escapeHtml(typeof result === 'string' ? result : JSON.stringify(result, null, 2))}</code></pre>
+                    `;
+                    body.appendChild(resultDiv);
+                }
+                // Auto-collapse when complete
+                pendingToolCall.classList.remove('expanded');
+                pendingToolCall = null;
+                return;
+            }
+
+            // Create new tool call element
+            const div = document.createElement('div');
+            div.className = 'tool-call';
+            div.innerHTML = `
+                <div class="tool-header" onclick="toggleToolCall(this.parentElement)">
+                    <span class="tool-icon">🔧</span>
+                    <span class="tool-name">${escapeHtml(toolName)}</span>
+                    <span class="tool-status ${statusClass}">${statusText}</span>
+                    <span class="tool-expand">▶</span>
+                </div>
+                <div class="tool-body">
+                    <div class="tool-section">
+                        <div class="tool-section-label">Arguments</div>
+                        <pre><code>${escapeHtml(typeof args === 'string' ? args : JSON.stringify(args, null, 2))}</code></pre>
+                    </div>
+                    ${result ? `<div class="tool-section">
+                        <div class="tool-section-label">Result</div>
+                        <pre><code>${escapeHtml(typeof result === 'string' ? result : JSON.stringify(result, null, 2))}</code></pre>
+                    </div>` : ''}
+                </div>
+            `;
+            messagesContainer.appendChild(div);
+
+            // Track pending tool calls and auto-expand for monitoring
+            if (toolStatus === 'pending') {
+                pendingToolCall = div;
+                div.classList.add('expanded');
+            }
+        }
+
+        function toggleToolCall(el) {
+            el.classList.toggle('expanded');
+        }
+
+        function clearMessages() {
+            const msgs = messagesContainer.querySelectorAll('.message, .tool-call');
+            msgs.forEach(m => m.remove());
+            currentAssistantDiv = null;
+            currentAssistantMarkdown = '';
+            messageMarkdown.clear();
+            messageIdCounter = 0;
+            pendingToolCall = null;
+            showEmptyState();
+        }
+
+        function scrollToBottom() {
+            window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+        }
+
+        function addUserMessage(content) {
+            if (!content || !content.trim()) return;
+            hideEmptyState();
+            currentAssistantDiv = null;
+            currentAssistantMarkdown = '';
+            const msgId = 'msg-' + (++messageIdCounter);
+            const div = document.createElement('div');
+            div.className = 'message user';
+            div.id = msgId;
+            div.innerHTML = `
+                <div class="message-header">
+                    <div class="role-badge">
+                        <div class="role-icon">U</div>
+                        <span class="role">User</span>
+                    </div>
+                    <button class="copy-msg-btn" onclick="copyMessageText('${msgId}')">Copy</button>
+                </div>
+                <div class="content">${escapeHtml(content)}</div>
+            `;
+            messageMarkdown.set(msgId, content);
+            messagesContainer.appendChild(div);
+        }
+
+        function addAssistantMessage(content, thinkingTraces) {
+            if (!content || !content.trim()) return;
+            hideEmptyState();
+            currentAssistantDiv = null;
+            currentAssistantMarkdown = '';
+            const msgId = 'msg-' + (++messageIdCounter);
+            const div = document.createElement('div');
+            div.className = 'message assistant';
+            div.id = msgId;
+
+            // Build thinking section if traces exist
+            let thinkingHtml = '';
+            if (thinkingTraces && thinkingTraces.length > 0) {
+                thinkingHtml = `
+                    <div class="thinking-section">
+                        <details class="thinking-details">
+                            <summary>💭 Thinking (${thinkingTraces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${thinkingTraces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    </div>
+                `;
+            }
+
+            div.innerHTML = `
+                <div class="message-header">
+                    <div class="role-badge">
+                        <div class="role-icon">A</div>
+                        <span class="role">Assistant</span>
+                    </div>
+                    <div class="copy-dropdown">
+                        <button class="copy-msg-btn" onclick="toggleCopyMsgMenu(this)">Copy ▾</button>
+                        <div class="copy-dropdown-menu">
+                            <button onclick="copyMessageText('${msgId}')">Copy as Text</button>
+                            <button onclick="copyMessageMarkdown('${msgId}')">Copy as Markdown</button>
+                        </div>
+                    </div>
+                </div>
+                ${thinkingHtml}
+                <div class="content">${renderMarkdown(content)}</div>
+            `;
+            messageMarkdown.set(msgId, content);
+            messagesContainer.appendChild(div);
+            addCodeCopyButtons(div);
+        }
+
+        function updateAssistantMessage(content, done, thinkingTraces) {
+            if (!content || !content.trim()) {
+                if (done && currentAssistantDiv) {
+                    currentAssistantDiv.remove();
+                    currentAssistantDiv = null;
+                    currentAssistantMarkdown = '';
+                }
+                return;
+            }
+            hideEmptyState();
+
+            if (!currentAssistantDiv) {
+                const msgId = 'msg-' + (++messageIdCounter);
+                currentAssistantDiv = document.createElement('div');
+                currentAssistantDiv.className = 'message assistant' + (done ? '' : ' streaming');
+                currentAssistantDiv.id = msgId;
+                currentAssistantDiv.innerHTML = `
+                    <div class="message-header">
+                        <div class="role-badge">
+                            <div class="role-icon">A</div>
+                            <span class="role">Assistant</span>
+                        </div>
+                        <div class="copy-dropdown">
+                            <button class="copy-msg-btn" onclick="toggleCopyMsgMenu(this)">Copy ▾</button>
+                            <div class="copy-dropdown-menu">
+                                <button onclick="copyMessageText('${msgId}')">Copy as Text</button>
+                                <button onclick="copyMessageMarkdown('${msgId}')">Copy as Markdown</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="thinking-section" style="display:none;"></div>
+                    <div class="content"></div>
+                `;
+                messagesContainer.appendChild(currentAssistantDiv);
+            }
+
+            currentAssistantMarkdown = content;
+            const contentDiv = currentAssistantDiv.querySelector('.content');
+            contentDiv.innerHTML = renderMarkdown(content);
+
+            if (done) {
+                currentAssistantDiv.classList.remove('streaming');
+                addCodeCopyButtons(currentAssistantDiv);
+                messageMarkdown.set(currentAssistantDiv.id, currentAssistantMarkdown);
+
+                // Show thinking traces on completion (collapsed by default)
+                if (thinkingTraces && thinkingTraces.length > 0) {
+                    const thinkingSection = currentAssistantDiv.querySelector('.thinking-section');
+                    thinkingSection.style.display = 'block';
+                    thinkingSection.innerHTML = `
+                        <details class="thinking-details">
+                            <summary>💭 Thinking (${thinkingTraces.length} traces)</summary>
+                            <div class="thinking-content">
+                                ${thinkingTraces.map((t, i) => `
+                                    <div class="thinking-trace">
+                                        <pre>${escapeHtml(t.text)}</pre>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    `;
+                }
+
+                currentAssistantDiv = null;
+                currentAssistantMarkdown = '';
+            }
+        }
+
+        function renderMarkdown(text) {
+            return marked.parse(text);
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function addCodeCopyButtons(container) {
+            container.querySelectorAll('pre code').forEach(code => {
+                const pre = code.parentElement;
+                if (!pre.querySelector('.copy-code-btn')) {
+                    const btn = document.createElement('button');
+                    btn.className = 'copy-code-btn';
+                    btn.textContent = 'Copy';
+                    btn.onclick = () => copyCode(code);
+                    pre.style.position = 'relative';
+                    pre.appendChild(btn);
+                }
+            });
+        }
+
+        function copyCode(codeElement) {
+            navigator.clipboard.writeText(codeElement.textContent);
+            showToast('Code copied!');
+        }
+
+        function copyMessageText(msgId) {
+            const msg = document.getElementById(msgId);
+            if (msg) {
+                const content = msg.querySelector('.content');
+                navigator.clipboard.writeText(content.innerText);
+                showToast('Copied as text!');
+            }
+            closeCopyMenus();
+        }
+
+        function copyMessageMarkdown(msgId) {
+            const md = messageMarkdown.get(msgId);
+            if (md) {
+                navigator.clipboard.writeText(md);
+                showToast('Copied as markdown!');
+            } else {
+                copyMessageText(msgId);
+            }
+            closeCopyMenus();
+        }
+
+        function toggleCopyMenu(btn) {
+            const menu = btn.nextElementSibling;
+            closeCopyMenus();
+            menu.classList.toggle('show');
+        }
+
+        function toggleCopyMsgMenu(btn) {
+            const menu = btn.nextElementSibling;
+            const wasOpen = menu.classList.contains('show');
+            closeCopyMenus();
+            if (!wasOpen) menu.classList.add('show');
+        }
+
+        function closeCopyMenus() {
+            document.querySelectorAll('.copy-dropdown-menu.show').forEach(m => m.classList.remove('show'));
+        }
+
+        function copyAllText() {
+            const msgs = messagesContainer.querySelectorAll('.message');
+            if (msgs.length === 0) {
+                showToast('No messages to copy');
+                return;
+            }
+            let text = '';
+            msgs.forEach(msg => {
+                const role = msg.classList.contains('user') ? 'You' : 'Assistant';
+                const content = msg.querySelector('.content').innerText;
+                if (content.trim()) {
+                    text += role + ':\\n' + content + '\\n\\n---\\n\\n';
+                }
+            });
+            navigator.clipboard.writeText(text);
+            showToast('Copied as text!');
+            closeCopyMenus();
+        }
+
+        function copyAllMarkdown() {
+            const msgs = messagesContainer.querySelectorAll('.message');
+            if (msgs.length === 0) {
+                showToast('No messages to copy');
+                return;
+            }
+            let text = '';
+            msgs.forEach(msg => {
+                const role = msg.classList.contains('user') ? 'You' : 'Assistant';
+                const md = messageMarkdown.get(msg.id) || msg.querySelector('.content').innerText;
+                if (md.trim()) {
+                    text += '**' + role + ':**\\n' + md + '\\n\\n---\\n\\n';
+                }
+            });
+            navigator.clipboard.writeText(text);
+            showToast('Copied as markdown!');
+            closeCopyMenus();
+        }
+
+        // Search functionality
+        function toggleSearch() {
+            const searchBar = document.getElementById('search-bar');
+            const visible = searchBar.classList.toggle('visible');
+            if (visible) {
+                document.getElementById('search-input').focus();
+            } else {
+                clearSearch();
+            }
+        }
+
+        function closeSearch() {
+            document.getElementById('search-bar').classList.remove('visible');
+            clearSearch();
+        }
+
+        function clearSearch() {
+            document.getElementById('search-input').value = '';
+            searchMatches = [];
+            currentMatchIndex = -1;
+            document.getElementById('search-count').textContent = '0/0';
+            // Remove all highlights
+            document.querySelectorAll('.content mark').forEach(mark => {
+                const parent = mark.parentNode;
+                parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                parent.normalize();
+            });
+        }
+
+        function doSearch() {
+            clearSearchHighlights();
+            const query = document.getElementById('search-input').value.toLowerCase();
+            if (!query) {
+                document.getElementById('search-count').textContent = '0/0';
+                searchMatches = [];
+                currentMatchIndex = -1;
+                return;
+            }
+
+            searchMatches = [];
+            document.querySelectorAll('.content').forEach(content => {
+                highlightMatches(content, query);
+            });
+
+            document.getElementById('search-count').textContent = searchMatches.length > 0 ? '1/' + searchMatches.length : '0/0';
+            if (searchMatches.length > 0) {
+                currentMatchIndex = 0;
+                searchMatches[0].classList.add('current');
+                searchMatches[0].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            }
+        }
+
+        function clearSearchHighlights() {
+            document.querySelectorAll('.content mark').forEach(mark => {
+                const parent = mark.parentNode;
+                parent.replaceChild(document.createTextNode(mark.textContent), mark);
+                parent.normalize();
+            });
+            searchMatches = [];
+            currentMatchIndex = -1;
+        }
+
+        function highlightMatches(element, query) {
+            const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+            const textNodes = [];
+            while (walker.nextNode()) textNodes.push(walker.currentNode);
+
+            textNodes.forEach(node => {
+                const text = node.textContent;
+                const lowerText = text.toLowerCase();
+                let idx = lowerText.indexOf(query);
+                if (idx === -1) return;
+
+                const frag = document.createDocumentFragment();
+                let lastIdx = 0;
+                while (idx !== -1) {
+                    frag.appendChild(document.createTextNode(text.substring(lastIdx, idx)));
+                    const mark = document.createElement('mark');
+                    mark.textContent = text.substring(idx, idx + query.length);
+                    frag.appendChild(mark);
+                    searchMatches.push(mark);
+                    lastIdx = idx + query.length;
+                    idx = lowerText.indexOf(query, lastIdx);
+                }
+                frag.appendChild(document.createTextNode(text.substring(lastIdx)));
+                node.parentNode.replaceChild(frag, node);
+            });
+        }
+
+        function searchPrev() {
+            if (searchMatches.length === 0) return;
+            searchMatches[currentMatchIndex].classList.remove('current');
+            currentMatchIndex = (currentMatchIndex - 1 + searchMatches.length) % searchMatches.length;
+            searchMatches[currentMatchIndex].classList.add('current');
+            searchMatches[currentMatchIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            document.getElementById('search-count').textContent = (currentMatchIndex + 1) + '/' + searchMatches.length;
+        }
+
+        function searchNext() {
+            if (searchMatches.length === 0) return;
+            searchMatches[currentMatchIndex].classList.remove('current');
+            currentMatchIndex = (currentMatchIndex + 1) % searchMatches.length;
+            searchMatches[currentMatchIndex].classList.add('current');
+            searchMatches[currentMatchIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+            document.getElementById('search-count').textContent = (currentMatchIndex + 1) + '/' + searchMatches.length;
+        }
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.ctrlKey && e.key === 'f') {
+                e.preventDefault();
+                toggleSearch();
+            }
+            if (e.key === 'Escape') {
+                closeSearch();
+                closeCopyMenus();
+            }
+            if (e.key === 'Enter' && document.getElementById('search-bar').classList.contains('visible')) {
+                e.shiftKey ? searchPrev() : searchNext();
+            }
+        });
+
+        // Close dropdown when clicking outside
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.copy-dropdown')) {
+                closeCopyMenus();
+            }
+        });
+
+        function showToast(message) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.add('show');
+            setTimeout(() => toast.classList.remove('show'), 2000);
+        }
+
+        connect();
+    </script>
+</body>
+</html>

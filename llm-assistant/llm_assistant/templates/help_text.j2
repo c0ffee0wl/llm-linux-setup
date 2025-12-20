@@ -1,0 +1,51 @@
+[bold]Available Commands:[/]
+/clear             Clear conversation history
+/reset             Full reset: clear history and remove squash summaries
+/refresh           Refresh terminal context (re-capture current state)
+/model [-q] <name> Switch model (or -q for fuzzy match) or list models
+/info              Show session information
+/watch <goal>      Enable watch mode with goal
+/watch off         Disable watch mode
+/watch status      Show watch mode status
+/squash <keep>     Compress context (e.g., /squash keep API patterns)
+/rewind \[n]        Rewind to previous turn (n=turn number, or picker)
+/rewind undo       Restore last rewound turns
+/auto              Enable auto mode (SAFE auto-executes)
+/auto full         Enable full auto mode (SAFE+CAUTION auto-execute)
+/auto off          Disable auto mode
+/auto status       Show auto mode status
+/assistant         Switch to assistant mode (conservative, 10 tool iterations)
+/agent             Switch to agent mode (agentic, 100 tool iterations)
+/voice             Enable voice auto-submit (auto-sends transcribed text)
+/voice off         Disable voice auto-submit
+/voice status      Show voice input status
+/speech            Enable TTS output (Vertex models only)
+/speech off        Disable TTS output
+/speech status     Show TTS status
+/capture \[mode] \[prompt]  Capture screenshot (window/region/full/rdp/annotate)
+/imagemage         Load image generation tool (generate_image)
+/imagemage off     Unload image generation tool
+/kb                List available and loaded knowledge bases
+/kb load <names>   Load KB(s) into session (comma-separated)
+/kb unload <names> Remove KB(s) from session (comma-separated)
+/kb reload         Reload all loaded knowledge bases
+/rag               List RAG collections and show active collection
+/rag <collection>  Activate RAG (search on every prompt)
+/rag off           Deactivate RAG
+/rag search <collection> <query>  One-shot RAG search
+/rag add <collection> <path>      Add documents to collection
+/copy \[n]          Copy last response (or last n) to clipboard
+/copy raw \[n]      Copy with markdown preserved
+/copy all          Copy entire conversation
+/web               Open conversation in web browser (real-time streaming)
+/web off           Stop web server
+/report <note>     Add pentest finding with LLM analysis (OWASP 1-9)
+/report init <p> <lang>  Create project (lang: en, de, es, fr, ...)
+/report list       List findings in current project
+/report export     Export to Word (docx) via pandoc
+/report projects   List all projects
+
+[bold]Usage:[/]
+- Type messages to chat with LLM
+- Commands are sent to Exec terminal with approval
+- [bold]Ctrl+Space[/] Toggle voice input ({{ voice_status }})
