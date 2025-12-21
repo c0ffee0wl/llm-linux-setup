@@ -106,17 +106,80 @@ except ImportError:
 # Always-on external tools (always available and auto-dispatch)
 _all_tools = llm.get_tools()
 
-# Pre-load MCP tools from llm-tools-mcp plugin (dynamic toolbox)
-# This makes MCP tools visible to the AI model at startup
-try:
-    from llm_tools_mcp.register_tools import MCP
-    _mcp_toolbox = MCP()  # Instantiate to load tools from configured MCP servers
-    for tool in _mcp_toolbox.tools():  # tools() is a method, not property
-        _all_tools[tool.name] = tool
-except ImportError:
-    pass  # llm-tools-mcp not installed
-except Exception:
-    pass  # MCP config missing or server unavailable
+# =============================================================================
+# Background MCP Loading
+# =============================================================================
+# Load MCP tools in background to avoid blocking startup
+# User sees prompt immediately, MCP tools become available when loading completes
+
+_mcp_future = None
+_mcp_toolbox = None
+_mcp_loaded = False
+_mcp_lock = threading.Lock()
+_mcp_executor = ThreadPoolExecutor(max_workers=1)
+
+
+def _load_mcp_background():
+    """Load MCP tools in background thread."""
+    try:
+        from llm_tools_mcp.register_tools import MCP
+        return MCP()
+    except ImportError:
+        return None  # llm-tools-mcp not installed
+    except Exception:
+        return None  # MCP config missing or server unavailable
+
+
+# Start loading immediately but don't block module import
+_mcp_future = _mcp_executor.submit(_load_mcp_background)
+
+
+def _ensure_mcp_loaded():
+    """Wait for background MCP load to complete, then register tools.
+
+    Call this before accessing ASSISTANT_TOOLS or EXTERNAL_TOOLS to ensure
+    MCP tools are available. The first call waits for background load to
+    complete, subsequent calls return immediately.
+    """
+    global _mcp_toolbox, _mcp_loaded, ASSISTANT_TOOLS, EXTERNAL_TOOLS
+    if _mcp_loaded:
+        return
+
+    with _mcp_lock:
+        if _mcp_loaded:
+            return
+        if _mcp_future:
+            try:
+                _mcp_toolbox = _mcp_future.result(timeout=30)
+                if _mcp_toolbox:
+                    for tool in _mcp_toolbox.tools():
+                        _all_tools[tool.name] = tool
+                    _rebuild_tool_lists()
+            except Exception:
+                pass  # Failed to load MCP tools
+        _mcp_loaded = True
+
+
+def _rebuild_tool_lists():
+    """Rebuild ASSISTANT_TOOLS and EXTERNAL_TOOLS after MCP tools load."""
+    global ASSISTANT_TOOLS, EXTERNAL_TOOLS
+
+    # Rebuild ASSISTANT_TOOLS with MCP tools included
+    ASSISTANT_TOOLS = [
+        tool for tool in _all_tools.values()
+        if isinstance(tool, Tool)
+        and getattr(tool, 'plugin', None) in ('assistant',) + EXTERNAL_TOOL_PLUGINS
+        and tool.name not in GEMINI_ONLY_TOOL_NAMES
+    ]
+
+    # Rebuild EXTERNAL_TOOLS dispatch dict
+    EXTERNAL_TOOLS = {
+        name: tool.implementation
+        for name, tool in _all_tools.items()
+        if isinstance(tool, Tool)
+        and hasattr(tool, 'implementation') and tool.implementation is not None
+        and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
+    }
 
 # Build ASSISTANT_TOOLS - base tools always offered to model
 # (agent-mode, optional, and Gemini-only tools added dynamically via _get_active_tools())
@@ -1004,6 +1067,9 @@ class TerminatorAssistantSession:
         - Optional tools (imagemage) when manually loaded via /imagemage
         - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
         """
+        # Ensure MCP tools are loaded (waits for background load on first call)
+        _ensure_mcp_loaded()
+
         tools = list(ASSISTANT_TOOLS)  # Base tools (always available)
 
         # Add agent-mode tools if in agent mode
@@ -1035,6 +1101,9 @@ class TerminatorAssistantSession:
         - Agent-mode tools when in /agent mode
         - Optional tools when manually loaded
         """
+        # Ensure MCP tools are loaded (waits for background load on first call)
+        _ensure_mcp_loaded()
+
         tools = dict(EXTERNAL_TOOLS)  # Base dispatch (always available)
 
         # Add agent-mode tools if in agent mode
