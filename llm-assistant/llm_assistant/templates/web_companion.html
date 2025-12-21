@@ -196,12 +196,13 @@
         }
         /* Token Usage Bar */
         .token-bar-container {
+            position: sticky;
+            top: 51px;
             background: var(--bg-primary);
             border-bottom: 1px solid var(--border-color);
             padding: 6px 20px;
-            display: none;
+            z-index: 99;
         }
-        .token-bar-container.visible { display: block; }
         .token-bar {
             max-width: 860px;
             margin: 0 auto;
@@ -239,7 +240,7 @@
         /* Search Bar */
         .search-bar {
             position: fixed;
-            top: 60px;
+            top: 85px;
             right: 20px;
             background: var(--bg-primary);
             border: 1px solid var(--border-color);
@@ -1025,10 +1026,8 @@
         }
 
         function updateTokenBar(data) {
-            const container = document.getElementById('token-bar-container');
             const fill = document.getElementById('token-bar-fill');
             const text = document.getElementById('token-bar-text');
-            container.classList.add('visible');
             const pct = Math.min(100, data.percentage || 0);
             fill.style.width = pct + '%';
             fill.classList.toggle('warning', pct > 80);

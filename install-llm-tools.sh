@@ -1741,6 +1741,35 @@ MCP_CONFIG_FILE="$MCP_CONFIG_DIR/mcp.json"
 update_mcp_config() {
     mkdir -p "$MCP_CONFIG_DIR"
 
+    # Detect Chrome/Chromium for chrome-devtools MCP
+    local chrome_devtools_config=""
+    if command -v google-chrome &>/dev/null || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
+        log "Chrome/Chromium detected, including chrome-devtools MCP server (optional)"
+        # Pre-install chrome-devtools-mcp for faster first use (npx will use cached version)
+        install_or_upgrade_npm_global chrome-devtools-mcp
+        chrome_devtools_config=',
+    "chrome-devtools": {
+      "command": "npx",
+      "args": ["-y", "chrome-devtools-mcp@latest", "--browser-url=http://127.0.0.1:9222"],
+      "optional": true,
+      "include_tools": [
+        "get_network_request",
+        "list_network_requests",
+        "evaluate_script",
+        "get_console_message",
+        "list_console_messages",
+        "take_screenshot",
+        "take_snapshot",
+        "close_page",
+        "list_pages",
+        "navigate_page",
+        "new_page",
+        "select_page",
+        "wait_for"
+      ]
+    }'
+    fi
+
     # Generate expected config content
     local expected_config='{
   "mcpServers": {
@@ -1751,13 +1780,13 @@ update_mcp_config() {
     "aws-knowledge": {
       "type": "http",
       "url": "https://knowledge-mcp.global.api.aws",
-      "exclude_tools": ["*list_regions", "*get_regional_availability"]
+      "exclude_tools": ["*list_regions", "*get_regional_availability"],
+      "optional": true
     },
-    "azure": {
-      "command": "npx",
-      "args": ["-y", "@azure/mcp@latest", "server", "start"],
-      "include_tools": ["extension_cli_generate"]
-    }
+    "arxiv": {
+      "command": "arxiv-mcp-server",
+      "optional": true
+    }'"$chrome_devtools_config"'
   }
 }'
 
@@ -1766,7 +1795,7 @@ update_mcp_config() {
 
     if [ ! -f "$MCP_CONFIG_FILE" ]; then
         # No installed file - install new
-        log "Creating MCP configuration with Microsoft Learn, AWS Knowledge, and Azure..."
+        log "Creating MCP configuration with Microsoft Learn, AWS Knowledge, and optional servers..."
         echo "$expected_config" > "$MCP_CONFIG_FILE"
         store_checksum "mcp-config" "$MCP_CONFIG_FILE"
         log "MCP configuration created at $MCP_CONFIG_FILE"
@@ -1814,6 +1843,10 @@ update_mcp_config() {
 }
 
 update_mcp_config
+
+# Install/update arxiv-mcp-server (optional MCP server for arXiv paper search)
+# This is installed for all users since MCP works with llm CLI, not just llm-assistant
+install_or_upgrade_uv_tool arxiv-mcp-server
 
 #############################################################################
 # PHASE 3: Configuring LLM
@@ -2355,10 +2388,6 @@ else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi
 
-# Install Azure MCP Server (used by llm-tools-mcp for Azure CLI tools)
-log "Installing/updating Azure MCP Server..."
-install_or_upgrade_npm_global @azure/mcp
-
 # Install/update Codex CLI if Azure is configured
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     log "Installing/updating Codex CLI..."
@@ -2382,43 +2411,6 @@ upgrade_npm_global_if_installed opencode-ai
 
 # Clean up package caches to reclaim disk space
 clear_package_caches
-
-#############################################################################
-# PHASE 8: Browser Automation (Blueprint MCP) - only if Terminator is installed
-#############################################################################
-
-# Browser MCP commented out - not currently used
-# if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-#     # Firefox is pre-installed on Kali, install if missing
-#     if ! command -v firefox &>/dev/null; then
-#         log "Installing Firefox..."
-#         install_apt_package firefox-esr
-#     fi
-#
-#     # Install/upgrade Blueprint MCP server
-#     log "Installing/updating Blueprint MCP server..."
-#     install_or_upgrade_npm_global @railsblueprint/blueprint-mcp
-# else
-#     log "Skipping Browser Automation (Terminator not installed)"
-# fi
-
-# TODO: Add Blueprint MCP to MCP config - commented out until MCP integration is working
-# MCP_CONFIG_FILE="$HOME/.llm-tools-mcp/mcp.json"
-# if [ -f "$MCP_CONFIG_FILE" ]; then
-#     # Use jq to check if browser key exists (more robust than grep)
-#     if ! jq -e '.mcpServers.browser' "$MCP_CONFIG_FILE" &>/dev/null; then
-#         log "Adding Blueprint MCP to MCP configuration..."
-#         jq '.mcpServers.browser = {
-#             "command": "npx",
-#             "args": ["@railsblueprint/blueprint-mcp@latest"]
-#         }' "$MCP_CONFIG_FILE" > "$MCP_CONFIG_FILE.tmp" && mv "$MCP_CONFIG_FILE.tmp" "$MCP_CONFIG_FILE"
-#         log ""
-#         log "NOTE: Install the Blueprint Firefox extension for browser automation:"
-#         log "  1. Open Firefox"
-#         log "  2. Visit: https://addons.mozilla.org/firefox/addon/blueprint-mcp-for-firefox/"
-#         log "  3. Click 'Add to Firefox'"
-#     fi
-# fi
 
 #############################################################################
 # COMPLETE
@@ -2453,8 +2445,6 @@ log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
 log "  3. Use Ctrl+N in your shell for AI command completion"
 log "  4. Test Claude Code Router: routed-claude"
-log "  5. For browser automation, install Firefox extension:"
-log "     https://addons.mozilla.org/firefox/addon/blueprint-mcp-for-firefox/"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"

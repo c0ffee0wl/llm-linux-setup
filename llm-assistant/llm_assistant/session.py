@@ -303,6 +303,10 @@ class TerminatorAssistantSession:
         # Must be initialized before _estimate_tool_schema_tokens()
         self.loaded_optional_tools: set = set()
 
+        # Active MCP servers - tracks which servers' tools are available
+        # Initialized with default (non-optional) servers; optional servers must be loaded via /mcp load
+        self.active_mcp_servers: set = self._get_default_mcp_servers()
+
         # Tool token overhead (estimated at startup, cached for session)
         self._tool_token_overhead = self._estimate_tool_schema_tokens()
 
@@ -1058,6 +1062,38 @@ class TerminatorAssistantSession:
             "status": status
         })
 
+    def _get_default_mcp_servers(self) -> set:
+        """Get non-optional MCP servers (loaded by default)."""
+        _ensure_mcp_loaded()
+        servers = set()
+        for tool in _all_tools.values():
+            server = getattr(tool, 'server_name', None)
+            is_optional = getattr(tool, 'mcp_optional', False)
+            if server and not is_optional:
+                servers.add(server)
+        return servers
+
+    def _get_all_mcp_servers(self) -> dict:
+        """Get all MCP servers with their optional status.
+
+        Returns dict mapping server_name -> is_optional (bool)
+        """
+        _ensure_mcp_loaded()
+        servers = {}
+        for tool in _all_tools.values():
+            server = getattr(tool, 'server_name', None)
+            if server and server not in servers:
+                servers[server] = getattr(tool, 'mcp_optional', False)
+        return servers
+
+    def _count_tools_for_server(self, server_name: str) -> int:
+        """Count tools available from a specific MCP server."""
+        count = 0
+        for tool in _all_tools.values():
+            if getattr(tool, 'server_name', None) == server_name:
+                count += 1
+        return count
+
     def _get_active_tools(self) -> list:
         """Get currently active tools based on mode, model, and loaded state.
 
@@ -1066,11 +1102,20 @@ class TerminatorAssistantSession:
         - Agent-mode tools when in /agent mode (currently none)
         - Optional tools (imagemage) when manually loaded via /imagemage
         - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
+
+        MCP tools are filtered by active_mcp_servers set - only tools from
+        active servers are included.
         """
         # Ensure MCP tools are loaded (waits for background load on first call)
         _ensure_mcp_loaded()
 
         tools = list(ASSISTANT_TOOLS)  # Base tools (always available)
+
+        # Filter MCP tools by active server set (handles both default and optional servers)
+        tools = [t for t in tools if (
+            getattr(t, 'server_name', None) is None or  # Not an MCP tool
+            getattr(t, 'server_name', None) in self.active_mcp_servers  # MCP server is active
+        )]
 
         # Add agent-mode tools if in agent mode
         if self.mode == "agent":
@@ -1100,11 +1145,22 @@ class TerminatorAssistantSession:
         - Base EXTERNAL_TOOLS (always available)
         - Agent-mode tools when in /agent mode
         - Optional tools when manually loaded
+
+        MCP tools are filtered by active_mcp_servers set - only tools from
+        active servers are included.
         """
         # Ensure MCP tools are loaded (waits for background load on first call)
         _ensure_mcp_loaded()
 
         tools = dict(EXTERNAL_TOOLS)  # Base dispatch (always available)
+
+        # Filter out MCP tools from inactive servers
+        def is_active_tool(name):
+            tool = _all_tools.get(name)
+            server = getattr(tool, 'server_name', None) if tool else None
+            return server is None or server in self.active_mcp_servers
+
+        tools = {name: impl for name, impl in tools.items() if is_active_tool(name)}
 
         # Add agent-mode tools if in agent mode
         if self.mode == "agent":
@@ -1360,6 +1416,18 @@ class TerminatorAssistantSession:
                 except Exception:
                     pass
 
+        # Get MCP server status
+        mcp_servers = {}
+        try:
+            all_servers = self._get_all_mcp_servers()
+            mcp_servers = {
+                "active": list(self.active_mcp_servers),
+                "all": {name: {"optional": is_opt, "loaded": name in self.active_mcp_servers}
+                        for name, is_opt in all_servers.items()}
+            }
+        except Exception:
+            pass
+
         return {
             "system_prompt": current_system_prompt,
             "tools": tools,
@@ -1370,7 +1438,8 @@ class TerminatorAssistantSession:
             "max_context": self.max_context_size,
             "current_tokens": self.estimate_tokens(),
             "loaded_kbs": list(self.loaded_kbs.keys()) if self.loaded_kbs else [],
-            "active_rag": self.active_rag_collection
+            "active_rag": self.active_rag_collection,
+            "mcp_servers": mcp_servers
         }
 
     # =========================================================================
@@ -4281,6 +4350,18 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[red]Usage: /imagemage, /imagemage off, /imagemage status[/]")
             return True
 
+        elif cmd == "/mcp":
+            parts = command.split()
+            if len(parts) == 1 or parts[1] == "status":
+                self._handle_mcp_status()
+            elif parts[1] == "load" and len(parts) >= 3:
+                self._handle_mcp_load(parts[2])
+            elif parts[1] == "unload" and len(parts) >= 3:
+                self._handle_mcp_unload(parts[2])
+            else:
+                self.console.print("[red]Usage: /mcp, /mcp load <server>, /mcp unload <server>[/]")
+            return True
+
         elif cmd == "/report":
             return self._handle_report_command(args)
 
@@ -4292,6 +4373,74 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             self.console.print(f"[red]Unknown command: {cmd}[/]")
             self.console.print("Type /help for available commands")
             return True
+
+    # ========== MCP Server Management Methods ==========
+
+    def _handle_mcp_load(self, server_name: str):
+        """Load an MCP server (optional or previously unloaded default)."""
+        all_servers = self._get_all_mcp_servers()
+        if server_name not in all_servers:
+            self.console.print(f"[red]Unknown server: {server_name}[/]")
+            available = ', '.join(sorted(all_servers.keys()))
+            self.console.print(f"[dim]Available: {available}[/]")
+            return
+
+        if server_name in self.active_mcp_servers:
+            self.console.print(f"[yellow]{server_name} already loaded[/]")
+            return
+
+        self.active_mcp_servers.add(server_name)
+        tool_count = self._count_tools_for_server(server_name)
+        self.console.print(f"[green]✓[/] {server_name} loaded ({tool_count} tools)")
+
+    def _handle_mcp_unload(self, server_name: str):
+        """Unload any MCP server (default or optional)."""
+        if server_name in self.active_mcp_servers:
+            self.active_mcp_servers.discard(server_name)
+            self.console.print(f"[green]✓[/] {server_name} unloaded")
+        else:
+            all_servers = self._get_all_mcp_servers()
+            if server_name in all_servers:
+                self.console.print(f"[yellow]{server_name} not loaded[/]")
+            else:
+                self.console.print(f"[red]Unknown server: {server_name}[/]")
+
+    def _handle_mcp_status(self):
+        """Show MCP server status (all servers, grouped by type)."""
+        all_servers = self._get_all_mcp_servers()
+
+        if not all_servers:
+            self.console.print("[dim]No MCP servers configured[/]")
+            return
+
+        # Group by optional status
+        default_servers = {s for s, opt in all_servers.items() if not opt}
+        optional_servers = {s for s, opt in all_servers.items() if opt}
+
+        self.console.print("[bold]MCP Servers:[/]")
+
+        # Show default servers
+        if default_servers:
+            self.console.print("  [dim]Default:[/]")
+            for server in sorted(default_servers):
+                if server in self.active_mcp_servers:
+                    tool_count = self._count_tools_for_server(server)
+                    self.console.print(f"    [green]●[/] {server} ({tool_count} tools)")
+                else:
+                    self.console.print(f"    [dim]○[/] {server} [dim](unloaded)[/]")
+
+        # Show optional servers
+        if optional_servers:
+            self.console.print("  [dim]Optional:[/]")
+            for server in sorted(optional_servers):
+                if server in self.active_mcp_servers:
+                    tool_count = self._count_tools_for_server(server)
+                    self.console.print(f"    [green]●[/] {server} ({tool_count} tools)")
+                else:
+                    self.console.print(f"    [dim]○[/] {server}")
+
+        if not self.active_mcp_servers:
+            self.console.print("[dim]Use /mcp load <server> to enable[/]")
 
     # ========== Pentest Finding Management Methods ==========
 

@@ -128,7 +128,7 @@ class SlashCommandCompleter(Completer):
                         yield Completion(num_str, start_position=-len(partial))
 
     def _complete_second_arg(self, cmd: str, subcommand: str, partial: str):
-        """Complete second argument (KB names after load/unload, RAG collections, finding IDs)."""
+        """Complete second argument (KB names after load/unload, RAG collections, finding IDs, MCP servers)."""
         if cmd == "/kb":
             if subcommand == "load":
                 yield from self._complete_available_kbs(partial)
@@ -142,6 +142,9 @@ class SlashCommandCompleter(Completer):
                 yield from self._complete_findings(partial)
             elif subcommand in ("open", "init"):
                 yield from self._complete_report_projects(partial)
+        elif cmd == "/mcp":
+            if subcommand in ("load", "unload"):
+                yield from self._complete_mcp_servers(partial)
 
     def _complete_models(self, partial: str):
         """Complete model names dynamically."""
@@ -186,6 +189,22 @@ class SlashCommandCompleter(Completer):
                 if name.lower().startswith(partial_lower):
                     yield Completion(
                         name,
+                        start_position=-len(partial)
+                    )
+        except Exception:
+            pass
+
+    def _complete_mcp_servers(self, partial: str):
+        """Complete MCP server names for /mcp load/unload."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            all_servers = self.session._get_all_mcp_servers()
+            for server_name in sorted(all_servers.keys()):
+                if server_name.lower().startswith(partial_lower):
+                    yield Completion(
+                        server_name,
                         start_position=-len(partial)
                     )
         except Exception:

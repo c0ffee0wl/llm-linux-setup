@@ -116,6 +116,9 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
 - `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)
 - `/kb reload` - Reload all loaded knowledge bases
+- `/mcp` - List MCP servers and their status
+- `/mcp load <server>` - Load MCP server (enable its tools)
+- `/mcp unload <server>` - Unload MCP server (disable its tools)
 - `/speech` - Enable TTS output (Vertex models only)
 - `/speech off` - Disable TTS output
 - `/speech status` - Show TTS status
@@ -213,6 +216,47 @@ knowledge_base:
 ```
 
 Loaded KBs are injected after the system prompt, providing persistent context without consuming conversation history.
+
+## MCP Server Management
+
+The assistant supports dynamic loading/unloading of MCP (Model Context Protocol) servers at runtime:
+
+**Configuration**: `~/.llm-tools-mcp/mcp.json`
+
+**Server Types:**
+- **Default servers**: Loaded automatically at startup (microsoft-learn, aws-knowledge, azure)
+- **Optional servers**: Not loaded by default, enabled via `/mcp load` (arxiv, chrome-devtools)
+
+**Usage:**
+```bash
+# In assistant:
+/mcp                        # List all servers with status
+/mcp load arxiv             # Load arxiv server (enables paper search tools)
+/mcp load chrome-devtools   # Load chrome devtools (if Chrome/Chromium installed)
+/mcp unload microsoft-learn # Temporarily disable Microsoft Learn
+/mcp unload aws-knowledge   # Temporarily disable AWS Knowledge
+```
+
+**Example /mcp output:**
+```
+MCP Servers:
+  Default:
+    ● microsoft-learn (3 tools)
+    ● aws-knowledge (3 tools)
+    ○ azure (unloaded)
+  Optional:
+    ○ arxiv
+    ● chrome-devtools (7 tools)
+```
+
+**Available MCP Tools:**
+- **microsoft-learn**: `microsoft_docs_search`, `microsoft_docs_fetch`, `microsoft_code_sample_search`
+- **aws-knowledge**: AWS documentation search and retrieval
+- **azure**: Azure CLI command generation
+- **arxiv** (optional): `search_papers`, `download_paper`, `list_papers`, `read_paper`
+- **chrome-devtools** (optional): `get_network_request`, `list_network_requests`, `evaluate_script`, `get_console_message`, `list_console_messages`, `take_screenshot`, `take_snapshot`
+
+**Note:** The chrome-devtools server is only available if Chrome or Chromium is installed on the system. The assistant detects this during installation.
 
 ## Input Modes
 

@@ -37,6 +37,7 @@ SLASH_COMMANDS = {
     "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
     "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
     "/report": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
+    "/mcp": {"subcommands": ["load", "unload", "status"], "dynamic": "mcp_servers", "description": "Load/unload MCP servers"},
 }
 
 
@@ -112,52 +113,32 @@ EXTERNAL_TOOL_DISPLAY = {
     'aws___search_documentation': ('query', 'Searching AWS docs', 'Search AWS documentation'),
     'aws___read_documentation': ('url', 'Reading AWS docs', 'Fetch AWS documentation page'),
     'aws___recommend': ('url', 'Getting AWS recommendations', 'Get related AWS content'),
-    # Azure MCP CLI extension tools
-    'extension_cli_generate': ('goal', 'Generating Azure CLI command', 'Generate az command for goal'),
     # Screen capture tool
     'capture_screen': ('mode', 'Capturing screenshot', 'Capture screen or window'),
     # Image generation tool (imagemage)
     'generate_image': ('prompt', 'Generating image', 'Generate or edit images with Gemini'),
-    # Blueprint MCP browser automation tools (30 tools)
-    # Connection Management
-    'enable': ('', 'Enabling browser automation', 'Activate browser automation'),
-    'disable': ('', 'Disabling browser automation', 'Deactivate browser automation'),
-    'status': ('', 'Checking connection status', 'Check browser connection status'),
-    'auth': ('', 'Authenticating to PRO', 'Login to Blueprint PRO account'),
-    # Tab Management
-    'browser_tabs': ('action', 'Managing tabs', 'List/create/attach/close browser tabs'),
-    # Navigation
-    'browser_navigate': ('url', 'Navigating to', 'Navigate to URL in browser'),
-    'browser_navigate_back': ('', 'Going back', 'Go back in browser history'),
-    # Content & Inspection
-    'browser_snapshot': ('', 'Getting page snapshot', 'Get accessible page content'),
-    'browser_take_screenshot': ('', 'Taking screenshot', 'Capture browser screenshot'),
-    'browser_console_messages': ('', 'Getting console logs', 'Get browser console messages'),
-    'browser_network_requests': ('urlPattern', 'Monitoring network', 'Monitor/filter network requests'),
-    'browser_extract_content': ('', 'Extracting content', 'Extract page content as markdown'),
-    # Interaction
-    'browser_interact': ('actions', 'Interacting with page', 'Perform multiple actions in sequence'),
-    'browser_click': ('selector', 'Clicking', 'Click on element'),
-    'browser_type': ('text', 'Typing', 'Type text into input'),
-    'browser_hover': ('selector', 'Hovering over', 'Hover over element'),
-    'browser_select_option': ('value', 'Selecting option', 'Select dropdown option'),
-    'browser_fill_form': ('fields', 'Filling form', 'Fill multiple form fields'),
-    'browser_press_key': ('key', 'Pressing key', 'Press keyboard key'),
-    'browser_drag': ('source', 'Dragging element', 'Drag and drop element'),
-    # Advanced
-    'browser_evaluate': ('code', 'Executing JavaScript', 'Run JavaScript in page context'),
-    'browser_handle_dialog': ('action', 'Handling dialog', 'Handle alert/confirm/prompt'),
-    'browser_file_upload': ('path', 'Uploading file', 'Upload file through input'),
-    'browser_window': ('action', 'Managing window', 'Resize/minimize/maximize window'),
-    'browser_pdf_save': ('', 'Saving as PDF', 'Save page as PDF'),
-    'browser_performance_metrics': ('', 'Getting metrics', 'Get performance metrics'),
-    'browser_verify_text_visible': ('text', 'Verifying text', 'Verify text is visible'),
-    'browser_verify_element_visible': ('selector', 'Verifying element', 'Verify element is visible'),
-    # Extension Management
-    'browser_list_extensions': ('', 'Listing extensions', 'List installed browser extensions'),
-    'browser_reload_extensions': ('', 'Reloading extensions', 'Reload unpacked extensions'),
     # Sandboxed Python execution
     'execute_python': ('code', 'Running Python', 'Execute Python code in sandbox'),
+    # ArXiv MCP tools (optional)
+    'search_papers': ('query', 'Searching arXiv', 'Search arXiv papers'),
+    'download_paper': ('paper_id', 'Downloading arXiv paper', 'Download arXiv paper'),
+    'list_papers': ('', 'Listing arXiv papers', 'List downloaded arXiv papers'),
+    'read_paper': ('paper_id', 'Reading arXiv paper', 'Read arXiv paper content'),
+    # Chrome DevTools CDP navigation tools (optional)
+    'close_page': ('', 'Closing CDP page', 'Close browser page via CDP'),
+    'list_pages': ('', 'Listing CDP pages', 'List open browser pages via CDP'),
+    'navigate_page': ('url', 'Navigating CDP page', 'Navigate to URL via CDP'),
+    'new_page': ('url', 'Opening CDP page', 'Open new browser page via CDP'),
+    'select_page': ('pageId', 'Selecting CDP page', 'Select browser page via CDP'),
+    'wait_for': ('selector', 'Waiting for CDP element', 'Wait for element via CDP'),
+    # Chrome DevTools CDP MCP tools (optional)
+    'get_network_request': ('requestId', 'Getting CDP request', 'Get CDP network request details'),
+    'list_network_requests': ('', 'Listing CDP requests', 'List CDP network requests'),
+    'evaluate_script': ('expression', 'Evaluating CDP script', 'Evaluate JavaScript via CDP'),
+    'get_console_message': ('messageId', 'Getting CDP message', 'Get CDP console message'),
+    'list_console_messages': ('', 'Listing CDP messages', 'List CDP console messages'),
+    'take_screenshot': ('', 'Taking CDP screenshot', 'Capture page screenshot via CDP'),
+    'take_snapshot': ('', 'Taking CDP snapshot', 'Capture DOM snapshot via CDP')
 }
 
 
