@@ -4183,9 +4183,17 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
         elif cmd == "/voice":
             # Voice auto-submit mode
             if not args or args.lower() == "auto":
-                self.voice_auto_submit = True
-                self.console.print("[bold green]Voice auto-submit enabled[/] - transcribed text sends automatically")
-                self.console.print("[dim]/voice off to disable[/]")
+                # Check if voice input is available before enabling
+                if not self.voice_input:
+                    if VOICE_UNAVAILABLE_REASON:
+                        self.console.print(f"[red]Voice input unavailable ({VOICE_UNAVAILABLE_REASON})[/]")
+                    else:
+                        self.console.print("[red]Voice input not installed[/]")
+                        self.console.print("[dim]Re-run install-llm-tools.sh to install[/]")
+                else:
+                    self.voice_auto_submit = True
+                    self.console.print("[bold green]Voice auto-submit enabled[/] - transcribed text sends automatically")
+                    self.console.print("[dim]/voice off to disable[/]")
             elif args.lower() == "off":
                 self.voice_auto_submit = False
                 self.console.print("[bold yellow]Voice auto-submit disabled[/]")
