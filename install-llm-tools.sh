@@ -1744,7 +1744,7 @@ update_mcp_config() {
     # Detect Chrome/Chromium for chrome-devtools MCP
     local chrome_devtools_config=""
     if command -v google-chrome &>/dev/null || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
-        log "Chrome/Chromium detected, including chrome-devtools MCP server (optional)"
+        log "Chrome/Chromium detected, adding chrome-devtools MCP"
         # Pre-install chrome-devtools-mcp for faster first use (npx will use cached version)
         install_or_upgrade_npm_global chrome-devtools-mcp
         chrome_devtools_config=',
@@ -2445,15 +2445,14 @@ log "  - llm (Simon Willison's CLI tool)"
 log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, sandboxed-python, fragments, jq, fabric templates, context, llm-functions bridge)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 log "  - Claude Code Router (proxy for Claude Code)"
-log "  - Blueprint MCP (browser automation for Firefox/Chrome with stealth mode)"
-log "  - micro (modern terminal text editor with llm-micro plugin for AI integration)"
+log "  - micro (terminal text editor with LLM integration)"
 log "  - gitingest (Git repository to LLM-friendly text)"
 log "  - yek (fast repository to LLM-friendly text converter)"
 log "  - files-to-prompt (file content formatter)"
 log "  - tldr (community-driven man pages with practical examples)"
 log "  - argc (Bash CLI framework, enables optional llm-functions)"
 log "  - asciinema (terminal session recorder)"
-log "  - transcribe (speech-to-text using Parakeet TDT, 25 European languages)"
+log "  - transcribe (speech-to-text, 25 European languages)"
 log ""
 log "Shell integration files created in: $SCRIPT_DIR/integration"
 log "  - integration/llm-integration.bash (for Bash)"
