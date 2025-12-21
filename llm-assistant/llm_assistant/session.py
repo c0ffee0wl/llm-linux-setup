@@ -5316,20 +5316,22 @@ Respond with a JSON object containing these fields:
                         self._debug(f"Exec terminal shell PID: {shell_pid}")
                         if shell_pid > 0:
                             meta_file = f"/tmp/llm-assistant/.prompt-meta-{shell_pid}"
-                            import os
                             if os.path.exists(meta_file):
-                                with open(meta_file, 'r') as f:
-                                    meta_content = f.read().strip()
-                                self._debug(f"Read metadata from file: {meta_content}")
-                                # Parse format: E<exit>T<timestamp>D<duration>
-                                import re
-                                match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})D(\d+)', meta_content)
-                                if match:
-                                    exit_code = int(match.group(1))
-                                    duration = int(match.group(3))
-                                    self._debug(f"Parsed metadata: exit_code={exit_code}, duration={duration}")
-                                # Delete file after reading (one-time use)
-                                os.unlink(meta_file)
+                                # Only read if file was modified in the last 10 seconds
+                                # (prevents false positives in nested shells without metadata)
+                                file_age = time.time() - os.path.getmtime(meta_file)
+                                if file_age > 10:
+                                    self._debug(f"Metadata file too old ({file_age:.1f}s), ignoring")
+                                else:
+                                    with open(meta_file, 'r') as f:
+                                        meta_content = f.read().strip()
+                                    self._debug(f"Read metadata from file: {meta_content}")
+                                    # Parse format: E<exit>T<timestamp>D<duration>
+                                    match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})D(\d+)', meta_content)
+                                    if match:
+                                        exit_code = int(match.group(1))
+                                        duration = int(match.group(3))
+                                        self._debug(f"Parsed metadata: exit_code={exit_code}, duration={duration}")
                             else:
                                 self._debug(f"Metadata file not found: {meta_file}")
                     except Exception as e:
