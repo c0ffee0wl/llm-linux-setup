@@ -1829,8 +1829,8 @@ update_mcp_config() {
             log "Local modifications detected"
         fi
         echo ""
-        read -p "Update MCP configuration? This will overwrite your version. (y/N): " UPDATE_MCP
-        if [[ "$UPDATE_MCP" =~ ^[Yy]$ ]]; then
+        read -p "Update MCP configuration? This will overwrite your version. (Y/n): " UPDATE_MCP
+        if [[ ! "$UPDATE_MCP" =~ ^[Nn]$ ]]; then
             echo "$expected_config" > "$MCP_CONFIG_FILE"
             store_checksum "mcp-config" "$MCP_CONFIG_FILE"
             log "MCP configuration updated to $MCP_CONFIG_FILE"
