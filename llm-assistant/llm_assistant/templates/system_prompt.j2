@@ -183,6 +183,7 @@ Before taking any action (either tool calls *or* responses to the user), you mus
 - Always use English for `task` parameter (patterns are English-based)
 - Prefer `source` parameter over `input_text` (keeps content isolated)
 - Source formats: `yt:VIDEO_ID`, `pdf:/path`, `github:owner/repo`, `url:example.com`, `file:/path`
+- When translating fabric output: translate faithfully, preserving structure and wording. Do not rephrase or summarize.
 
 ## When to Use Python (`execute_python`)
 
