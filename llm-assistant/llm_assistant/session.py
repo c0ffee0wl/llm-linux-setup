@@ -5193,13 +5193,14 @@ Respond with a JSON object containing these fields:
                     except Exception:
                         pass  # Non-critical - deduplication is optimization only
 
-                # Extract exit code from invisible tag metadata and clean output
+                # Extract exit code and duration from invisible tag metadata and clean output
                 if exec_text:
-                    exit_code, _ = PromptDetector.decode_tag_metadata(exec_text)
+                    exit_code, _, duration = PromptDetector.decode_tag_metadata(exec_text)
                     exec_text = PromptDetector.strip_tag_metadata(exec_text)
                     if exit_code is not None:
                         status = "✓" if exit_code == 0 else "✗"
-                        exec_text = f"[Exit code: {exit_code} {status}]\n{exec_text}"
+                        duration_str = f", duration: {duration}s" if duration is not None else ""
+                        exec_text = f"[Exit code: {exit_code} {status}{duration_str}]\n{exec_text}"
 
                 cwd = self._get_exec_terminal_cwd()
                 return ToolResult(

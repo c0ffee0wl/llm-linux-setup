@@ -187,10 +187,11 @@ if [ -n "$VTE_VERSION" ]; then
 
     # Pre-computed tag characters for metadata encoding (U+E0000 + ASCII code)
     # These are invisible in terminal but survive VTE text capture
-    # Only the chars we use: E, T, 0-9, space, dash, colon
+    # Only the chars we use: E, T, D, 0-9, space, dash, colon
     # Computed at parse time via $'\U...' - zero runtime cost
     _TAG_E=$'\U000E0045'    # 'E' for Exit
     _TAG_T=$'\U000E0054'    # 'T' for Timestamp
+    _TAG_D=$'\U000E0044'    # 'D' for Duration
     _TAG_0=$'\U000E0030'    # '0'
     _TAG_1=$'\U000E0031'    # '1'
     _TAG_2=$'\U000E0032'    # '2'
@@ -206,7 +207,7 @@ if [ -n "$VTE_VERSION" ]; then
     _TAG_COLON=$'\U000E003A'  # ':'
 
     # Fast tag encoding using pre-computed lookup (no subshells!)
-    # Only handles chars used in "E<exit>T<YYYY-MM-DD HH:MM:SS>" format
+    # Only handles chars used in "E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds>" format
     __encode_tags() {
         local result=""
         local str="$1"
@@ -214,6 +215,7 @@ if [ -n "$VTE_VERSION" ]; then
             case "${str%"${str#?}"}" in
                 E) result="${result}${_TAG_E}" ;;
                 T) result="${result}${_TAG_T}" ;;
+                D) result="${result}${_TAG_D}" ;;
                 0) result="${result}${_TAG_0}" ;;
                 1) result="${result}${_TAG_1}" ;;
                 2) result="${result}${_TAG_2}" ;;
@@ -233,15 +235,28 @@ if [ -n "$VTE_VERSION" ]; then
         printf '%s' "$result"
     }
 
+    # Preexec hook: capture command start time (uses $SECONDS - no subshell!)
+    # Called BEFORE each command executes
+    __capture_cmd_start() {
+        _CMD_START_SECONDS=$SECONDS
+    }
+
     # Unified marker function with metadata injection
     # Called via PROMPT_COMMAND (bash) or precmd_functions (zsh)
     # CRITICAL: Must APPEND to run LAST (after Starship/Powerlevel10k modify PS1)
     __add_prompt_markers() {
         local last_exit=$?  # MUST be first line to capture exit code
 
+        # Calculate duration since command start (0 if no command ran)
+        local duration=0
+        if [ -n "$_CMD_START_SECONDS" ]; then
+            duration=$((SECONDS - _CMD_START_SECONDS))
+            unset _CMD_START_SECONDS
+        fi
+
         # Print invisible metadata BEFORE prompt (fresh timestamp each time)
-        # Format: E<exit>T<YYYY-MM-DD HH:MM:SS> encoded as tag characters
-        printf '%s' "$(__encode_tags "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')")"
+        # Format: E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds> encoded as tag characters
+        printf '%s' "$(__encode_tags "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}")"
 
         # Add markers to PS1/PROMPT (idempotent - only once)
         if [ -n "${BASH_VERSION:-}" ]; then
@@ -255,11 +270,16 @@ if [ -n "$VTE_VERSION" ]; then
         fi
     }
 
-    # Register with shell's prompt hook
+    # Register hooks with shell
     if [ -n "${BASH_VERSION:-}" ]; then
-        # APPEND to run LAST (after Starship/Powerlevel10k)
-        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__add_prompt_markers"
+        # DEBUG trap runs BEFORE each command (like preexec)
+        # Skip during PROMPT_COMMAND execution (flag prevents timer reset by Starship/etc.)
+        trap '[[ -z "$_IN_PROMPT_COMMAND" ]] && __capture_cmd_start' DEBUG
+        # Wrap PROMPT_COMMAND with flag to disable DEBUG trap during prompt generation
+        PROMPT_COMMAND="_IN_PROMPT_COMMAND=1; ${PROMPT_COMMAND:-:}; __add_prompt_markers; unset _IN_PROMPT_COMMAND"
     elif [ -n "${ZSH_VERSION:-}" ]; then
+        # preexec runs BEFORE each user command (not internal precmd functions)
+        preexec_functions=($preexec_functions __capture_cmd_start)
         # APPEND to run LAST in precmd_functions array
         precmd_functions=($precmd_functions __add_prompt_markers)
     fi

@@ -110,12 +110,12 @@ class PromptDetector:
         return cls.INPUT_START_MARKER in text
 
     @classmethod
-    def decode_tag_metadata(cls, text: str) -> Tuple[Optional[int], Optional[str]]:
+    def decode_tag_metadata(cls, text: str) -> Tuple[Optional[int], Optional[str], Optional[int]]:
         """
-        Extract exit code and timestamp from tag-encoded metadata.
+        Extract exit code, timestamp, and duration from tag-encoded metadata.
 
         Tag characters (U+E0000-E007F) encode ASCII chars as invisible metadata.
-        Format: E<exit>T<YYYY-MM-DD HH:MM:SS>
+        Format: E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds>
 
         Finds the LAST tag sequence in the text (most recent prompt's metadata).
 
@@ -123,7 +123,7 @@ class PromptDetector:
             text: Terminal output text that may contain tag-encoded metadata
 
         Returns:
-            Tuple of (exit_code, timestamp_str) or (None, None) if not found.
+            Tuple of (exit_code, timestamp_str, duration_seconds) or (None, None, None) if not found.
         """
         # Find the LAST tag sequence (most recent prompt's metadata)
         # Iterate backwards to find where the last tag sequence ends
@@ -135,7 +135,7 @@ class PromptDetector:
                 break
 
         if last_tag_end == -1:
-            return (None, None)  # No tag characters found
+            return (None, None, None)  # No tag characters found
 
         # Find where this tag sequence starts
         last_tag_start = last_tag_end
@@ -154,14 +154,14 @@ class PromptDetector:
 
         decoded = ''.join(tag_chars)
 
-        # Parse format: E<exit>T<timestamp> (YYYY-MM-DD HH:MM:SS)
-        match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', decoded)
+        # Parse format: E<exit>T<timestamp>D<duration> (duration in seconds)
+        match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})D(\d+)', decoded)
         if match:
             try:
-                return (int(match.group(1)), match.group(2))
+                return (int(match.group(1)), match.group(2), int(match.group(3)))
             except ValueError:
-                return (None, None)
-        return (None, None)
+                return (None, None, None)
+        return (None, None, None)
 
     @classmethod
     def strip_tag_metadata(cls, text: str) -> str:
