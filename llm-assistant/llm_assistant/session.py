@@ -182,21 +182,8 @@ class TerminatorAssistantSession:
             self.console.print("[yellow]Please run this from inside a Terminator terminal.[/]")
             sys.exit(1)
 
-        # Fast check: Is there already an assistant in this tab?
-        if self._check_existing_assistant_in_tab(self.early_terminal_uuid):
-            self.console.print("[red]Error: An assistant is already running in this tab[/]")
-            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
-            sys.exit(1)
-
-        # Acquire global lock (brief, only during initialization)
+        # Acquire per-tab lock (held for entire session, prevents duplicates)
         self._acquire_instance_lock()
-
-        # Double-check under lock (catches race condition)
-        if self._check_existing_assistant_in_tab(self.early_terminal_uuid):
-            self._release_instance_lock()
-            self.console.print("[red]Error: An assistant is already running in this tab[/]")
-            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
-            sys.exit(1)
 
         # Register shutdown handlers EARLY (before creating resources)
         self._register_shutdown_handlers()
@@ -431,58 +418,29 @@ class TerminatorAssistantSession:
 
     def _acquire_instance_lock(self):
         """
-        Acquire brief global lock during initialization.
-        Used with double-check pattern to prevent race conditions
-        when multiple tabs start simultaneously.
+        Acquire per-tab lock using TERMINATOR_UUID.
 
-        The lock is released after exec terminal creation (not end of session).
+        This provides 100% reliable one-assistant-per-tab enforcement:
+        - Lock is tied to specific tab via TERMINATOR_UUID
+        - Kernel automatically releases lock on process death (no stale locks)
+        - No need for PID tracking, title parsing, or D-Bus queries
+        - Race-condition free (fcntl.flock is atomic)
 
-        Security improvements:
-        - Uses per-user subdirectory to prevent cross-user interference
-        - Sets lock file permissions to 0600
-        - Handles corrupted lock files gracefully
+        Security: Uses per-user runtime directory with 0600 permissions.
         """
-        # Use per-user lock directory for security
+        terminal_uuid = self.early_terminal_uuid
+
+        # Use per-user lock directory
         runtime_dir = os.environ.get('XDG_RUNTIME_DIR')
         if not runtime_dir or not Path(runtime_dir).is_dir():
-            # Fallback to user-specific temp directory
             runtime_dir = Path(tempfile.gettempdir()) / f'llm-assistant-{os.getuid()}'
             runtime_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
             runtime_dir = str(runtime_dir)
 
-        lock_path = Path(runtime_dir) / 'llm-assistant.lock'
-
-        # Check for stale lock before attempting to acquire
-        if lock_path.exists():
-            try:
-                with open(lock_path, 'r') as f:
-                    old_pid_str = f.read().strip()
-                    if old_pid_str:
-                        try:
-                            old_pid = int(old_pid_str)
-                            os.kill(old_pid, 0)  # Check if process exists
-                            # Also check for zombie state (os.kill succeeds for zombies)
-                            try:
-                                with open(f'/proc/{old_pid}/status', 'r') as status_f:
-                                    if 'State:\tZ' in status_f.read():
-                                        raise OSError("Zombie process - treating as stale")
-                            except FileNotFoundError:
-                                raise OSError("Process no longer exists")
-                        except (ValueError, OSError):
-                            # Process doesn't exist, is zombie, or PID invalid - stale/corrupted lock
-                            try:
-                                lock_path.unlink()
-                            except OSError:
-                                pass  # Another process may have removed it
-            except IOError:
-                # Can't read lock file - try to remove it
-                try:
-                    lock_path.unlink()
-                except OSError:
-                    pass
+        # Per-tab lock file
+        lock_path = Path(runtime_dir) / f'llm-assistant-{terminal_uuid}.lock'
 
         try:
-            # Open with secure permissions (0600) using fdopen pattern
             fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
             self.lock_file = os.fdopen(fd, 'w')
             fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -490,18 +448,10 @@ class TerminatorAssistantSession:
             self.lock_file.flush()
 
         except BlockingIOError:
-            # Another instance is initializing - wait briefly and retry
-            # This allows multi-tab support while preventing race conditions
-            self.console.print("[yellow]Another assistant is starting, waiting...[/]")
-            try:
-                fd = os.open(str(lock_path), os.O_WRONLY | os.O_CREAT, 0o600)
-                self.lock_file = os.fdopen(fd, 'w')
-                fcntl.flock(self.lock_file.fileno(), fcntl.LOCK_EX)  # Blocking wait
-                self.lock_file.write(f"{os.getpid()}\n")
-                self.lock_file.flush()
-            except Exception as e:
-                self.console.print(f"[red]Error acquiring lock: {e}[/]")
-                sys.exit(1)
+            # Another instance already has this tab's lock
+            self.console.print("[red]Error: An assistant is already running in this tab[/]")
+            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
+            sys.exit(1)
 
         except Exception as e:
             self.console.print(f"[red]Error acquiring lock: {e}[/]")
@@ -569,61 +519,6 @@ class TerminatorAssistantSession:
         if env_uuid:
             return self._normalize_uuid(env_uuid)
         return None  # Not running in Terminator
-
-    def _check_existing_assistant_in_tab(self, terminal_uuid: str) -> bool:
-        """
-        Check if another assistant instance is already running in the same tab.
-
-        Looks for terminals with title starting with "Assistant: Exec" in the
-        same tab as the given terminal.
-
-        Args:
-            terminal_uuid: UUID of the current terminal
-
-        Returns:
-            True if another assistant is running in this tab, False otherwise
-        """
-        try:
-            bus = dbus.SessionBus()
-            plugin_dbus = bus.get_object(
-                'net.tenshu.Terminator2.Assistant',
-                '/net/tenshu/Terminator2/Assistant'
-            )
-
-            # Get terminals in same tab
-            terminals = plugin_dbus.get_terminals_in_same_tab(terminal_uuid)
-
-            # Check for existing Assistant Exec terminal with active process
-            for t in terminals:
-                title = t.get('title', '')
-                if title.startswith('Assistant: Exec'):
-                    # Extract PID from title and verify process is running
-                    pid = self._extract_pid_from_title(title)
-                    if pid and self._process_exists(pid):
-                        # Found active assistant in this tab
-                        return True
-                    # Stale title (no PID or process dead) - continue checking
-
-            return False
-
-        except Exception:
-            # Plugin not available or error - allow startup
-            # (will fail later with proper error message)
-            return False
-
-    def _extract_pid_from_title(self, title: str) -> int:
-        """
-        Extract PID from 'Assistant: Exec (PID 12345)' or 'Assistant: Exec (Restored PID 12345)' format.
-
-        Args:
-            title: Terminal title string
-
-        Returns:
-            PID as integer, or None if not found
-        """
-        import re
-        match = re.search(r'\((?:Restored )?PID (\d+)\)', title)
-        return int(match.group(1)) if match else None
 
     def _process_exists(self, pid: int) -> bool:
         """
@@ -1982,19 +1877,13 @@ class TerminatorAssistantSession:
                     other_terminals = [t for t in terminals if str(t['uuid']) != self.chat_terminal_uuid]
 
                     # First: Look for existing Assistant Exec pane
+                    # (Per-tab lock ensures only one assistant per tab, so any Exec pane is ours)
                     for t in other_terminals:
                         title = t.get('title', '')
                         if title.startswith('Assistant: Exec'):
-                            pid = self._extract_pid_from_title(title)
-                            # Reuse if: no PID in title (legacy), PID matches current process,
-                            # or PID is from a dead process (previous session)
-                            pid_is_dead = pid is not None and pid != os.getpid() and not self._process_exists(pid)
-                            if pid is None or pid == os.getpid() or pid_is_dead:
-                                self.exec_terminal_uuid = self._normalize_uuid(t['uuid'])
-                                self._release_instance_lock()  # Release global lock
-                                self.console.print("[green]✓[/] Terminals ready")
-                                return  # Success - reusing existing exec terminal
-                            # PID belongs to another active assistant - don't reuse
+                            self.exec_terminal_uuid = self._normalize_uuid(t['uuid'])
+                            self.console.print("[green]✓[/] Terminals ready")
+                            return  # Success - reusing existing exec terminal
 
                     # Second: If exactly one other pane, offer to use it
                     if len(other_terminals) == 1:
@@ -2004,7 +1893,6 @@ class TerminatorAssistantSession:
 
                         if use_existing:
                             self.exec_terminal_uuid = self._normalize_uuid(existing_pane['uuid'])
-                            self._release_instance_lock()  # Release global lock
                             self.console.print("[green]✓[/] Terminals ready")
                             return  # Success - using existing terminal
                 except dbus.exceptions.DBusException as e:
@@ -2025,14 +1913,13 @@ class TerminatorAssistantSession:
                 exec_uuid = self.dbus_service.vsplit(
                     self.chat_terminal_uuid,
                     dbus.Dictionary({
-                        'title': f'Assistant: Exec (PID {os.getpid()})'
+                        'title': 'Assistant: Exec'
                     }, signature='ss')
                 )
                 if str(exec_uuid).startswith('ERROR'):
                     raise Exception(f"Failed to split terminal: {exec_uuid}")
                 self.exec_terminal_uuid = self._normalize_uuid(exec_uuid)
 
-                self._release_instance_lock()  # Release global lock
                 self.console.print("[green]✓[/] Terminals ready")
                 return  # Success
 
@@ -2072,7 +1959,7 @@ class TerminatorAssistantSession:
             # Use chat_terminal_uuid (stable) instead of get_focused_terminal()
             exec_uuid = self.dbus_service.vsplit(
                 self.chat_terminal_uuid,
-                dbus.Dictionary({'title': f'Assistant: Exec (Restored PID {os.getpid()})'}, signature='ss')
+                dbus.Dictionary({'title': 'Assistant: Exec'}, signature='ss')
             )
             if str(exec_uuid).startswith('ERROR'):
                 raise Exception(f"Failed to split terminal: {exec_uuid}")
