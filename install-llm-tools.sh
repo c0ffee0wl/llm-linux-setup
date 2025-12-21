@@ -2156,7 +2156,7 @@ EOF
             HANDY_DEB="/tmp/handy_${HANDY_VERSION}_amd64.deb"
             HANDY_URL="https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy_${HANDY_VERSION}_amd64.deb"
 
-            curl -L "$HANDY_URL" -o "$HANDY_DEB"
+            curl -fL "$HANDY_URL" -o "$HANDY_DEB"
             if [ -f "$HANDY_DEB" ]; then
                 sudo dpkg -i "$HANDY_DEB" || sudo apt-get install -f -y
                 rm -f "$HANDY_DEB"

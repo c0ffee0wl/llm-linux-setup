@@ -185,21 +185,50 @@ if [ -n "$VTE_VERSION" ]; then
     _PROMPT_START_MARKER=$'\u200B\u200D\u200B'  # Before PS1
     _INPUT_START_MARKER=$'\u200D\u200B\u200D'   # After PS1
 
-    # Tag character encoding: ASCII → U+E0000 range (invisible in terminal)
-    # Used to embed exit code and timestamp in prompt, extractable via VTE capture
-    # Shell-specific: zsh uses print, bash uses printf %b
+    # Pre-computed tag characters for metadata encoding (U+E0000 + ASCII code)
+    # These are invisible in terminal but survive VTE text capture
+    # Only the chars we use: E, T, 0-9, space, dash, colon
+    # Computed at parse time via $'\U...' - zero runtime cost
+    _TAG_E=$'\U000E0045'    # 'E' for Exit
+    _TAG_T=$'\U000E0054'    # 'T' for Timestamp
+    _TAG_0=$'\U000E0030'    # '0'
+    _TAG_1=$'\U000E0031'    # '1'
+    _TAG_2=$'\U000E0032'    # '2'
+    _TAG_3=$'\U000E0033'    # '3'
+    _TAG_4=$'\U000E0034'    # '4'
+    _TAG_5=$'\U000E0035'    # '5'
+    _TAG_6=$'\U000E0036'    # '6'
+    _TAG_7=$'\U000E0037'    # '7'
+    _TAG_8=$'\U000E0038'    # '8'
+    _TAG_9=$'\U000E0039'    # '9'
+    _TAG_SPACE=$'\U000E0020'  # ' '
+    _TAG_DASH=$'\U000E002D'   # '-'
+    _TAG_COLON=$'\U000E003A'  # ':'
+
+    # Fast tag encoding using pre-computed lookup (no subshells!)
+    # Only handles chars used in "E<exit>T<YYYY-MM-DD HH:MM:SS>" format
     __encode_tags() {
-        local str="$1" result="" first code hex
+        local result=""
+        local str="$1"
         while [ -n "$str" ]; do
-            first="${str%"${str#?}"}"  # Get first char (POSIX)
-            str="${str#?}"              # Remove first char
-            code=$(printf '%d' "'$first")
-            hex=$(printf '%08X' $((0xE0000 + code)))
-            if [ -n "${ZSH_VERSION:-}" ]; then
-                result="${result}$(print -n "\U${hex}")"
-            else
-                result="${result}$(printf '%b' "\\U${hex}")"
-            fi
+            case "${str%"${str#?}"}" in
+                E) result="${result}${_TAG_E}" ;;
+                T) result="${result}${_TAG_T}" ;;
+                0) result="${result}${_TAG_0}" ;;
+                1) result="${result}${_TAG_1}" ;;
+                2) result="${result}${_TAG_2}" ;;
+                3) result="${result}${_TAG_3}" ;;
+                4) result="${result}${_TAG_4}" ;;
+                5) result="${result}${_TAG_5}" ;;
+                6) result="${result}${_TAG_6}" ;;
+                7) result="${result}${_TAG_7}" ;;
+                8) result="${result}${_TAG_8}" ;;
+                9) result="${result}${_TAG_9}" ;;
+                ' ') result="${result}${_TAG_SPACE}" ;;
+                -) result="${result}${_TAG_DASH}" ;;
+                :) result="${result}${_TAG_COLON}" ;;
+            esac
+            str="${str#?}"
         done
         printf '%s' "$result"
     }
