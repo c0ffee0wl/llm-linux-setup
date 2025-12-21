@@ -268,6 +268,10 @@ class TerminatorAssistantSession:
         # (Jinja2 template uses mode to conditionally include agent/assistant content)
         self.mode: str = "agent" if agent_mode else "assistant"
 
+        # Watch mode state (must be initialized before _render_system_prompt)
+        self.watch_mode = False
+        self.watch_goal = None
+
         # Render system prompt using Jinja2 template
         # Template handles mode filtering and environment injection
         self.system_prompt = self._render_system_prompt()
@@ -310,9 +314,7 @@ class TerminatorAssistantSession:
         # Tool token overhead (estimated at startup, cached for session)
         self._tool_token_overhead = self._estimate_tool_schema_tokens()
 
-        # Watch mode (thread-safe)
-        self.watch_mode = False
-        self.watch_goal = None
+        # Watch mode threading (watch_mode/watch_goal initialized earlier)
         self.watch_thread = None
         self.watch_task = None  # Asyncio task for graceful cancellation
         self.watch_interval = 5  # seconds
@@ -1045,7 +1047,8 @@ class TerminatorAssistantSession:
         self._broadcast_to_web({
             "type": "watch_status",
             "active": self.watch_mode,
-            "goal": self.watch_goal if self.watch_mode else None
+            "goal": self.watch_goal if self.watch_mode else None,
+            "system_prompt": self._build_system_prompt()
         })
 
     def _broadcast_token_update(self):
@@ -1297,6 +1300,8 @@ class TerminatorAssistantSession:
             platform=os_info,
             shell=shell_info,
             environment=env_type,
+            watch_mode=self.watch_mode,
+            watch_goal=self.watch_goal,
         )
 
     def _build_system_prompt(self) -> str:
@@ -2778,10 +2783,10 @@ class TerminatorAssistantSession:
             summary = summary_response.text()
 
             # Create new conversation and update system prompt
-            # Build enhanced system prompt from ORIGINAL, not current
+            # Re-render system prompt to preserve current watch mode state
             # Store summary for next user message (keeps system prompt clean)
             self.pending_summary = summary
-            self.system_prompt = self.original_system_prompt
+            self.system_prompt = self._render_system_prompt()
 
             # Save old conversation ID before creating new one
             old_conversation_id = self.conversation.id
@@ -3824,9 +3829,6 @@ Screenshot size: {file_size} bytes"""
                 # Clear conversation
                 self.conversation = llm.Conversation(model=self.model)
 
-                # Reset system prompt to original
-                self.system_prompt = self.original_system_prompt
-
                 # Disable watch mode if active
                 if self.watch_mode:
                     with self.watch_lock:
@@ -3837,6 +3839,10 @@ Screenshot size: {file_size} bytes"""
                                 self.event_loop.call_soon_threadsafe(self.event_loop.stop)
                             except RuntimeError:
                                 pass  # Loop already closed
+
+                # Re-render system prompt (ensures watch mode state is correct)
+                self.system_prompt = self._render_system_prompt()
+                self.original_system_prompt = self.system_prompt
 
                 # Clear plugin cache
                 if hasattr(self, 'plugin_dbus') and self.plugin_dbus:
@@ -4097,9 +4103,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 if self.watch_mode:
                     with self.watch_lock:
                         self.watch_mode = False
+                        self.watch_goal = None
                         # Reset state for next enable
                         self.previous_watch_context_hash = None
                         self.previous_watch_iteration_count = 0
+                        # Re-render system prompt without watch mode context
+                        self.system_prompt = self._render_system_prompt()
                         if self.watch_task and not self.watch_task.done():
                             # Cancel the task gracefully (interrupts asyncio.sleep)
                             try:
@@ -4145,6 +4154,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     # Reset state for fresh analysis with new goal
                     self.previous_watch_context_hash = None
                     self.previous_watch_iteration_count = 0
+                    # Re-render system prompt with watch mode context
+                    self.system_prompt = self._render_system_prompt()
                     self._start_watch_mode_thread()
                 self.console.print(f"[green]✓[/] Watch mode enabled")
                 self.console.print(f"Goal: {self.watch_goal}")

@@ -1023,6 +1023,31 @@
             } else {
                 watchBadge.classList.remove('active');
             }
+            // Update debug panel system prompt if present
+            if (data.system_prompt) {
+                const debugContent = document.getElementById('debug-content');
+                if (debugContent) {
+                    // Find System Prompt section by title
+                    const sections = debugContent.querySelectorAll('.debug-section');
+                    for (const section of sections) {
+                        const title = section.querySelector('.debug-section-title');
+                        if (title && title.textContent === 'System Prompt') {
+                            const codeEl = section.querySelector('pre code');
+                            if (codeEl) {
+                                codeEl.textContent = data.system_prompt;
+                                // Update token count
+                                const tokenInfo = section.querySelector('.token-info');
+                                if (tokenInfo) {
+                                    const chars = data.system_prompt.length;
+                                    const tokens = Math.ceil(chars / 4);
+                                    tokenInfo.textContent = chars + ' chars, ~' + tokens + ' tokens';
+                                }
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
         }
 
         function updateTokenBar(data) {
