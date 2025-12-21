@@ -5386,6 +5386,7 @@ Respond with a JSON object containing these fields:
                     with Spinner(f"Capturing screenshot ({mode})...", console=self.console):
                         result = impl(**tool_args)
                     self.console.print(f"[green]✓[/] {tool_name} completed")
+                    self.console.print()  # Blank line for visual separation
 
                     # Handle ToolOutput return type
                     attachments = []
@@ -5429,6 +5430,7 @@ Respond with a JSON object containing these fields:
                     result = impl(**tool_args)
                 self.console.print(f"[dim cyan]{status_msg}[/]")
                 self.console.print(f"[green]✓[/] {tool_name} completed")
+                self.console.print()  # Blank line for visual separation
 
                 # Handle ToolOutput return type (e.g., capture_screen with attachments)
                 attachments = []
