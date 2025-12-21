@@ -13,26 +13,58 @@ from typing import Optional, Tuple
 # Voice input (optional - graceful degradation if not installed)
 VOICE_AVAILABLE = False
 VOICE_UNAVAILABLE_REASON = None  # None = available, string = reason unavailable
+sd = None
+np = None
 
-try:
-    import sounddevice as sd
-    import numpy as np
-    VOICE_AVAILABLE = True
-except ImportError:
-    VOICE_UNAVAILABLE_REASON = "not installed"
-    sd = None
-    np = None
-
-# Disable built-in voice input if Handy is running (handles OS-level STT)
-if VOICE_AVAILABLE:
+# Check for Handy FIRST - skip sounddevice import entirely if Handy handles STT
+# (avoids PortAudio initialization errors during import)
+def _is_handy_running():
     try:
         import subprocess
-        _handy_check = subprocess.run(["pgrep", "-xi", "handy"], capture_output=True)
-        if _handy_check.returncode == 0:
-            VOICE_AVAILABLE = False
-            VOICE_UNAVAILABLE_REASON = "Handy running"
+        result = subprocess.run(["pgrep", "-xi", "handy"], capture_output=True)
+        return result.returncode == 0
     except Exception:
-        pass
+        return False
+
+def _suppress_stderr():
+    """Context manager to suppress stderr (for PortAudio messages)."""
+    devnull_fd = None
+    old_stderr_fd = None
+    try:
+        devnull_fd = os.open(os.devnull, os.O_WRONLY)
+        old_stderr_fd = os.dup(2)
+        os.dup2(devnull_fd, 2)
+        return devnull_fd, old_stderr_fd
+    except OSError:
+        # Cleanup on failure
+        if devnull_fd is not None:
+            os.close(devnull_fd)
+        if old_stderr_fd is not None:
+            os.close(old_stderr_fd)
+        return None, None
+
+def _restore_stderr(devnull_fd, old_stderr_fd):
+    """Restore stderr after suppression."""
+    if old_stderr_fd is not None:
+        os.dup2(old_stderr_fd, 2)
+        os.close(old_stderr_fd)
+    if devnull_fd is not None:
+        os.close(devnull_fd)
+
+if _is_handy_running():
+    VOICE_UNAVAILABLE_REASON = "Handy running"
+else:
+    try:
+        # Suppress PortAudio stderr during import (can print debug messages)
+        _devnull_fd, _old_stderr_fd = _suppress_stderr()
+        try:
+            import sounddevice as sd
+            import numpy as np
+            VOICE_AVAILABLE = True
+        finally:
+            _restore_stderr(_devnull_fd, _old_stderr_fd)
+    except ImportError:
+        VOICE_UNAVAILABLE_REASON = "not installed"
 
 
 class VoiceInput:
@@ -131,13 +163,19 @@ class VoiceInput:
         self.recording = True
 
         try:
-            self.stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=1,
-                dtype=np.float32,
-                callback=self._audio_callback
-            )
-            self.stream.start()
+            # Suppress PortAudio stderr messages during stream creation
+            # (PortAudio prints debug messages like "paTimedOut" to fd 2)
+            devnull_fd, old_stderr_fd = _suppress_stderr()
+            try:
+                self.stream = sd.InputStream(
+                    samplerate=self.sample_rate,
+                    channels=1,
+                    dtype=np.float32,
+                    callback=self._audio_callback
+                )
+                self.stream.start()
+            finally:
+                _restore_stderr(devnull_fd, old_stderr_fd)
             # Start recording animation
             self._start_animation(self.RECORDING_FRAMES, "Recording")
             return True
@@ -162,8 +200,13 @@ class VoiceInput:
         self.status_message = ""  # Clear immediately after stopping animation
 
         if self.stream:
-            self.stream.stop()
-            self.stream.close()
+            # Suppress PortAudio stderr during stream cleanup
+            devnull_fd, old_stderr_fd = _suppress_stderr()
+            try:
+                self.stream.stop()
+                self.stream.close()
+            finally:
+                _restore_stderr(devnull_fd, old_stderr_fd)
             self.stream = None
 
         if not self.audio_chunks:
