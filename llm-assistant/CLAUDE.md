@@ -228,7 +228,9 @@ Loaded KBs are injected after the system prompt, providing persistent context wi
 **Voice Input:**
 - Press `Ctrl+Space` to start recording (shows 🎤 Recording...)
 - Press `Ctrl+Space` again to stop and transcribe
-- Uses onnx-asr with Parakeet TDT model (lazy-loaded on first use)
+- Uses onnx-asr with Parakeet TDT INT8 quantized model (smaller, faster)
+- **Shared model location**: `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/`
+- **Handy integration**: Built-in voice input is automatically disabled when Handy is running (Handy handles OS-level STT)
 - Transcribed text is inserted at cursor position
 - `/voice` or `/voice auto` - auto-submit transcribed text
 - `/voice off` - disable auto-submit

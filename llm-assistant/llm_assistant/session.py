@@ -61,7 +61,7 @@ from prompt_toolkit.styles import Style as PTStyle
 # Local module imports
 from .prompt_detection import PromptDetector
 from .system_info import detect_os, detect_shell, detect_environment
-from .voice import VoiceInput, VOICE_AVAILABLE
+from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
 from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
 from .ui import Spinner, Confirm
 from .completer import SlashCommandCompleter
@@ -3757,7 +3757,12 @@ Screenshot size: {file_size} bytes"""
         args = parts[1] if len(parts) > 1 else ""
 
         if cmd == "/help":
-            voice_status = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
+            if self.voice_input:
+                voice_status = "[green]available[/]"
+            elif VOICE_UNAVAILABLE_REASON:
+                voice_status = f"[dim]{VOICE_UNAVAILABLE_REASON}[/]"
+            else:
+                voice_status = "[dim]not installed[/]"
             help_text = render('help_text.j2', voice_status=voice_status)
             self.console.print(Panel(help_text, title="Assistant Help", border_style="cyan"))
             return True
@@ -4161,7 +4166,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[bold yellow]Voice auto-submit disabled[/]")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.voice_auto_submit else "[yellow]disabled[/]"
-                voice_avail = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
+                if self.voice_input:
+                    voice_avail = "[green]available[/]"
+                elif VOICE_UNAVAILABLE_REASON:
+                    voice_avail = f"[dim]{VOICE_UNAVAILABLE_REASON}[/]"
+                else:
+                    voice_avail = "[dim]not installed[/]"
                 self.console.print(f"Voice auto-submit: {status}")
                 self.console.print(f"Voice input: {voice_avail}")
             else:
@@ -5182,6 +5192,14 @@ Respond with a JSON object containing these fields:
                             self.previous_capture_block_hashes[self.exec_terminal_uuid] = block_hashes
                     except Exception:
                         pass  # Non-critical - deduplication is optimization only
+
+                # Extract exit code from invisible tag metadata and clean output
+                if exec_text:
+                    exit_code, _ = PromptDetector.decode_tag_metadata(exec_text)
+                    exec_text = PromptDetector.strip_tag_metadata(exec_text)
+                    if exit_code is not None:
+                        status = "✓" if exit_code == 0 else "✗"
+                        exec_text = f"[Exit code: {exit_code} {status}]\n{exec_text}"
 
                 cwd = self._get_exec_terminal_cwd()
                 return ToolResult(

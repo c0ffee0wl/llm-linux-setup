@@ -516,13 +516,19 @@ See [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md) for comprehensive docum
 
 ### Speech-to-Text Transcription
 
-The repository includes a **speech-to-text transcription tool** using onnx-asr with NVIDIA's Parakeet TDT model:
+The repository includes **speech-to-text transcription tools** using onnx-asr with NVIDIA's Parakeet TDT model:
 
 **Components**:
+- **Handy**: System-wide STT application (installed via .deb, x86_64 only)
 - **onnx-asr**: Speech recognition library with ONNX Runtime backend
-- **nemo-parakeet-tdt-0.6b-v3**: NVIDIA's high-quality multilingual ASR model
+- **nemo-parakeet-tdt-0.6b-v3-int8**: INT8 quantized model (smaller, faster)
 - **transcribe**: CLI wrapper script for file transcription
 - **pydub**: Audio format conversion (requires ffmpeg)
+
+**Handy Integration**:
+- Handy provides OS-level voice input accessible from any application
+- When Handy is running, llm-assistant's built-in voice input is automatically disabled
+- Both use the same shared INT8 model to avoid duplication
 
 **Features**:
 - **25 European languages** with automatic language detection
@@ -550,9 +556,10 @@ transcribe meeting.m4a 2>/dev/null | less
 ```
 
 **Model Information**:
-- Model: `nemo-parakeet-tdt-0.6b-v3` (600M parameters)
-- Size: ~600MB (auto-downloaded on first use)
-- Cached in: `~/.cache/huggingface/`
+- Model: `nemo-parakeet-tdt-0.6b-v3` INT8 quantized (600M parameters)
+- Size: ~670MB total (encoder: 652MB, decoder: 18MB, plus config files)
+- **Shared location**: `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/`
+- Downloaded from HuggingFace during installation (not on first use)
 - Audio: Non-WAV formats converted via pydub/ffmpeg; resampling handled by onnx-asr
 
 **Comparison with llm-assistant Voice Input**:
@@ -904,6 +911,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
+- `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/` - Shared INT8 Parakeet model (used by Handy and llm-assistant)
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure

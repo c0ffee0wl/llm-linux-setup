@@ -2091,15 +2091,46 @@ EOF
 
     # Note: system_info.py and prompt_detection.py are now bundled in the package
 
-    # Preload the Parakeet speech model to avoid first-use delay
-    # (onnx-asr is now installed via llm-tools-assistant pyproject.toml dependencies)
-    log "Preloading Parakeet speech model (this may take a minute)..."
-    "$HOME/.local/share/uv/tools/llm/bin/python3" -c "
-import onnx_asr
-print('Downloading model...')
-model = onnx_asr.load_model('nemo-parakeet-tdt-0.6b-v3')
-print('Model loaded successfully')
-" 2>&1 || warn "Model preload failed (will download on first use)"
+    # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
+    MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
+    HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
+
+    # Required model files
+    MODEL_FILES=(
+        "config.json"
+        "vocab.txt"
+        "nemo128.onnx"
+        "decoder_joint-model.int8.onnx"
+        "encoder-model.int8.onnx"
+    )
+
+    # Check if model already exists (encoder is largest file, use as marker)
+    if [ -f "$MODEL_DIR/encoder-model.int8.onnx" ] && \
+       [ "$(stat -c%s "$MODEL_DIR/encoder-model.int8.onnx" 2>/dev/null)" -gt 100000000 ]; then
+        log "Parakeet model already downloaded"
+    else
+        log "Downloading Parakeet speech model (this may take a few minutes)..."
+        mkdir -p "$MODEL_DIR"
+
+        # Download and verify each file
+        download_failed=false
+        for file in "${MODEL_FILES[@]}"; do
+            log "  Downloading $file..."
+            if ! curl -fL --progress-bar "$HF_BASE/$file" -o "$MODEL_DIR/$file"; then
+                warn "  Failed to download $file"
+                download_failed=true
+            elif [ ! -s "$MODEL_DIR/$file" ]; then
+                warn "  Downloaded $file is empty"
+                download_failed=true
+            fi
+        done
+
+        if [ "$download_failed" = "false" ]; then
+            log "Parakeet model downloaded to $MODEL_DIR"
+        else
+            warn "Model download incomplete - run install-llm-tools.sh again"
+        fi
+    fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
@@ -2114,6 +2145,30 @@ print('Model loaded successfully')
         fi
     else
         log "Skipping imagemage: Gemini not configured"
+    fi
+
+    # Install Handy (system-wide STT) via .deb package
+    ARCH=$(uname -m)
+    if [ "$ARCH" = "x86_64" ]; then
+        if ! command -v handy &>/dev/null; then
+            log "Installing Handy (system-wide speech-to-text)..."
+            HANDY_VERSION="0.6.8"
+            HANDY_DEB="/tmp/handy_${HANDY_VERSION}_amd64.deb"
+            HANDY_URL="https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy_${HANDY_VERSION}_amd64.deb"
+
+            curl -L "$HANDY_URL" -o "$HANDY_DEB"
+            if [ -f "$HANDY_DEB" ]; then
+                sudo dpkg -i "$HANDY_DEB" || sudo apt-get install -f -y
+                rm -f "$HANDY_DEB"
+                log "Handy installed via deb package"
+            else
+                warn "Failed to download Handy"
+            fi
+        else
+            log "Handy is already installed"
+        fi
+    else
+        log "Skipping Handy: only x86_64 deb package available"
     fi
 fi
 

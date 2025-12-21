@@ -90,12 +90,21 @@ def transcribe(audio_path: Path) -> str:
               file=sys.stderr)
         sys.exit(1)
 
-    # Suppress HuggingFace progress bars
-    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
+    # Use shared model path (same as Handy) - must be pre-downloaded by install script
+    model_path = os.path.expanduser("~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8")
+    encoder_path = os.path.join(model_path, "encoder-model.int8.onnx")
 
-    print("Loading Parakeet TDT model...", file=sys.stderr)
+    if not os.path.isfile(encoder_path):
+        print("Error: Speech model not found. Run install-llm-tools.sh to download.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Disable HuggingFace auto-download (model must be pre-installed)
+    os.environ["HF_HUB_OFFLINE"] = "1"
+
+    print("Loading Parakeet TDT model (INT8)...", file=sys.stderr)
     try:
-        model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3")
+        model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", model_path, quantization="int8")
     except Exception as e:
         print(f"Error: Failed to load model: {e}", file=sys.stderr)
         sys.exit(1)

@@ -11,14 +11,28 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
 # Voice input (optional - graceful degradation if not installed)
+VOICE_AVAILABLE = False
+VOICE_UNAVAILABLE_REASON = None  # None = available, string = reason unavailable
+
 try:
     import sounddevice as sd
     import numpy as np
     VOICE_AVAILABLE = True
 except ImportError:
-    VOICE_AVAILABLE = False
+    VOICE_UNAVAILABLE_REASON = "not installed"
     sd = None
     np = None
+
+# Disable built-in voice input if Handy is running (handles OS-level STT)
+if VOICE_AVAILABLE:
+    try:
+        import subprocess
+        _handy_check = subprocess.run(["pgrep", "-xi", "handy"], capture_output=True)
+        if _handy_check.returncode == 0:
+            VOICE_AVAILABLE = False
+            VOICE_UNAVAILABLE_REASON = "Handy running"
+    except Exception:
+        pass
 
 
 class VoiceInput:
@@ -83,9 +97,17 @@ class VoiceInput:
                 self.console.print("[red]onnx-asr not installed. Re-run install-llm-tools.sh[/]")
                 return False
             try:
-                # Suppress HuggingFace download progress bars (model cached after first download)
-                os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
-                self.model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3")
+                # Use shared model path (same as Handy) - must be pre-downloaded by install script
+                model_path = os.path.expanduser("~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8")
+                encoder_path = os.path.join(model_path, "encoder-model.int8.onnx")
+
+                if not os.path.isfile(encoder_path):
+                    self.console.print("[red]Speech model not found. Run install-llm-tools.sh to download.[/]")
+                    return False
+
+                # Disable HuggingFace auto-download (model must be pre-installed)
+                os.environ["HF_HUB_OFFLINE"] = "1"
+                self.model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", model_path, quantization="int8")
             except Exception as e:
                 self.console.print(f"[red]Failed to load speech model: {e}[/]")
                 return False
