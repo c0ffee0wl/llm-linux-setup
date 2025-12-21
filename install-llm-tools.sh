@@ -2259,6 +2259,13 @@ EOF
         fi
 
         if [ "$INSTALLED_HANDY_VERSION" != "skip" ]; then
+            # Kill Handy if running (required for clean upgrade)
+            if pgrep -xi handy >/dev/null 2>&1; then
+                log "Stopping Handy process for upgrade..."
+                pkill -xi handy || true
+                sleep 1
+            fi
+
             HANDY_DEB="/tmp/handy_${HANDY_VERSION}_amd64.deb"
             HANDY_URL="https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy_${HANDY_VERSION}_amd64.deb"
 
