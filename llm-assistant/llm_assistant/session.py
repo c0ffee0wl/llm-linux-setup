@@ -747,11 +747,19 @@ class TerminatorAssistantSession:
                 print(f"Warning during shutdown: {e}", file=sys.stderr)
 
     def _get_default_model(self) -> str:
-        """Get default model from llm configuration"""
+        """Get default model from llm configuration.
+
+        If default is gpt-4.1-mini, upgrade to gpt-4.1 for assistant
+        (assistant benefits from more capable model).
+        """
         try:
-            return llm.get_default_model()
+            model = llm.get_default_model()
+            # Upgrade mini to full model for assistant
+            if model == "azure/gpt-4.1-mini":
+                return "azure/gpt-4.1"
+            return model
         except Exception:
-            return "azure/gpt-4.1-mini"
+            return "azure/gpt-4.1"
 
     def _is_vertex_model(self) -> bool:
         """Check if current model is a Vertex AI model (vertex/*)"""
@@ -3909,20 +3917,23 @@ Screenshot size: {file_size} bytes"""
             if self._start_web_server():
                 url = f"http://localhost:{self.web_port}"
                 try:
-                    # Suppress Firefox GFX warnings by setting MOZ_LOG
-                    old_moz_log = os.environ.get("MOZ_LOG")
-                    os.environ["MOZ_LOG"] = "GFX:0"
-                    try:
-                        webbrowser.open(url)
-                    finally:
-                        # Restore original value
-                        if old_moz_log is None:
-                            os.environ.pop("MOZ_LOG", None)
-                        else:
-                            os.environ["MOZ_LOG"] = old_moz_log
+                    # Suppress browser stderr (Firefox GFX warnings, etc.)
+                    # Use nohup + disown pattern to fully detach and suppress output
+                    import subprocess
+                    import shlex
+                    subprocess.Popen(
+                        f"nohup xdg-open {shlex.quote(url)} >/dev/null 2>&1 &",
+                        shell=True,
+                        start_new_session=True
+                    )
                     self.console.print(f"[green]✓[/] Web companion opened at {url}")
                 except Exception as e:
-                    self.console.print(f"[yellow]Web server running at {url} (browser open failed: {e})[/]")
+                    # Fallback to webbrowser if shell approach fails
+                    try:
+                        webbrowser.open(url)
+                        self.console.print(f"[green]✓[/] Web companion opened at {url}")
+                    except Exception as e2:
+                        self.console.print(f"[yellow]Web server running at {url} (browser open failed: {e2})[/]")
             return True
 
         elif cmd == "/refresh":

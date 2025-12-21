@@ -2241,10 +2241,24 @@ EOF
 
     # Install Handy (system-wide STT) via .deb package
     ARCH=$(uname -m)
+    HANDY_VERSION="0.6.8"
     if [ "$ARCH" = "x86_64" ]; then
-        if ! command -v handy &>/dev/null; then
+        # Check installed version via dpkg
+        INSTALLED_HANDY_VERSION=$(dpkg-query -W -f='${Version}' handy 2>/dev/null || echo "")
+
+        if [ -z "$INSTALLED_HANDY_VERSION" ]; then
             log "Installing Handy (system-wide speech-to-text)..."
-            HANDY_VERSION="0.6.8"
+        elif [ "$INSTALLED_HANDY_VERSION" = "$HANDY_VERSION" ]; then
+            log "Handy $HANDY_VERSION is already installed"
+            INSTALLED_HANDY_VERSION="skip"
+        elif dpkg --compare-versions "$INSTALLED_HANDY_VERSION" ge "$HANDY_VERSION"; then
+            log "Handy $INSTALLED_HANDY_VERSION is already installed (>= $HANDY_VERSION)"
+            INSTALLED_HANDY_VERSION="skip"
+        else
+            log "Upgrading Handy from $INSTALLED_HANDY_VERSION to $HANDY_VERSION..."
+        fi
+
+        if [ "$INSTALLED_HANDY_VERSION" != "skip" ]; then
             HANDY_DEB="/tmp/handy_${HANDY_VERSION}_amd64.deb"
             HANDY_URL="https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy_${HANDY_VERSION}_amd64.deb"
 
@@ -2252,12 +2266,10 @@ EOF
             if [ -f "$HANDY_DEB" ]; then
                 sudo dpkg -i "$HANDY_DEB" || sudo apt-get install -f -y
                 rm -f "$HANDY_DEB"
-                log "Handy installed via deb package"
+                log "Handy $HANDY_VERSION installed via deb package"
             else
                 warn "Failed to download Handy"
             fi
-        else
-            log "Handy is already installed"
         fi
     else
         log "Skipping Handy: only x86_64 deb package available"
