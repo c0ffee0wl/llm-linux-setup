@@ -992,6 +992,9 @@
                 case 'tool_call':
                     addToolCall(data.tool_name, data.arguments, data.result, data.status);
                     break;
+                case 'rag_status':
+                    updateRagStatus(data);
+                    break;
                 case 'debug_info':
                     renderDebugInfo(data);
                     break;
@@ -1024,27 +1027,54 @@
                 watchBadge.classList.remove('active');
             }
             // Update debug panel system prompt if present
-            if (data.system_prompt) {
-                const debugContent = document.getElementById('debug-content');
-                if (debugContent) {
-                    // Find System Prompt section by title
-                    const sections = debugContent.querySelectorAll('.debug-section');
-                    for (const section of sections) {
-                        const title = section.querySelector('.debug-section-title');
-                        if (title && title.textContent === 'System Prompt') {
-                            const codeEl = section.querySelector('pre code');
-                            if (codeEl) {
-                                codeEl.textContent = data.system_prompt;
-                                // Update token count
-                                const tokenInfo = section.querySelector('.token-info');
-                                if (tokenInfo) {
-                                    const chars = data.system_prompt.length;
-                                    const tokens = Math.ceil(chars / 4);
-                                    tokenInfo.textContent = chars + ' chars, ~' + tokens + ' tokens';
-                                }
-                            }
-                            break;
+            updateDebugSystemPrompt(data.system_prompt);
+        }
+
+        function updateRagStatus(data) {
+            const debugContent = document.getElementById('debug-content');
+            if (debugContent) {
+                // Update RAG indicator in debug meta
+                const debugMeta = debugContent.querySelector('.debug-meta');
+                if (debugMeta) {
+                    // Find existing RAG item or create new one
+                    let ragItem = debugMeta.querySelector('.debug-meta-item-rag');
+                    if (data.active && data.collection) {
+                        if (!ragItem) {
+                            ragItem = document.createElement('div');
+                            ragItem.className = 'debug-meta-item debug-meta-item-rag';
+                            debugMeta.appendChild(ragItem);
                         }
+                        ragItem.innerHTML = '<span class="debug-meta-label">RAG:</span> ' + escapeHtml(data.collection);
+                    } else if (ragItem) {
+                        ragItem.remove();
+                    }
+                }
+            }
+            // Update debug panel system prompt if present
+            updateDebugSystemPrompt(data.system_prompt);
+        }
+
+        function updateDebugSystemPrompt(systemPrompt) {
+            if (!systemPrompt) return;
+            const debugContent = document.getElementById('debug-content');
+            if (debugContent) {
+                // Find System Prompt section by title
+                const sections = debugContent.querySelectorAll('.debug-section');
+                for (const section of sections) {
+                    const title = section.querySelector('.debug-section-title');
+                    if (title && title.textContent === 'System Prompt') {
+                        const codeEl = section.querySelector('pre code');
+                        if (codeEl) {
+                            codeEl.textContent = systemPrompt;
+                            // Update token count
+                            const tokenInfo = section.querySelector('.token-info');
+                            if (tokenInfo) {
+                                const chars = systemPrompt.length;
+                                const tokens = Math.ceil(chars / 4);
+                                tokenInfo.textContent = chars + ' chars, ~' + tokens + ' tokens';
+                            }
+                        }
+                        break;
                     }
                 }
             }
@@ -1127,7 +1157,7 @@
                 <div class="debug-meta-item"><span class="debug-meta-label">Tokens:</span> ${formatTokens(data.current_tokens)} / ${formatTokens(data.max_context)}</div>
                 ${optionsStr ? `<div class="debug-meta-item"><span class="debug-meta-label">Options:</span> ${escapeHtml(optionsStr)}</div>` : ''}
                 ${data.loaded_kbs && data.loaded_kbs.length ? `<div class="debug-meta-item"><span class="debug-meta-label">KBs:</span> ${data.loaded_kbs.join(', ')}</div>` : ''}
-                ${data.active_rag ? `<div class="debug-meta-item"><span class="debug-meta-label">RAG:</span> ${escapeHtml(data.active_rag)}</div>` : ''}
+                ${data.active_rag ? `<div class="debug-meta-item debug-meta-item-rag"><span class="debug-meta-label">RAG:</span> ${escapeHtml(data.active_rag)}</div>` : ''}
             </div>`;
 
             // System Prompt section (expanded by default)

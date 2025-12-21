@@ -272,6 +272,9 @@ class TerminatorAssistantSession:
         self.watch_mode = False
         self.watch_goal = None
 
+        # RAG state (must be initialized before _render_system_prompt)
+        self.active_rag_collection: Optional[str] = None
+
         # Render system prompt using Jinja2 template
         # Template handles mode filtering and environment injection
         self.system_prompt = self._render_system_prompt()
@@ -361,7 +364,7 @@ class TerminatorAssistantSession:
         self._load_auto_kbs()  # Load from config on startup
 
         # RAG system (llm-tools-rag integration)
-        self.active_rag_collection: Optional[str] = None  # Active collection (persistent mode)
+        # Note: self.active_rag_collection initialized earlier (before _render_system_prompt)
         self.rag_top_k: int = 5                           # Number of results to retrieve
         self.rag_search_mode: str = "hybrid"              # hybrid|vector|keyword
         self.pending_rag_context: Optional[str] = None    # One-shot search result
@@ -1051,6 +1054,15 @@ class TerminatorAssistantSession:
             "system_prompt": self._build_system_prompt()
         })
 
+    def _broadcast_rag_status(self):
+        """Broadcast current RAG status to web clients."""
+        self._broadcast_to_web({
+            "type": "rag_status",
+            "active": bool(self.active_rag_collection),
+            "collection": self.active_rag_collection,
+            "system_prompt": self._build_system_prompt()
+        })
+
     def _broadcast_token_update(self):
         """Broadcast current token usage to web clients."""
         current_tokens = self.estimate_tokens()
@@ -1302,6 +1314,7 @@ class TerminatorAssistantSession:
             environment=env_type,
             watch_mode=self.watch_mode,
             watch_goal=self.watch_goal,
+            rag_active=bool(self.active_rag_collection),
         )
 
     def _build_system_prompt(self) -> str:
@@ -1612,6 +1625,9 @@ class TerminatorAssistantSession:
         elif parts[0] == "off":
             self.active_rag_collection = None
             self.pending_rag_context = None
+            # Re-render system prompt to remove RAG guidance
+            self.system_prompt = self._render_system_prompt()
+            self._broadcast_rag_status()
             self.console.print("[green]✓[/] RAG deactivated")
         elif parts[0] == "status":
             self._rag_show_status()
@@ -1721,6 +1737,9 @@ class TerminatorAssistantSession:
             return
 
         self.active_rag_collection = name
+        # Re-render system prompt to include RAG guidance
+        self.system_prompt = self._render_system_prompt()
+        self._broadcast_rag_status()
         self.console.print(f"[green]✓[/] RAG activated: {name}")
         self.console.print("[dim]Retrieved context will be injected into every prompt[/]")
 
@@ -1766,6 +1785,9 @@ class TerminatorAssistantSession:
                 self.console.print(f"[green]✓[/] Added {result.get('chunks', '?')} chunks")
                 # Auto-activate the collection
                 self.active_rag_collection = collection
+                # Re-render system prompt to include RAG guidance
+                self.system_prompt = self._render_system_prompt()
+                self._broadcast_rag_status()
                 self.console.print(f"[dim]Collection '{collection}' now active[/]")
             elif result["status"] == "skipped":
                 self.console.print(f"[yellow]⊘[/] Skipped: {result.get('reason', 'already indexed')}")
@@ -1812,6 +1834,9 @@ class TerminatorAssistantSession:
             # Deactivate if was active
             if self.active_rag_collection == collection:
                 self.active_rag_collection = None
+                # Re-render system prompt to remove RAG guidance
+                self.system_prompt = self._render_system_prompt()
+                self._broadcast_rag_status()
                 self.console.print("[dim]RAG deactivated[/]")
 
         except Exception as e:
