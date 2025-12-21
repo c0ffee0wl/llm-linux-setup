@@ -108,6 +108,12 @@ EXTERNAL_TOOL_DISPLAY = {
     'microsoft_docs_search': ('query', 'Searching Microsoft Learn', 'Search Microsoft documentation'),
     'microsoft_docs_fetch': ('url', 'Fetching Microsoft documentation', 'Fetch Microsoft documentation page'),
     'microsoft_code_sample_search': ('query', 'Searching Microsoft code samples', 'Search Microsoft code examples'),
+    # AWS Knowledge MCP tools (prefixed with aws___)
+    'aws___search_documentation': ('query', 'Searching AWS docs', 'Search AWS documentation'),
+    'aws___read_documentation': ('url', 'Reading AWS docs', 'Fetch AWS documentation page'),
+    'aws___recommend': ('url', 'Getting AWS recommendations', 'Get related AWS content'),
+    # Azure MCP CLI extension tools
+    'extension_cli_generate': ('goal', 'Generating Azure CLI command', 'Generate az command for goal'),
     # Screen capture tool
     'capture_screen': ('mode', 'Capturing screenshot', 'Capture screen or window'),
     # Image generation tool (imagemage)

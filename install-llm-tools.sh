@@ -1734,27 +1734,86 @@ for plugin in "${PLUGINS[@]}"; do
     install_or_upgrade_llm_plugin "$plugin"
 done
 
-# Create default MCP configuration if not exists
+# Update MCP configuration with checksum tracking (same pattern as templates)
 MCP_CONFIG_DIR="$HOME/.llm-tools-mcp"
 MCP_CONFIG_FILE="$MCP_CONFIG_DIR/mcp.json"
 
-if [ ! -f "$MCP_CONFIG_FILE" ]; then
-    log "Creating default MCP configuration with Microsoft Learn..."
+update_mcp_config() {
     mkdir -p "$MCP_CONFIG_DIR"
-    cat > "$MCP_CONFIG_FILE" <<'EOF'
-{
+
+    # Generate expected config content
+    local expected_config='{
   "mcpServers": {
     "microsoft-learn": {
       "type": "http",
       "url": "https://learn.microsoft.com/api/mcp"
+    },
+    "aws-knowledge": {
+      "type": "http",
+      "url": "https://knowledge-mcp.global.api.aws",
+      "exclude_tools": ["*list_regions", "*get_regional_availability"]
+    },
+    "azure": {
+      "command": "npx",
+      "args": ["-y", "@azure/mcp@latest", "server", "start"],
+      "include_tools": ["extension_cli_generate"]
     }
   }
+}'
+
+    # Calculate expected config checksum
+    local expected_checksum=$(echo "$expected_config" | sha256sum | awk '{print $1}')
+
+    if [ ! -f "$MCP_CONFIG_FILE" ]; then
+        # No installed file - install new
+        log "Creating MCP configuration with Microsoft Learn, AWS Knowledge, and Azure..."
+        echo "$expected_config" > "$MCP_CONFIG_FILE"
+        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
+        log "MCP configuration created at $MCP_CONFIG_FILE"
+        return
+    fi
+
+    # Calculate installed file checksum
+    local installed_checksum=$(sha256sum "$MCP_CONFIG_FILE" | awk '{print $1}')
+
+    # Check if already up to date
+    if [ "$installed_checksum" = "$expected_checksum" ]; then
+        log "MCP configuration is up to date"
+        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
+        return
+    fi
+
+    # Get stored checksum (what we last installed)
+    local stored_checksum=$(get_stored_checksum "mcp-config")
+
+    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
+        # User hasn't modified the file - auto-update silently
+        log "MCP configuration updated (no local modifications detected)"
+        echo "$expected_config" > "$MCP_CONFIG_FILE"
+        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
+    else
+        # User has modified the file OR no stored checksum (legacy) - prompt
+        log "MCP configuration has changed in repository"
+        if [ -z "$stored_checksum" ]; then
+            log "Cannot determine if you have local modifications (legacy installation)"
+        else
+            log "Local modifications detected"
+        fi
+        echo ""
+        read -p "Update MCP configuration? This will overwrite your version. (y/N): " UPDATE_MCP
+        if [[ "$UPDATE_MCP" =~ ^[Yy]$ ]]; then
+            echo "$expected_config" > "$MCP_CONFIG_FILE"
+            store_checksum "mcp-config" "$MCP_CONFIG_FILE"
+            log "MCP configuration updated to $MCP_CONFIG_FILE"
+        else
+            log "Keeping existing MCP configuration"
+            # Update stored checksum to current installed version to avoid prompting next time
+            store_checksum "mcp-config" "$MCP_CONFIG_FILE"
+        fi
+    fi
 }
-EOF
-    log "MCP configuration created at $MCP_CONFIG_FILE"
-else
-    log "MCP configuration already exists, preserving"
-fi
+
+update_mcp_config
 
 #############################################################################
 # PHASE 3: Configuring LLM
@@ -2295,6 +2354,10 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
 else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi
+
+# Install Azure MCP Server (used by llm-tools-mcp for Azure CLI tools)
+log "Installing/updating Azure MCP Server..."
+install_or_upgrade_npm_global @azure/mcp
 
 # Install/update Codex CLI if Azure is configured
 if [ "$AZURE_CONFIGURED" = "true" ]; then
