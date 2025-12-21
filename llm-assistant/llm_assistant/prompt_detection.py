@@ -5,7 +5,7 @@ and llm-assistant. It's installed to Python user site-packages (llm_tools/)
 and can be imported as: from llm_tools.prompt_detection import PromptDetector
 """
 import re
-from typing import List, Optional, Tuple, Union
+from typing import List, Tuple, Union
 
 
 class PromptDetector:
@@ -16,12 +16,6 @@ class PromptDetector:
     # Used by llm-assistant for local prompt detection (context tool uses regex-only)
     PROMPT_START_MARKER = '\u200B\u200D\u200B'  # ZWS+ZWJ+ZWS - before PS1
     INPUT_START_MARKER = '\u200D\u200B\u200D'   # ZWJ+ZWS+ZWJ - after PS1
-
-    # Tag character range for invisible metadata encoding (exit code + timestamp)
-    # ASCII chars (0x00-0x7F) are encoded as U+E0000 + ASCII code
-    # These are completely invisible in terminal display but survive VTE text capture
-    TAG_CHAR_BASE = 0xE0000
-    TAG_CHAR_END = 0xE007F
 
     # Patterns to match shell prompts. More specific than just "ends with $"
     # to avoid false positives on output containing $ (like currency) or # (shell comments)
@@ -109,59 +103,10 @@ class PromptDetector:
         """
         return cls.INPUT_START_MARKER in text
 
-    @classmethod
-    def decode_tag_metadata(cls, text: str) -> Tuple[Optional[int], Optional[str], Optional[int]]:
-        """
-        Extract exit code, timestamp, and duration from tag-encoded metadata.
-
-        Tag characters (U+E0000-E007F) encode ASCII chars as invisible metadata.
-        Format: E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds>
-
-        Finds the LAST tag sequence in the text (most recent prompt's metadata).
-
-        Args:
-            text: Terminal output text that may contain tag-encoded metadata
-
-        Returns:
-            Tuple of (exit_code, timestamp_str, duration_seconds) or (None, None, None) if not found.
-        """
-        # Find the LAST tag sequence (most recent prompt's metadata)
-        # Iterate backwards to find where the last tag sequence ends
-        last_tag_end = -1
-        for i in range(len(text) - 1, -1, -1):
-            code = ord(text[i])
-            if cls.TAG_CHAR_BASE <= code <= cls.TAG_CHAR_END:
-                last_tag_end = i
-                break
-
-        if last_tag_end == -1:
-            return (None, None, None)  # No tag characters found
-
-        # Find where this tag sequence starts
-        last_tag_start = last_tag_end
-        for i in range(last_tag_end - 1, -1, -1):
-            code = ord(text[i])
-            if cls.TAG_CHAR_BASE <= code <= cls.TAG_CHAR_END:
-                last_tag_start = i
-            else:
-                break
-
-        # Decode the tag sequence
-        tag_chars = []
-        for i in range(last_tag_start, last_tag_end + 1):
-            code = ord(text[i])
-            tag_chars.append(chr(code - cls.TAG_CHAR_BASE))
-
-        decoded = ''.join(tag_chars)
-
-        # Parse format: E<exit>T<timestamp>D<duration> (duration in seconds)
-        match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})D(\d+)', decoded)
-        if match:
-            try:
-                return (int(match.group(1)), match.group(2), int(match.group(3)))
-            except ValueError:
-                return (None, None, None)
-        return (None, None, None)
+    # Tag character range for invisible metadata (legacy support)
+    # Unicode Tags block (U+E0000-E007F) - no longer encoded but may exist in old data
+    TAG_CHAR_BASE = 0xE0000
+    TAG_CHAR_END = 0xE007F
 
     @classmethod
     def strip_tag_metadata(cls, text: str) -> str:

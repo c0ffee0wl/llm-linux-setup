@@ -185,78 +185,32 @@ if [ -n "$VTE_VERSION" ]; then
     _PROMPT_START_MARKER=$'\u200B\u200D\u200B'  # Before PS1
     _INPUT_START_MARKER=$'\u200D\u200B\u200D'   # After PS1
 
-    # Pre-computed tag characters for metadata encoding (U+E0000 + ASCII code)
-    # These are invisible in terminal but survive VTE text capture
-    # Only the chars we use: E, T, D, 0-9, space, dash, colon
-    # Computed at parse time via $'\U...' - zero runtime cost
-    _TAG_E=$'\U000E0045'    # 'E' for Exit
-    _TAG_T=$'\U000E0054'    # 'T' for Timestamp
-    _TAG_D=$'\U000E0044'    # 'D' for Duration
-    _TAG_0=$'\U000E0030'    # '0'
-    _TAG_1=$'\U000E0031'    # '1'
-    _TAG_2=$'\U000E0032'    # '2'
-    _TAG_3=$'\U000E0033'    # '3'
-    _TAG_4=$'\U000E0034'    # '4'
-    _TAG_5=$'\U000E0035'    # '5'
-    _TAG_6=$'\U000E0036'    # '6'
-    _TAG_7=$'\U000E0037'    # '7'
-    _TAG_8=$'\U000E0038'    # '8'
-    _TAG_9=$'\U000E0039'    # '9'
-    _TAG_SPACE=$'\U000E0020'  # ' '
-    _TAG_DASH=$'\U000E002D'   # '-'
-    _TAG_COLON=$'\U000E003A'  # ':'
-
-    # Fast tag encoding using pre-computed lookup (no subshells!)
-    # Only handles chars used in "E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds>" format
-    __encode_tags() {
-        local result=""
-        local str="$1"
-        while [ -n "$str" ]; do
-            case "${str%"${str#?}"}" in
-                E) result="${result}${_TAG_E}" ;;
-                T) result="${result}${_TAG_T}" ;;
-                D) result="${result}${_TAG_D}" ;;
-                0) result="${result}${_TAG_0}" ;;
-                1) result="${result}${_TAG_1}" ;;
-                2) result="${result}${_TAG_2}" ;;
-                3) result="${result}${_TAG_3}" ;;
-                4) result="${result}${_TAG_4}" ;;
-                5) result="${result}${_TAG_5}" ;;
-                6) result="${result}${_TAG_6}" ;;
-                7) result="${result}${_TAG_7}" ;;
-                8) result="${result}${_TAG_8}" ;;
-                9) result="${result}${_TAG_9}" ;;
-                ' ') result="${result}${_TAG_SPACE}" ;;
-                -) result="${result}${_TAG_DASH}" ;;
-                :) result="${result}${_TAG_COLON}" ;;
-            esac
-            str="${str#?}"
-        done
-        printf '%s' "$result"
-    }
-
     # Preexec hook: capture command start time (uses $SECONDS - no subshell!)
     # Called BEFORE each command executes
     __capture_cmd_start() {
         _CMD_START_SECONDS=$SECONDS
     }
 
-    # Unified marker function with metadata injection
+    # Prompt hook: write metadata and add markers
     # Called via PROMPT_COMMAND (bash) or precmd_functions (zsh)
     # CRITICAL: Must APPEND to run LAST (after Starship/Powerlevel10k modify PS1)
+    # Note: Exit code is passed as $1 to avoid $? being clobbered by preceding commands
     __add_prompt_markers() {
-        local last_exit=$?  # MUST be first line to capture exit code
+        local last_exit=${1:-$?}  # Use passed exit code, or $? as fallback (zsh)
 
         # Calculate duration since command start (0 if no command ran)
         local duration=0
         if [ -n "$_CMD_START_SECONDS" ]; then
             duration=$((SECONDS - _CMD_START_SECONDS))
             unset _CMD_START_SECONDS
+            # Protect against negative duration (clock issues, SECONDS reset)
+            [ "$duration" -lt 0 ] && duration=0
         fi
 
-        # Print invisible metadata BEFORE prompt (fresh timestamp each time)
-        # Format: E<exit>T<YYYY-MM-DD HH:MM:SS>D<seconds> encoded as tag characters
-        printf '%s' "$(__encode_tags "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}")"
+        # Write metadata to temp file for llm-assistant to read
+        # File is named by shell PID for disambiguation between terminals
+        mkdir -p /tmp/llm-assistant 2>/dev/null
+        printf '%s\n' "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}" > "/tmp/llm-assistant/.prompt-meta-$$" 2>/dev/null
 
         # Add markers to PS1/PROMPT (idempotent - only once)
         if [ -n "${BASH_VERSION:-}" ]; then
@@ -270,18 +224,43 @@ if [ -n "$VTE_VERSION" ]; then
         fi
     }
 
+    # DEBUG trap handler for Bash timing
+    # Called BEFORE each simple command - captures start time for user commands only
+    # Sets flag after capturing timer to prevent reset during PROMPT_COMMAND
+    __debug_handler() {
+        local last_exit=$?  # Save FIRST before any commands change it
+        # Only capture start time for USER commands, not PROMPT_COMMAND internals
+        if [[ -z "$_IN_PROMPT_COMMAND" ]]; then
+            __capture_cmd_start
+            _IN_PROMPT_COMMAND=1  # Set flag so PROMPT_COMMAND's DEBUG traps skip
+        fi
+        return $last_exit   # Restore $? to original value
+    }
+
+    # Zsh: Save exit code at VERY START of precmd (before Starship/P10k clobber it)
+    __zsh_save_exit() {
+        _LAST_EXIT=$?
+    }
+
+    # Zsh: Wrapper that passes saved exit code to __add_prompt_markers
+    __zsh_add_markers() {
+        __add_prompt_markers "$_LAST_EXIT"
+        unset _LAST_EXIT
+    }
+
     # Register hooks with shell
     if [ -n "${BASH_VERSION:-}" ]; then
-        # DEBUG trap runs BEFORE each command (like preexec)
-        # Skip during PROMPT_COMMAND execution (flag prevents timer reset by Starship/etc.)
-        trap '[[ -z "$_IN_PROMPT_COMMAND" ]] && __capture_cmd_start' DEBUG
-        # Wrap PROMPT_COMMAND with flag to disable DEBUG trap during prompt generation
-        PROMPT_COMMAND="_IN_PROMPT_COMMAND=1; ${PROMPT_COMMAND:-:}; __add_prompt_markers; unset _IN_PROMPT_COMMAND"
+        # DEBUG trap captures timer and sets flag for PROMPT_COMMAND
+        trap '__debug_handler' DEBUG
+        # Capture exit code FIRST, run hooks, then unset flag for next command
+        PROMPT_COMMAND='_LAST_EXIT=$?; '"${PROMPT_COMMAND:-:}"'; __add_prompt_markers "$_LAST_EXIT"; unset _IN_PROMPT_COMMAND _LAST_EXIT'
     elif [ -n "${ZSH_VERSION:-}" ]; then
-        # preexec runs BEFORE each user command (not internal precmd functions)
+        # preexec runs BEFORE each user command - capture start time
         preexec_functions=($preexec_functions __capture_cmd_start)
-        # APPEND to run LAST in precmd_functions array
-        precmd_functions=($precmd_functions __add_prompt_markers)
+        # PREPEND exit code capture to run FIRST (before Starship/P10k)
+        precmd_functions=(__zsh_save_exit $precmd_functions)
+        # APPEND our markers to run LAST (after Starship/P10k modify PROMPT)
+        precmd_functions=($precmd_functions __zsh_add_markers)
     fi
 fi
 

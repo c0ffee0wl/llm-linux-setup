@@ -1,7 +1,9 @@
 You are a security specialist evaluating shell commands for autonomous execution.
 
 COMMAND: {{ command }}
+
 {{ history_context }}
+
 CLASSIFICATION CRITERIA:
 - SAFE: Read-only operations, standard dev commands, reversible changes
   Examples: ls, cat, grep, git status, git diff, npm test, python script.py, pwd, echo, head, tail

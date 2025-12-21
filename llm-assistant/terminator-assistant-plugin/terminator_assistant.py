@@ -788,6 +788,128 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
         """
         return PLUGIN_VERSION
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='i')
+    def get_shell_pid(self, terminal_uuid):
+        """
+        Get the PID of the interactive shell running in a terminal.
+
+        Used to locate the prompt metadata file written by the shell.
+
+        Note: When asciinema is recording, the process tree is:
+          VTE child -> asciinema -> actual shell (writes metadata with $$)
+        We need the shell's PID, not asciinema's.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Shell PID as integer, or -1 on error
+        """
+        import os
+
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return -1
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return -1
+
+            # Get the PTY file descriptor
+            pty = vte.get_pty()
+            if not pty:
+                err(f'PTY not accessible for terminal {terminal_uuid}')
+                return -1
+
+            # Find shell by traversing from VTE's direct child
+            # Walk the process tree to find the deepest interactive shell
+            # Note: tcgetpgrp() doesn't work here because when asciinema is recording,
+            # VTE's PTY has asciinema as foreground, but the shell is on asciinema's PTY
+            if hasattr(terminal, 'pid') and terminal.pid:
+                shell_pid = self._find_shell_in_tree(terminal.pid)
+                if shell_pid > 0:
+                    return shell_pid
+                # If no shell found, return the direct child (might be asciinema)
+                return terminal.pid
+
+            err(f'Could not determine shell PID for terminal {terminal_uuid}')
+            return -1
+
+        except Exception as e:
+            err(f'Error getting shell PID: {e}')
+            return -1
+
+    def _find_shell_in_tree(self, root_pid):
+        """
+        Find an interactive shell in the process tree starting from root_pid.
+
+        Walks the process tree via BFS to find bash/zsh/fish/sh.
+        Returns the deepest shell found (handles asciinema -> shell case).
+
+        Args:
+            root_pid: PID to start searching from
+
+        Returns:
+            Shell PID or -1 if not found
+        """
+        shell_names = {b'bash', b'zsh', b'fish', b'sh', b'dash', b'ksh'}
+        found_shell = -1
+
+        def get_children(pid):
+            """Get child PIDs of a process by scanning /proc."""
+            children = []
+            # Method 1: Try /proc/{pid}/task/{pid}/children (fast, needs CONFIG_PROC_CHILDREN)
+            try:
+                with open(f'/proc/{pid}/task/{pid}/children', 'rb') as f:
+                    return [int(p) for p in f.read().split()]
+            except (OSError, ValueError):
+                pass
+            # Method 2: Scan /proc/*/stat for processes with this PPID (portable)
+            import os
+            try:
+                for entry in os.listdir('/proc'):
+                    if not entry.isdigit():
+                        continue
+                    try:
+                        with open(f'/proc/{entry}/stat', 'rb') as f:
+                            stat = f.read()
+                            # Format: pid (comm) state ppid ...
+                            # Find closing paren to handle comm with spaces/parens
+                            paren_end = stat.rfind(b')')
+                            if paren_end > 0:
+                                fields = stat[paren_end+2:].split()
+                                if len(fields) >= 2:
+                                    ppid = int(fields[1])
+                                    if ppid == pid:
+                                        children.append(int(entry))
+                    except (OSError, ValueError, IndexError):
+                        continue
+            except OSError:
+                pass
+            return children
+
+        def get_comm(pid):
+            """Get process command name."""
+            try:
+                with open(f'/proc/{pid}/comm', 'rb') as f:
+                    return f.read().strip()
+            except OSError:
+                return b''
+
+        # BFS through process tree
+        to_visit = [root_pid]
+        while to_visit:
+            pid = to_visit.pop(0)
+            comm = get_comm(pid)
+            if comm in shell_names:
+                found_shell = pid  # Keep looking for deeper shells
+            to_visit.extend(get_children(pid))
+
+        return found_shell
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
     def is_likely_tui_active(self, terminal_uuid):
         """
