@@ -5,7 +5,7 @@ and llm-assistant. It's installed to Python user site-packages (llm_tools/)
 and can be imported as: from llm_tools.prompt_detection import PromptDetector
 """
 import re
-from typing import List, Tuple, Union
+from typing import List, Optional, Tuple, Union
 
 
 class PromptDetector:
@@ -16,6 +16,12 @@ class PromptDetector:
     # Used by llm-assistant for local prompt detection (context tool uses regex-only)
     PROMPT_START_MARKER = '\u200B\u200D\u200B'  # ZWS+ZWJ+ZWS - before PS1
     INPUT_START_MARKER = '\u200D\u200B\u200D'   # ZWJ+ZWS+ZWJ - after PS1
+
+    # Tag character range for invisible metadata encoding (exit code + timestamp)
+    # ASCII chars (0x00-0x7F) are encoded as U+E0000 + ASCII code
+    # These are completely invisible in terminal display but survive VTE text capture
+    TAG_CHAR_BASE = 0xE0000
+    TAG_CHAR_END = 0xE007F
 
     # Patterns to match shell prompts. More specific than just "ends with $"
     # to avoid false positives on output containing $ (like currency) or # (shell comments)
@@ -81,7 +87,9 @@ class PromptDetector:
         """Check if a single line matches a prompt pattern"""
         if not line.strip():
             return False
-        # Strip Unicode markers before regex matching - they break ^ anchored patterns
+        # Strip tag metadata and Unicode markers before regex matching
+        # They break ^ anchored patterns (e.g., Kali prompt ^[┌╭])
+        line = cls.strip_tag_metadata(line)
         line = line.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
         # Check standard patterns (includes PowerShell)
         if any(p.search(line) for p in cls.PROMPT_PATTERNS):
@@ -102,6 +110,65 @@ class PromptDetector:
         return cls.INPUT_START_MARKER in text
 
     @classmethod
+    def decode_tag_metadata(cls, text: str) -> Tuple[Optional[int], Optional[str]]:
+        """
+        Extract exit code and timestamp from tag-encoded metadata.
+
+        Tag characters (U+E0000-E007F) encode ASCII chars as invisible metadata.
+        Format: E<exit>T<YYYY-MM-DD HH:MM:SS>
+
+        Finds the LAST tag sequence in the text (most recent prompt's metadata).
+
+        Args:
+            text: Terminal output text that may contain tag-encoded metadata
+
+        Returns:
+            Tuple of (exit_code, timestamp_str) or (None, None) if not found.
+        """
+        # Find the LAST tag sequence (most recent prompt's metadata)
+        # Iterate backwards to find where the last tag sequence ends
+        last_tag_end = -1
+        for i in range(len(text) - 1, -1, -1):
+            code = ord(text[i])
+            if cls.TAG_CHAR_BASE <= code <= cls.TAG_CHAR_END:
+                last_tag_end = i
+                break
+
+        if last_tag_end == -1:
+            return (None, None)  # No tag characters found
+
+        # Find where this tag sequence starts
+        last_tag_start = last_tag_end
+        for i in range(last_tag_end - 1, -1, -1):
+            code = ord(text[i])
+            if cls.TAG_CHAR_BASE <= code <= cls.TAG_CHAR_END:
+                last_tag_start = i
+            else:
+                break
+
+        # Decode the tag sequence
+        tag_chars = []
+        for i in range(last_tag_start, last_tag_end + 1):
+            code = ord(text[i])
+            tag_chars.append(chr(code - cls.TAG_CHAR_BASE))
+
+        decoded = ''.join(tag_chars)
+
+        # Parse format: E<exit>T<timestamp> (YYYY-MM-DD HH:MM:SS)
+        match = re.match(r'E(\d+)T(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2})', decoded)
+        if match:
+            try:
+                return (int(match.group(1)), match.group(2))
+            except ValueError:
+                return (None, None)
+        return (None, None)
+
+    @classmethod
+    def strip_tag_metadata(cls, text: str) -> str:
+        """Remove tag characters from text for clean display/regex matching."""
+        return ''.join(c for c in text if not (cls.TAG_CHAR_BASE <= ord(c) <= cls.TAG_CHAR_END))
+
+    @classmethod
     def _detect_prompt_regex(cls, text: str, debug: bool = False) -> bool:
         """
         Internal: Check if text ends with an empty prompt using regex patterns.
@@ -112,8 +179,9 @@ class PromptDetector:
                 print("[PromptDetector] Empty or whitespace-only text (regex)")
             return False
 
-        # Strip Unicode markers before regex matching - they break ^ anchored patterns
-        # (e.g., Kali prompt ^[┌╭] won't match if line starts with invisible \u200B)
+        # Strip tag metadata and Unicode markers before regex matching
+        # They break ^ anchored patterns (e.g., Kali prompt ^[┌╭])
+        text = cls.strip_tag_metadata(text)
         text = text.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
 
         lines = text.strip().split('\n')
@@ -259,8 +327,9 @@ class PromptDetector:
         # Adjust for Kali two-line prompts (include header line)
         adjusted = []
         for line_num, line_content in prompt_lines:
-            # Strip Unicode markers before KALI_HEADER check - they break ^ anchored patterns
-            prev_line = lines[line_num - 1].replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
+            # Strip tag metadata and Unicode markers before KALI_HEADER check
+            prev_line = cls.strip_tag_metadata(lines[line_num - 1])
+            prev_line = prev_line.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
             if line_num > 0 and cls.KALI_HEADER.search(prev_line):
                 adjusted.append((line_num - 1, lines[line_num - 1]))
             else:

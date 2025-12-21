@@ -43,7 +43,7 @@ The repository includes an **automatic session recording and context extraction 
    - Filters out previous `context` command outputs (lines starting with `#c#`) to avoid recursion
    - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
 
-3. **Prompt Detection Module** (`shared/prompt_detection.py`): Shared Python module
+3. **Prompt Detection Module** (`llm-assistant/llm_assistant/prompt_detection.py`): Shared Python module
    - PromptDetector class used by both context tool and llm-assistant
    - **Hybrid detection** for llm-assistant:
      - **Priority 1**: Unicode markers (100% reliable in VTE terminals)
@@ -912,8 +912,7 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
 - `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
-- `llm-assistant/` - Assistant components: llm-assistant, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
-- `shared/` - Common Python modules: prompt_detection.py, system_info.py
+- `llm-assistant/` - Assistant components: llm_assistant/ package, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `scripts/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
 - `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)

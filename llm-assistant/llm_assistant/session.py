@@ -39,12 +39,14 @@ import fcntl
 import signal
 import atexit
 from pathlib import Path
+from datetime import date
 from collections import deque
 from rich.console import Console
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.status import Status
 from rich.text import Text
 from typing import List, Optional, Tuple, Dict, Union, Set
 
@@ -78,15 +80,7 @@ from .config import (
 )
 from .schemas import FindingSchema, SafetySchema
 from .utils import strip_markdown_for_tts, strip_markdown_for_clipboard, validate_language_code
-from .templates import (
-    render_system_prompt,
-    render_help_text,
-    render_watch_prompt,
-    render_safety_evaluation,
-    render_report_analysis,
-    render_squash_prompt,
-    get_web_companion_html,
-)
+from .templates import render
 
 # Clipboard support for /copy command
 try:
@@ -904,10 +898,10 @@ class TerminatorAssistantSession:
 
     def _get_web_html(self) -> str:
         """Return the HTML for the web companion interface from Jinja2 template."""
-        return get_web_companion_html()
+        return render('web_companion.html')
 
     # NOTE: The inline HTML that was here has been moved to templates/web_companion.html
-    # and is now rendered by the get_web_companion_html() function.
+    # and is now rendered by the render() function.
 
 
     def _start_web_server(self):
@@ -1269,8 +1263,9 @@ class TerminatorAssistantSession:
         shell_info = f"{shell_name} {shell_version}".strip() if shell_version else shell_name
         env_type = detect_environment()
 
-        return render_system_prompt(
+        return render('system_prompt.j2',
             mode=self.mode,
+            date=date.today().isoformat(),
             platform=os_info,
             shell=shell_info,
             environment=env_type,
@@ -2741,7 +2736,7 @@ class TerminatorAssistantSession:
                 keep_section = f"\n\nIMPORTANT: Preserve full details about: {keep}"
 
             # Generate summary using a standalone prompt (not in conversation)
-            summary_prompt = render_squash_prompt(
+            summary_prompt = render('prompts/squash_prompt.j2',
                 keep_section=keep_section,
                 summary_parts=chr(10).join(summary_parts),
             )
@@ -3252,7 +3247,7 @@ class TerminatorAssistantSession:
                 f"  {i}. {c}" for i, c in enumerate(self.auto_command_history, 1)
             )
 
-        judge_prompt = render_safety_evaluation(command=command, history_context=history_context)
+        judge_prompt = render('prompts/safety_evaluation.j2', command=command, history_context=history_context)
 
         try:
             model = self.conversation.model
@@ -3704,7 +3699,7 @@ Screenshot size: {file_size} bytes"""
                             self.previous_watch_iteration_count += 1
 
                             # HISTORY-AWARE PROMPT: Tell AI to focus on new content
-                            prompt = render_watch_prompt(
+                            prompt = render('prompts/watch_prompt.j2',
                                 iteration_count=self.previous_watch_iteration_count,
                                 goal=self.watch_goal,
                                 exec_status=exec_status,
@@ -3763,7 +3758,7 @@ Screenshot size: {file_size} bytes"""
 
         if cmd == "/help":
             voice_status = "[green]available[/]" if self.voice_input else "[dim]not installed[/]"
-            help_text = render_help_text(voice_status)
+            help_text = render('help_text.j2', voice_status=voice_status)
             self.console.print(Panel(help_text, title="Assistant Help", border_style="cyan"))
             return True
 
@@ -4543,7 +4538,7 @@ language_name: {language_name}
         model = llm.get_model(self.model_name)
 
         # Render the report analysis prompt with language using Jinja2 template
-        system_prompt = render_report_analysis(language=language)
+        system_prompt = render('prompts/report_analysis.j2', language=language)
 
         # Build prompt with quick note
         prompt = f"Quick note from penetration tester: {quick_note}"

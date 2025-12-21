@@ -178,30 +178,59 @@ fi
 
 # Invisible Unicode markers for 100% reliable prompt detection in VTE terminals
 # ONLY inject in VTE terminals (Terminator, GNOME Terminal, Tilix, etc.)
-# Other terminals (Kitty, Windows Terminal) render zero-width chars as visible spaces
+# Other terminals (Kitty) render zero-width chars as visible spaces
 # These markers are detected by llm-assistant via PromptDetector.has_unicode_markers()
 if [ -n "$VTE_VERSION" ]; then
     # \u200B = Zero Width Space, \u200D = Zero Width Joiner
     _PROMPT_START_MARKER=$'\u200B\u200D\u200B'  # Before PS1
     _INPUT_START_MARKER=$'\u200D\u200B\u200D'   # After PS1
 
-    # Use PROMPT_COMMAND/precmd to add markers DYNAMICALLY
+    # Tag character encoding: ASCII → U+E0000 range (invisible in terminal)
+    # Used to embed exit code and timestamp in prompt, extractable via VTE capture
+    # Shell-specific: zsh uses print, bash uses printf %b
+    __encode_tags() {
+        local str="$1" result="" first code hex
+        while [ -n "$str" ]; do
+            first="${str%"${str#?}"}"  # Get first char (POSIX)
+            str="${str#?}"              # Remove first char
+            code=$(printf '%d' "'$first")
+            hex=$(printf '%08X' $((0xE0000 + code)))
+            if [ -n "${ZSH_VERSION:-}" ]; then
+                result="${result}$(print -n "\U${hex}")"
+            else
+                result="${result}$(printf '%b' "\\U${hex}")"
+            fi
+        done
+        printf '%s' "$result"
+    }
+
+    # Unified marker function with metadata injection
+    # Called via PROMPT_COMMAND (bash) or precmd_functions (zsh)
     # CRITICAL: Must APPEND to run LAST (after Starship/Powerlevel10k modify PS1)
-    if [ -n "${BASH_VERSION:-}" ]; then
-        __add_prompt_markers() {
-            # Idempotency: only add if not already present
+    __add_prompt_markers() {
+        local last_exit=$?  # MUST be first line to capture exit code
+
+        # Print invisible metadata BEFORE prompt (fresh timestamp each time)
+        # Format: E<exit>T<YYYY-MM-DD HH:MM:SS> encoded as tag characters
+        printf '%s' "$(__encode_tags "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')")"
+
+        # Add markers to PS1/PROMPT (idempotent - only once)
+        if [ -n "${BASH_VERSION:-}" ]; then
             if [[ "$PS1" != *$'\u200B\u200D\u200B'* ]]; then
                 PS1="${_PROMPT_START_MARKER}${PS1}${_INPUT_START_MARKER}"
             fi
-        }
-        # APPEND to run LAST (after Starship/Powerlevel10k)
-        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__add_prompt_markers"
-    elif [ -n "${ZSH_VERSION:-}" ]; then
-        __add_prompt_markers() {
+        elif [ -n "${ZSH_VERSION:-}" ]; then
             if [[ "$PROMPT" != *$'\u200B\u200D\u200B'* ]]; then
                 PROMPT="${_PROMPT_START_MARKER}${PROMPT}${_INPUT_START_MARKER}"
             fi
-        }
+        fi
+    }
+
+    # Register with shell's prompt hook
+    if [ -n "${BASH_VERSION:-}" ]; then
+        # APPEND to run LAST (after Starship/Powerlevel10k)
+        PROMPT_COMMAND="${PROMPT_COMMAND:+$PROMPT_COMMAND; }__add_prompt_markers"
+    elif [ -n "${ZSH_VERSION:-}" ]; then
         # APPEND to run LAST in precmd_functions array
         precmd_functions=($precmd_functions __add_prompt_markers)
     fi
