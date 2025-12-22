@@ -1,0 +1,589 @@
+#!/usr/bin/env -S uv tool run --from llm python
+"""
+YouTube Playlist Fabric Pattern Processor
+
+Processes all videos in a YouTube playlist, extracts transcripts,
+and runs Fabric patterns on each. Supports incremental updates.
+
+By default, videos are sorted by upload date (newest first).
+
+Usage:
+    ./process-playlist "https://youtube.com/playlist?list=PLxxxxxx"
+    ./process-playlist URL --patterns summarize,analyze_claims
+    ./process-playlist URL --output ./my-output --delay 2
+    ./process-playlist URL --no-sort  # preserve playlist order
+"""
+
+import argparse
+import json
+import random
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api.formatters import TextFormatter
+from youtube_transcript_api._errors import (
+    NoTranscriptFound,
+    TranscriptsDisabled,
+    RequestBlocked,
+    IpBlocked,
+    AgeRestricted,
+    VideoUnavailable,
+    CouldNotRetrieveTranscript,
+)
+
+# Default configuration
+DEFAULT_OUTPUT_DIR = Path.home() / "youtube"
+DEFAULT_DELAY = 15  # Conservative default to avoid rate limiting
+DEFAULT_BATCH_SIZE = 20  # Pause after this many videos
+DEFAULT_BATCH_PAUSE = 180  # 3 minutes between batches
+DEFAULT_PATTERNS = ["youtube_summary", "summarize_lecture", "rate_content"]
+
+# Rate limiting detection patterns
+RATE_LIMIT_PATTERNS = [
+    "429", "too many requests", "rate limit", "blocked",
+    "temporarily unavailable", "try again later"
+]
+
+# Graceful shutdown flag
+shutdown_requested = False
+
+
+def signal_handler(signum, frame):
+    """Handle Ctrl+C gracefully."""
+    global shutdown_requested
+    if shutdown_requested:
+        print("\nForce quit.", file=sys.stderr)
+        sys.exit(1)
+    shutdown_requested = True
+    print("\nShutdown requested. Finishing current video...", file=sys.stderr)
+
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
+
+
+def interruptible_sleep(seconds: float):
+    """Sleep that respects shutdown_requested flag."""
+    end_time = time.time() + seconds
+    while time.time() < end_time:
+        if shutdown_requested:
+            return
+        time.sleep(min(1, end_time - time.time()))
+
+
+def sleep_with_jitter(base_delay: int, jitter_pct: float = 0.3):
+    """Sleep for base_delay with random jitter (+/- jitter_pct)."""
+    jitter = base_delay * jitter_pct
+    actual_delay = base_delay + random.uniform(-jitter, jitter)
+    interruptible_sleep(max(1, actual_delay))
+
+
+def get_playlist_videos(playlist_url: str, sort_by_date: bool = True) -> tuple[list[dict], str]:
+    """Extract all video IDs from playlist using yt-dlp.
+
+    Returns (videos_list, playlist_title).
+    If sort_by_date is True, sorts videos by upload date (newest first).
+    """
+    result = subprocess.run(
+        ["yt-dlp", "--flat-playlist", "-j", playlist_url],
+        capture_output=True, text=True
+    )
+
+    if result.returncode != 0:
+        print(f"Error: Failed to fetch playlist: {result.stderr}", file=sys.stderr)
+        sys.exit(1)
+
+    videos = []
+    playlist_title = "Unknown Playlist"
+
+    for line in result.stdout.strip().split('\n'):
+        if line:
+            try:
+                data = json.loads(line)
+                # upload_date format: YYYYMMDD (e.g., "20241215")
+                upload_date = data.get('upload_date') or data.get('release_date') or ''
+                videos.append({
+                    'id': data['id'],
+                    'title': data.get('title', 'Unknown'),
+                    'url': f"https://youtube.com/watch?v={data['id']}",
+                    'upload_date': upload_date
+                })
+                if 'playlist_title' in data:
+                    playlist_title = data['playlist_title']
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"Warning: Skipping malformed entry: {e}", file=sys.stderr)
+
+    if sort_by_date and videos:
+        # Sort by upload_date descending (newest first)
+        # Videos without date go to the end
+        videos.sort(key=lambda v: v['upload_date'] or '00000000', reverse=True)
+
+    return videos, playlist_title
+
+
+# Reusable API and formatter instances (created once, reused for all videos)
+_transcript_api: YouTubeTranscriptApi | None = None
+_text_formatter: TextFormatter | None = None
+
+
+def get_transcript_api() -> YouTubeTranscriptApi:
+    """Get or create the shared YouTubeTranscriptApi instance."""
+    global _transcript_api
+    if _transcript_api is None:
+        _transcript_api = YouTubeTranscriptApi()
+    return _transcript_api
+
+
+def get_text_formatter() -> TextFormatter:
+    """Get or create the shared TextFormatter instance."""
+    global _text_formatter
+    if _text_formatter is None:
+        _text_formatter = TextFormatter()
+    return _text_formatter
+
+
+def get_transcript(video_id: str, preferred_languages: list[str] = None) -> tuple[str | None, str | None, bool]:
+    """Fetch transcript directly from YouTube Transcript API.
+
+    Returns (transcript_text, error_message, is_rate_limit_error).
+    Avoids the extra yt-dlp metadata call that transcript_loader makes.
+    Reuses a single API instance for connection pooling.
+    """
+    if preferred_languages is None:
+        preferred_languages = ['en']
+
+    api = get_transcript_api()
+    formatter = get_text_formatter()
+
+    try:
+        # Try preferred languages first
+        try:
+            raw_transcript = api.fetch(video_id, languages=preferred_languages)
+        except NoTranscriptFound:
+            # Try to find any transcript and translate if possible
+            transcript_list = api.list(video_id)
+            raw_transcript = None
+
+            for transcript in transcript_list:
+                if transcript.is_translatable:
+                    try:
+                        raw_transcript = transcript.translate('en').fetch()
+                        break
+                    except (RequestBlocked, IpBlocked):
+                        # Translation blocked, use original language
+                        raw_transcript = transcript.fetch()
+                        break
+                    except Exception:
+                        raw_transcript = transcript.fetch()
+                        break
+
+            if raw_transcript is None:
+                # Use any available transcript
+                for transcript in transcript_list:
+                    raw_transcript = transcript.fetch()
+                    break
+
+            if raw_transcript is None:
+                return None, "No transcript available", False
+
+        # Format transcript
+        text = formatter.format_transcript(raw_transcript)
+        text = text.replace('\n', ' ').replace('[Music]', '')
+        text = ' '.join(text.split())  # Normalize whitespace
+
+        return text, None, False
+
+    except (RequestBlocked, IpBlocked) as e:
+        return None, f"Rate limited: {type(e).__name__}", True
+    except TranscriptsDisabled:
+        return None, "Transcripts disabled", False
+    except NoTranscriptFound:
+        return None, "No transcript available", False
+    except AgeRestricted:
+        return None, "Age-restricted video", False
+    except VideoUnavailable:
+        return None, "Video unavailable", False
+    except CouldNotRetrieveTranscript as e:
+        # Check if error message indicates rate limiting
+        error_str = str(e).lower()
+        is_rate_limit = any(p in error_str for p in RATE_LIMIT_PATTERNS)
+        return None, str(e)[:200], is_rate_limit
+    except Exception as e:
+        error_str = str(e).lower()
+        is_rate_limit = any(p in error_str for p in RATE_LIMIT_PATTERNS)
+        return None, str(e)[:200], is_rate_limit
+
+
+def save_transcript(output_dir: Path, video_id: str, transcript: str):
+    """Save raw transcript to file."""
+    transcript_dir = output_dir / "_transcripts"
+    transcript_dir.mkdir(parents=True, exist_ok=True)
+    (transcript_dir / f"{video_id}.txt").write_text(transcript)
+
+
+def run_fabric_pattern(transcript: str, pattern: str) -> tuple[str, bool]:
+    """Run a Fabric pattern via llm CLI.
+
+    Uses -n (--no-log) to avoid flooding logs.db.
+    Returns (output, success).
+    """
+    result = subprocess.run(
+        ["llm", "-n", "-t", f"fabric:{pattern}"],
+        input=transcript,
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode != 0:
+        return result.stderr, False
+    return result.stdout, True
+
+
+def save_pattern_output(output_dir: Path, pattern: str, video_id: str, content: str):
+    """Save pattern output to file."""
+    pattern_dir = output_dir / pattern
+    pattern_dir.mkdir(parents=True, exist_ok=True)
+    (pattern_dir / f"{video_id}.md").write_text(content)
+
+
+def load_progress(output_dir: Path) -> dict:
+    """Load progress state from file."""
+    progress_file = output_dir / ".progress.json"
+    if progress_file.exists():
+        try:
+            return json.loads(progress_file.read_text())
+        except json.JSONDecodeError:
+            print(f"Warning: Corrupted {progress_file}, starting fresh", file=sys.stderr)
+    return {"processed": [], "failed": {}}
+
+
+def save_progress(output_dir: Path, progress: dict):
+    """Save progress state to file."""
+    progress_file = output_dir / ".progress.json"
+    progress_file.write_text(json.dumps(progress, indent=2))
+
+
+def log_error(output_dir: Path, video_id: str, title: str, error: str):
+    """Append error to errors.log."""
+    errors_file = output_dir / "errors.log"
+    with open(errors_file, "a") as f:
+        f.write(f"{datetime.now().isoformat()} | {video_id} | {title} | {error}\n")
+
+
+def format_upload_date(date_str: str) -> str:
+    """Convert YYYYMMDD to YYYY-MM-DD for display."""
+    if len(date_str) == 8:
+        return f"{date_str[:4]}-{date_str[4:6]}-{date_str[6:]}"
+    return date_str or "N/A"
+
+
+def generate_index(output_dir: Path, videos: list[dict], progress: dict, playlist_title: str):
+    """Generate index.md with video title -> ID mapping."""
+    processed = set(progress.get("processed", []))
+    failed = set(progress.get("failed", {}).keys())
+
+    lines = [
+        f"# {playlist_title}",
+        "",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Total videos: {len(videos)}",
+        f"Processed: {len(processed)}",
+        f"Failed: {len(failed)}",
+        "",
+        "| # | Title | Video ID | Upload Date | Status |",
+        "|---|-------|----------|-------------|--------|"
+    ]
+
+    for i, video in enumerate(videos, 1):
+        vid = video['id']
+        title = video['title'].replace("|", "\\|")  # Escape pipe for markdown
+        upload_date = format_upload_date(video.get('upload_date', ''))
+        if vid in processed:
+            status = "✓"
+        elif vid in failed:
+            status = "✗"
+        else:
+            status = "pending"
+        lines.append(f"| {i} | {title} | {vid} | {upload_date} | {status} |")
+
+    (output_dir / "index.md").write_text("\n".join(lines))
+
+
+def parse_rating(content: str) -> dict:
+    """Extract rating info from rate_content pattern output."""
+    rating_match = re.search(r'RATING:\s*([SABCD])', content)
+    score_match = re.search(r'CONTENT SCORE:\s*(\d+)', content)
+    labels_match = re.search(r'LABELS:\s*(.+?)(?:\n|$)', content)
+
+    return {
+        'rating': rating_match.group(1) if rating_match else 'N/A',
+        'score': int(score_match.group(1)) if score_match else 0,
+        'labels': labels_match.group(1).strip() if labels_match else ''
+    }
+
+
+def generate_ratings_report(output_dir: Path, videos: list[dict], progress: dict):
+    """Generate ratings.md with all videos sorted by score."""
+    processed = set(progress.get("processed", []))
+    rate_content_dir = output_dir / "rate_content"
+
+    if not rate_content_dir.exists():
+        return  # No rate_content pattern was run
+
+    ratings_data = []
+
+    for video in videos:
+        vid = video['id']
+        if vid not in processed:
+            continue
+
+        rating_file = rate_content_dir / f"{vid}.md"
+        if not rating_file.exists():
+            continue
+
+        content = rating_file.read_text()
+        parsed = parse_rating(content)
+
+        ratings_data.append({
+            'id': vid,
+            'title': video['title'],
+            'rating': parsed['rating'],
+            'score': parsed['score'],
+            'labels': parsed['labels']
+        })
+
+    # Sort by score descending
+    ratings_data.sort(key=lambda x: x['score'], reverse=True)
+
+    lines = [
+        "# Playlist Ratings Report",
+        "",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+        f"Videos processed: {len(ratings_data)}",
+        "",
+        "| Video ID | Title | Rating | Score | Labels |",
+        "|----------|-------|--------|-------|--------|"
+    ]
+
+    for item in ratings_data:
+        title = item['title'][:50].replace("|", "\\|")  # Truncate then escape
+        labels = item['labels'][:30].replace("|", "\\|")
+        lines.append(
+            f"| {item['id']} | {title} | {item['rating']} | {item['score']} | {labels} |"
+        )
+
+    (output_dir / "ratings.md").write_text("\n".join(lines))
+
+
+def check_dependencies():
+    """Check if required binaries are installed."""
+    required = ["yt-dlp", "llm"]
+    missing = []
+    for cmd in required:
+        if shutil.which(cmd) is None:
+            missing.append(cmd)
+    if missing:
+        print(f"Error: Required commands not found: {', '.join(missing)}", file=sys.stderr)
+        print("Please install them before running this script.", file=sys.stderr)
+        sys.exit(1)
+
+
+def main():
+    check_dependencies()
+
+    parser = argparse.ArgumentParser(
+        description="Process YouTube playlist with Fabric patterns"
+    )
+    parser.add_argument("playlist_url", help="YouTube playlist URL")
+    parser.add_argument(
+        "--output", "-o",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})"
+    )
+    parser.add_argument(
+        "--delay", "-d",
+        type=int,
+        default=DEFAULT_DELAY,
+        help=f"Delay between videos in seconds (default: {DEFAULT_DELAY})"
+    )
+    parser.add_argument(
+        "--patterns", "-p",
+        type=str,
+        default=None,
+        help=f"Comma-separated patterns (default: {','.join(DEFAULT_PATTERNS)})"
+    )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry previously failed videos"
+    )
+    parser.add_argument(
+        "--no-sort",
+        action="store_true",
+        help="Preserve playlist order (default: sort by upload date, newest first)"
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=DEFAULT_BATCH_SIZE,
+        help=f"Videos per batch before long pause (default: {DEFAULT_BATCH_SIZE})"
+    )
+    parser.add_argument(
+        "--batch-pause",
+        type=int,
+        default=DEFAULT_BATCH_PAUSE,
+        help=f"Seconds to pause between batches (default: {DEFAULT_BATCH_PAUSE})"
+    )
+
+    args = parser.parse_args()
+
+    # Parse patterns
+    patterns = args.patterns.split(',') if args.patterns else DEFAULT_PATTERNS
+
+    # Ensure output directory exists
+    output_dir = args.output.expanduser()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    print(f"Output directory: {output_dir}")
+    print(f"Patterns: {', '.join(patterns)}")
+    print(f"Delay: {args.delay}s between videos")
+    print(f"Sort order: {'newest first' if not args.no_sort else 'playlist order'}")
+    print()
+
+    # Fetch playlist
+    print("Fetching playlist...")
+    sort_by_date = not args.no_sort
+    videos, playlist_title = get_playlist_videos(args.playlist_url, sort_by_date=sort_by_date)
+
+    if not videos:
+        print("Error: Playlist is empty or could not be parsed.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Found {len(videos)} videos in '{playlist_title}'")
+    print()
+
+    # Load progress
+    progress = load_progress(output_dir)
+    processed = set(progress.get("processed", []))
+    failed = progress.get("failed", {})
+
+    # Handle --retry-failed: clear failed status for retry
+    if args.retry_failed and failed:
+        print(f"Retrying {len(failed)} previously failed videos...")
+        failed = {}
+        progress["failed"] = failed
+        save_progress(output_dir, progress)
+
+    # Find new videos (incremental update)
+    new_videos = [v for v in videos if v['id'] not in processed and v['id'] not in failed]
+
+    if not new_videos:
+        print("All videos already processed. Nothing to do.")
+        generate_index(output_dir, videos, progress, playlist_title)
+        generate_ratings_report(output_dir, videos, progress)
+        return
+
+    print(f"New videos to process: {len(new_videos)}")
+    print(f"Batch size: {args.batch_size} videos, then {args.batch_pause}s pause")
+    print()
+
+    # Track rate limiting for exponential backoff
+    consecutive_errors = 0
+    current_delay = args.delay
+
+    # Process each video
+    for i, video in enumerate(new_videos, 1):
+        # Check for graceful shutdown
+        if shutdown_requested:
+            print("\nStopping as requested. Progress saved.")
+            break
+
+        vid = video['id']
+        title = video['title']
+
+        print(f"[{i}/{len(new_videos)}] Processing {vid}: {title[:60]}...")
+
+        # Fetch transcript
+        transcript, error, is_rate_limit = get_transcript(vid)
+
+        if transcript is None:
+            print(f"  ✗ Failed: {error}")
+            failed[vid] = error
+            log_error(output_dir, vid, title, error)
+            progress["failed"] = failed
+            save_progress(output_dir, progress)
+
+            # Handle rate limiting with exponential backoff
+            if is_rate_limit:
+                consecutive_errors += 1
+                backoff_time = min(300, current_delay * (2 ** consecutive_errors))
+                print(f"  ⚠ Rate limit detected! Backing off for {backoff_time}s...\n")
+                interruptible_sleep(backoff_time)
+            else:
+                # Small delay even on non-rate-limit errors
+                sleep_with_jitter(current_delay // 2)
+                print()  # Newline between videos
+            continue
+
+        # Reset error counter on success
+        consecutive_errors = 0
+        current_delay = args.delay
+
+        # Save transcript
+        save_transcript(output_dir, vid, transcript)
+        print(f"  ✓ Transcript saved ({len(transcript)} chars)")
+
+        # Run each pattern
+        for pattern in patterns:
+            output, success = run_fabric_pattern(transcript, pattern)
+
+            if success:
+                save_pattern_output(output_dir, pattern, vid, output)
+                print(f"  ✓ {pattern}")
+            else:
+                print(f"  ✗ {pattern}: {output[:100]}")
+                log_error(output_dir, vid, title, f"Pattern {pattern} failed: {output[:200]}")
+
+        # Mark as processed
+        processed.add(vid)
+        progress["processed"] = list(processed)
+        save_progress(output_dir, progress)
+
+        # Delay before next video (with jitter)
+        if i < len(new_videos) and not shutdown_requested:
+            # Batch pause: longer break every batch_size videos
+            if i % args.batch_size == 0:
+                print(f"\n  ⏸ Batch pause ({args.batch_pause}s) to avoid rate limiting...")
+                interruptible_sleep(args.batch_pause)
+                print()  # Empty line after batch pause
+            else:
+                sleep_with_jitter(current_delay)
+                print()  # Newline between videos
+
+    print()
+    print("=" * 50)
+    print("Processing complete!")
+    print(f"  Processed: {len(processed)}")
+    print(f"  Failed: {len(failed)}")
+    print()
+
+    # Generate reports
+    print("Generating reports...")
+    generate_index(output_dir, videos, progress, playlist_title)
+    generate_ratings_report(output_dir, videos, progress)
+    print(f"  ✓ index.md")
+    print(f"  ✓ ratings.md")
+    print()
+    print(f"Output saved to: {output_dir}")
+
+
+if __name__ == "__main__":
+    main()
