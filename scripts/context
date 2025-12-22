@@ -126,6 +126,11 @@ def should_exclude_block(block):
     if not lines:
         return False
 
+    # Strip Unicode prompt markers for pattern matching (same as find_all_prompts)
+    lines = [line.replace(PromptDetector.PROMPT_START_MARKER, '')
+                  .replace(PromptDetector.INPUT_START_MARKER, '')
+             for line in lines]
+
     # Check if this is a Kali-style two-line prompt
     kali_header_pattern = r'^[┌╭]──.*[\])]$'
     command_line_idx = 0
