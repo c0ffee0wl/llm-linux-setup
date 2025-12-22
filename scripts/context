@@ -126,16 +126,17 @@ def should_exclude_block(block):
     if not lines:
         return False
 
-    # Strip Unicode prompt markers for pattern matching (same as find_all_prompts)
-    lines = [line.replace(PromptDetector.PROMPT_START_MARKER, '')
+    # Strip Unicode prompt markers and tag metadata for pattern matching
+    # (consistent with PromptDetector.is_prompt_line and find_all_prompts)
+    lines = [PromptDetector.strip_tag_metadata(line)
+                  .replace(PromptDetector.PROMPT_START_MARKER, '')
                   .replace(PromptDetector.INPUT_START_MARKER, '')
              for line in lines]
 
-    # Check if this is a Kali-style two-line prompt
-    kali_header_pattern = r'^[┌╭]──.*[\])]$'
+    # Check if this is a Kali-style two-line prompt (use shared pattern)
     command_line_idx = 0
 
-    if len(lines) >= 2 and re.search(kali_header_pattern, lines[0]):
+    if len(lines) >= 2 and PromptDetector.KALI_HEADER.search(lines[0]):
         # Skip the decorative header, use second line
         command_line_idx = 1
 
@@ -207,34 +208,40 @@ def extract_prompt_blocks(text, count=1):
     # Exclude the last block if it's just an empty current prompt
     # or if it's a self-referential context command with no output yet
     if blocks:
-        last_block_lines = [line for line in blocks[-1].split('\n') if line.strip()]
+        last_block = blocks[-1]
+        last_block_lines = [line for line in last_block.split('\n') if line.strip()]
 
         if not last_block_lines:
             # Completely empty block
             blocks = blocks[:-1]
-        elif len(last_block_lines) == 1:
-            # Single-line prompt: check if it's just a prompt with no command
-            # Unix: ends with $ # % ❯ → ➜
-            # PowerShell: ends with > after PS path
-            if re.search(r'[$#%❯→➜]\s*$', last_block_lines[0]):
-                blocks = blocks[:-1]
-            elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s*$', last_block_lines[0]):
-                blocks = blocks[:-1]
-            # Or check if it's context command with no output
-            elif re.search(r'[$#%❯→➜]\s+context(\s|$)', last_block_lines[0]):
-                blocks = blocks[:-1]
-            elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+context(\s|$)', last_block_lines[0]):
-                blocks = blocks[:-1]
-        elif len(last_block_lines) == 2:
-            # Potential two-line prompt (Kali/fancy prompts)
-            # Check if first line is header and second is prompt-only
-            kali_header_pattern = r'^[┌╭]──.*[\])]$'
-            if (re.search(kali_header_pattern, last_block_lines[0]) and
-                re.search(r'[$#%❯→➜]\s*$', last_block_lines[1])):
-                blocks = blocks[:-1]
-            # Or check if it's context command with no output
-            elif (re.search(kali_header_pattern, last_block_lines[0]) and
-                  re.search(r'[$#%❯→➜]\s+context(\s|$)', last_block_lines[1])):
+        elif PromptDetector.detect_prompt_at_end(last_block):
+            # Empty prompt (ready for input) - uses hybrid detection:
+            # 1. Unicode markers (100% reliable for VTE terminals)
+            # 2. Regex fallback (SSH sessions, non-VTE terminals)
+            blocks = blocks[:-1]
+        else:
+            # Check for context command with no output (specific to this tool)
+            # Strip markers before pattern matching (markers break \s+ between prompt and command)
+            stripped_lines = [
+                PromptDetector.strip_tag_metadata(line)
+                    .replace(PromptDetector.PROMPT_START_MARKER, '')
+                    .replace(PromptDetector.INPUT_START_MARKER, '')
+                for line in last_block_lines
+            ]
+
+            is_context_command = False
+            if len(stripped_lines) == 1:
+                if re.search(r'[$#%❯→➜]\s+context(\s|$)', stripped_lines[0]):
+                    is_context_command = True
+                elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+context(\s|$)', stripped_lines[0]):
+                    is_context_command = True
+            elif len(stripped_lines) == 2:
+                # Kali two-line prompt with context command
+                if (PromptDetector.KALI_HEADER.search(stripped_lines[0]) and
+                    re.search(r'[$#%❯→➜]\s+context(\s|$)', stripped_lines[1])):
+                    is_context_command = True
+
+            if is_context_command:
                 blocks = blocks[:-1]
 
     # Return requested number of blocks
