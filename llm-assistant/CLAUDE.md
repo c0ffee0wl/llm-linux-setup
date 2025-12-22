@@ -153,7 +153,7 @@ The assistant includes a finding management system for penetration testing workf
 - Conversation context used for better findings assessment
 - Export to Word document via pandoc
 
-**Storage Location**: `~/.config/io.datasette.llm/llm-assistant/findings/`
+**Storage Location**: `~/.config/llm-assistant/findings/`
 
 **File Format**: Single markdown file per project with YAML frontmatter:
 - Project metadata in file frontmatter
@@ -189,15 +189,15 @@ The assistant includes a finding management system for penetration testing workf
 
 The assistant supports TmuxAI-style knowledge bases for persistent context:
 
-**Location**: `~/.config/io.datasette.llm/kb/` (in llm's config directory)
+**Location**: `~/.config/llm-assistant/kb/`
 
 **Usage**:
 ```bash
 # Create a KB file
-mkdir -p ~/.config/io.datasette.llm/kb
+mkdir -p ~/.config/llm-assistant/kb
 echo "## Project Conventions
 - Use Python 3.10+
-- Follow PEP8" > ~/.config/io.datasette.llm/kb/project.md
+- Follow PEP8" > ~/.config/llm-assistant/kb/project.md
 
 # In assistant:
 /kb load project              # Load single KB
@@ -208,7 +208,7 @@ echo "## Project Conventions
 
 **Auto-load config** (optional):
 ```yaml
-# ~/.config/io.datasette.llm/assistant-config.yaml
+# ~/.config/llm-assistant/assistant-config.yaml
 knowledge_base:
   auto_load:
     - project
@@ -439,11 +439,11 @@ llm assistant --cid 01abc123def...      # continue specific conversation
 
 ## Conversation Persistence
 
-Conversations are automatically logged to the llm database (`~/.config/io.datasette.llm/logs.db`), enabling:
+Conversations are automatically logged to `~/.config/llm-assistant/logs.db` (separate from llm CLI), enabling:
 
 - **Resume across sessions**: Continue where you left off with `-c` or `--cid`
-- **Search conversation history**: Use `llm logs` to view past assistant interactions
-- **Consistent UX**: Same conversation model as `llm chat`
+- **Isolated history**: Assistant conversations are kept separate from regular `llm` usage
+- **Same database format**: Uses llm's schema, can be queried with `sqlite-utils`
 
 **What's stored:**
 - User prompts (with terminal context stripped for privacy)
@@ -457,7 +457,7 @@ Conversations are automatically logged to the llm database (`~/.config/io.datase
 - Loaded knowledge bases
 
 **Context Squashing and Conversation Links:**
-When context is squashed, a new conversation is created and linked to the previous one. Links are stored in `~/.config/io.datasette.llm/squash-links.json`. The assistant displays the link when resuming a conversation that was created from a squash.
+When context is squashed, a new conversation is created and linked to the previous one. Links are stored in `~/.config/llm-assistant/squash-links.json`. The assistant displays the link when resuming a conversation that was created from a squash.
 
 **Disabling logging:**
 Use `--no-log` to run without database persistence (conversation won't be resumable).
@@ -488,8 +488,12 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - `~/.config/io.datasette.llm/templates/llm-assistant.yaml` - Template
 
 ### Data Locations
-- `~/.config/io.datasette.llm/logs.db` - Conversation database (shared with llm CLI)
-- `~/.config/io.datasette.llm/squash-links.json` - Conversation squash chain links
+- `~/.config/llm-assistant/logs.db` - Conversation database (separate from llm CLI)
+- `~/.config/llm-assistant/squash-links.json` - Conversation squash chain links
+- `~/.config/llm-assistant/kb/` - Knowledge base files
+- `~/.config/llm-assistant/skills/` - Custom skills
+- `~/.config/llm-assistant/findings/` - Pentest findings
+- `~/.config/llm-assistant/assistant-config.yaml` - Configuration file
 
 ## Troubleshooting
 

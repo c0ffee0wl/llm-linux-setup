@@ -145,6 +145,11 @@ class SlashCommandCompleter(Completer):
         elif cmd == "/mcp":
             if subcommand in ("load", "unload"):
                 yield from self._complete_mcp_servers(partial)
+        elif cmd == "/skill":
+            if subcommand == "load":
+                yield from self._complete_available_skills(partial)
+            elif subcommand == "unload":
+                yield from self._complete_loaded_skills(partial)
 
     def _complete_models(self, partial: str):
         """Complete model names dynamically."""
@@ -205,6 +210,42 @@ class SlashCommandCompleter(Completer):
                 if server_name.lower().startswith(partial_lower):
                     yield Completion(
                         server_name,
+                        start_position=-len(partial)
+                    )
+        except Exception:
+            pass
+
+    def _complete_available_skills(self, partial: str):
+        """Complete available skill names for /skill load."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            available = self.session._discover_available_skills()
+            for name in sorted(available.keys()):
+                # Only show skills not already loaded
+                if name not in self.session.loaded_skills:
+                    if name.lower().startswith(partial_lower):
+                        _, props = available[name]
+                        desc = props.description[:40] if props.description else ""
+                        yield Completion(
+                            name,
+                            start_position=-len(partial),
+                            display_meta=desc
+                        )
+        except Exception:
+            pass
+
+    def _complete_loaded_skills(self, partial: str):
+        """Complete loaded skill names for /skill unload."""
+        if not self.session:
+            return
+        partial_lower = partial.lower()
+        try:
+            for name in self.session.loaded_skills.keys():
+                if name.lower().startswith(partial_lower):
+                    yield Completion(
+                        name,
                         start_position=-len(partial)
                     )
         except Exception:

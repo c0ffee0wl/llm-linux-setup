@@ -1728,6 +1728,7 @@ PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-tools-fabric"
     "git+https://github.com/c0ffee0wl/llm-tools-mcp"
     "git+https://github.com/c0ffee0wl/llm-tools-rag"
+    "git+https://github.com/c0ffee0wl/llm-tools-skills"
 )
 
 for plugin in "${PLUGINS[@]}"; do

@@ -79,6 +79,14 @@ Before taking any action (either tool calls *or* responses to the user), you mus
 - When citing specific information from retrieved documents, reference the source (e.g., "According to source.py...").
 {% endif %}
 
+{% if skills_active %}
+## Available Skills
+
+The following skills are loaded and available. Call `skill_invoke` with the skill name to load its full instructions.
+
+{{ skills_xml }}
+{% endif %}
+
 ## User Preferences (for local Linux work)
 
 - Prefers nano over vim.

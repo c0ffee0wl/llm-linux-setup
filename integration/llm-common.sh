@@ -209,8 +209,10 @@ if [ -n "$VTE_VERSION" ]; then
 
         # Write metadata to temp file for llm-assistant to read
         # File is named by shell PID for disambiguation between terminals
-        mkdir -p /tmp/llm-assistant 2>/dev/null
-        printf '%s\n' "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}" > "/tmp/llm-assistant/.prompt-meta-$$" 2>/dev/null
+        # Uses TMPDIR with user isolation (matches Python get_temp_dir())
+        _LLM_TEMP_DIR="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}/llm-assistant/$(id -u)"
+        mkdir -p "$_LLM_TEMP_DIR" 2>/dev/null
+        printf '%s\n' "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}" > "$_LLM_TEMP_DIR/.prompt-meta-$$" 2>/dev/null
 
         # Add markers to PS1/PROMPT (idempotent - only once)
         if [ -n "${BASH_VERSION:-}" ]; then
