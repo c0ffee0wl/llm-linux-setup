@@ -831,12 +831,12 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Append memory content (AGENTS.md) - before KB
         memory_content = self._get_memory_content()
         if memory_content:
-            prompt = f"{prompt}\n# Persistent Memory\n\n{memory_content}"
+            prompt = f"{prompt}\n\n<memory>\n# Persistent Memory\n\n{memory_content}\n</memory>"
 
         # Append KB content if any loaded
         kb_content = self._get_loaded_kb_content()
         if kb_content:
-            prompt = f"{prompt}\n# Knowledge Base\n\n{kb_content}"
+            prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
 
         return prompt
 
