@@ -547,7 +547,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         }
         signal_name = signal_names.get(signum, f"signal {signum}")
 
-        self.console.print(f"\n[yellow]Received {signal_name}, shutting down...[/]")
+        self.console.print()
+        ConsoleHelper.warning(self.console, f"Received {signal_name}, shutting down...")
         self._shutdown()
         sys.exit(0)
 
@@ -670,7 +671,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
     def _debug(self, msg: str):
         """Print debug message if debug mode is enabled"""
         if self.debug:
-            self.console.print(f"[dim]DEBUG: {msg}[/dim]")
+            ConsoleHelper.dim(self.console, f"DEBUG: {msg}")
 
     def _stream_response_with_display(self, response, tts_enabled: bool = False) -> str:
         """
@@ -783,7 +784,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         result = warning + truncated
 
         self._debug(f"Truncated {source_desc}: {original_size:,} -> {len(truncated):,} chars")
-        self.console.print(f"[yellow]⚠ {source_desc.capitalize()} truncated ({original_size:,} chars)[/]")
+        ConsoleHelper.warn_icon(self.console, f"{source_desc.capitalize()} truncated ({original_size:,} chars)")
 
         return result
 
@@ -909,10 +910,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                     time.sleep(poll_interval)
 
                 except dbus.exceptions.DBusException as e:
-                    self.console.print(f"[red]Plugin D-Bus error during capture: {e}[/]")
+                    ConsoleHelper.error(self.console, f"Plugin D-Bus error during capture: {e}")
                     return (False, "", "")
                 except Exception as e:
-                    self.console.print(f"[red]Prompt-based capture error ({type(e).__name__}): {e}[/]")
+                    ConsoleHelper.error(self.console, f"Prompt-based capture error ({type(e).__name__}): {e}")
                     return (False, "", "")
 
         # Timeout - return last content
@@ -1235,7 +1236,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
             combined_context = self._truncate_capture_if_needed(combined_context, "terminal context")
             return combined_context, attachments
         except Exception as e:
-            self.console.print(f"[red]Error capturing context: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error capturing context: {e}")
             return "", []
 
     def handle_rewind_command(self, args: str) -> bool:
@@ -1755,7 +1756,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                         return self.execute_command(edited)
             else:  # dangerous
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
-                self.console.print("[bold red]BLOCKED[/bold red] - manual approval required")
+                ConsoleHelper.error(self.console, "BLOCKED - manual approval required")
                 choice = self._ask_confirmation("Override?", ["yes", "no", "edit"], "no")
                 if choice == "no":
                     return (False, "")
@@ -1825,10 +1826,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                     temp_path, error = self._capture_screenshot(self.exec_terminal_uuid)
                     if error:
                         escaped_error = error.replace('[', '[[').replace(']', ']]')
-                        self.console.print(f"[red]Screenshot capture failed: {escaped_error}[/]")
+                        ConsoleHelper.error(self.console, f"Screenshot capture failed: {escaped_error}")
                         return True, f"Screenshot capture failed: {error}"
 
-                    self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
+                    ConsoleHelper.success(self.console, f"TUI screenshot captured: {temp_path}")
 
                     # Return a message with the screenshot path
                     # The AI will be able to see this image via attachments
@@ -1852,7 +1853,7 @@ Screenshot size: {file_size} bytes"""
 
                     if prompt_detected:
                         method_label = f"via {detection_method}" if detection_method else ""
-                        self.console.print(f"[green]✓[/] Command completed (prompt detected {method_label})")
+                        ConsoleHelper.success(self.console, f"Command completed (prompt detected {method_label})")
                         self.console.print()  # Blank line for visual separation
 
                         # Smart full-output capture: capture from command start row
@@ -2149,16 +2150,17 @@ Screenshot size: {file_size} bytes"""
                 context, tui_attachments = self.capture_context(include_exec_output=True)
 
             if context or tui_attachments:
-                self.console.print(f"[green]✓[/] Captured {len(context)} characters of context")
+                ConsoleHelper.success(self.console, f"Captured {len(context)} characters of context")
 
                 # Show TUI screenshots info
                 if tui_attachments:
-                    self.console.print(f"[green]✓[/] Captured {len(tui_attachments)} TUI screenshot(s)")
+                    ConsoleHelper.success(self.console, f"Captured {len(tui_attachments)} TUI screenshot(s)")
 
                 # Show per-terminal breakdown
                 terminals = re.findall(r'<terminal uuid="([^"]+)" title="([^"]+)"', context)
                 if terminals:
-                    self.console.print("\n[bold]Terminals captured:[/]")
+                    self.console.print()
+                    ConsoleHelper.bold(self.console, "Terminals captured:")
                     for uuid_match, title in terminals:
                         # Check if this is a TUI screenshot
                         tui_pattern = rf'<terminal uuid="{re.escape(uuid_match)}"[^>]*type="tui-screenshot"'
@@ -2177,9 +2179,9 @@ Screenshot size: {file_size} bytes"""
                 # Show preview of first terminal (skip if only TUI screenshots)
                 text_only = re.sub(r'<terminal[^>]*type="tui-screenshot"[^>]*>.*?</terminal>', '', context, flags=re.DOTALL)
                 if text_only.strip():
-                    self.console.print("\n[dim]First 300 chars of text content:[/]")
+                    ConsoleHelper.dim(self.console, "\nFirst 300 chars of text content:")
                     preview = text_only[:300].replace('\n', ' ')
-                    self.console.print(f"[dim]{preview}...[/]")
+                    ConsoleHelper.dim(self.console, f"{preview}...")
             else:
                 ConsoleHelper.warning(self.console, "No context captured")
 
@@ -2188,7 +2190,7 @@ Screenshot size: {file_size} bytes"""
         elif cmd == "/model":
             if not args:
                 # List available models
-                self.console.print("[bold]Available models:[/bold]")
+                ConsoleHelper.bold(self.console, "Available models:")
                 for model in llm.get_models():
                     current = " [green](current)[/]" if model.model_id == self.model_name else ""
                     self.console.print(f"  - {model.model_id}{current}")
@@ -2341,7 +2343,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     # Re-render system prompt with watch mode context
                     self._update_system_prompt()
                     self._start_watch_mode_thread()
-                self.console.print(f"[green]✓[/] Watch mode enabled")
+                ConsoleHelper.success(self.console, "Watch mode enabled")
                 self.console.print(f"Goal: {self.watch_goal}")
                 self.console.print(f"Monitoring all terminals every {self.watch_interval}s...")
                 self._broadcast_status("watch")
@@ -2360,16 +2362,16 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             # Auto mode: LLM-judged autonomous command execution
             if not args:
                 self.auto_mode = "normal"
-                self.console.print("[bold green]Auto mode enabled[/] - SAFE commands auto-execute")
-                self.console.print("[dim]/auto full for SAFE+CAUTION, /auto off to disable[/]")
+                ConsoleHelper.enabled(self.console, "Auto mode enabled - SAFE commands auto-execute")
+                ConsoleHelper.dim(self.console, "/auto full for SAFE+CAUTION, /auto off to disable")
             elif args.lower() == "full":
                 self.auto_mode = "full"
-                self.console.print("[bold green]Auto mode FULL[/] - SAFE+CAUTION commands auto-execute")
-                self.console.print("[dim]/auto for SAFE only, /auto off to disable[/]")
+                ConsoleHelper.enabled(self.console, "Auto mode FULL - SAFE+CAUTION commands auto-execute")
+                ConsoleHelper.dim(self.console, "/auto for SAFE only, /auto off to disable")
             elif args.lower() == "off":
                 self.auto_mode = False
                 self.auto_command_history.clear()
-                self.console.print("[bold yellow]Auto mode disabled[/]")
+                ConsoleHelper.disabled(self.console, "Auto mode disabled")
             elif args.lower() == "status":
                 if self.auto_mode == "full":
                     status = "[green]full[/] (SAFE+CAUTION)"
@@ -2398,11 +2400,11 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         ConsoleHelper.dim(self.console, "Re-run install-llm-tools.sh to install")
                 else:
                     self.voice_auto_submit = True
-                    self.console.print("[bold green]Voice auto-submit enabled[/bold green] - transcribed text sends automatically")
+                    ConsoleHelper.enabled(self.console, "Voice auto-submit enabled - transcribed text sends automatically")
                     ConsoleHelper.dim(self.console, "/voice off to disable")
             elif args.lower() == "off":
                 self.voice_auto_submit = False
-                self.console.print("[bold yellow]Voice auto-submit disabled[/bold yellow]")
+                ConsoleHelper.disabled(self.console, "Voice auto-submit disabled")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.voice_auto_submit else "[yellow]disabled[/]"
                 if self.voice_input:
@@ -2428,13 +2430,13 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 ConsoleHelper.dim(self.console, "Re-run install-llm-tools.sh to install")
             elif not args or args.lower() == "on":
                 self.speech_output.enabled = True
-                self.console.print("[bold green]Speech output enabled[/bold green] - AI responses will be spoken")
+                ConsoleHelper.enabled(self.console, "Speech output enabled - AI responses will be spoken")
                 ConsoleHelper.dim(self.console, f"Voice: {self.speech_output.voice_name}")
                 ConsoleHelper.dim(self.console, "/speech off to disable")
             elif args.lower() == "off":
                 self.speech_output.enabled = False
                 self.speech_output.stop()  # Stop any playing audio
-                self.console.print("[bold yellow]Speech output disabled[/bold yellow]")
+                ConsoleHelper.disabled(self.console, "Speech output disabled")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.speech_output.enabled else "[yellow]disabled[/]"
                 tts_avail = "[green]available[/]" if TTS_AVAILABLE else "[dim]not installed[/]"
@@ -2463,7 +2465,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
-                self.console.print("[bold green]Switched to assistant mode[/bold green] - conservative (10 tool iterations)")
+                ConsoleHelper.enabled(self.console, "Switched to assistant mode - conservative (10 tool iterations)")
                 ConsoleHelper.dim(self.console, "/agent for agentic mode (100 iterations)")
             return True
 
@@ -2475,7 +2477,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
-                self.console.print("[bold green]Switched to agent mode[/bold green] - agentic (100 tool iterations)")
+                ConsoleHelper.enabled(self.console, "Switched to agent mode - agentic (100 tool iterations)")
                 ConsoleHelper.dim(self.console, "/assistant for conservative mode (10 iterations)")
             return True
 
@@ -2776,7 +2778,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             if scope not in {"exec", "all"}:
                 scope = "exec"
 
-            self.console.print(f"\n[cyan]Capturing screenshot ({scope})...[/]")
+            self.console.print()
+            ConsoleHelper.info(self.console, f"Capturing screenshot ({scope})...")
 
             try:
                 result_attachments = []
@@ -2795,9 +2798,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         if temp_path:
                             result_attachments.append(Attachment(path=temp_path))
                             captured_info.append(term.get('title', 'Terminal'))
-                            self.console.print(f"[green]✓[/] Screenshot: {term.get('title', 'Terminal')}")
+                            ConsoleHelper.success(self.console, f"Screenshot: {term.get('title', 'Terminal')}")
                         else:
-                            self.console.print(f"[yellow]Screenshot failed for {term.get('title', 'Terminal')}: {error}[/]")
+                            ConsoleHelper.warning(self.console, f"Screenshot failed for {term.get('title', 'Terminal')}: {error}")
                 else:
                     temp_path, error = self._capture_screenshot(
                         self.exec_terminal_uuid,
@@ -2806,9 +2809,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     if temp_path:
                         result_attachments.append(Attachment(path=temp_path))
                         captured_info.append("Exec terminal")
-                        self.console.print(f"[green]✓[/] Screenshot captured")
+                        ConsoleHelper.success(self.console, "Screenshot captured")
                     else:
-                        self.console.print(f"[red]Screenshot failed: {error}[/]")
+                        ConsoleHelper.error(self.console, f"Screenshot failed: {error}")
                         captured_info.append(f"Error: {error}")
 
                 return ToolResult(
@@ -2818,7 +2821,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     tool_call_id=tool_call_id
                 )
             except Exception as e:
-                self.console.print(f"[red]Screenshot error: {e}[/]")
+                ConsoleHelper.error(self.console, f"Screenshot error: {e}")
                 return ToolResult(
                     name=tool_call.name,
                     output=f"Screenshot error: {e}",
@@ -2826,7 +2829,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 )
 
         elif tool_name == "refresh_context":
-            self.console.print("\n[cyan]Refreshing terminal context...[/]")
+            self.console.print()
+            ConsoleHelper.info(self.console, "Refreshing terminal context...")
             try:
                 # Clear cache to get fresh content
                 try:
@@ -2902,7 +2906,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     result = f"Model doesn't support video ({mime_type}). Only Gemini models can process video."
                 else:
                     result = f"Unsupported attachment type: {mime_type}"
-                self.console.print(f"[yellow]{result}[/]")
+                ConsoleHelper.warning(self.console, result)
                 return ToolResult(
                     name=tool_call.name,
                     output=result,
@@ -2910,7 +2914,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 )
 
             self.pending_attachments.append(attachment)
-            self.console.print(f"[green]✓[/] Queued {mime_type}: {path_or_url}")
+            ConsoleHelper.success(self.console, f"Queued {mime_type}: {path_or_url}")
             return ToolResult(
                 name=tool_call.name,
                 output=f"Queued for viewing: {path_or_url} ({mime_type}). Will be visible in next turn.",
@@ -2940,7 +2944,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             try:
                 attachment = self._create_attachment(path_or_url)
                 self.pending_attachments.append(attachment)
-                self.console.print(f"[green]✓[/] PDF queued for native viewing: {path_or_url}")
+                ConsoleHelper.success(self.console, f"PDF queued for native viewing: {path_or_url}")
                 result = f"PDF queued for native viewing in next turn: {path_or_url}"
             except Exception as e:
                 result = f"Failed to queue PDF: {e}"
@@ -2974,7 +2978,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 attachment = Attachment(url=url)
                 attachment.type = "video/youtube"  # Force YouTube type
                 self.pending_attachments.append(attachment)
-                self.console.print(f"[green]✓[/] YouTube video queued for native viewing")
+                ConsoleHelper.success(self.console, "YouTube video queued for native viewing")
                 return ToolResult(
                     name=tool_call.name,
                     output=f"YouTube video queued for native viewing (visual + audio). Will process in next turn.",
@@ -3021,7 +3025,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 try:
                     with Spinner(f"Capturing screenshot ({mode})...", console=self.console):
                         result = impl(**tool_args)
-                    self.console.print(f"[green]✓[/] {tool_name} completed")
+                    ConsoleHelper.success(self.console, f"{tool_name} completed")
                     self.console.print()  # Blank line for visual separation
 
                     # Handle ToolOutput return type
@@ -3042,7 +3046,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         tool_call_id=tool_call_id
                     )
                 except Exception as e:
-                    self.console.print(f"[red]{tool_name} error: {e}[/]")
+                    ConsoleHelper.error(self.console, f"{tool_name} error: {e}")
                     return ToolResult(
                         name=tool_call.name,
                         output=f"Error calling {tool_name}: {e}",
@@ -3064,8 +3068,8 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             try:
                 with Spinner(status_msg, console=self.console):
                     result = impl(**tool_args)
-                self.console.print(f"[dim cyan]{status_msg}[/]")
-                self.console.print(f"[green]✓[/] {tool_name} completed")
+                self.console.print(f"[dim cyan]{status_msg}[/]")  # dim + cyan combined style
+                ConsoleHelper.success(self.console, f"{tool_name} completed")
                 self.console.print()  # Blank line for visual separation
 
                 # Handle ToolOutput return type (e.g., capture_screen with attachments)
@@ -3087,7 +3091,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     tool_call_id=tool_call_id
                 )
             except Exception as e:
-                self.console.print(f"[red]{tool_name} error: {e}[/]")
+                ConsoleHelper.error(self.console, f"{tool_name} error: {e}")
                 return ToolResult(
                     name=tool_call.name,
                     output=f"Error calling {tool_name}: {e}",
@@ -3096,7 +3100,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         else:
             # Unknown tool - shouldn't happen with our defined tools
-            self.console.print(f"[yellow]Unknown tool: {tool_call.name}[/]")
+            ConsoleHelper.warning(self.console, f"Unknown tool: {tool_call.name}")
             return ToolResult(
                 name=tool_call.name,
                 output=f"Unknown tool: {tool_call.name}",
@@ -3212,7 +3216,7 @@ Type !fragment <name> [...] to insert fragments""",
                         end_token = f"!end {' '.join(bits[1:])}"
                     else:
                         end_token = "!end"
-                    self.console.print(f"[dim]Multi-line mode. Type '{end_token}' to finish[/]")
+                    ConsoleHelper.dim(self.console, f"Multi-line mode. Type '{end_token}' to finish")
                     continue
 
                 # Handle multi-line input accumulation
@@ -3232,7 +3236,8 @@ Type !fragment <name> [...] to insert fragments""",
 
                 # Handle exit/quit commands (like llm chat mode)
                 if user_input in ("exit", "quit"):
-                    self.console.print("\n[yellow]Exiting...[/]")
+                    self.console.print()
+                    ConsoleHelper.warning(self.console, "Exiting...")
                     self._shutdown()
                     break
 
@@ -3258,7 +3263,8 @@ Type !fragment <name> [...] to insert fragments""",
                 stream_success = False
 
                 try:
-                    self.console.print("\n[bold green]llm[/]")
+                    self.console.print()
+                    ConsoleHelper.enabled(self.console, "llm")
 
                     # Thread-safe context capture AND conversation access
                     # Extended lock scope fixes race condition with watch mode
@@ -3382,14 +3388,16 @@ Type !fragment <name> [...] to insert fragments""",
                         # Process tool calls (structured output from model)
                         if tool_calls:
                             if self.debug:
-                                self.console.print(f"\n[cyan]Processing {len(tool_calls)} tool call(s)[/]")
+                                self.console.print()
+                                ConsoleHelper.info(self.console, f"Processing {len(tool_calls)} tool call(s)")
 
                             # Collect tool results for sending back to model
                             tool_results = []
 
                             for i, tool_call in enumerate(tool_calls, 1):
                                 if len(tool_calls) > 1:
-                                    self.console.print(f"\n[bold]Tool {i}/{len(tool_calls)}: {tool_call.name}[/]")
+                                    self.console.print()
+                                    ConsoleHelper.bold(self.console, f"Tool {i}/{len(tool_calls)}: {tool_call.name}")
                                 tool_results.append(self._process_tool_call(tool_call))
 
                             # After processing all tool calls, send results back to model
@@ -3409,7 +3417,8 @@ Type !fragment <name> [...] to insert fragments""",
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
                                 iteration += 1
                                 if self.debug:
-                                    self.console.print(f"\n[dim]Sending {len(tool_results)} tool result(s) to model...[/]")
+                                    self.console.print()
+                                    ConsoleHelper.dim(self.console, f"Sending {len(tool_results)} tool result(s) to model...")
 
                                 # Extract attachments from tool results (e.g., capture_screen screenshots)
                                 # This mirrors llm's ChainResponse behavior
@@ -3425,7 +3434,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     self.pending_attachments = []  # Clear after including
 
                                 if self.debug and followup_attachments:
-                                    self.console.print(f"[dim]Including {len(followup_attachments)} attachment(s) ({len(tool_result_attachments)} from tools)[/]")
+                                    ConsoleHelper.dim(self.console, f"Including {len(followup_attachments)} attachment(s) ({len(tool_result_attachments)} from tools)")
 
                                 with self.watch_lock:
                                     # Continue conversation with tool results (and attachments)
@@ -3453,22 +3462,26 @@ Type !fragment <name> [...] to insert fragments""",
                                     break
 
                                 if self.debug:
-                                    self.console.print(f"\n[cyan]Processing {len(more_tool_calls)} additional tool call(s) (round {iteration + 1})[/]")
+                                    self.console.print()
+                                    ConsoleHelper.info(self.console, f"Processing {len(more_tool_calls)} additional tool call(s) (round {iteration + 1})")
                                 tool_results = []
 
                                 for j, tool_call in enumerate(more_tool_calls, 1):
                                     if len(more_tool_calls) > 1:
-                                        self.console.print(f"\n[bold]Tool {j}/{len(more_tool_calls)}: {tool_call.name}[/]")
+                                        self.console.print()
+                                        ConsoleHelper.bold(self.console, f"Tool {j}/{len(more_tool_calls)}: {tool_call.name}")
                                     tool_results.append(self._process_tool_call(tool_call))
 
                             # Warn if max iterations reached and model still wants more
                             if iteration >= MAX_TOOL_ITERATIONS and more_tool_calls:
-                                self.console.print(f"\n[yellow]Max tool iterations ({MAX_TOOL_ITERATIONS}) reached. Model requested {len(more_tool_calls)} more tool call(s). Please continue the conversation.[/]")
+                                self.console.print()
+                                ConsoleHelper.warning(self.console, f"Max tool iterations ({MAX_TOOL_ITERATIONS}) reached. Model requested {len(more_tool_calls)} more tool call(s). Please continue the conversation.")
 
                             # Auto-send any remaining pending attachments (e.g., view_attachment was last tool call)
                             if self.pending_attachments:
                                 if self.debug:
-                                    self.console.print(f"\n[dim]Auto-sending {len(self.pending_attachments)} pending attachment(s)[/]")
+                                    self.console.print()
+                                    ConsoleHelper.dim(self.console, f"Auto-sending {len(self.pending_attachments)} pending attachment(s)")
 
                                 attachments_to_send = self.pending_attachments
                                 self.pending_attachments = []
@@ -3497,7 +3510,8 @@ Type !fragment <name> [...] to insert fragments""",
                                         self._process_tool_call(tc)
 
                     except Exception as e:
-                        self.console.print(f"\n[red]Tool execution error: {e}[/]")
+                        self.console.print()
+                        ConsoleHelper.error(self.console, f"Tool execution error: {e}")
 
         finally:
             # Unified cleanup - handles all resources

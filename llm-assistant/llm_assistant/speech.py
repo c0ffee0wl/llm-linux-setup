@@ -13,7 +13,7 @@ from typing import Optional, Tuple
 
 import llm
 
-from .utils import strip_markdown_for_tts
+from .utils import strip_markdown_for_tts, ConsoleHelper
 
 # Voice/audio dependencies (shared with voice.py)
 try:
@@ -148,11 +148,11 @@ class SpeechOutput:
             return True
 
         if not TTS_AVAILABLE:
-            self.console.print("[red]google-cloud-texttospeech not installed. Re-run install-llm-tools.sh[/]")
+            ConsoleHelper.error(self.console, "google-cloud-texttospeech not installed. Re-run install-llm-tools.sh")
             return False
 
         if not AUDIO_AVAILABLE:
-            self.console.print("[red]sounddevice/numpy not installed. Re-run install-llm-tools.sh[/]")
+            ConsoleHelper.error(self.console, "sounddevice/numpy not installed. Re-run install-llm-tools.sh")
             return False
 
         try:
@@ -171,9 +171,9 @@ class SpeechOutput:
             self._executor = ThreadPoolExecutor(max_workers=1)  # Must be 1 to preserve sentence order
             return True
         except Exception as e:
-            self.console.print(f"[red]Failed to initialize TTS client: {e}[/]")
-            self.console.print("[dim]Configure via: llm vertex set-credentials /path/to/sa.json[/]")
-            self.console.print("[dim]Or run: gcloud auth application-default login[/]")
+            ConsoleHelper.error(self.console, f"Failed to initialize TTS client: {e}")
+            ConsoleHelper.dim(self.console, "Configure via: llm vertex set-credentials /path/to/sa.json")
+            ConsoleHelper.dim(self.console, "Or run: gcloud auth application-default login")
             return False
 
     def _synthesize_and_queue(self, sentence: str):

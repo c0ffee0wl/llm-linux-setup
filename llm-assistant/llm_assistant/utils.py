@@ -159,6 +159,21 @@ class ConsoleHelper:
         """Print dim/muted message."""
         console.print(f"[dim]{message}[/]")
 
+    @staticmethod
+    def enabled(console, message: str) -> None:
+        """Print enabled/activated message in bold green."""
+        console.print(f"[bold green]{message}[/bold green]")
+
+    @staticmethod
+    def disabled(console, message: str) -> None:
+        """Print disabled/deactivated message in bold yellow."""
+        console.print(f"[bold yellow]{message}[/bold yellow]")
+
+    @staticmethod
+    def bold(console, message: str) -> None:
+        """Print bold message."""
+        console.print(f"[bold]{message}[/bold]")
+
 
 def render_grouped_list(
     console,
@@ -178,21 +193,25 @@ def render_grouped_list(
         format_item: Callable(name, data) -> display string
         empty_msg: Message when both dicts are empty
     """
-    console.print(f"\n[bold]{title}[/]")
+    console.print()
+    ConsoleHelper.bold(console, title)
 
     if loaded:
-        console.print("\n[green]Loaded:[/]")
+        console.print()
+        console.print("[green]Loaded:[/]")
         for name in sorted(loaded.keys()):
             console.print(f"  • {format_item(name, loaded[name])}")
 
     unloaded = {k: v for k, v in available.items() if k not in loaded}
     if unloaded:
-        console.print("\n[dim]Available:[/]")
+        console.print()
+        ConsoleHelper.dim(console, "Available:")
         for name in sorted(unloaded.keys()):
             console.print(f"  • {format_item(name, unloaded[name])}")
 
     if not loaded and not available:
-        console.print(f"\n[dim]{empty_msg}[/]")
+        console.print()
+        ConsoleHelper.dim(console, empty_msg)
 
 
 # =============================================================================

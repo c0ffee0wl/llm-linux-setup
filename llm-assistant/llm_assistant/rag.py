@@ -46,7 +46,7 @@ class RAGMixin:
         """Handle /rag commands. Returns True to continue REPL."""
         if not self._rag_available():
             ConsoleHelper.error(self.console, "RAG not available. Install llm-tools-rag.")
-            self.console.print("[dim]Run install-llm-tools.sh or: llm install git+https://github.com/c0ffee0wl/llm-tools-rag[/]")
+            ConsoleHelper.dim(self.console, "Run install-llm-tools.sh or: llm install git+https://github.com/c0ffee0wl/llm-tools-rag")
             return True
 
         cmd, rest = parse_command(args)
@@ -117,11 +117,13 @@ class RAGMixin:
 
         collections = get_collection_list()
 
-        self.console.print("\n[bold]RAG Collections[/]")
+        self.console.print()
+        ConsoleHelper.bold(self.console, "RAG Collections")
 
         if not collections:
-            self.console.print("\n[dim]No RAG collections found[/]")
-            self.console.print("[dim]Create with: /rag add <name> <path>[/]")
+            self.console.print()
+            ConsoleHelper.dim(self.console, "No RAG collections found")
+            ConsoleHelper.dim(self.console, "Create with: /rag add <name> <path>")
             return
 
         for coll in collections:
@@ -133,10 +135,12 @@ class RAGMixin:
             self.console.print(f"  • {name}: {chunks} chunks, {docs} docs{active_marker}")
 
         if self.active_rag_collection:
-            self.console.print(f"\n[green]Active:[/] {self.active_rag_collection}")
-            self.console.print(f"[dim]Top-k: {self.rag_top_k}, Mode: {self.rag_search_mode}[/]")
+            self.console.print()
+            self.console.print(f"[green]Active:[/] {self.active_rag_collection}")
+            ConsoleHelper.dim(self.console, f"Top-k: {self.rag_top_k}, Mode: {self.rag_search_mode}")
         else:
-            self.console.print("\n[dim]RAG not active. Activate with: /rag <collection>[/]")
+            self.console.print()
+            ConsoleHelper.dim(self.console, "RAG not active. Activate with: /rag <collection>")
 
     def _rag_show_status(self):
         """Show current RAG status."""
@@ -153,7 +157,7 @@ class RAGMixin:
             self.console.print(f"[dim]Mode:[/] {self.rag_search_mode}")
         else:
             ConsoleHelper.warning(self.console, "RAG not active")
-            self.console.print("[dim]Activate with: /rag <collection>[/]")
+            ConsoleHelper.dim(self.console, "Activate with: /rag <collection>")
 
     def _rag_activate_collection(self, name: str):
         """Activate a RAG collection for persistent search."""
@@ -161,14 +165,14 @@ class RAGMixin:
 
         if not collection_exists(name):
             ConsoleHelper.error(self.console, f"Collection '{name}' not found")
-            self.console.print(f"[dim]Create with: /rag add {name} <documents>[/]")
+            ConsoleHelper.dim(self.console, f"Create with: /rag add {name} <documents>")
             return
 
         self.active_rag_collection = name
         # Re-render system prompt and notify web companion
         self._update_system_prompt(broadcast_type="rag")
         ConsoleHelper.success(self.console, f"RAG activated: {name}")
-        self.console.print("[dim]Retrieved context will be injected into every prompt[/]")
+        ConsoleHelper.dim(self.console, "Retrieved context will be injected into every prompt")
 
     def _rag_oneshot_search(self, collection: str, query: str):
         """One-shot RAG search without activating persistent mode."""
@@ -214,9 +218,9 @@ class RAGMixin:
                 self.active_rag_collection = collection
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="rag")
-                self.console.print(f"[dim]Collection '{collection}' now active[/]")
+                ConsoleHelper.dim(self.console, f"Collection '{collection}' now active")
             elif result["status"] == "skipped":
-                self.console.print(f"[yellow]⊘[/] Skipped: {result.get('reason', 'already indexed')}")
+                ConsoleHelper.warning(self.console, f"Skipped: {result.get('reason', 'already indexed')}")
             else:
                 ConsoleHelper.error(self.console, f"Error: {result.get('error', 'unknown')}")
 
@@ -250,7 +254,7 @@ class RAGMixin:
         ConsoleHelper.warning(self.console, f"Delete collection '{collection}'? (y/N)")
         confirm = input().strip().lower()
         if confirm != 'y':
-            self.console.print("[dim]Cancelled[/]")
+            ConsoleHelper.dim(self.console, "Cancelled")
             return
 
         try:
@@ -262,7 +266,7 @@ class RAGMixin:
                 self.active_rag_collection = None
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="rag")
-                self.console.print("[dim]RAG deactivated[/]")
+                ConsoleHelper.dim(self.console, "RAG deactivated")
 
         except Exception as e:
             ConsoleHelper.error(self.console, f"Error deleting: {e}")

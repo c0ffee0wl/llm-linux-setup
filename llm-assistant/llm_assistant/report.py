@@ -54,8 +54,8 @@ class ReportMixin:
         subcmd = subcmd.lower()
 
         if not subcmd:
-            self.console.print("[yellow]Usage: /report <note> or /report <subcommand>[/]")
-            self.console.print("[dim]Subcommands: init, list, edit, delete, export, severity, projects, open[/]")
+            ConsoleHelper.warning(self.console, "Usage: /report <note> or /report <subcommand>")
+            ConsoleHelper.dim(self.console, "Subcommands: init, list, edit, delete, export, severity, projects, open")
             return True
 
         # Dispatch subcommands
@@ -85,8 +85,8 @@ class ReportMixin:
 
         if not project_name or not lang_code:
             ConsoleHelper.error(self.console, "Usage: /report init <project-name> <language-code>")
-            self.console.print("[dim]Example: /report init acme-webapp-2025 en[/]")
-            self.console.print("[dim]Language codes: en (English), de (German), es (Spanish), fr (French), ...[/]")
+            ConsoleHelper.dim(self.console, "Example: /report init acme-webapp-2025 en")
+            ConsoleHelper.dim(self.console, "Language codes: en (English), de (German), es (Spanish), fr (French), ...")
             return True
 
         lang_code = lang_code.lower().strip()
@@ -95,7 +95,7 @@ class ReportMixin:
         language_name = validate_language_code(lang_code)
         if not language_name:
             ConsoleHelper.error(self.console, f"Invalid language code: {lang_code}")
-            self.console.print("[dim]Use ISO 639-1 codes: en, de, es, fr, it, nl, pt, ru, ja, ko, zh, etc.[/]")
+            ConsoleHelper.dim(self.console, "Use ISO 639-1 codes: en, de, es, fr, it, nl, pt, ru, ja, ko, zh, etc.")
             return True
 
         # Sanitize project name (alphanumeric, hyphens, underscores)
@@ -132,7 +132,7 @@ language_name: {language_name}
 
         self.findings_project = safe_name
         ConsoleHelper.success(self.console, f"Created project: {project_dir} ({language_name})")
-        self.console.print("[dim]Add findings with: /report \"<quick note>\"[/]")
+        ConsoleHelper.dim(self.console, "Add findings with: /report \"<quick note>\"")
         return True
 
     def _report_add(self, quick_note: str) -> bool:
@@ -159,7 +159,7 @@ language_name: {language_name}
         # Safety check: if parsing returned empty project_meta, file may be corrupted
         if not project_meta:
             ConsoleHelper.error(self.console, "Could not parse project file (missing or invalid YAML frontmatter)")
-            self.console.print(f"[dim]Check file manually: {findings_file}[/]")
+            ConsoleHelper.dim(self.console, f"Check file manually: {findings_file}")
             return True
 
         # Get language from project metadata (default to English for legacy projects)
@@ -523,10 +523,10 @@ Respond with a JSON object containing these fields:
         project_meta, findings = self._parse_findings_file(findings_file)
 
         if not findings:
-            self.console.print(f"[dim]No findings in project: {self.findings_project}[/]")
+            ConsoleHelper.dim(self.console, f"No findings in project: {self.findings_project}")
             return True
 
-        self.console.print(f"[bold]Findings for {self.findings_project}:[/]")
+        ConsoleHelper.bold(self.console, f"Findings for {self.findings_project}:")
         for meta, _ in findings:
             fid = meta.get('id', '?')
             severity = meta.get('severity', 0)
@@ -551,7 +551,7 @@ Respond with a JSON object containing these fields:
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
-        self.console.print(f"[dim]Edit the findings file directly:[/]")
+        ConsoleHelper.dim(self.console, "Edit the findings file directly:")
         self.console.print(f"  {findings_file}")
         return True
 
@@ -663,15 +663,15 @@ Respond with a JSON object containing these fields:
     def _report_projects(self) -> bool:
         """List all finding projects."""
         if not self.findings_base_dir.exists():
-            self.console.print("[dim]No projects found[/]")
+            ConsoleHelper.dim(self.console, "No projects found")
             return True
 
         projects = [d for d in self.findings_base_dir.iterdir() if d.is_dir()]
         if not projects:
-            self.console.print("[dim]No projects found. Use /report init <name> <lang> to create one.[/]")
+            ConsoleHelper.dim(self.console, "No projects found. Use /report init <name> <lang> to create one.")
             return True
 
-        self.console.print("[bold]Finding Projects:[/]")
+        ConsoleHelper.bold(self.console, "Finding Projects:")
         for project_dir in sorted(projects):
             name = project_dir.name
             findings_file = project_dir / "findings.md"
@@ -696,7 +696,7 @@ Respond with a JSON object containing these fields:
 
         if not project_dir.exists():
             ConsoleHelper.error(self.console, f"Project not found: {project_name}")
-            self.console.print("[dim]Use /report projects to list available projects[/]")
+            ConsoleHelper.dim(self.console, "Use /report projects to list available projects")
             return True
 
         self.findings_project = project_name

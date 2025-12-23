@@ -293,7 +293,7 @@ class MCPMixin:
         if server_name not in all_servers:
             ConsoleHelper.error(self.console, f"Unknown server: {server_name}")
             available = ', '.join(sorted(all_servers.keys()))
-            self.console.print(f"[dim]Available: {available}[/]")
+            ConsoleHelper.dim(self.console, f"Available: {available}")
             return
 
         if server_name in self.active_mcp_servers:
@@ -321,14 +321,14 @@ class MCPMixin:
         all_servers = self._get_all_mcp_servers()
 
         if not all_servers:
-            self.console.print("[dim]No MCP servers configured[/]")
+            ConsoleHelper.dim(self.console, "No MCP servers configured")
             return
 
         # Group by optional status
         default_servers = {s for s, opt in all_servers.items() if not opt}
         optional_servers = {s for s, opt in all_servers.items() if opt}
 
-        self.console.print("[bold]MCP Servers:[/]")
+        ConsoleHelper.bold(self.console, "MCP Servers:")
 
         # Show default servers
         if default_servers:
@@ -351,4 +351,4 @@ class MCPMixin:
                     self.console.print(f"    [dim]○[/] {server}")
 
         if not self.active_mcp_servers:
-            self.console.print("[dim]Use /mcp load <server> to enable[/]")
+            ConsoleHelper.dim(self.console, "Use /mcp load <server> to enable")

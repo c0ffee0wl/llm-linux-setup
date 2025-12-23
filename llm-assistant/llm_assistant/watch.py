@@ -18,6 +18,7 @@ from rich.panel import Panel
 
 from .prompt_detection import PromptDetector
 from .templates import render
+from .utils import ConsoleHelper
 from .utils import is_watch_response_dismissive
 
 if TYPE_CHECKING:
@@ -82,7 +83,7 @@ class WatchMixin:
             except asyncio.CancelledError:
                 pass  # Expected when watch mode is disabled
             except Exception as e:
-                self.console.print(f"[red]Watch mode error: {e}[/]")
+                ConsoleHelper.error(self.console, f"Watch mode error: {e}")
             finally:
                 self.watch_task = None
                 self.event_loop.close()
@@ -171,7 +172,7 @@ class WatchMixin:
                             except Exception as response_error:
                                 # Don't update hash on error - will retry next iteration
                                 self.previous_watch_context_hash = None
-                                self.console.print(f"[yellow]Watch mode response error: {response_error}[/]")
+                                ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
 
                 # Only show if AI has actionable feedback - outside lock
                 if not should_skip and response_text and response_text.strip():
@@ -185,6 +186,6 @@ class WatchMixin:
                         self.console.print()
 
             except Exception as e:
-                self.console.print(f"[red]Watch mode error: {e}[/]")
+                ConsoleHelper.error(self.console, f"Watch mode error: {e}")
 
             await asyncio.sleep(self.watch_interval)

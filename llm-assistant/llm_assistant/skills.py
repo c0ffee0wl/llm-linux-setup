@@ -209,7 +209,7 @@ class SkillsMixin:
         """Handle /skill commands. Returns True to continue REPL."""
         if not self._skills_available():
             ConsoleHelper.error(self.console, "Skills not available. Install llm-tools-skills.")
-            self.console.print("[dim]Run: pip install llm-tools-skills[/]")
+            ConsoleHelper.dim(self.console, "Run: pip install llm-tools-skills")
             return True
 
         cmd, rest = parse_command(args)

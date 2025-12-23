@@ -10,6 +10,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
+from .utils import ConsoleHelper
+
 # Voice input (optional - graceful degradation if not installed)
 VOICE_AVAILABLE = False
 VOICE_UNAVAILABLE_REASON = None  # None = available, string = reason unavailable
@@ -126,7 +128,7 @@ class VoiceInput:
             try:
                 import onnx_asr
             except ImportError:
-                self.console.print("[red]onnx-asr not installed. Re-run install-llm-tools.sh[/]")
+                ConsoleHelper.error(self.console, "onnx-asr not installed. Re-run install-llm-tools.sh")
                 return False
             try:
                 # Use shared model path (same as Handy) - must be pre-downloaded by install script
@@ -134,14 +136,14 @@ class VoiceInput:
                 encoder_path = os.path.join(model_path, "encoder-model.int8.onnx")
 
                 if not os.path.isfile(encoder_path):
-                    self.console.print("[red]Speech model not found. Run install-llm-tools.sh to download.[/]")
+                    ConsoleHelper.error(self.console, "Speech model not found. Run install-llm-tools.sh to download.")
                     return False
 
                 # Disable HuggingFace auto-download (model must be pre-installed)
                 os.environ["HF_HUB_OFFLINE"] = "1"
                 self.model = onnx_asr.load_model("nemo-parakeet-tdt-0.6b-v3", model_path, quantization="int8")
             except Exception as e:
-                self.console.print(f"[red]Failed to load speech model: {e}[/]")
+                ConsoleHelper.error(self.console, f"Failed to load speech model: {e}")
                 return False
         return True
 
@@ -153,7 +155,7 @@ class VoiceInput:
     def start(self) -> bool:
         """Start recording audio."""
         if not VOICE_AVAILABLE:
-            self.console.print("[red]Voice input unavailable. Re-run install-llm-tools.sh[/]")
+            ConsoleHelper.error(self.console, "Voice input unavailable. Re-run install-llm-tools.sh")
             return False
 
         if self.recording:
@@ -180,7 +182,7 @@ class VoiceInput:
             self._start_animation(self.RECORDING_FRAMES, "Recording")
             return True
         except Exception as e:
-            self.console.print(f"[red]Failed to start recording: {e}[/]")
+            ConsoleHelper.error(self.console, f"Failed to start recording: {e}")
             if self.stream:
                 try:
                     self.stream.close()
@@ -247,7 +249,7 @@ class VoiceInput:
         except Exception as e:
             self._stop_animation_thread()
             self.status_message = ""
-            self.console.print(f"[red]Transcription failed: {e}[/]")
+            ConsoleHelper.error(self.console, f"Transcription failed: {e}")
             return None
 
         self._stop_animation_thread()

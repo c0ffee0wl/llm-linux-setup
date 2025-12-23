@@ -224,7 +224,24 @@ The system uses **llm-uv-tool** (https://github.com/c0ffee0wl/llm-uv-tool) to ma
 
 The installation script uses **helper functions** to eliminate code duplication and follow KISS principles:
 
-- **`install_apt_package(package_name)`**: Installs apt packages with existence checks (used in Phase 1)
+- **`install_apt_package(package_name, [command_name])`**: Installs apt packages with existence checks (used in Phase 1)
+  - If `command_name` is provided, checks for that command instead of `package_name`
+  - Examples: `install_apt_package git`, `install_apt_package bubblewrap bwrap`, `install_apt_package poppler-utils pdftotext`
+- **`compare_versions(v1, v2)`**: Compare two semantic versions (used throughout)
+  - Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
+  - Example: `compare_versions "1.85.0" "1.80.0"` returns 1
+- **`version_at_least(version, minimum)`**: Check if version >= minimum (convenience wrapper)
+  - Returns: 0 (true) if v1 >= v2, 1 (false) otherwise
+  - Example: `if version_at_least "$rust_ver" "1.85"; then`
+- **`version_less_than(version, target)`**: Check if version < target (convenience wrapper)
+  - Returns: 0 (true) if v1 < v2, 1 (false) otherwise
+  - Example: `if version_less_than "$node_ver" "20"; then`
+- **`ask_yes_no(prompt, default)`**: Interactive yes/no prompt with default (used throughout)
+  - Returns: 0 for yes, 1 for no
+  - Example: `if ask_yes_no "Install Rust?" Y; then` or `if ask_yes_no "Overwrite?" N; then`
+- **`get_llm_config_dir()`**: Get llm config directory path, cached for performance (used in Phase 2-4)
+  - Returns: Path to `~/.config/io.datasette.llm/` (or equivalent)
+  - Example: `TEMPLATES_DIR="$(get_llm_config_dir)/templates"`
 - **`install_or_upgrade_uv_tool(tool_source, [is_git_package])`**: Unified uv tool installation/upgrade with intelligent source detection (used in Phase 2, 6)
   - **Intelligent source detection**: Uses `uv tool list --show-version-specifiers` to check current installation source
   - **Git packages** (is_git_package=true):
@@ -236,9 +253,18 @@ The installation script uses **helper functions** to eliminate code duplication 
   - **Implementation**: Parses uv's output format: `llm v0.27.1 [required:  git+https://github.com/...]` to detect git sources
   - **Why this matters**: uv remembers the original installation source. Without source detection, `uv tool upgrade` checks the original source (PyPI→PyPI, git→git). The intelligent detection only forces reinstall when source switching is needed.
 - **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
+- **`install_or_upgrade_uv()`**: Install or upgrade uv via pipx and configure system Python preference (used in Phase 1)
+- **`install_or_upgrade_rust()`**: Install or upgrade Rust with intelligent version detection (used in Phase 1)
+  - Uses apt if repo version >= 1.85, otherwise falls back to rustup
+  - Prompts user if upgrade needed from old apt version to rustup
+- **`install_or_upgrade_nodejs()`**: Install or upgrade Node.js with intelligent version detection (used in Phase 1)
+  - Uses apt if repo version >= 20, otherwise falls back to nvm (Node 22)
+  - Also ensures npm is installed
+- **`detect_npm_permissions()`**: Detect if npm needs sudo for global installs (used in Phase 1)
+  - Sets `NPM_NEEDS_SUDO` and `NPM_PREFIX` environment variables
 - **`configure_azure_openai()`**: Centralized Azure OpenAI configuration prompts (used in Phase 2)
-- **`install_rust_via_rustup()`**: Installs Rust via official rustup installer with non-interactive flags (used in Phase 1)
-- **`update_rust_via_rustup()`**: Updates Rust via rustup when rustup-managed installation is detected (used in Phase 1)
+- **`install_rust_via_rustup()`**: Low-level helper to install Rust via rustup (called by `install_or_upgrade_rust`)
+- **`update_rust_via_rustup()`**: Low-level helper to update Rust via rustup (called by `install_or_upgrade_rust`)
 - **`update_template_file(template_name)`**: Smart template update with checksum tracking
   - Compares repository version vs installed version using SHA256 checksums
   - Stores checksums in `~/.config/llm-tools/template-checksums`
@@ -761,10 +787,17 @@ The loop handles both PyPI packages and git URLs automatically.
 When adding new functionality to `install-llm-tools.sh`:
 
 1. **Use existing helper functions** where possible:
-   - For apt packages: `install_apt_package package_name`
+   - For apt packages: `install_apt_package package_name [command_name]`
+   - For version comparison: `version_at_least "$ver" "1.85"` or `version_less_than "$ver" "20"`
+   - For Y/n prompts: `if ask_yes_no "Question?" Y; then`
+   - For llm config dir: `$(get_llm_config_dir)/templates`
+   - For uv installation: `install_or_upgrade_uv`
    - For uv tools from PyPI: `install_or_upgrade_uv_tool tool_name`
    - For uv tools from git: `install_or_upgrade_uv_tool "git+https://github.com/user/repo" true`
+   - For Rust installation: `install_or_upgrade_rust`
    - For cargo tools: `install_or_upgrade_cargo_tool tool_name [git_url]`
+   - For Node.js installation: `install_or_upgrade_nodejs`
+   - For npm permission detection: `detect_npm_permissions`
    - For shell RC updates: `update_shell_rc_file rc_file integration_file shell_name`
    - For Azure config: `configure_azure_openai`
    - For template updates: `update_template_file template_name`

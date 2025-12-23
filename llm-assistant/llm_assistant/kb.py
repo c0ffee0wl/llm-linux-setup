@@ -52,7 +52,7 @@ class KnowledgeBaseMixin:
             if not kb_path.exists():
                 if not silent:
                     ConsoleHelper.error(self.console, f"KB not found: {name}")
-                    self.console.print(f"[dim]Looking in: {kb_dir}[/]")
+                    ConsoleHelper.dim(self.console, f"Looking in: {kb_dir}")
                 return False
 
         try:

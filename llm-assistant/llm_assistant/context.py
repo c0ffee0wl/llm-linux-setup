@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Optional
 
 import llm
 
-from .utils import get_config_dir
+from .utils import get_config_dir, ConsoleHelper
 from .templates import render
 
 if TYPE_CHECKING:
@@ -165,7 +165,7 @@ class ContextMixin:
                     tokens = (total_chars // 4) + self._tool_token_overhead
 
         except Exception as e:
-            self.console.print(f"[yellow]Warning: Token estimation failed: {e}[/]")
+            ConsoleHelper.warning(self.console, f"Token estimation failed: {e}")
             # Ultimate fallback
             tokens = len(self.system_prompt) // 4 + len(self.conversation.responses) * 500
             source = "estimated"
@@ -177,7 +177,7 @@ class ContextMixin:
         current_tokens = self.estimate_tokens()
 
         if current_tokens >= self.max_context_size * self.context_squash_threshold:
-            self.console.print("[yellow]Context approaching limit, auto-squashing...[/]")
+            ConsoleHelper.warning(self.console, "Context approaching limit, auto-squashing...")
 
             # Record pre-squash tokens
             pre_squash_tokens = current_tokens
@@ -219,7 +219,7 @@ class ContextMixin:
             keep: Optional instruction for what to preserve (e.g., 'API patterns')
         """
         if len(self.conversation.responses) <= 5:  # Keep at least 5 recent exchanges
-            self.console.print("[yellow]Too few messages to squash[/]")
+            ConsoleHelper.warning(self.console, "Too few messages to squash")
             return
 
         try:
@@ -281,13 +281,13 @@ class ContextMixin:
             # Clear rewind undo buffer (new conversation = no undo)
             self.rewind_undo_buffer = None
 
-            self.console.print(f"[green]✓[/] Context squashed")
-            self.console.print(f"[cyan]New session: {new_conversation_id}[/]")
-            self.console.print(f"[dim](Previous: {old_conversation_id})[/]")
-            self.console.print(f"[cyan]Summary will be included with your next message[/]")
+            ConsoleHelper.success(self.console, "Context squashed")
+            ConsoleHelper.info(self.console, f"New session: {new_conversation_id}")
+            ConsoleHelper.dim(self.console, f"(Previous: {old_conversation_id})")
+            ConsoleHelper.info(self.console, "Summary will be included with your next message")
 
         except Exception as e:
-            self.console.print(f"[red]Error squashing context: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error squashing context: {e}")
 
     def _strip_context(self, prompt_text):
         """Remove <terminal_context> and <conversation_summary> sections from prompt.

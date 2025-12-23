@@ -11,6 +11,7 @@ import time
 from typing import TYPE_CHECKING, Optional, Set, Dict, List
 
 from .templates import render
+from .utils import ConsoleHelper
 
 # Web companion (optional - graceful degradation if not installed)
 try:
@@ -75,11 +76,11 @@ class WebMixin:
     def _start_web_server(self):
         """Start the web companion server in a background thread."""
         if not WEB_AVAILABLE:
-            self.console.print("[red]Web companion not available. Install: llm install fastapi uvicorn[/]")
+            ConsoleHelper.error(self.console, "Web companion not available. Install: llm install fastapi uvicorn")
             return False
 
         if self.web_server_thread and self.web_server_thread.is_alive():
-            self.console.print(f"[yellow]Web server already running at http://localhost:{self.web_port}[/]")
+            ConsoleHelper.warning(self.console, f"Web server already running at http://localhost:{self.web_port}")
             return True
 
         # Create FastAPI app
@@ -205,9 +206,9 @@ class WebMixin:
             self.web_server_thread = None
             self.web_event_loop = None
             self.web_clients.clear()
-            self.console.print("[green]✓[/] Web server stopped")
+            ConsoleHelper.success(self.console, "Web server stopped")
         else:
-            self.console.print("[yellow]Web server is not running[/]")
+            ConsoleHelper.warning(self.console, "Web server is not running")
 
     def _broadcast_to_web(self, message: dict):
         """Broadcast a message to all connected web clients.
