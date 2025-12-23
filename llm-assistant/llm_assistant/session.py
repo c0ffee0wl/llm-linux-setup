@@ -81,6 +81,7 @@ from .utils import (
 )
 from .templates import render
 from .kb import KnowledgeBaseMixin
+from .memory import MemoryMixin
 from .rag import RAGMixin
 from .skills import SkillsMixin
 from .report import ReportMixin
@@ -117,7 +118,7 @@ except ImportError:
 
 
 
-class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
+class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
     """Main assistant session manager for Terminator"""
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: Optional[int] = None,
@@ -199,6 +200,13 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         # Store original system prompt for context squashing
         # This prevents infinite growth when squashing multiple times
         self.original_system_prompt = self.system_prompt
+
+        # Memory system (AGENTS.md)
+        self._global_memory = ""
+        self._global_memory_path = None
+        self._local_memory = ""
+        self._local_memory_path = None
+        self._load_memories()
 
         # Terminal tracking
         self.chat_terminal_uuid = None
@@ -813,12 +821,17 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         )
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt with KB content appended.
+        """Build system prompt with memory and KB content appended.
 
         The base system prompt is rendered by Jinja2 at init/mode change.
-        This method just appends KB content for the current request.
+        This method appends memory and KB content for the current request.
         """
         prompt = self.system_prompt
+
+        # Append memory content (AGENTS.md) - before KB
+        memory_content = self._get_memory_content()
+        if memory_content:
+            prompt = f"{prompt}\n# Persistent Memory\n\n{memory_content}"
 
         # Append KB content if any loaded
         kb_content = self._get_loaded_kb_content()
@@ -2131,6 +2144,9 @@ Screenshot size: {file_size} bytes"""
             # Re-capture terminal content and show preview
             ConsoleHelper.info(self.console, "Refreshing terminal context...")
 
+            # Reload memories (in case AGENTS.md changed externally)
+            self._load_memories()
+
             # Clear plugin cache
             try:
                 self.plugin_dbus.clear_cache()
@@ -2251,6 +2267,13 @@ Screenshot size: {file_size} bytes"""
             else:
                 system_status = "System prompt: NOT LOADED"
             watch_goal_line = f"\nWatch goal: {self.watch_goal}" if self.watch_mode else ""
+            # Memory status
+            memory_parts = []
+            if self._global_memory:
+                memory_parts.append("global")
+            if self._local_memory:
+                memory_parts.append("local")
+            memory_status = ", ".join(memory_parts) if memory_parts else "none"
             # Mode display
             mode_display = f"[green]{self.mode}[/]" if self.mode == "assistant" else f"[cyan]{self.mode}[/]"
             # Active tools display
@@ -2266,6 +2289,7 @@ Screenshot size: {file_size} bytes"""
 {system_status}
 Mode: {mode_display}
 {tools_info}
+Memory: {memory_status}
 Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%) [{token_source}]
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
@@ -2357,6 +2381,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/kb":
             return self._handle_kb_command(args)
+
+        elif cmd == "/memory":
+            return self._handle_memory_command(args)
 
         elif cmd == "/auto":
             # Auto mode: LLM-judged autonomous command execution
@@ -3240,6 +3267,13 @@ Type !fragment <name> [...] to insert fragments""",
                     ConsoleHelper.warning(self.console, "Exiting...")
                     self._shutdown()
                     break
+
+                # Handle memory command (# prefix) - not shebang (#!)
+                if user_input.startswith('#') and not user_input.startswith('#!'):
+                    rest = user_input[1:].strip()
+                    if rest:
+                        self._handle_hash_command(rest)
+                        continue
 
                 # Handle slash commands
                 if user_input.startswith('/'):

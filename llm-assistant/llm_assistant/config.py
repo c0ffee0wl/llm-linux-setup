@@ -26,6 +26,7 @@ SLASH_COMMANDS = {
     "/squash": {"subcommands": [], "dynamic": None, "description": "Compress context"},
     "/rewind": {"subcommands": ["undo"], "dynamic": None, "description": "Rewind to previous turn"},
     "/kb": {"subcommands": ["load", "unload", "reload"], "dynamic": "kb", "description": "Knowledge base control"},
+    "/memory": {"subcommands": ["list", "reload", "global", "local"], "dynamic": None, "description": "View/manage AGENTS.md memory"},
     "/auto": {"subcommands": ["full", "off", "status"], "dynamic": None, "description": "Auto mode control"},
     "/voice": {"subcommands": ["auto", "off", "status"], "dynamic": None, "description": "Voice input control"},
     "/speech": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "TTS output control"},

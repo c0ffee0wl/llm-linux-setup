@@ -116,6 +116,12 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/kb load <name>` - Load a knowledge base into session (comma-separated for multiple)
 - `/kb unload <name>` - Remove a knowledge base from session (comma-separated for multiple)
 - `/kb reload` - Reload all loaded knowledge bases
+- `/memory` - Show loaded AGENTS.md content
+- `/memory reload` - Reload AGENTS.md files from disk
+- `/memory global` - Show only global memory
+- `/memory local` - Show only project memory
+- `# <note>` - Add note to local AGENTS.md (## Notes section)
+- `# global <note>` - Add note to global AGENTS.md
 - `/mcp` - List MCP servers and their status
 - `/mcp load <server>` - Load MCP server (enable its tools)
 - `/mcp unload <server>` - Unload MCP server (disable its tools)
@@ -216,6 +222,58 @@ knowledge_base:
 ```
 
 Loaded KBs are injected after the system prompt, providing persistent context without consuming conversation history.
+
+## Memory System (AGENTS.md)
+
+The assistant supports AGENTS.md-style persistent memory for storing project context and notes:
+
+**Locations**:
+- **Global**: `~/.config/llm-assistant/AGENTS.md` - user-wide preferences
+- **Local**: `./AGENTS.md` in current working directory - project-specific context
+
+**Features**:
+- Both global and local memory are merged and injected into system prompt
+- Case-insensitive file matching (accepts `AGENTS.md`, `agents.md`, `Agents.md`)
+- Timestamped notes via `#` command
+
+**Usage**:
+```bash
+# Quick note (saves to local AGENTS.md in current directory)
+# remember to use pytest for this project
+
+# Global note (saves to ~/.config/llm-assistant/AGENTS.md)
+# global always use vim for editing
+
+# View loaded memory
+/memory
+
+# View only global or local
+/memory global
+/memory local
+
+# Reload after external changes
+/memory reload
+```
+
+**File Format** (standard Markdown with sections):
+```markdown
+## Preferences
+
+- Prefer concise responses
+- Use vim for editing
+
+## Project
+
+This is a Flask web application.
+API endpoints are in routes/api.py.
+
+## Notes
+
+- 2025-12-23 14:30: Use pytest for testing
+- 2025-12-23 15:00: Database connection string in .env
+```
+
+**Automatic Loading**: Memory is loaded at startup and on `/refresh`. Notes written via `#` command are appended to the `## Notes` section with timestamp.
 
 ## MCP Server Management
 
@@ -494,6 +552,8 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - `~/.config/llm-assistant/skills/` - Custom skills
 - `~/.config/llm-assistant/findings/` - Pentest findings
 - `~/.config/llm-assistant/assistant-config.yaml` - Configuration file
+- `~/.config/llm-assistant/AGENTS.md` - Global memory file
+- `./AGENTS.md` - Project-specific memory file (in current working directory)
 
 ## Troubleshooting
 
