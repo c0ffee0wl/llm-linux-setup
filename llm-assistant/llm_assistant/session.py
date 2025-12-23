@@ -279,8 +279,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
         self._load_auto_kbs()  # Load from config on startup
 
-        # Skills auto-load from config (skills.auto_load)
-        self._auto_load_skills_from_config()
+        # Skills auto-load (all skills in skills directory)
+        self._auto_load_all_skills()
 
         # RAG system (llm-tools-rag integration)
         # Note: self.active_rag_collection initialized earlier (before _render_system_prompt)
@@ -2492,15 +2492,35 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             return True
 
         elif cmd == "/capture":
-            # Parse: /capture [mode] [prompt...]
-            parts = command.split(maxsplit=2)
+            # Parse: /capture [mode] [delay] [prompt...]
+            # delay can be a number (0-30) or "-" for default
+            parts = command.split(maxsplit=3)
             mode = "window"
+            delay = None  # None means use default
             prompt = None
+
+            def parse_delay(val: str) -> int | None:
+                """Parse delay value, return None for default, or validated int."""
+                if val == "-":
+                    return None
+                try:
+                    d = int(val)
+                    return max(0, min(30, d))  # Clamp to 0-30 seconds
+                except ValueError:
+                    return None  # Not a valid number
 
             if len(parts) >= 2:
                 if parts[1] in ("window", "region", "full", "rdp", "annotate"):
                     mode = parts[1]
-                    prompt = parts[2] if len(parts) > 2 else None
+                    # Check for delay parameter
+                    if len(parts) >= 3:
+                        parsed = parse_delay(parts[2])
+                        if parsed is not None or parts[2] == "-":
+                            delay = parsed
+                            prompt = parts[3] if len(parts) > 3 else None
+                        else:
+                            # Not a delay, treat as prompt
+                            prompt = " ".join(parts[2:])
                 else:
                     # No mode specified, rest is prompt
                     prompt = " ".join(parts[1:])
@@ -2509,8 +2529,9 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             try:
                 from llm_tools_capture_screen import capture_screen
 
-                # Show countdown for interactive modes
-                delay = 5 if mode in ("window", "region", "annotate") else 0
+                # Use default delay for interactive modes if not specified
+                if delay is None:
+                    delay = 5 if mode in ("window", "region", "annotate") else 0
                 if delay > 0:
                     with Status(f"Capturing ({mode}): {delay}s", console=self.console) as status:
                         for i in range(delay, 0, -1):

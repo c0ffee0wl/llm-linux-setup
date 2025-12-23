@@ -28,7 +28,6 @@ class SkillsMixin:
     - system_prompt: str for system prompt
     - _render_system_prompt: method to re-render system prompt
     - _broadcast_skill_status: method to broadcast status
-    - _load_config: method to load config
     """
 
     # Type hints for attributes provided by main class
@@ -50,42 +49,23 @@ class SkillsMixin:
         """Get default skills directory."""
         return get_config_dir() / "skills"
 
-    def _get_skills_paths(self) -> List[Path]:
-        """Get list of skill paths from config and default directory."""
-        paths = []
-
-        # Paths from config (skills.paths)
-        config = self._load_config()
-        config_paths = config.get("skills", {}).get("paths", [])
-        for p in config_paths:
-            path = Path(p).expanduser()
-            if path.exists():
-                paths.append(path)
-
-        # Default skills directory
-        default_dir = self._get_skills_dir()
-        if default_dir.exists() and default_dir not in paths:
-            paths.append(default_dir)
-
-        return paths
-
-    def _auto_load_skills_from_config(self):
-        """Load skills listed in config.yaml auto_load."""
+    def _auto_load_all_skills(self):
+        """Auto-load all available skills at startup."""
         if not self._skills_available():
             return
 
-        config = self._load_config()
-        auto_load = config.get("skills", {}).get("auto_load", [])
-        for name in auto_load:
+        available = self._discover_available_skills()
+        for name in available:
             self._load_skill(name, silent=True)
 
     def _discover_available_skills(self) -> Dict[str, Tuple[Path, Any]]:
-        """Discover all available skills from configured paths."""
+        """Discover all available skills from the skills directory."""
         from llm_tools_skills import discover_skills, read_properties
 
         result = {}
-        for skills_path in self._get_skills_paths():
-            discovered = discover_skills(skills_path)
+        skills_dir = self._get_skills_dir()
+        if skills_dir.exists():
+            discovered = discover_skills(skills_dir)
             for name, path in discovered.items():
                 try:
                     props = read_properties(path)

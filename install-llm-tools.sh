@@ -119,13 +119,26 @@ install_apt_package() {
 }
 
 # Install or upgrade a uv tool with intelligent source detection
-# Usage: install_or_upgrade_uv_tool tool_name_or_source [is_git_package]
+# Usage: install_or_upgrade_uv_tool tool_name_or_source [python_version]
 # Examples:
-#   install_or_upgrade_uv_tool gitingest                                    # PyPI package
-#   install_or_upgrade_uv_tool "git+https://github.com/user/repo" true     # Git package
+#   install_or_upgrade_uv_tool gitingest                             # PyPI package
+#   install_or_upgrade_uv_tool "git+https://github.com/user/repo"    # Git package (auto-detected)
+#   install_or_upgrade_uv_tool toko 3.14                             # With specific Python version
 install_or_upgrade_uv_tool() {
     local tool_source="$1"
-    local is_git_package="${2:-false}"  # Default to false (PyPI package)
+    local python_version="${2:-}"  # Optional Python version
+
+    # Auto-detect git package from URL prefix
+    local is_git_package=false
+    if [[ "$tool_source" =~ ^git\+ ]]; then
+        is_git_package=true
+    fi
+
+    # Build python flag if specified
+    local python_flag=""
+    if [ -n "$python_version" ]; then
+        python_flag="--python $python_version"
+    fi
 
     # Extract tool name from source (handles both PyPI names and git URLs)
     # Example: "git+https://github.com/c0ffee0wl/llm" -> "llm"
@@ -152,7 +165,7 @@ install_or_upgrade_uv_tool() {
             if [ -n "$current_git_url" ] && [ "$current_git_url" = "$new_git_url" ]; then
                 # Already from the same git source - just check for updates
                 log "$tool_name is already from git source, checking for updates..."
-                uv tool upgrade "$tool_name"
+                uv tool upgrade $python_flag "$tool_name"
             else
                 # Different source (PyPI or different git repo) - force reinstall to migrate
                 if [ -n "$current_git_url" ]; then
@@ -164,17 +177,17 @@ install_or_upgrade_uv_tool() {
                     log "Migrating $tool_name from PyPI to git source..."
                     log "  Git: $new_git_url"
                 fi
-                uv tool install --force "$tool_source"
+                uv tool install --force $python_flag "$tool_source"
             fi
         else
             # PyPI package - just upgrade
             log "$tool_name is already installed, upgrading..."
-            uv tool upgrade "$tool_name"
+            uv tool upgrade $python_flag "$tool_name"
         fi
     else
         # Not installed - install it
         log "Installing $tool_name..."
-        uv tool install "$tool_source"
+        uv tool install $python_flag "$tool_source"
     fi
 }
 
@@ -2296,6 +2309,10 @@ install_or_upgrade_uv_tool gitingest
 # Install/update tldr (community-driven man pages with practical examples)
 install_or_upgrade_uv_tool tldr
 
+# Install/update toko (LLM token counter with cost estimation)
+# Requires Python 3.14 - installs with isolated Python environment
+install_or_upgrade_uv_tool toko 3.14
+
 # Install transcribe script (uses onnx-asr from llm environment)
 log "Installing transcribe script..."
 if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
@@ -2309,7 +2326,7 @@ else
 fi
 
 # Install/update files-to-prompt (from fork)
-install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt" true
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt"
 
 # Install/update argc (prerequisite for llm-functions if users want to install it)
 install_or_upgrade_cargo_tool argc
