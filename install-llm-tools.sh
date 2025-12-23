@@ -190,7 +190,7 @@ configure_codex_cli() {
     log "Configuring Codex CLI with Azure OpenAI..."
 
     # Extract api_base from extra-openai-models.yaml
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
 
     if [ -z "$api_base" ]; then
@@ -230,7 +230,7 @@ export_azure_env_vars() {
     log "Exporting Azure environment variables to ~/.profile..."
 
     # Extract api_base and resource name
-    local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
+    local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
     local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
 
     if [ -z "$api_base" ]; then
@@ -367,7 +367,7 @@ EOF
 
         # Extract Azure API base
         local azure_api_base=""
-        local EXTRA_MODELS_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/extra-openai-models.yaml"
+        local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
         if [ -f "$EXTRA_MODELS_FILE" ]; then
             azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
         fi
@@ -533,8 +533,7 @@ EOF
             log "Local modifications detected in config.json"
         fi
         echo ""
-        read -p "Update Claude Code Router config.json? This will overwrite your version. (y/N): " UPDATE_CCR
-        if [[ "$UPDATE_CCR" =~ ^[Yy]$ ]]; then
+        if ask_yes_no "Update Claude Code Router config.json? This will overwrite your version." N; then
             # Backup existing config
             cp "$config_file" "$config_file.backup-$(date +%Y%m%d-%H%M%S)"
             log "Backed up existing config to $config_file.backup-$(date +%Y%m%d-%H%M%S)"
@@ -552,7 +551,7 @@ EOF
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
-    local DEFAULT_MODEL_FILE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/default_model.txt"
+    local DEFAULT_MODEL_FILE="$(get_llm_config_dir)/default_model.txt"
 
     if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
         log "Setting default model to ${new_default}..."
@@ -621,8 +620,7 @@ update_template_file() {
             log "Local modifications detected"
         fi
         echo ""
-        read -p "Update ${template_name}.yaml template? This will overwrite your version. (y/N): " UPDATE_TEMPLATE
-        if [[ "$UPDATE_TEMPLATE" =~ ^[Yy]$ ]]; then
+        if ask_yes_no "Update ${template_name}.yaml template? This will overwrite your version." N; then
             cp "$source_file" "$dest_file"
             store_checksum "$template_name" "$dest_file"
             log "${template_name}.yaml template updated to $dest_file"
@@ -990,7 +988,7 @@ install_or_upgrade_llm_plugin pymupdf_layout
 export PATH=$HOME/.local/bin:$PATH
 
 # Define the extra models file path early so we can check/preserve existing config
-LLM_CONFIG_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+LLM_CONFIG_DIR="$(get_llm_config_dir)"
 if [ -z "$LLM_CONFIG_DIR" ] || [ ! -d "$LLM_CONFIG_DIR" ]; then
     error "Failed to get llm configuration directory. Is llm installed correctly?"
 fi
@@ -1148,8 +1146,7 @@ update_mcp_config() {
             log "Local modifications detected"
         fi
         echo ""
-        read -p "Update MCP configuration? This will overwrite your version. (Y/n): " UPDATE_MCP
-        if [[ ! "$UPDATE_MCP" =~ ^[Nn]$ ]]; then
+        if ask_yes_no "Update MCP configuration? This will overwrite your version." Y; then
             echo "$expected_config" > "$MCP_CONFIG_FILE"
             store_checksum "mcp-config" "$MCP_CONFIG_FILE"
             log "MCP configuration updated to $MCP_CONFIG_FILE"
@@ -1183,10 +1180,7 @@ elif [ "$IS_FIRST_RUN" = "true" ]; then
     # First run - ask if user wants to configure Azure OpenAI
     log "Azure OpenAI Configuration"
     echo ""
-    read -p "Do you want to configure Azure OpenAI? (Y/n): " CONFIG_AZURE
-    CONFIG_AZURE=${CONFIG_AZURE:-Y}
-
-    if [[ "$CONFIG_AZURE" =~ ^[Yy]$ ]]; then
+    if ask_yes_no "Do you want to configure Azure OpenAI?" Y; then
         configure_azure_openai
     else
         log "Skipping Azure OpenAI configuration"
@@ -1304,10 +1298,7 @@ elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
     # First run AND Azure was declined - ask if user wants to configure Gemini
     log "Google Gemini Configuration"
     echo ""
-    read -p "Do you want to configure Google Gemini? (y/N): " CONFIG_GEMINI
-    CONFIG_GEMINI=${CONFIG_GEMINI:-N}
-
-    if [[ "$CONFIG_GEMINI" =~ ^[Yy]$ ]]; then
+    if ask_yes_no "Do you want to configure Google Gemini?" N; then
         configure_gemini
     else
         log "Skipping Google Gemini configuration"
@@ -1328,10 +1319,7 @@ elif [ "$AZURE_CONFIGURED" = "true" ]; then
         echo "  - llm chat-google-search (or -o google_search 1)"
         echo "  - imagemage (Gemini 'Nano Banana' Pro image generation CLI)"
         echo ""
-        read -p "Would you like to configure Gemini as a secondary provider? (y/N): " CONFIG_GEMINI_SECONDARY
-        CONFIG_GEMINI_SECONDARY=${CONFIG_GEMINI_SECONDARY:-N}
-
-        if [[ "$CONFIG_GEMINI_SECONDARY" =~ ^[Yy]$ ]]; then
+        if ask_yes_no "Would you like to configure Gemini as a secondary provider?" N; then
             configure_gemini
             # Note: AZURE_CONFIGURED stays true - Gemini is secondary, not replacement
         else
@@ -1371,7 +1359,7 @@ fi
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)/templates"
+TEMPLATES_DIR="$(get_llm_config_dir)/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
@@ -1434,16 +1422,13 @@ prompt_for_session_log_silent() {
     # Only prompt if not already set
     if [ -z "$SESSION_LOG_SILENT_VALUE" ]; then
         echo ""
-        read -p "Suppress session log messages at shell startup? (y/N): " silent_choice
-        echo ""
-
-        if [ "$silent_choice" = "y" ] || [ "$silent_choice" = "Y" ]; then
+        if ask_yes_no "Suppress session log messages at shell startup?" N; then
             SESSION_LOG_SILENT_VALUE="1"
         else
             SESSION_LOG_SILENT_VALUE="0"
             echo "You can enable this later by setting SESSION_LOG_SILENT=1 in your .bashrc/.zshrc"
-            echo ""
         fi
+        echo ""
     fi
 }
 

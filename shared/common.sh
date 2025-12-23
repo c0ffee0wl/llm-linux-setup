@@ -53,6 +53,84 @@ warn() {
 }
 
 #############################################################################
+# Version Comparison
+#############################################################################
+
+# Compare two semantic versions
+# Returns: 0 if equal, 1 if v1 > v2, 2 if v1 < v2
+# Usage: compare_versions "1.85.0" "1.80.0"
+compare_versions() {
+    [[ $# -lt 2 ]] && return 2
+    [[ "$1" == "$2" ]] && return 0
+
+    local IFS=.
+    local i v1=($1) v2=($2)
+
+    # Compare each component
+    for ((i=0; i<${#v1[@]} || i<${#v2[@]}; i++)); do
+        local n1=${v1[i]:-0}
+        local n2=${v2[i]:-0}
+        ((n1 > n2)) && return 1
+        ((n1 < n2)) && return 2
+    done
+    return 0
+}
+
+# Check if version is at least minimum required
+# Returns: 0 (true) if v1 >= v2, 1 (false) otherwise
+# Usage: if version_at_least "$current" "1.85"; then
+version_at_least() {
+    compare_versions "$1" "$2"
+    [[ $? -le 1 ]]
+}
+
+# Check if version is less than target
+# Returns: 0 (true) if v1 < v2, 1 (false) otherwise
+# Usage: if version_less_than "$current" "1.85"; then
+version_less_than() {
+    compare_versions "$1" "$2"
+    [[ $? -eq 2 ]]
+}
+
+#############################################################################
+# Interactive Prompts
+#############################################################################
+
+# Prompt for yes/no confirmation with default
+# Returns: 0 for yes, 1 for no
+# Usage: if ask_yes_no "Install Rust?" Y; then
+#        if ask_yes_no "Overwrite?" N; then
+ask_yes_no() {
+    local prompt="$1"
+    local default="${2:-Y}"
+    local hint response
+
+    if [[ "$default" =~ ^[Yy] ]]; then
+        hint="(Y/n)"
+    else
+        hint="(y/N)"
+    fi
+
+    read -p "$prompt $hint: " response
+    response=${response:-$default}
+    [[ "$response" =~ ^[Yy] ]]
+}
+
+#############################################################################
+# LLM Configuration
+#############################################################################
+
+# Get llm config directory (cached for performance)
+# Usage: config_dir=$(get_llm_config_dir)
+_LLM_CONFIG_DIR_CACHE=""
+get_llm_config_dir() {
+    if [ -z "$_LLM_CONFIG_DIR_CACHE" ]; then
+        _LLM_CONFIG_DIR_CACHE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+    fi
+    echo "$_LLM_CONFIG_DIR_CACHE"
+}
+
+#############################################################################
 # Checksum Functions
 #############################################################################
 
@@ -505,7 +583,7 @@ install_or_upgrade_uv() {
 #############################################################################
 
 # Minimum Rust version required (1.85 for edition2024 cargo tools)
-MINIMUM_RUST_VERSION=185
+MINIMUM_RUST_VERSION="1.85"
 
 # Install or upgrade Rust with intelligent version detection
 # Uses apt if repo version >= 1.85, otherwise falls back to rustup
@@ -520,10 +598,7 @@ install_or_upgrade_rust() {
         warn "Could not determine repository Rust version"
     fi
 
-    # Convert version to comparable number (e.g., "1.85" -> 185)
-    local repo_rust_version_num=$(echo "$repo_rust_version" | awk -F. '{print ($1 * 100) + $2}')
-
-    log "Repository has Rust version: $repo_rust_version (numeric: $repo_rust_version_num, minimum required: $MINIMUM_RUST_VERSION)"
+    log "Repository has Rust version: $repo_rust_version (minimum required: $MINIMUM_RUST_VERSION)"
 
     # Install Rust - either from repo (if >= 1.85) or via rustup (if < 1.85)
     if ! command -v cargo &> /dev/null; then
@@ -532,11 +607,11 @@ install_or_upgrade_rust() {
             log "rustup is installed but cargo not found, installing Rust via rustup..."
             rustup toolchain install stable
             rustup default stable
-        elif [ "$repo_rust_version_num" -ge "$MINIMUM_RUST_VERSION" ]; then
+        elif version_at_least "$repo_rust_version" "$MINIMUM_RUST_VERSION"; then
             log "Installing Rust from repositories (version $repo_rust_version)..."
             sudo apt-get install -y cargo rustc
         else
-            log "Repository version $repo_rust_version is < 1.85, installing Rust via rustup..."
+            log "Repository version $repo_rust_version is < $MINIMUM_RUST_VERSION, installing Rust via rustup..."
             install_rust_via_rustup
         fi
     else
@@ -549,18 +624,12 @@ install_or_upgrade_rust() {
             update_rust_via_rustup
         else
             local current_rust_version=$(rustc --version | grep -oP 'rustc \K[0-9]+\.[0-9]+' | head -1)
-            local current_rust_version_num=$(echo "$current_rust_version" | awk -F. '{print ($1 * 100) + $2}')
-
             log "Rust is already installed from system packages (version $current_rust_version)"
 
             # If current version is < 1.85, offer to upgrade via rustup
-            if [ "$current_rust_version_num" -lt "$MINIMUM_RUST_VERSION" ]; then
-                warn "Installed Rust version $current_rust_version is too old (requires 1.85+)"
-                echo ""
-                read -p "Install Rust 1.85+ via rustup? This will shadow the system installation. (Y/n): " upgrade_rust
-                upgrade_rust=${upgrade_rust:-Y}
-
-                if [[ "$upgrade_rust" =~ ^[Yy]$ ]]; then
+            if version_less_than "$current_rust_version" "$MINIMUM_RUST_VERSION"; then
+                warn "Installed Rust version $current_rust_version is too old (requires $MINIMUM_RUST_VERSION+)"
+                if ask_yes_no "Install Rust $MINIMUM_RUST_VERSION+ via rustup? This will shadow the system installation." Y; then
                     install_rust_via_rustup
                     log "Rust upgraded successfully. rustup version will take precedence over system version."
                 else
@@ -577,7 +646,7 @@ install_or_upgrade_rust() {
 #############################################################################
 
 # Minimum Node.js version required (20 for Claude Code)
-MINIMUM_NODE_VERSION=20
+MINIMUM_NODE_VERSION="20"
 
 # Install or upgrade Node.js with intelligent version detection
 # Uses apt if repo version >= 20, otherwise falls back to nvm (Node 22)
@@ -588,15 +657,15 @@ install_or_upgrade_nodejs() {
     local repo_node_version=$(apt-cache policy nodejs 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+' | head -1)
 
     if [ -z "$repo_node_version" ]; then
-        repo_node_version=0
+        repo_node_version="0"
         warn "Could not determine repository Node.js version"
     fi
 
-    log "Repository has Node.js version: $repo_node_version"
+    log "Repository has Node.js version: $repo_node_version (minimum required: $MINIMUM_NODE_VERSION)"
 
     # Install Node.js - either from repo (if >= 20) or via nvm (if < 20)
     if ! command -v node &> /dev/null; then
-        if [ "$repo_node_version" -ge "$MINIMUM_NODE_VERSION" ]; then
+        if version_at_least "$repo_node_version" "$MINIMUM_NODE_VERSION"; then
             log "Installing Node.js from repositories (version $repo_node_version)..."
             sudo apt-get install -y nodejs
 
@@ -606,7 +675,7 @@ install_or_upgrade_nodejs() {
                 sudo apt-get install -y npm
             fi
         else
-            log "Repository version $repo_node_version is < 20, installing Node 22 via nvm..."
+            log "Repository version $repo_node_version is < $MINIMUM_NODE_VERSION, installing Node 22 via nvm..."
 
             # Install nvm
             if [ ! -d "$HOME/.nvm" ]; then
@@ -633,8 +702,8 @@ install_or_upgrade_nodejs() {
         log "Node.js is already installed (version $current_node_version)"
 
         # If current version is < 20, warn user
-        if [ "$current_node_version" -lt "$MINIMUM_NODE_VERSION" ]; then
-            warn "Installed Node.js version $current_node_version is < 20. Consider upgrading to Node 22 via nvm."
+        if version_less_than "$current_node_version" "$MINIMUM_NODE_VERSION"; then
+            warn "Installed Node.js version $current_node_version is < $MINIMUM_NODE_VERSION. Consider upgrading to Node 22 via nvm."
             warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
             warn "Then: nvm install 22 && nvm use 22 && nvm alias default 22"
         fi
@@ -766,7 +835,7 @@ install_go() {
     # Check if already installed with sufficient version
     if command -v go &> /dev/null; then
         local current_version=$(go version | grep -oP 'go\K[0-9]+\.[0-9]+' || true)
-        if [ "$(printf '%s\n' "$MIN_GO_VERSION" "$current_version" | sort -V | head -n1)" = "$MIN_GO_VERSION" ]; then
+        if version_at_least "$current_version" "$MIN_GO_VERSION"; then
             log "Go $current_version is already installed (>= $MIN_GO_VERSION)"
             return 0
         else
@@ -777,7 +846,7 @@ install_go() {
 
     # Check apt repository version
     local repo_version=$(apt-cache policy golang-go 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+\.[0-9]+' | head -1)
-    if [ -n "$repo_version" ] && [ "$(printf '%s\n' "$MIN_GO_VERSION" "$repo_version" | sort -V | head -n1)" = "$MIN_GO_VERSION" ]; then
+    if [ -n "$repo_version" ] && version_at_least "$repo_version" "$MIN_GO_VERSION"; then
         log "Installing Go $repo_version from apt..."
         sudo apt-get install -y golang-go
         return 0
