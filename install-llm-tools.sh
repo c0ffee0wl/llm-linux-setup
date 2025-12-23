@@ -90,6 +90,16 @@ fi
 # Helper Functions
 #############################################################################
 
+# Get llm config directory (cached for performance)
+# Usage: config_dir=$(get_llm_config_dir)
+_LLM_CONFIG_DIR_CACHE=""
+get_llm_config_dir() {
+    if [ -z "$_LLM_CONFIG_DIR_CACHE" ]; then
+        _LLM_CONFIG_DIR_CACHE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+    fi
+    echo "$_LLM_CONFIG_DIR_CACHE"
+}
+
 # Update shell RC file with integration
 update_shell_rc_file() {
     local rc_file="$1"

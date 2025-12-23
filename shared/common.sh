@@ -16,8 +16,8 @@
 #
 
 # Source guard - prevent double-sourcing
-[[ -n "${_LLM_COMMON_SOURCED:-}" ]] && return
-_LLM_COMMON_SOURCED=1
+[[ -n "${_SETUP_COMMON_SOURCED:-}" ]] && return
+_SETUP_COMMON_SOURCED=1
 
 #############################################################################
 # Colors
@@ -33,6 +33,11 @@ NC='\033[0m' # No Color
 #############################################################################
 
 LLM_TOOLS_CONFIG_DIR="${LLM_TOOLS_CONFIG_DIR:-$HOME/.config/llm-tools}"
+
+# Global mode flags for non-interactive script execution
+# Set these in your script before sourcing common.sh or calling ask_yes_no()
+YES_MODE=${YES_MODE:-false}
+NO_MODE=${NO_MODE:-false}
 
 #############################################################################
 # Logging Functions
@@ -97,6 +102,7 @@ version_less_than() {
 #############################################################################
 
 # Prompt for yes/no confirmation with default
+# Respects YES_MODE and NO_MODE global flags for non-interactive execution
 # Returns: 0 for yes, 1 for no
 # Usage: if ask_yes_no "Install Rust?" Y; then
 #        if ask_yes_no "Overwrite?" N; then
@@ -104,6 +110,18 @@ ask_yes_no() {
     local prompt="$1"
     local default="${2:-Y}"
     local hint response
+
+    # In yes mode, automatically answer yes
+    if [[ "$YES_MODE" == "true" ]]; then
+        log "Yes mode: Auto-answering 'Yes' to: $prompt"
+        return 0
+    fi
+
+    # In no mode, automatically answer no
+    if [[ "$NO_MODE" == "true" ]]; then
+        log "No mode: Auto-answering 'No' to: $prompt"
+        return 1
+    fi
 
     if [[ "$default" =~ ^[Yy] ]]; then
         hint="(Y/n)"
@@ -114,20 +132,6 @@ ask_yes_no() {
     read -p "$prompt $hint: " response
     response=${response:-$default}
     [[ "$response" =~ ^[Yy] ]]
-}
-
-#############################################################################
-# LLM Configuration
-#############################################################################
-
-# Get llm config directory (cached for performance)
-# Usage: config_dir=$(get_llm_config_dir)
-_LLM_CONFIG_DIR_CACHE=""
-get_llm_config_dir() {
-    if [ -z "$_LLM_CONFIG_DIR_CACHE" ]; then
-        _LLM_CONFIG_DIR_CACHE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
-    fi
-    echo "$_LLM_CONFIG_DIR_CACHE"
 }
 
 #############################################################################
@@ -166,6 +170,65 @@ store_checksum() {
 
     # Add new entry
     echo "${template_name}:${checksum}" >> "$checksum_file"
+}
+
+#############################################################################
+# Distribution Detection
+#############################################################################
+
+# Check if running on Kali Linux
+is_kali_linux() {
+    grep -q "Kali" /etc/os-release 2>/dev/null
+}
+
+# Check if running on Ubuntu or Ubuntu-based distribution
+is_ubuntu() {
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        [ "$ID" = "ubuntu" ] || [ "$ID_LIKE" = "ubuntu" ] || echo "$ID_LIKE" | grep -q "ubuntu"
+    else
+        return 1
+    fi
+}
+
+# Check if a desktop environment is available
+# Detects xsessions, wayland-sessions, display managers, or common DE packages
+has_desktop_environment() {
+    # Check for desktop session files (most reliable)
+    if [ -d /usr/share/xsessions ] && [ -n "$(ls -A /usr/share/xsessions 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    if [ -d /usr/share/wayland-sessions ] && [ -n "$(ls -A /usr/share/wayland-sessions 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    # Check for display manager configuration
+    if [ -f /etc/X11/default-display-manager ] && [ -s /etc/X11/default-display-manager ]; then
+        return 0
+    fi
+
+    # Check for common DE packages (Kali uses XFCE)
+    if dpkg -l 2>/dev/null | grep -qE '^ii\s+(xfce4|gnome-shell|kde-plasma-desktop|plasma-desktop|lxde-core)' || false; then
+        return 0
+    fi
+
+    return 1
+}
+
+#############################################################################
+# File Management
+#############################################################################
+
+# Create a timestamped backup of a file
+# Usage: backup_file /path/to/file
+backup_file() {
+    local file_path="$1"
+    if [ -f "$file_path" ]; then
+        local backup_path="${file_path}.backup.$(date +'%Y-%m-%d_%H-%M-%S')"
+        cp "$file_path" "$backup_path"
+        log "Backed up to: $backup_path"
+    fi
 }
 
 #############################################################################
@@ -854,6 +917,22 @@ install_go() {
         warn "Go >= $MIN_GO_VERSION not available from apt (found: ${repo_version:-none})"
         warn "imagemage will be skipped. Install Go manually if needed."
         return 1
+    fi
+}
+
+# Install a Go tool via go install
+# Usage: install_go_tool <tool-name> <go-package-path>
+# Example: install_go_tool "lazygit" "github.com/jesseduffield/lazygit@latest"
+install_go_tool() {
+    local tool_name="$1"
+    local package_path="$2"
+
+    log "Installing ${tool_name}..."
+    if ! command -v "$tool_name" &> /dev/null; then
+        export PATH=$HOME/go/bin:$PATH
+        go install -v "$package_path"
+    else
+        log "${tool_name} is already installed"
     fi
 }
 
