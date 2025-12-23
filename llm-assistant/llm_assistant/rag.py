@@ -25,8 +25,7 @@ class RAGMixin:
     - rag_top_k: int for number of results
     - rag_search_mode: str for search mode (hybrid, vector, keyword)
     - system_prompt: str for system prompt
-    - _render_system_prompt: method to re-render system prompt
-    - _broadcast_rag_status: method to broadcast status
+    - _update_system_prompt: method to re-render and broadcast
     - _debug: method for debug output
     """
 
@@ -61,9 +60,8 @@ class RAGMixin:
         elif parts[0] == "off":
             self.active_rag_collection = None
             self.pending_rag_context = None
-            # Re-render system prompt to remove RAG guidance
-            self.system_prompt = self._render_system_prompt()
-            self._broadcast_rag_status()
+            # Re-render system prompt and notify web companion
+            self._update_system_prompt(broadcast_type="rag")
             self.console.print("[green]✓[/] RAG deactivated")
         elif parts[0] == "status":
             self._rag_show_status()
@@ -173,9 +171,8 @@ class RAGMixin:
             return
 
         self.active_rag_collection = name
-        # Re-render system prompt to include RAG guidance
-        self.system_prompt = self._render_system_prompt()
-        self._broadcast_rag_status()
+        # Re-render system prompt and notify web companion
+        self._update_system_prompt(broadcast_type="rag")
         self.console.print(f"[green]✓[/] RAG activated: {name}")
         self.console.print("[dim]Retrieved context will be injected into every prompt[/]")
 
@@ -221,9 +218,8 @@ class RAGMixin:
                 self.console.print(f"[green]✓[/] Added {result.get('chunks', '?')} chunks")
                 # Auto-activate the collection
                 self.active_rag_collection = collection
-                # Re-render system prompt to include RAG guidance
-                self.system_prompt = self._render_system_prompt()
-                self._broadcast_rag_status()
+                # Re-render system prompt and notify web companion
+                self._update_system_prompt(broadcast_type="rag")
                 self.console.print(f"[dim]Collection '{collection}' now active[/]")
             elif result["status"] == "skipped":
                 self.console.print(f"[yellow]⊘[/] Skipped: {result.get('reason', 'already indexed')}")
@@ -270,9 +266,8 @@ class RAGMixin:
             # Deactivate if was active
             if self.active_rag_collection == collection:
                 self.active_rag_collection = None
-                # Re-render system prompt to remove RAG guidance
-                self.system_prompt = self._render_system_prompt()
-                self._broadcast_rag_status()
+                # Re-render system prompt and notify web companion
+                self._update_system_prompt(broadcast_type="rag")
                 self.console.print("[dim]RAG deactivated[/]")
 
         except Exception as e:

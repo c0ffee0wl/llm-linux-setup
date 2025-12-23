@@ -2025,7 +2025,7 @@ Screenshot size: {file_size} bytes"""
                                 pass  # Loop already closed
 
                 # Re-render system prompt (ensures watch mode state is correct)
-                self.system_prompt = self._render_system_prompt()
+                self._update_system_prompt()
                 self.original_system_prompt = self.system_prompt
 
                 # Clear plugin cache
@@ -2292,7 +2292,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         self.previous_watch_context_hash = None
                         self.previous_watch_iteration_count = 0
                         # Re-render system prompt without watch mode context
-                        self.system_prompt = self._render_system_prompt()
+                        self._update_system_prompt()
                         if self.watch_task and not self.watch_task.done():
                             # Cancel the task gracefully (interrupts asyncio.sleep)
                             try:
@@ -2303,7 +2303,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     if self.watch_thread and self.watch_thread.is_alive():
                         self.watch_thread.join(timeout=2.0)
                     self.console.print("[yellow]Watch mode disabled[/]")
-                    self._broadcast_watch_status()
+                    self._broadcast_status("watch")
                 else:
                     self.console.print("[yellow]Watch mode is already off[/]")
             elif args.lower() == "status":
@@ -2339,12 +2339,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     self.previous_watch_context_hash = None
                     self.previous_watch_iteration_count = 0
                     # Re-render system prompt with watch mode context
-                    self.system_prompt = self._render_system_prompt()
+                    self._update_system_prompt()
                     self._start_watch_mode_thread()
                 self.console.print(f"[green]✓[/] Watch mode enabled")
                 self.console.print(f"Goal: {self.watch_goal}")
                 self.console.print(f"Monitoring all terminals every {self.watch_interval}s...")
-                self._broadcast_watch_status()
+                self._broadcast_status("watch")
             return True
 
         elif cmd == "/squash":
@@ -2460,17 +2460,11 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[dim]Already in assistant mode[/]")
             else:
                 self.mode = "assistant"
-                # Re-render system prompt for new mode (Jinja2 includes mode-specific content)
-                self.system_prompt = self._render_system_prompt()
+                # Re-render system prompt and notify web companion
+                self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
                 self.console.print("[bold green]Switched to assistant mode[/] - conservative (10 tool iterations)")
                 self.console.print("[dim]/agent for agentic mode (100 iterations)[/]")
-                # Notify web companion of mode change
-                self._broadcast_to_web({
-                    "type": "session_info",
-                    "model": self.model_name,
-                    "mode": self.mode
-                })
             return True
 
         elif cmd == "/agent":
@@ -2478,17 +2472,11 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print("[dim]Already in agent mode[/]")
             else:
                 self.mode = "agent"
-                # Re-render system prompt for new mode (Jinja2 includes mode-specific content)
-                self.system_prompt = self._render_system_prompt()
+                # Re-render system prompt and notify web companion
+                self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
                 self.console.print("[bold green]Switched to agent mode[/] - agentic (100 tool iterations)")
                 self.console.print("[dim]/assistant for conservative mode (10 iterations)[/]")
-                # Notify web companion of mode change
-                self._broadcast_to_web({
-                    "type": "session_info",
-                    "model": self.model_name,
-                    "mode": self.mode
-                })
             return True
 
         elif cmd == "/capture":

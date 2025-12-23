@@ -26,8 +26,7 @@ class SkillsMixin:
     - _skill_invoke_tool: Optional[Tool]
     - _skill_load_file_tool: Optional[Tool]
     - system_prompt: str for system prompt
-    - _render_system_prompt: method to re-render system prompt
-    - _broadcast_skill_status: method to broadcast status
+    - _update_system_prompt: method to re-render and broadcast
     """
 
     # Type hints for attributes provided by main class
@@ -112,10 +111,8 @@ class SkillsMixin:
         path, props = available[name]
         self.loaded_skills[name] = (path, props)
         self._rebuild_skill_tools()
-        # Re-render system prompt to include new skill in <available_skills>
-        self.system_prompt = self._render_system_prompt()
-        # Update web companion
-        self._broadcast_skill_status()
+        # Re-render system prompt and notify web companion
+        self._update_system_prompt(broadcast_type="skill")
 
         if not silent:
             self.console.print(f"[green]✓[/] Loaded skill: {name}")
@@ -129,10 +126,8 @@ class SkillsMixin:
 
         del self.loaded_skills[name]
         self._rebuild_skill_tools()
-        # Re-render system prompt to remove skill from <available_skills>
-        self.system_prompt = self._render_system_prompt()
-        # Update web companion
-        self._broadcast_skill_status()
+        # Re-render system prompt and notify web companion
+        self._update_system_prompt(broadcast_type="skill")
         self.console.print(f"[green]✓[/] Unloaded skill: {name}")
         return True
 
@@ -194,14 +189,6 @@ class SkillsMixin:
             return f"Error: File '{file}' not found in skill '{skill}'"
 
         return file_path.read_text()
-
-    def _broadcast_skill_status(self):
-        """Broadcast current skill status to web clients."""
-        self._broadcast_to_web({
-            "type": "skill_status",
-            "loaded": list(self.loaded_skills.keys()),
-            "system_prompt": self._build_system_prompt()
-        })
 
     def _list_skills(self):
         """List available and loaded skills."""

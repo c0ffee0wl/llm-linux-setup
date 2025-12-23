@@ -238,24 +238,6 @@ class WebMixin:
             # Event loop closed or not running
             pass
 
-    def _broadcast_watch_status(self):
-        """Broadcast current watch mode status to web clients."""
-        self._broadcast_to_web({
-            "type": "watch_status",
-            "active": self.watch_mode,
-            "goal": self.watch_goal if self.watch_mode else None,
-            "system_prompt": self._build_system_prompt()
-        })
-
-    def _broadcast_rag_status(self):
-        """Broadcast current RAG status to web clients."""
-        self._broadcast_to_web({
-            "type": "rag_status",
-            "active": bool(self.active_rag_collection),
-            "collection": self.active_rag_collection,
-            "system_prompt": self._build_system_prompt()
-        })
-
     def _broadcast_token_update(self):
         """Broadcast current token usage to web clients."""
         current_tokens = self.estimate_tokens()
@@ -277,6 +259,48 @@ class WebMixin:
             "result": result,
             "status": status
         })
+
+    def _broadcast_status(self, status_type: str):
+        """Unified status broadcast to web clients.
+
+        Centralizes the pattern of broadcasting status updates with system prompt.
+
+        Args:
+            status_type: One of "watch", "rag", "skill", or "session"
+        """
+        if status_type == "session":
+            message = {
+                "type": "session_info",
+                "model": self.model_name,
+                "mode": self.mode
+            }
+        else:
+            message = {
+                "type": f"{status_type}_status",
+                "system_prompt": self._build_system_prompt()
+            }
+            if status_type == "watch":
+                message.update(active=self.watch_mode, goal=self.watch_goal if self.watch_mode else None)
+            elif status_type == "rag":
+                message.update(active=bool(self.active_rag_collection), collection=self.active_rag_collection)
+            elif status_type == "skill":
+                message["loaded"] = list(self.loaded_skills.keys())
+
+        self._broadcast_to_web(message)
+
+    def _update_system_prompt(self, broadcast_type: Optional[str] = None):
+        """Re-render system prompt and optionally broadcast status.
+
+        Centralizes the common pattern:
+            self.system_prompt = self._render_system_prompt()
+            self._broadcast_*_status()
+
+        Args:
+            broadcast_type: Type of broadcast ("watch", "rag", "skill", "session", or None)
+        """
+        self.system_prompt = self._render_system_prompt()
+        if broadcast_type:
+            self._broadcast_status(broadcast_type)
 
     def _get_debug_info(self) -> dict:
         """Return debug information for the web companion."""

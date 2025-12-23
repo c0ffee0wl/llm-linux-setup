@@ -260,7 +260,7 @@ class ContextMixin:
             # Re-render system prompt to preserve current watch mode state
             # Store summary for next user message (keeps system prompt clean)
             self.pending_summary = summary
-            self.system_prompt = self._render_system_prompt()
+            self._update_system_prompt()
 
             # Save old conversation ID before creating new one
             old_conversation_id = self.conversation.id
