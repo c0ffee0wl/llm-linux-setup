@@ -10,6 +10,7 @@ This module provides RAG functionality via llm-tools-rag:
 from typing import TYPE_CHECKING, Optional
 
 from .ui import Spinner
+from .utils import check_import, parse_command, parse_comma_list, ConsoleHelper
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -39,81 +40,74 @@ class RAGMixin:
 
     def _rag_available(self) -> bool:
         """Check if llm-tools-rag is installed."""
-        try:
-            import llm_tools_rag
-            return True
-        except ImportError:
-            return False
+        return check_import("llm_tools_rag")
 
     def _handle_rag_command(self, args: str) -> bool:
         """Handle /rag commands. Returns True to continue REPL."""
         if not self._rag_available():
-            self.console.print("[red]RAG not available. Install llm-tools-rag.[/]")
+            ConsoleHelper.error(self.console, "RAG not available. Install llm-tools-rag.")
             self.console.print("[dim]Run install-llm-tools.sh or: llm install git+https://github.com/c0ffee0wl/llm-tools-rag[/]")
             return True
 
-        parts = args.strip().split(maxsplit=1)
+        cmd, rest = parse_command(args)
 
-        if not parts or parts[0] == "":
+        if cmd == "":
             # /rag - list collections and show active
             self._rag_list_collections()
-        elif parts[0] == "off":
+        elif cmd == "off":
             self.active_rag_collection = None
             self.pending_rag_context = None
             # Re-render system prompt and notify web companion
             self._update_system_prompt(broadcast_type="rag")
-            self.console.print("[green]✓[/] RAG deactivated")
-        elif parts[0] == "status":
+            ConsoleHelper.success(self.console, "RAG deactivated")
+        elif cmd == "status":
             self._rag_show_status()
-        elif parts[0] == "search":
+        elif cmd == "search":
             # /rag search <collection> <query>
-            search_args = parts[1] if len(parts) > 1 else ""
-            search_parts = search_args.split(maxsplit=1)
-            if len(search_parts) == 2:
-                self._rag_oneshot_search(search_parts[0], search_parts[1])
+            search_cmd, search_query = parse_command(rest)
+            if search_cmd and search_query:
+                self._rag_oneshot_search(search_cmd, search_query)
             else:
-                self.console.print("[red]Usage: /rag search <collection> <query>[/]")
-        elif parts[0] == "top-k":
+                ConsoleHelper.error(self.console, "Usage: /rag search <collection> <query>")
+        elif cmd == "top-k":
             # /rag top-k <n>
             try:
-                self.rag_top_k = int(parts[1]) if len(parts) > 1 else 5
-                self.console.print(f"[green]✓[/] RAG top-k set to {self.rag_top_k}")
+                self.rag_top_k = int(rest) if rest else 5
+                ConsoleHelper.success(self.console, f"RAG top-k set to {self.rag_top_k}")
             except ValueError:
-                self.console.print("[red]Invalid top-k value[/]")
-        elif parts[0] == "mode":
+                ConsoleHelper.error(self.console, "Invalid top-k value")
+        elif cmd == "mode":
             # /rag mode <hybrid|vector|keyword>
-            mode = parts[1].strip() if len(parts) > 1 else ""
+            mode = rest.strip() if rest else ""
             if mode in ("hybrid", "vector", "keyword"):
                 self.rag_search_mode = mode
-                self.console.print(f"[green]✓[/] RAG mode set to {mode}")
+                ConsoleHelper.success(self.console, f"RAG mode set to {mode}")
             else:
-                self.console.print("[red]Invalid mode. Use: hybrid, vector, keyword[/]")
-        elif parts[0] == "add":
+                ConsoleHelper.error(self.console, "Invalid mode. Use: hybrid, vector, keyword")
+        elif cmd == "add":
             # /rag add <collection> <path>
-            add_args = parts[1] if len(parts) > 1 else ""
-            add_parts = add_args.split(maxsplit=1)
-            if len(add_parts) == 2:
-                self._rag_add_documents(add_parts[0], add_parts[1])
+            add_cmd, add_path = parse_command(rest)
+            if add_cmd and add_path:
+                self._rag_add_documents(add_cmd, add_path)
             else:
-                self.console.print("[red]Usage: /rag add <collection> <path|git:url|glob>[/]")
-        elif parts[0] == "rebuild":
+                ConsoleHelper.error(self.console, "Usage: /rag add <collection> <path|git:url|glob>")
+        elif cmd == "rebuild":
             # /rag rebuild <collection>
-            collection = parts[1].strip() if len(parts) > 1 else ""
+            collection = rest.strip() if rest else ""
             if collection:
                 self._rag_rebuild_collection(collection)
             else:
-                self.console.print("[red]Usage: /rag rebuild <collection>[/]")
-        elif parts[0] == "delete":
+                ConsoleHelper.error(self.console, "Usage: /rag rebuild <collection>")
+        elif cmd == "delete":
             # /rag delete <collection>
-            collection = parts[1].strip() if len(parts) > 1 else ""
+            collection = rest.strip() if rest else ""
             if collection:
                 self._rag_delete_collection(collection)
             else:
-                self.console.print("[red]Usage: /rag delete <collection>[/]")
+                ConsoleHelper.error(self.console, "Usage: /rag delete <collection>")
         else:
             # Assume it's a collection name for activation: /rag <collection>
-            collection = parts[0]
-            self._rag_activate_collection(collection)
+            self._rag_activate_collection(cmd)
 
         return True
 
@@ -158,7 +152,7 @@ class RAGMixin:
             self.console.print(f"[dim]Top-k:[/] {self.rag_top_k}")
             self.console.print(f"[dim]Mode:[/] {self.rag_search_mode}")
         else:
-            self.console.print("[yellow]RAG not active[/]")
+            ConsoleHelper.warning(self.console, "RAG not active")
             self.console.print("[dim]Activate with: /rag <collection>[/]")
 
     def _rag_activate_collection(self, name: str):
@@ -166,14 +160,14 @@ class RAGMixin:
         from llm_tools_rag import collection_exists
 
         if not collection_exists(name):
-            self.console.print(f"[red]Collection '{name}' not found[/]")
+            ConsoleHelper.error(self.console, f"Collection '{name}' not found")
             self.console.print(f"[dim]Create with: /rag add {name} <documents>[/]")
             return
 
         self.active_rag_collection = name
         # Re-render system prompt and notify web companion
         self._update_system_prompt(broadcast_type="rag")
-        self.console.print(f"[green]✓[/] RAG activated: {name}")
+        ConsoleHelper.success(self.console, f"RAG activated: {name}")
         self.console.print("[dim]Retrieved context will be injected into every prompt[/]")
 
     def _rag_oneshot_search(self, collection: str, query: str):
@@ -181,19 +175,19 @@ class RAGMixin:
         from llm_tools_rag import collection_exists, search_collection
 
         if not collection_exists(collection):
-            self.console.print(f"[red]Collection '{collection}' not found[/]")
+            ConsoleHelper.error(self.console, f"Collection '{collection}' not found")
             return
 
         with Spinner(f"Searching {collection}...", self.console):
             results = search_collection(collection, query, self.rag_top_k, self.rag_search_mode)
 
         if not results:
-            self.console.print("[yellow]No results found[/]")
+            ConsoleHelper.warning(self.console, "No results found")
             return
 
         # Store for next prompt injection (one-shot mode)
         self.pending_rag_context = self._format_rag_results(results)
-        self.console.print(f"[green]✓[/] Found {len(results)} results. Context will be injected into next prompt.")
+        ConsoleHelper.success(self.console, f"Found {len(results)} results. Context will be injected into next prompt.")
 
         # Show preview
         for i, chunk in enumerate(results[:3], 1):
@@ -208,14 +202,14 @@ class RAGMixin:
         is_new = not collection_exists(collection)
         action = "Creating" if is_new else "Adding to"
 
-        self.console.print(f"[cyan]{action} collection '{collection}'...[/]")
+        ConsoleHelper.info(self.console, f"{action} collection '{collection}'...")
 
         try:
             with Spinner(f"Processing {path}...", self.console):
                 result = add_to_collection(collection, path)
 
             if result["status"] == "success":
-                self.console.print(f"[green]✓[/] Added {result.get('chunks', '?')} chunks")
+                ConsoleHelper.success(self.console, f"Added {result.get('chunks', '?')} chunks")
                 # Auto-activate the collection
                 self.active_rag_collection = collection
                 # Re-render system prompt and notify web companion
@@ -224,36 +218,36 @@ class RAGMixin:
             elif result["status"] == "skipped":
                 self.console.print(f"[yellow]⊘[/] Skipped: {result.get('reason', 'already indexed')}")
             else:
-                self.console.print(f"[red]✗[/] Error: {result.get('error', 'unknown')}")
+                ConsoleHelper.error(self.console, f"Error: {result.get('error', 'unknown')}")
 
         except Exception as e:
-            self.console.print(f"[red]Error: {e}[/]")
+            ConsoleHelper.error(self.console, str(e))
 
     def _rag_rebuild_collection(self, collection: str):
         """Rebuild a RAG collection's index."""
         from llm_tools_rag import collection_exists, rebuild_collection_index
 
         if not collection_exists(collection):
-            self.console.print(f"[red]Collection '{collection}' not found[/]")
+            ConsoleHelper.error(self.console, f"Collection '{collection}' not found")
             return
 
         try:
             with Spinner(f"Rebuilding {collection}...", self.console):
                 rebuild_collection_index(collection)
-            self.console.print(f"[green]✓[/] Rebuilt index for '{collection}'")
+            ConsoleHelper.success(self.console, f"Rebuilt index for '{collection}'")
         except Exception as e:
-            self.console.print(f"[red]Error rebuilding: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error rebuilding: {e}")
 
     def _rag_delete_collection(self, collection: str):
         """Delete a RAG collection."""
         from llm_tools_rag import collection_exists, remove_collection
 
         if not collection_exists(collection):
-            self.console.print(f"[red]Collection '{collection}' not found[/]")
+            ConsoleHelper.error(self.console, f"Collection '{collection}' not found")
             return
 
         # Confirm deletion
-        self.console.print(f"[yellow]Delete collection '{collection}'? (y/N)[/]")
+        ConsoleHelper.warning(self.console, f"Delete collection '{collection}'? (y/N)")
         confirm = input().strip().lower()
         if confirm != 'y':
             self.console.print("[dim]Cancelled[/]")
@@ -261,7 +255,7 @@ class RAGMixin:
 
         try:
             remove_collection(collection)
-            self.console.print(f"[green]✓[/] Deleted collection '{collection}'")
+            ConsoleHelper.success(self.console, f"Deleted collection '{collection}'")
 
             # Deactivate if was active
             if self.active_rag_collection == collection:
@@ -271,7 +265,7 @@ class RAGMixin:
                 self.console.print("[dim]RAG deactivated[/]")
 
         except Exception as e:
-            self.console.print(f"[red]Error deleting: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error deleting: {e}")
 
     def _retrieve_rag_context(self, query: str) -> str:
         """Retrieve and format RAG context for query."""

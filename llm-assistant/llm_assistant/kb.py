@@ -9,7 +9,7 @@ This module provides knowledge base functionality:
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from .utils import get_config_dir
+from .utils import get_config_dir, parse_command, parse_comma_list, ConsoleHelper, render_grouped_list
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -51,7 +51,7 @@ class KnowledgeBaseMixin:
             kb_path = kb_dir / name
             if not kb_path.exists():
                 if not silent:
-                    self.console.print(f"[red]KB not found: {name}[/]")
+                    ConsoleHelper.error(self.console, f"KB not found: {name}")
                     self.console.print(f"[dim]Looking in: {kb_dir}[/]")
                 return False
 
@@ -59,20 +59,20 @@ class KnowledgeBaseMixin:
             content = kb_path.read_text()
             self.loaded_kbs[name] = content
             if not silent:
-                self.console.print(f"[green]✓[/] Loaded KB: {name} ({len(content)} chars)")
+                ConsoleHelper.success(self.console, f"Loaded KB: {name} ({len(content)} chars)")
             return True
         except Exception as e:
             if not silent:
-                self.console.print(f"[red]Failed to load {name}: {e}[/]")
+                ConsoleHelper.error(self.console, f"Failed to load {name}: {e}")
             return False
 
     def _unload_kb(self, name: str) -> bool:
         """Unload a KB from session."""
         if name in self.loaded_kbs:
             del self.loaded_kbs[name]
-            self.console.print(f"[green]✓[/] Unloaded KB: {name}")
+            ConsoleHelper.success(self.console, f"Unloaded KB: {name}")
             return True
-        self.console.print(f"[yellow]KB not loaded: {name}[/]")
+        ConsoleHelper.warning(self.console, f"KB not loaded: {name}")
         return False
 
     def _get_loaded_kb_content(self) -> str:
@@ -86,53 +86,48 @@ class KnowledgeBaseMixin:
 
     def _handle_kb_command(self, args: str) -> bool:
         """Handle /kb commands. Returns True to continue REPL."""
-        parts = args.strip().split(maxsplit=1)
+        cmd, rest = parse_command(args)
 
-        if not parts or parts[0] == "":
-            # /kb - list KBs
+        if cmd == "" or cmd == "list":
+            # /kb or /kb list - list KBs
             self._list_kbs()
-        elif parts[0] == "load" and len(parts) > 1:
+        elif cmd == "load" and rest:
             # /kb load <name> or /kb load name1,name2,name3
-            names = [n.strip() for n in parts[1].split(",") if n.strip()]
-            for name in names:
+            for name in parse_comma_list(rest):
                 self._load_kb(name)
-        elif parts[0] == "unload" and len(parts) > 1:
+        elif cmd == "unload" and rest:
             # /kb unload <name> or /kb unload name1,name2,name3
-            names = [n.strip() for n in parts[1].split(",") if n.strip()]
-            for name in names:
+            for name in parse_comma_list(rest):
                 self._unload_kb(name)
-        elif parts[0] == "reload":
+        elif cmd == "reload":
             # /kb reload - reload all loaded KBs
             names = list(self.loaded_kbs.keys())
             if names:
                 for name in names:
                     self._load_kb(name)
             else:
-                self.console.print("[yellow]No KBs loaded to reload[/]")
+                ConsoleHelper.warning(self.console, "No KBs loaded to reload")
         else:
-            self.console.print("[yellow]Usage: /kb [load|unload|reload] [name][/]")
+            ConsoleHelper.warning(self.console, "Usage: /kb [load|unload|reload|list] [name]")
 
         return True
 
     def _list_kbs(self):
         """List available and loaded KBs."""
         kb_dir = self._get_kb_dir()
-        available = sorted([f.stem for f in kb_dir.glob("*.md")])
+        # Build available dict: {name: None} for consistency with render_grouped_list
+        available = {f.stem: None for f in kb_dir.glob("*.md")}
 
-        self.console.print("\n[bold]Knowledge Bases[/]")
+        def format_kb(name, content):
+            if content is not None:
+                return f"{name} ({len(content)} chars)"
+            return name
 
-        if self.loaded_kbs:
-            self.console.print("\n[green]Loaded:[/]")
-            for name in sorted(self.loaded_kbs.keys()):
-                chars = len(self.loaded_kbs[name])
-                self.console.print(f"  • {name} ({chars} chars)")
-
-        unloaded = [n for n in available if n not in self.loaded_kbs]
-        if unloaded:
-            self.console.print("\n[dim]Available:[/]")
-            for name in unloaded:
-                self.console.print(f"  • {name}")
-
-        if not available and not self.loaded_kbs:
-            self.console.print(f"\n[dim]No KBs found in {kb_dir}[/]")
-            self.console.print("[dim]Create markdown files to use as knowledge bases.[/]")
+        render_grouped_list(
+            self.console,
+            "Knowledge Bases",
+            self.loaded_kbs,
+            available,
+            format_kb,
+            f"No KBs found in {kb_dir}\nCreate markdown files to use as knowledge bases."
+        )

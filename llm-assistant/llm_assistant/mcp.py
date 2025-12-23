@@ -19,6 +19,7 @@ from .config import (
     OPTIONAL_TOOL_PLUGINS,
     GEMINI_ONLY_TOOL_NAMES,
 )
+from .utils import ConsoleHelper
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -290,30 +291,30 @@ class MCPMixin:
         """Load an MCP server (optional or previously unloaded default)."""
         all_servers = self._get_all_mcp_servers()
         if server_name not in all_servers:
-            self.console.print(f"[red]Unknown server: {server_name}[/]")
+            ConsoleHelper.error(self.console, f"Unknown server: {server_name}")
             available = ', '.join(sorted(all_servers.keys()))
             self.console.print(f"[dim]Available: {available}[/]")
             return
 
         if server_name in self.active_mcp_servers:
-            self.console.print(f"[yellow]{server_name} already loaded[/]")
+            ConsoleHelper.warning(self.console, f"{server_name} already loaded")
             return
 
         self.active_mcp_servers.add(server_name)
         tool_count = self._count_tools_for_server(server_name)
-        self.console.print(f"[green]✓[/] {server_name} loaded ({tool_count} tools)")
+        ConsoleHelper.success(self.console, f"{server_name} loaded ({tool_count} tools)")
 
     def _handle_mcp_unload(self, server_name: str):
         """Unload any MCP server (default or optional)."""
         if server_name in self.active_mcp_servers:
             self.active_mcp_servers.discard(server_name)
-            self.console.print(f"[green]✓[/] {server_name} unloaded")
+            ConsoleHelper.success(self.console, f"{server_name} unloaded")
         else:
             all_servers = self._get_all_mcp_servers()
             if server_name in all_servers:
-                self.console.print(f"[yellow]{server_name} not loaded[/]")
+                ConsoleHelper.warning(self.console, f"{server_name} not loaded")
             else:
-                self.console.print(f"[red]Unknown server: {server_name}[/]")
+                ConsoleHelper.error(self.console, f"Unknown server: {server_name}")
 
     def _handle_mcp_status(self):
         """Show MCP server status (all servers, grouped by type)."""

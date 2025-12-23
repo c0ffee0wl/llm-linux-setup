@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Dict, List, Optional, Tuple, Any
 
 from llm import Tool
 
-from .utils import get_config_dir
+from .utils import get_config_dir, check_import, parse_command, parse_comma_list, ConsoleHelper, render_grouped_list
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -38,11 +38,7 @@ class SkillsMixin:
 
     def _skills_available(self) -> bool:
         """Check if llm-tools-skills is installed."""
-        try:
-            import llm_tools_skills
-            return True
-        except ImportError:
-            return False
+        return check_import("llm_tools_skills")
 
     def _get_skills_dir(self) -> Path:
         """Get default skills directory."""
@@ -105,7 +101,7 @@ class SkillsMixin:
         available = self._discover_available_skills()
         if name not in available:
             if not silent:
-                self.console.print(f"[red]Skill not found: {name}[/]")
+                ConsoleHelper.error(self.console, f"Skill not found: {name}")
             return False
 
         path, props = available[name]
@@ -115,20 +111,20 @@ class SkillsMixin:
         self._update_system_prompt(broadcast_type="skill")
 
         if not silent:
-            self.console.print(f"[green]✓[/] Loaded skill: {name}")
+            ConsoleHelper.success(self.console, f"Loaded skill: {name}")
         return True
 
     def _unload_skill(self, name: str) -> bool:
         """Unload a skill."""
         if name not in self.loaded_skills:
-            self.console.print(f"[yellow]Skill not loaded: {name}[/]")
+            ConsoleHelper.warning(self.console, f"Skill not loaded: {name}")
             return False
 
         del self.loaded_skills[name]
         self._rebuild_skill_tools()
         # Re-render system prompt and notify web companion
         self._update_system_prompt(broadcast_type="skill")
-        self.console.print(f"[green]✓[/] Unloaded skill: {name}")
+        ConsoleHelper.success(self.console, f"Unloaded skill: {name}")
         return True
 
     def _rebuild_skill_tools(self):
@@ -193,61 +189,52 @@ class SkillsMixin:
     def _list_skills(self):
         """List available and loaded skills."""
         available = self._discover_available_skills()
+        skills_dir = self._get_skills_dir()
 
-        self.console.print("\n[bold]Skills[/]")
+        def format_skill(name, data):
+            path, props = data
+            desc = props.description[:50] + "..." if len(props.description) > 50 else props.description
+            return f"{name}: {desc}"
 
-        if self.loaded_skills:
-            self.console.print("\n[green]Loaded:[/]")
-            for name in sorted(self.loaded_skills.keys()):
-                path, props = self.loaded_skills[name]
-                desc = props.description[:50] + "..." if len(props.description) > 50 else props.description
-                self.console.print(f"  • {name}: {desc}")
-
-        unloaded = [n for n in available.keys() if n not in self.loaded_skills]
-        if unloaded:
-            self.console.print("\n[dim]Available:[/]")
-            for name in sorted(unloaded):
-                path, props = available[name]
-                desc = props.description[:50] + "..." if len(props.description) > 50 else props.description
-                self.console.print(f"  • {name}: {desc}")
-
-        if not available and not self.loaded_skills:
-            skills_dir = self._get_skills_dir()
-            self.console.print(f"\n[dim]No skills found in {skills_dir}[/]")
-            self.console.print("[dim]Create skill directories with SKILL.md files.[/]")
+        render_grouped_list(
+            self.console,
+            "Skills",
+            self.loaded_skills,
+            available,
+            format_skill,
+            f"No skills found in {skills_dir}\nCreate skill directories with SKILL.md files."
+        )
 
     def _handle_skill_command(self, args: str) -> bool:
         """Handle /skill commands. Returns True to continue REPL."""
         if not self._skills_available():
-            self.console.print("[red]Skills not available. Install llm-tools-skills.[/]")
+            ConsoleHelper.error(self.console, "Skills not available. Install llm-tools-skills.")
             self.console.print("[dim]Run: pip install llm-tools-skills[/]")
             return True
 
-        parts = args.strip().split(maxsplit=1)
+        cmd, rest = parse_command(args)
 
-        if not parts or parts[0] == "" or parts[0] == "list":
+        if cmd == "" or cmd == "list":
             # /skill or /skill list - list skills
             self._list_skills()
-        elif parts[0] == "load" and len(parts) > 1:
+        elif cmd == "load" and rest:
             # /skill load <name> or /skill load name1,name2
-            names = [n.strip() for n in parts[1].split(",") if n.strip()]
-            for name in names:
+            for name in parse_comma_list(rest):
                 self._load_skill(name)
-        elif parts[0] == "unload" and len(parts) > 1:
+        elif cmd == "unload" and rest:
             # /skill unload <name> or /skill unload name1,name2
-            names = [n.strip() for n in parts[1].split(",") if n.strip()]
-            for name in names:
+            for name in parse_comma_list(rest):
                 self._unload_skill(name)
-        elif parts[0] == "reload":
+        elif cmd == "reload":
             # /skill reload - reload all loaded skills
             names = list(self.loaded_skills.keys())
             if names:
                 for name in names:
                     self._load_skill(name, silent=True)
-                self.console.print(f"[green]✓[/] Reloaded {len(names)} skill(s)")
+                ConsoleHelper.success(self.console, f"Reloaded {len(names)} skill(s)")
             else:
-                self.console.print("[yellow]No skills loaded to reload[/]")
+                ConsoleHelper.warning(self.console, "No skills loaded to reload")
         else:
-            self.console.print("[yellow]Usage: /skill [load|unload|reload|list] [name][/]")
+            ConsoleHelper.warning(self.console, "Usage: /skill [load|unload|reload|list] [name]")
 
         return True

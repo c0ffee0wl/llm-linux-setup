@@ -9,8 +9,9 @@ This module contains utility functions for:
 
 import os
 import re
+from functools import wraps
 from pathlib import Path
-from typing import Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 
 # =============================================================================
@@ -62,6 +63,171 @@ def logs_on() -> bool:
     """
     import llm
     return not (llm.user_dir() / "logs-off").exists()
+
+
+# =============================================================================
+# Command Parsing Helpers
+# =============================================================================
+
+
+def parse_command(args: str) -> Tuple[str, str]:
+    """Parse slash command args into (subcommand, remaining).
+
+    Examples:
+        parse_command("load foo")    # Returns ("load", "foo")
+        parse_command("list")        # Returns ("list", "")
+        parse_command("")            # Returns ("", "")
+        parse_command("  ")          # Returns ("", "")
+    """
+    parts = args.strip().split(maxsplit=1)
+    if not parts or parts[0] == "":
+        return ("", "")
+    return (parts[0], parts[1] if len(parts) > 1 else "")
+
+
+def parse_comma_list(text: str) -> List[str]:
+    """Parse comma-separated list with trimming.
+
+    Examples:
+        parse_comma_list("a,b,c")      # Returns ["a", "b", "c"]
+        parse_comma_list("a, b , c")   # Returns ["a", "b", "c"]
+        parse_comma_list("")           # Returns []
+    """
+    return [n.strip() for n in text.split(",") if n.strip()]
+
+
+# =============================================================================
+# Plugin Availability Check
+# =============================================================================
+
+
+def check_import(module_name: str) -> bool:
+    """Check if a module is importable.
+
+    Args:
+        module_name: Fully qualified module name (e.g., "llm_tools_rag")
+
+    Returns:
+        True if module can be imported, False otherwise.
+    """
+    try:
+        __import__(module_name)
+        return True
+    except ImportError:
+        return False
+
+
+# =============================================================================
+# Console Output Helpers
+# =============================================================================
+
+
+class ConsoleHelper:
+    """Consistent console output formatting.
+
+    Provides static methods for common console output patterns.
+    Uses Rich markup for styling.
+    """
+
+    @staticmethod
+    def success(console, message: str) -> None:
+        """Print success message with green checkmark."""
+        console.print(f"[green]✓[/] {message}")
+
+    @staticmethod
+    def error(console, message: str) -> None:
+        """Print error message with red X."""
+        console.print(f"[red]✗[/] {message}")
+
+    @staticmethod
+    def warning(console, message: str) -> None:
+        """Print warning message in yellow."""
+        console.print(f"[yellow]{message}[/]")
+
+    @staticmethod
+    def warn_icon(console, message: str) -> None:
+        """Print warning with ⚠ icon."""
+        console.print(f"[yellow]⚠[/] {message}")
+
+    @staticmethod
+    def info(console, message: str) -> None:
+        """Print info message in cyan."""
+        console.print(f"[cyan]{message}[/]")
+
+    @staticmethod
+    def dim(console, message: str) -> None:
+        """Print dim/muted message."""
+        console.print(f"[dim]{message}[/]")
+
+
+def render_grouped_list(
+    console,
+    title: str,
+    loaded: dict,
+    available: dict,
+    format_item: Callable[[str, Any], str],
+    empty_msg: str = "None found"
+) -> None:
+    """Render grouped list with Loaded/Available sections.
+
+    Args:
+        console: Rich Console instance
+        title: Section title (e.g., "Knowledge Bases")
+        loaded: Dict of loaded items {name: data}
+        available: Dict of all available items {name: data}
+        format_item: Callable(name, data) -> display string
+        empty_msg: Message when both dicts are empty
+    """
+    console.print(f"\n[bold]{title}[/]")
+
+    if loaded:
+        console.print("\n[green]Loaded:[/]")
+        for name in sorted(loaded.keys()):
+            console.print(f"  • {format_item(name, loaded[name])}")
+
+    unloaded = {k: v for k, v in available.items() if k not in loaded}
+    if unloaded:
+        console.print("\n[dim]Available:[/]")
+        for name in sorted(unloaded.keys()):
+            console.print(f"  • {format_item(name, unloaded[name])}")
+
+    if not loaded and not available:
+        console.print(f"\n[dim]{empty_msg}[/]")
+
+
+# =============================================================================
+# Exception Handling Decorator
+# =============================================================================
+
+
+def safe_operation(error_prefix: str = "Operation failed", return_on_error: Any = False):
+    """Decorator for consistent exception handling.
+
+    Use on methods that have a simple try/except pattern and a uniform
+    error message format. Not suitable for complex error handling.
+
+    Args:
+        error_prefix: Prefix for error message (e.g., "Failed to load KB")
+        return_on_error: Value to return when exception occurs
+
+    Example:
+        @safe_operation("Failed to load KB")
+        def _load_kb(self, name: str) -> bool:
+            content = Path(name).read_text()
+            ...
+            return True
+    """
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        def wrapper(self, *args, **kwargs):
+            try:
+                return func(self, *args, **kwargs)
+            except Exception as e:
+                if hasattr(self, 'console'):
+                    self.console.print(f"[red]{error_prefix}: {e}[/]")
+                return return_on_error
+        return wrapper
+    return decorator
 
 
 # =============================================================================

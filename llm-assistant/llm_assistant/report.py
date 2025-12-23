@@ -20,7 +20,7 @@ import yaml
 
 from .schemas import FindingSchema
 from .templates import render
-from .utils import get_config_dir, validate_language_code, md_table_escape, yaml_escape
+from .utils import get_config_dir, validate_language_code, md_table_escape, yaml_escape, parse_command, ConsoleHelper
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -50,9 +50,8 @@ class ReportMixin:
 
     def _handle_report_command(self, args: str) -> bool:
         """Route /report subcommands to appropriate handlers."""
-        parts = args.strip().split(maxsplit=1)
-        subcmd = parts[0].lower() if parts else ""
-        subargs = parts[1] if len(parts) > 1 else ""
+        subcmd, subargs = parse_command(args)
+        subcmd = subcmd.lower()
 
         if not subcmd:
             self.console.print("[yellow]Usage: /report <note> or /report <subcommand>[/]")
@@ -82,21 +81,20 @@ class ReportMixin:
 
     def _report_init(self, args: str) -> bool:
         """Initialize a new pentest project with language selection."""
-        parts = args.strip().split(maxsplit=1)
+        project_name, lang_code = parse_command(args)
 
-        if len(parts) < 2:
-            self.console.print("[red]Usage: /report init <project-name> <language-code>[/]")
+        if not project_name or not lang_code:
+            ConsoleHelper.error(self.console, "Usage: /report init <project-name> <language-code>")
             self.console.print("[dim]Example: /report init acme-webapp-2025 en[/]")
             self.console.print("[dim]Language codes: en (English), de (German), es (Spanish), fr (French), ...[/]")
             return True
 
-        project_name = parts[0]
-        lang_code = parts[1].lower().strip()
+        lang_code = lang_code.lower().strip()
 
         # Validate language code using iso639-lang library
         language_name = validate_language_code(lang_code)
         if not language_name:
-            self.console.print(f"[red]Invalid language code: {lang_code}[/]")
+            ConsoleHelper.error(self.console, f"Invalid language code: {lang_code}")
             self.console.print("[dim]Use ISO 639-1 codes: en, de, es, fr, it, nl, pt, ru, ja, ko, zh, etc.[/]")
             return True
 
@@ -107,7 +105,7 @@ class ReportMixin:
         if project_dir.exists():
             # Project exists - switch to it
             self.findings_project = safe_name
-            self.console.print(f"[yellow]Project already exists, switched to:[/] {safe_name}")
+            ConsoleHelper.warning(self.console, f"Project already exists, switched to: {safe_name}")
             return True
 
         # Create project directory and initial findings.md
@@ -133,26 +131,26 @@ language_name: {language_name}
         findings_file.write_text(initial_content)
 
         self.findings_project = safe_name
-        self.console.print(f"[green]✓[/] Created project: {project_dir} ({language_name})")
-        self.console.print(f"[dim]Add findings with: /report \"<quick note>\"[/]")
+        ConsoleHelper.success(self.console, f"Created project: {project_dir} ({language_name})")
+        self.console.print("[dim]Add findings with: /report \"<quick note>\"[/]")
         return True
 
     def _report_add(self, quick_note: str) -> bool:
         """Add a new finding with LLM-assisted analysis."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /report init <project> <lang>[/]")
+            ConsoleHelper.error(self.console, "No project initialized. Use /report init <project> <lang>")
             return True
 
         quick_note = quick_note.strip().strip('"\'')
         if not quick_note:
-            self.console.print("[red]Usage: /report \"<quick note about vulnerability>\"[/]")
+            ConsoleHelper.error(self.console, "Usage: /report \"<quick note about vulnerability>\"")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
         if not findings_file.exists():
-            self.console.print(f"[red]Project file not found: {findings_file}[/]")
+            ConsoleHelper.error(self.console, f"Project file not found: {findings_file}")
             return True
 
         # Parse existing findings
@@ -160,7 +158,7 @@ language_name: {language_name}
 
         # Safety check: if parsing returned empty project_meta, file may be corrupted
         if not project_meta:
-            self.console.print(f"[red]Error: Could not parse project file (missing or invalid YAML frontmatter)[/]")
+            ConsoleHelper.error(self.console, "Could not parse project file (missing or invalid YAML frontmatter)")
             self.console.print(f"[dim]Check file manually: {findings_file}[/]")
             return True
 
@@ -187,11 +185,11 @@ language_name: {language_name}
             pass
 
         # LLM analysis with schema enforcement
-        self.console.print(f"[dim]Analyzing finding ({language_name})...[/]")
+        ConsoleHelper.info(self.console, f"Analyzing finding ({language_name})...")
         try:
             analysis = self._analyze_finding(quick_note, context, language=language_name)
         except Exception as e:
-            self.console.print(f"[red]LLM analysis failed: {e}[/]")
+            ConsoleHelper.error(self.console, f"LLM analysis failed: {e}")
             # Fallback to manual entry
             analysis = {
                 "suggested_title": quick_note[:60],
@@ -242,7 +240,7 @@ language_name: {language_name}
         sev_color = "red" if severity >= 7 else "yellow" if severity >= 4 else "green"
         sev_label = "High" if severity >= 7 else "Med" if severity >= 4 else "Low"
 
-        self.console.print(f"[green]✓[/] Added [{sev_color}]{finding_id}[/] ({severity} {sev_label}): {finding_meta['title']}")
+        ConsoleHelper.success(self.console, f"Added [{sev_color}]{finding_id}[/] ({severity} {sev_label}): {finding_meta['title']}")
         return True
 
     def _analyze_finding(self, quick_note: str, context: Optional[str] = None,
@@ -512,14 +510,14 @@ Respond with a JSON object containing these fields:
     def _report_list(self) -> bool:
         """List all findings in current project."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized. Use /report init <project> <lang>[/]")
+            ConsoleHelper.error(self.console, "No project initialized. Use /report init <project> <lang>")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
         if not findings_file.exists():
-            self.console.print(f"[red]Project file not found: {findings_file}[/]")
+            ConsoleHelper.error(self.console, f"Project file not found: {findings_file}")
             return True
 
         project_meta, findings = self._parse_findings_file(findings_file)
@@ -542,12 +540,12 @@ Respond with a JSON object containing these fields:
     def _report_edit(self, args: str) -> bool:
         """Open finding for editing."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized.[/]")
+            ConsoleHelper.error(self.console, "No project initialized.")
             return True
 
         finding_id = args.strip().upper()
         if not finding_id:
-            self.console.print("[red]Usage: /report edit <id> (e.g., /report edit F001)[/]")
+            ConsoleHelper.error(self.console, "Usage: /report edit <id> (e.g., /report edit F001)")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
@@ -560,26 +558,26 @@ Respond with a JSON object containing these fields:
     def _report_delete(self, args: str) -> bool:
         """Delete a finding by ID."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized.[/]")
+            ConsoleHelper.error(self.console, "No project initialized.")
             return True
 
         finding_id = args.strip().upper()
         if not finding_id:
-            self.console.print("[red]Usage: /report delete <id> (e.g., /report delete F001)[/]")
+            ConsoleHelper.error(self.console, "Usage: /report delete <id> (e.g., /report delete F001)")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
         if not findings_file.exists():
-            self.console.print(f"[red]Project file not found[/]")
+            ConsoleHelper.error(self.console, "Project file not found")
             return True
 
         project_meta, findings = self._parse_findings_file(findings_file)
 
         # Safety check: refuse to modify corrupted files
         if not project_meta:
-            self.console.print(f"[red]Error: Could not parse project file (invalid format)[/]")
+            ConsoleHelper.error(self.console, "Could not parse project file (invalid format)")
             return True
 
         # Find the finding to delete (to get evidence paths)
@@ -592,7 +590,7 @@ Respond with a JSON object containing these fields:
                 new_findings.append((m, b))
 
         if deleted_finding is None:
-            self.console.print(f"[yellow]Finding {finding_id} not found[/]")
+            ConsoleHelper.warning(self.console, f"Finding {finding_id} not found")
             return True
 
         # Delete associated evidence files
@@ -607,18 +605,18 @@ Respond with a JSON object containing these fields:
                         pass  # Best effort deletion
 
         self._write_findings_file(findings_file, project_meta, new_findings)
-        self.console.print(f"[green]✓[/] Deleted {finding_id}")
+        ConsoleHelper.success(self.console, f"Deleted {finding_id}")
         return True
 
     def _report_set_severity(self, args: str) -> bool:
         """Override severity for a finding."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized.[/]")
+            ConsoleHelper.error(self.console, "No project initialized.")
             return True
 
         parts = args.strip().split()
         if len(parts) != 2:
-            self.console.print("[red]Usage: /report severity <id> <1-9> (e.g., /report severity F001 8)[/]")
+            ConsoleHelper.error(self.console, "Usage: /report severity <id> <1-9> (e.g., /report severity F001 8)")
             return True
 
         finding_id = parts[0].upper()
@@ -627,21 +625,21 @@ Respond with a JSON object containing these fields:
             if not 1 <= new_severity <= 9:
                 raise ValueError()
         except ValueError:
-            self.console.print("[red]Severity must be 1-9[/]")
+            ConsoleHelper.error(self.console, "Severity must be 1-9")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
         if not findings_file.exists():
-            self.console.print(f"[red]Project file not found[/]")
+            ConsoleHelper.error(self.console, "Project file not found")
             return True
 
         project_meta, findings = self._parse_findings_file(findings_file)
 
         # Safety check: refuse to modify corrupted files
         if not project_meta:
-            self.console.print(f"[red]Error: Could not parse project file (invalid format)[/]")
+            ConsoleHelper.error(self.console, "Could not parse project file (invalid format)")
             return True
 
         # Find and update the finding
@@ -654,12 +652,12 @@ Respond with a JSON object containing these fields:
                 break
 
         if not found:
-            self.console.print(f"[yellow]Finding {finding_id} not found[/]")
+            ConsoleHelper.warning(self.console, f"Finding {finding_id} not found")
             return True
 
         self._write_findings_file(findings_file, project_meta, findings)
         sev_color = "red" if new_severity >= 7 else "yellow" if new_severity >= 4 else "green"
-        self.console.print(f"[green]✓[/] Updated {finding_id} severity to [{sev_color}]{new_severity}[/]")
+        ConsoleHelper.success(self.console, f"Updated {finding_id} severity to [{sev_color}]{new_severity}[/]")
         return True
 
     def _report_projects(self) -> bool:
@@ -691,38 +689,38 @@ Respond with a JSON object containing these fields:
         """Switch to an existing project."""
         project_name = project_name.strip()
         if not project_name:
-            self.console.print("[red]Usage: /report open <project-name>[/]")
+            ConsoleHelper.error(self.console, "Usage: /report open <project-name>")
             return True
 
         project_dir = self.findings_base_dir / project_name
 
         if not project_dir.exists():
-            self.console.print(f"[red]Project not found: {project_name}[/]")
+            ConsoleHelper.error(self.console, f"Project not found: {project_name}")
             self.console.print("[dim]Use /report projects to list available projects[/]")
             return True
 
         self.findings_project = project_name
-        self.console.print(f"[green]✓[/] Switched to project: {project_name}")
+        ConsoleHelper.success(self.console, f"Switched to project: {project_name}")
         return True
 
     def _report_export(self, args: str) -> bool:
         """Export findings to Word document via pandoc."""
         if not self.findings_project:
-            self.console.print("[red]No project initialized.[/]")
+            ConsoleHelper.error(self.console, "No project initialized.")
             return True
 
         project_dir = self.findings_base_dir / self.findings_project
         findings_file = project_dir / "findings.md"
 
         if not findings_file.exists():
-            self.console.print(f"[red]Project file not found[/]")
+            ConsoleHelper.error(self.console, "Project file not found")
             return True
 
         # Check pandoc is available
         try:
             subprocess.run(["pandoc", "--version"], capture_output=True, check=True)
         except (subprocess.CalledProcessError, FileNotFoundError):
-            self.console.print("[red]pandoc not found. Install with: apt install pandoc[/]")
+            ConsoleHelper.error(self.console, "pandoc not found. Install with: apt install pandoc")
             return True
 
         # Create export file (strip per-finding YAML for clean Word output)
@@ -777,9 +775,9 @@ Respond with a JSON object containing these fields:
 
         try:
             subprocess.run(cmd, check=True, capture_output=True)
-            self.console.print(f"[green]✓[/] Exported to: {output_file}")
+            ConsoleHelper.success(self.console, f"Exported to: {output_file}")
         except subprocess.CalledProcessError as e:
-            self.console.print(f"[red]Export failed: {e.stderr.decode() if e.stderr else str(e)}[/]")
+            ConsoleHelper.error(self.console, f"Export failed: {e.stderr.decode() if e.stderr else str(e)}")
         finally:
             # Clean up temp file
             if export_md.exists():

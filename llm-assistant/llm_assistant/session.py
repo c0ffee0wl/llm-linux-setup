@@ -77,7 +77,7 @@ from .utils import (
     strip_markdown_for_tts, strip_markdown_for_clipboard, validate_language_code,
     get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
     process_exists, md_table_escape, yaml_escape, is_watch_response_dismissive,
-    get_model_context_limit,
+    get_model_context_limit, ConsoleHelper,
 )
 from .templates import render
 from .kb import KnowledgeBaseMixin
@@ -151,8 +151,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         self.early_terminal_uuid = self._get_current_terminal_uuid_early()
 
         if not self.early_terminal_uuid:
-            self.console.print("[red]Error: llm-assistant requires Terminator terminal[/]")
-            self.console.print("[yellow]Please run this from inside a Terminator terminal.[/]")
+            ConsoleHelper.error(self.console, "llm-assistant requires Terminator terminal")
+            ConsoleHelper.warning(self.console, "Please run this from inside a Terminator terminal.")
             sys.exit(1)
 
         # Acquire per-tab lock (held for entire session, prevents duplicates)
@@ -166,8 +166,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         try:
             self.model = llm.get_model(self.model_name)
         except Exception as e:
-            self.console.print(f"[red]Error loading model '{self.model_name}': {e}[/]")
-            self.console.print("[yellow]Available models:[/]")
+            ConsoleHelper.error(self.console, f"Error loading model '{self.model_name}': {e}")
+            ConsoleHelper.warning(self.console, "Available models:")
             for model in llm.get_models():
                 self.console.print(f"  - {model.model_id}")
             sys.exit(1)
@@ -440,12 +440,12 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
 
         except BlockingIOError:
             # Another instance already has this tab's lock
-            self.console.print("[red]Error: An assistant is already running in this tab[/]")
-            self.console.print("[yellow]You can run assistant in a different Terminator tab.[/]")
+            ConsoleHelper.error(self.console, "An assistant is already running in this tab")
+            ConsoleHelper.warning(self.console, "You can run assistant in a different Terminator tab.")
             sys.exit(1)
 
         except Exception as e:
-            self.console.print(f"[red]Error acquiring lock: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error acquiring lock: {e}")
             if self.lock_file:
                 try:
                     self.lock_file.close()
@@ -632,7 +632,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         except Exception as e:
             # Ensure we log errors but don't prevent shutdown
             try:
-                self.console.print(f"[yellow]Warning during shutdown: {e}[/]")
+                ConsoleHelper.warning(self.console, f"Warning during shutdown: {e}")
             except Exception:
                 # If console fails, write to stderr
                 print(f"Warning during shutdown: {e}", file=sys.stderr)
@@ -1248,7 +1248,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
             return self._handle_rewind_undo()
 
         if not responses:
-            self.console.print("[yellow]No conversation history to rewind.[/yellow]")
+            ConsoleHelper.warning(self.console, "No conversation history to rewind.")
             return True
 
         # Handle quick rewind: /rewind N or /rewind -N
@@ -1257,7 +1257,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                 n = int(args)
                 return self._quick_rewind(n)
             except ValueError:
-                self.console.print(f"[red]Invalid argument: {args}. Use 'undo', a turn number, or no argument for picker.[/red]")
+                ConsoleHelper.error(self.console, f"Invalid argument: {args}. Use 'undo', a turn number, or no argument for picker.")
                 return True
 
         # Interactive picker mode
@@ -1273,7 +1273,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         total_turns = len(responses)
 
         if total_turns < 2:
-            self.console.print("[yellow]Need at least 2 turns to rewind.[/yellow]")
+            ConsoleHelper.warning(self.console, "Need at least 2 turns to rewind.")
             return True
 
         # Build turn list with token counts
@@ -1298,22 +1298,22 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         try:
             selection = input(f"Select turn to rewind to (1-{max_valid}), or q to cancel: ").strip()
         except (EOFError, KeyboardInterrupt):
-            self.console.print("[dim]Rewind cancelled.[/dim]")
+            ConsoleHelper.dim(self.console, "Rewind cancelled.")
             return True
 
         if selection.lower() == 'q' or selection == '':
-            self.console.print("[dim]Rewind cancelled.[/dim]")
+            ConsoleHelper.dim(self.console, "Rewind cancelled.")
             return True
 
         try:
             target_turn = int(selection)
         except ValueError:
-            self.console.print(f"[red]Invalid selection: {selection}[/red]")
+            ConsoleHelper.error(self.console, f"Invalid selection: {selection}")
             return True
 
         # Validate range
         if target_turn < 1 or target_turn >= total_turns:
-            self.console.print(f"[red]Turn must be between 1 and {max_valid}[/red]")
+            ConsoleHelper.error(self.console, f"Turn must be between 1 and {max_valid}")
             return True
 
         # Calculate impact
@@ -1321,14 +1321,14 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         turns_removed = total_turns - target_turn
 
         # Confirm
-        self.console.print(f"\n[cyan]Rewinding to {target_turn} removes {turns_removed} turn(s), freeing ~{tokens_freed:,} tokens.[/cyan]")
+        ConsoleHelper.info(self.console, f"Rewinding to {target_turn} removes {turns_removed} turn(s), freeing ~{tokens_freed:,} tokens.")
         confirm = input("Proceed? [Y/n] ").strip().lower()
         if confirm and confirm != 'y':
-            self.console.print("[dim]Rewind cancelled.[/dim]")
+            ConsoleHelper.dim(self.console, "Rewind cancelled.")
             return True
 
         self._perform_rewind(target_turn)
-        self.console.print(f"[green]✓ Rewound to turn {target_turn}. Use /rewind undo to restore.[/green]")
+        ConsoleHelper.success(self.console, f"Rewound to turn {target_turn}. Use /rewind undo to restore.")
         return True
 
     def _draw_rewind_picker(self, turns: list, total_tokens: int):
@@ -1371,10 +1371,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
 
         # Validate
         if target_turn < 1:
-            self.console.print(f"[red]Invalid turn: must be >= 1 (got {n} → {target_turn})[/red]")
+            ConsoleHelper.error(self.console, f"Invalid turn: must be >= 1 (got {n} → {target_turn})")
             return True
         if target_turn >= total_turns:
-            self.console.print(f"[yellow]Already at turn {total_turns}. Nothing to rewind.[/yellow]")
+            ConsoleHelper.warning(self.console, f"Already at turn {total_turns}. Nothing to rewind.")
             return True
 
         # Calculate impact
@@ -1385,14 +1385,14 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         turns_removed = total_turns - target_turn
 
         # Confirm
-        self.console.print(f"[cyan]Rewind to turn {target_turn}? Removes {turns_removed} turn(s), frees ~{tokens_freed:,} tokens.[/cyan]")
+        ConsoleHelper.info(self.console, f"Rewind to turn {target_turn}? Removes {turns_removed} turn(s), frees ~{tokens_freed:,} tokens.")
         confirm = input("Proceed? [Y/n] ").strip().lower()
         if confirm and confirm != 'y':
-            self.console.print("[dim]Rewind cancelled.[/dim]")
+            ConsoleHelper.dim(self.console, "Rewind cancelled.")
             return True
 
         self._perform_rewind(target_turn)
-        self.console.print(f"[green]✓ Rewound to turn {target_turn}. Use /rewind undo to restore.[/green]")
+        ConsoleHelper.success(self.console, f"Rewound to turn {target_turn}. Use /rewind undo to restore.")
         return True
 
     def _perform_rewind(self, target_turn: int):
@@ -1424,7 +1424,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
     def _handle_rewind_undo(self) -> bool:
         """Restore last rewound turns."""
         if not self.rewind_undo_buffer:
-            self.console.print("[yellow]No rewind to undo.[/yellow]")
+            ConsoleHelper.warning(self.console, "No rewind to undo.")
             return True
 
         # Restore
@@ -1433,7 +1433,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
         self.rewind_undo_buffer = None
 
         new_total = len(self.conversation.responses)
-        self.console.print(f"[green]✓ Restored {restored_count} turn(s). Back to turn {new_total}.[/green]")
+        ConsoleHelper.success(self.console, f"Restored {restored_count} turn(s). Back to turn {new_total}.")
 
         # Broadcast to web companion
         if self.web_clients:
@@ -1534,17 +1534,17 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                     self.model = loaded.model
                     # Check for linked conversations (squash chain)
                     self._load_squash_chain_info(loaded.id)
-                    self.console.print(f"[green]Continuing conversation {loaded.id}[/]")
+                    ConsoleHelper.success(self.console, f"Continuing conversation {loaded.id}")
                     self.console.print(f"  {len(loaded.responses)} previous exchanges loaded")
                     return
                 else:
-                    self.console.print("[yellow]No previous conversations found, starting fresh[/]")
+                    ConsoleHelper.warning(self.console, "No previous conversations found, starting fresh")
             except click.ClickException as e:
                 # load_conversation raises ClickException if specific ID not found
-                self.console.print(f"[red]Could not load conversation: {e.message}[/]")
+                ConsoleHelper.error(self.console, f"Could not load conversation: {e.message}")
                 sys.exit(1)
             except Exception as e:
-                self.console.print(f"[yellow]Warning: Could not load conversation: {e}[/]")
+                ConsoleHelper.warning(self.console, f"Could not load conversation: {e}")
 
         # Create new conversation
         self.conversation = llm.Conversation(model=self.model)
@@ -1565,7 +1565,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
             migrate(db)
             return process_fragments_in_chat(db, prompt)
         except Exception as ex:
-            self.console.print(f"[red]Fragment error: {ex}[/]")
+            ConsoleHelper.error(self.console, f"Fragment error: {ex}")
             return prompt, [], []
 
     def should_use_screenshot_capture(self, command: str) -> bool:
@@ -1596,7 +1596,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
             is_tui_active = self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid)
             if is_tui_active:
                 self._debug("TUI detected via terminal state (alternate screen heuristic)")
-                self.console.print("[cyan]TUI detected via terminal state[/]")
+                ConsoleHelper.info(self.console, "TUI detected via terminal state")
                 return True
         except dbus.exceptions.DBusException as e:
             # Method might not exist in older plugin versions
@@ -1755,7 +1755,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                         return self.execute_command(edited)
             else:  # dangerous
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
-                self.console.print("[bold red]BLOCKED[/] - manual approval required")
+                self.console.print("[bold red]BLOCKED[/bold red] - manual approval required")
                 choice = self._ask_confirmation("Override?", ["yes", "no", "edit"], "no")
                 if choice == "no":
                     return (False, "")
@@ -1803,7 +1803,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
             )
 
             if success:
-                self.console.print("[green]✓[/] Command sent to Exec terminal")
+                ConsoleHelper.success(self.console, "Command sent to Exec terminal")
 
                 # Scroll to bottom to ensure prompt detection sees the new prompt
                 # Critical when user has scrolled up in the terminal
@@ -1816,7 +1816,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, RAGMixin, SkillsMixin, Repo
                 # Checks both command name AND terminal state (alternate screen heuristic)
                 if self.should_use_screenshot_capture(command):
                     # TUI detected - use screenshot capture
-                    self.console.print("[cyan]TUI application detected - using screenshot capture[/]")
+                    ConsoleHelper.info(self.console, "TUI application detected - using screenshot capture")
 
                     # Adaptive wait for TUI to render (replaces fixed 1.5s delay)
                     # Pass initial_content so we wait for content to change first
@@ -1884,16 +1884,16 @@ Screenshot size: {file_size} bytes"""
                             self.auto_command_history.append(command)
                         return True, output
                     else:
-                        self.console.print("[yellow]⚠[/] Timeout or long-running command")
+                        ConsoleHelper.warn_icon(self.console, "Timeout or long-running command")
 
                         # Post-timeout TUI check: command may have launched a TUI we didn't expect
                         # (e.g., git log with pager, script that invokes vim, etc.)
                         try:
                             if self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid):
-                                self.console.print("[cyan]TUI detected after timeout - capturing screenshot[/]")
+                                ConsoleHelper.info(self.console, "TUI detected after timeout - capturing screenshot")
                                 temp_path, error = self._capture_screenshot(self.exec_terminal_uuid)
                                 if temp_path:
-                                    self.console.print(f"[green]✓[/] TUI screenshot captured: {temp_path}")
+                                    ConsoleHelper.success(self.console, f"TUI screenshot captured: {temp_path}")
                                     if self.auto_mode:
                                         self.auto_command_history.append(command)
                                     return True, (output, temp_path)
@@ -1904,14 +1904,14 @@ Screenshot size: {file_size} bytes"""
                             self.auto_command_history.append(command)
                         return True, output
             else:
-                self.console.print("[red]✗[/] Failed to send command")
+                ConsoleHelper.error(self.console, "Failed to send command")
                 return False, ""
         except dbus.exceptions.DBusException as e:
-            self.console.print(f"[red]D-Bus error executing command: {e}[/]")
-            self.console.print("[yellow]Plugin may have disconnected. Try /reset[/]")
+            ConsoleHelper.error(self.console, f"D-Bus error executing command: {e}")
+            ConsoleHelper.warning(self.console, "Plugin may have disconnected. Try /reset")
             return False, ""
         except Exception as e:
-            self.console.print(f"[red]Error executing command ({type(e).__name__}): {e}[/]")
+            ConsoleHelper.error(self.console, f"Error executing command ({type(e).__name__}): {e}")
             return False, ""
 
     def execute_keypress(self, keypress: str) -> bool:
@@ -1957,13 +1957,13 @@ Screenshot size: {file_size} bytes"""
             )
 
             if success:
-                self.console.print(f"[green]✓[/] Keypress '{keypress}' sent to Exec terminal")
+                ConsoleHelper.success(self.console, f"Keypress '{keypress}' sent to Exec terminal")
                 return True
             else:
-                self.console.print("[red]✗[/] Failed to send keypress")
+                ConsoleHelper.error(self.console, "Failed to send keypress")
                 return False
         except Exception as e:
-            self.console.print(f"[red]Error sending keypress: {e}[/]")
+            ConsoleHelper.error(self.console, f"Error sending keypress: {e}")
             return False
 
     def handle_slash_command(self, command: str) -> Union[bool, str]:
@@ -2002,9 +2002,9 @@ Screenshot size: {file_size} bytes"""
                 # Broadcast clear to web companion
                 if self.web_clients:
                     self._broadcast_to_web({"type": "clear"})
-                self.console.print("[green]✓[/] Conversation cleared")
+                ConsoleHelper.success(self.console, "Conversation cleared")
             except Exception as e:
-                self.console.print(f"[red]Error clearing conversation: {e}[/]")
+                ConsoleHelper.error(self.console, f"Error clearing conversation: {e}")
             return True
 
         elif cmd == "/reset":
@@ -2048,9 +2048,9 @@ Screenshot size: {file_size} bytes"""
                 if self.web_clients:
                     self._broadcast_to_web({"type": "clear"})
 
-                self.console.print("[green]✓[/] Conversation cleared and terminal states reset")
+                ConsoleHelper.success(self.console, "Conversation cleared and terminal states reset")
             except Exception as e:
-                self.console.print(f"[red]Error resetting: {e}[/]")
+                ConsoleHelper.error(self.console, f"Error resetting: {e}")
             return True
 
         elif cmd == "/rewind":
@@ -2058,7 +2058,7 @@ Screenshot size: {file_size} bytes"""
 
         elif cmd == "/copy":
             if not CLIPBOARD_AVAILABLE:
-                self.console.print("[red]Clipboard not available. Install pyperclip: llm install pyperclip[/]")
+                ConsoleHelper.error(self.console, "Clipboard not available. Install pyperclip: llm install pyperclip")
                 return True
 
             raw_mode = "raw" in args.lower()
@@ -2070,7 +2070,7 @@ Screenshot size: {file_size} bytes"""
 
             responses = self.conversation.responses
             if not responses:
-                self.console.print("[yellow]No responses to copy[/]")
+                ConsoleHelper.warning(self.console, "No responses to copy")
                 return True
 
             if copy_all:
@@ -2090,9 +2090,9 @@ Screenshot size: {file_size} bytes"""
                 pyperclip.copy(combined)
                 what = "conversation" if copy_all else f"{len(texts)} response(s)"
                 mode = "raw markdown" if raw_mode else "plain text"
-                self.console.print(f"[green]✓[/] Copied {what} to clipboard ({mode})")
+                ConsoleHelper.success(self.console, f"Copied {what} to clipboard ({mode})")
             except Exception as e:
-                self.console.print(f"[red]Clipboard error: {e}[/]")
+                ConsoleHelper.error(self.console, f"Clipboard error: {e}")
             return True
 
         elif cmd == "/web":
@@ -2101,7 +2101,7 @@ Screenshot size: {file_size} bytes"""
                 return True
 
             if not WEB_AVAILABLE:
-                self.console.print("[red]Web companion not available. Install: llm install fastapi uvicorn[/]")
+                ConsoleHelper.error(self.console, "Web companion not available. Install: llm install fastapi uvicorn")
                 return True
 
             if self._start_web_server():
@@ -2116,19 +2116,19 @@ Screenshot size: {file_size} bytes"""
                         shell=True,
                         start_new_session=True
                     )
-                    self.console.print(f"[green]✓[/] Web companion opened at {url}")
+                    ConsoleHelper.success(self.console, f"Web companion opened at {url}")
                 except Exception as e:
                     # Fallback to webbrowser if shell approach fails
                     try:
                         webbrowser.open(url)
-                        self.console.print(f"[green]✓[/] Web companion opened at {url}")
+                        ConsoleHelper.success(self.console, f"Web companion opened at {url}")
                     except Exception as e2:
-                        self.console.print(f"[yellow]Web server running at {url} (browser open failed: {e2})[/]")
+                        ConsoleHelper.warning(self.console, f"Web server running at {url} (browser open failed: {e2})")
             return True
 
         elif cmd == "/refresh":
             # Re-capture terminal content and show preview
-            self.console.print("[cyan]Refreshing terminal context...[/]")
+            ConsoleHelper.info(self.console, "Refreshing terminal context...")
 
             # Clear plugin cache
             try:
@@ -2181,14 +2181,14 @@ Screenshot size: {file_size} bytes"""
                     preview = text_only[:300].replace('\n', ' ')
                     self.console.print(f"[dim]{preview}...[/]")
             else:
-                self.console.print("[yellow]No context captured[/]")
+                ConsoleHelper.warning(self.console, "No context captured")
 
             return True
 
         elif cmd == "/model":
             if not args:
                 # List available models
-                self.console.print("[bold]Available models:[/]")
+                self.console.print("[bold]Available models:[/bold]")
                 for model in llm.get_models():
                     current = " [green](current)[/]" if model.model_id == self.model_name else ""
                     self.console.print(f"  - {model.model_id}{current}")
@@ -2197,7 +2197,7 @@ Screenshot size: {file_size} bytes"""
                 query_parts = args.split()[1:]  # Remove -q/--query prefix
                 queries = [q for q in query_parts if not q.startswith("-")]
                 if not queries:
-                    self.console.print("[yellow]Usage: /model -q <query> [-q <query>...][/]")
+                    ConsoleHelper.warning(self.console, "Usage: /model -q <query> [-q <query>...]")
                 else:
                     resolved = resolve_model_query(queries)
                     if resolved:
@@ -2207,7 +2207,7 @@ Screenshot size: {file_size} bytes"""
                             self.conversation.model = self.model
                             # Recalculate tool token overhead (tools change with model)
                             self._tool_token_overhead = self._estimate_tool_schema_tokens()
-                            self.console.print(f"[green]✓[/] Switched to model: {resolved}")
+                            ConsoleHelper.success(self.console, f"Switched to model: {resolved}")
                             # Notify web companion of model change
                             self._broadcast_to_web({
                                 "type": "session_info",
@@ -2215,9 +2215,9 @@ Screenshot size: {file_size} bytes"""
                                 "mode": self.mode
                             })
                         except Exception as e:
-                            self.console.print(f"[red]Error switching model: {e}[/]")
+                            ConsoleHelper.error(self.console, f"Error switching model: {e}")
                     else:
-                        self.console.print(f"[yellow]No model matching queries: {queries}[/]")
+                        ConsoleHelper.warning(self.console, f"No model matching queries: {queries}")
             else:
                 # Direct model name
                 try:
@@ -2227,7 +2227,7 @@ Screenshot size: {file_size} bytes"""
                     self.conversation.model = self.model
                     # Recalculate tool token overhead (tools change with model)
                     self._tool_token_overhead = self._estimate_tool_schema_tokens()
-                    self.console.print(f"[green]✓[/] Switched to model: {args}")
+                    ConsoleHelper.success(self.console, f"Switched to model: {args}")
                     # Notify web companion of model change
                     self._broadcast_to_web({
                         "type": "session_info",
@@ -2235,7 +2235,7 @@ Screenshot size: {file_size} bytes"""
                         "mode": self.mode
                     })
                 except Exception as e:
-                    self.console.print(f"[red]Error switching model: {e}[/]")
+                    ConsoleHelper.error(self.console, f"Error switching model: {e}")
             return True
 
         elif cmd == "/info":
@@ -2276,12 +2276,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             if not args:
                 # No args: show status with usage hint
                 if self.watch_mode:
-                    self.console.print(f"[green]Watch mode: enabled[/]")
+                    ConsoleHelper.success(self.console, "Watch mode: enabled")
                     self.console.print(f"Goal: {self.watch_goal}")
                     self.console.print(f"Interval: {self.watch_interval}s")
                 else:
-                    self.console.print("[yellow]Watch mode: disabled[/]")
-                    self.console.print("[dim]Usage: /watch <goal> to enable[/]")
+                    ConsoleHelper.warning(self.console, "Watch mode: disabled")
+                    ConsoleHelper.dim(self.console, "Usage: /watch <goal> to enable")
             elif args.lower() == "off":
                 # Disable watch mode
                 if self.watch_mode:
@@ -2302,18 +2302,18 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     # Wait for watch thread to finish (prevents multiple threads)
                     if self.watch_thread and self.watch_thread.is_alive():
                         self.watch_thread.join(timeout=2.0)
-                    self.console.print("[yellow]Watch mode disabled[/]")
+                    ConsoleHelper.warning(self.console, "Watch mode disabled")
                     self._broadcast_status("watch")
                 else:
-                    self.console.print("[yellow]Watch mode is already off[/]")
+                    ConsoleHelper.warning(self.console, "Watch mode is already off")
             elif args.lower() == "status":
                 # Show watch mode status
                 if self.watch_mode:
-                    self.console.print(f"[green]Watch mode: enabled[/]")
+                    ConsoleHelper.success(self.console, "Watch mode: enabled")
                     self.console.print(f"Goal: {self.watch_goal}")
                     self.console.print(f"Interval: {self.watch_interval}s")
                 else:
-                    self.console.print("[yellow]Watch mode: disabled[/]")
+                    ConsoleHelper.warning(self.console, "Watch mode: disabled")
             else:
                 # Enable watch mode with goal
                 # First stop any existing watch thread to prevent multiple threads (thread-safe)
@@ -2383,7 +2383,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     for i, cmd_hist in enumerate(self.auto_command_history, 1):
                         self.console.print(f"  {i}. {cmd_hist[:60]}{'...' if len(cmd_hist) > 60 else ''}")
             else:
-                self.console.print("[red]Usage: /auto, /auto full, /auto off, /auto status[/]")
+                ConsoleHelper.error(self.console, "Usage: /auto, /auto full, /auto off, /auto status")
             return True
 
         elif cmd == "/voice":
@@ -2392,17 +2392,17 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 # Check if voice input is available before enabling
                 if not self.voice_input:
                     if VOICE_UNAVAILABLE_REASON:
-                        self.console.print(f"[red]Voice input unavailable ({VOICE_UNAVAILABLE_REASON})[/]")
+                        ConsoleHelper.error(self.console, f"Voice input unavailable ({VOICE_UNAVAILABLE_REASON})")
                     else:
-                        self.console.print("[red]Voice input not installed[/]")
-                        self.console.print("[dim]Re-run install-llm-tools.sh to install[/]")
+                        ConsoleHelper.error(self.console, "Voice input not installed")
+                        ConsoleHelper.dim(self.console, "Re-run install-llm-tools.sh to install")
                 else:
                     self.voice_auto_submit = True
-                    self.console.print("[bold green]Voice auto-submit enabled[/] - transcribed text sends automatically")
-                    self.console.print("[dim]/voice off to disable[/]")
+                    self.console.print("[bold green]Voice auto-submit enabled[/bold green] - transcribed text sends automatically")
+                    ConsoleHelper.dim(self.console, "/voice off to disable")
             elif args.lower() == "off":
                 self.voice_auto_submit = False
-                self.console.print("[bold yellow]Voice auto-submit disabled[/]")
+                self.console.print("[bold yellow]Voice auto-submit disabled[/bold yellow]")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.voice_auto_submit else "[yellow]disabled[/]"
                 if self.voice_input:
@@ -2414,27 +2414,27 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print(f"Voice auto-submit: {status}")
                 self.console.print(f"Voice input: {voice_avail}")
             else:
-                self.console.print("[red]Usage: /voice auto, /voice off, /voice status[/]")
+                ConsoleHelper.error(self.console, "Usage: /voice auto, /voice off, /voice status")
             return True
 
         elif cmd == "/speech":
             # Text-to-speech output mode (requires Vertex model)
             if not self._is_vertex_model():
-                self.console.print("[red]TTS requires a Vertex model (vertex/*)[/]")
-                self.console.print(f"[dim]Current model: {self.model_name}[/]")
-                self.console.print("[dim]Switch with: /model vertex/gemini-2.5-flash[/]")
+                ConsoleHelper.error(self.console, "TTS requires a Vertex model (vertex/*)")
+                ConsoleHelper.dim(self.console, f"Current model: {self.model_name}")
+                ConsoleHelper.dim(self.console, "Switch with: /model vertex/gemini-2.5-flash")
             elif not self.speech_output:
-                self.console.print("[red]google-cloud-texttospeech not installed[/]")
-                self.console.print("[dim]Re-run install-llm-tools.sh to install[/]")
+                ConsoleHelper.error(self.console, "google-cloud-texttospeech not installed")
+                ConsoleHelper.dim(self.console, "Re-run install-llm-tools.sh to install")
             elif not args or args.lower() == "on":
                 self.speech_output.enabled = True
-                self.console.print("[bold green]Speech output enabled[/] - AI responses will be spoken")
-                self.console.print(f"[dim]Voice: {self.speech_output.voice_name}[/]")
-                self.console.print("[dim]/speech off to disable[/]")
+                self.console.print("[bold green]Speech output enabled[/bold green] - AI responses will be spoken")
+                ConsoleHelper.dim(self.console, f"Voice: {self.speech_output.voice_name}")
+                ConsoleHelper.dim(self.console, "/speech off to disable")
             elif args.lower() == "off":
                 self.speech_output.enabled = False
                 self.speech_output.stop()  # Stop any playing audio
-                self.console.print("[bold yellow]Speech output disabled[/]")
+                self.console.print("[bold yellow]Speech output disabled[/bold yellow]")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.speech_output.enabled else "[yellow]disabled[/]"
                 tts_avail = "[green]available[/]" if TTS_AVAILABLE else "[dim]not installed[/]"
@@ -2446,7 +2446,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 self.console.print(f"Credentials: {cred_method}")
                 self.console.print(f"Voice: {self.speech_output.voice_name}")
             else:
-                self.console.print("[red]Usage: /speech on, /speech off, /speech status[/]")
+                ConsoleHelper.error(self.console, "Usage: /speech on, /speech off, /speech status")
             return True
 
         elif cmd == "/rag":
@@ -2457,26 +2457,26 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/assistant":
             if self.mode == "assistant":
-                self.console.print("[dim]Already in assistant mode[/]")
+                ConsoleHelper.dim(self.console, "Already in assistant mode")
             else:
                 self.mode = "assistant"
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
-                self.console.print("[bold green]Switched to assistant mode[/] - conservative (10 tool iterations)")
-                self.console.print("[dim]/agent for agentic mode (100 iterations)[/]")
+                self.console.print("[bold green]Switched to assistant mode[/bold green] - conservative (10 tool iterations)")
+                ConsoleHelper.dim(self.console, "/agent for agentic mode (100 iterations)")
             return True
 
         elif cmd == "/agent":
             if self.mode == "agent":
-                self.console.print("[dim]Already in agent mode[/]")
+                ConsoleHelper.dim(self.console, "Already in agent mode")
             else:
                 self.mode = "agent"
                 # Re-render system prompt and notify web companion
                 self._update_system_prompt(broadcast_type="session")
                 self.original_system_prompt = self.system_prompt
-                self.console.print("[bold green]Switched to agent mode[/] - agentic (100 tool iterations)")
-                self.console.print("[dim]/assistant for conservative mode (10 iterations)[/]")
+                self.console.print("[bold green]Switched to agent mode[/bold green] - agentic (100 tool iterations)")
+                ConsoleHelper.dim(self.console, "/assistant for conservative mode (10 iterations)")
             return True
 
         elif cmd == "/capture":
@@ -2539,15 +2539,15 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                     else:
                         # Queue for next message
                         self.pending_attachments.extend(result.attachments)
-                        self.console.print(f"[green]✓[/] Screenshot queued (mode={mode})")
-                        self.console.print("[dim]Attached to your next message[/]")
+                        ConsoleHelper.success(self.console, f"Screenshot queued (mode={mode})")
+                        ConsoleHelper.dim(self.console, "Attached to your next message")
                 else:
-                    self.console.print("[yellow]No screenshot captured[/]")
+                    ConsoleHelper.warning(self.console, "No screenshot captured")
             except ImportError:
-                self.console.print("[red]capture_screen tool not installed[/]")
-                self.console.print("[dim]Install: llm install /opt/llm-tools-capture-screen[/]")
+                ConsoleHelper.error(self.console, "capture_screen tool not installed")
+                ConsoleHelper.dim(self.console, "Install: llm install /opt/llm-tools-capture-screen")
             except Exception as e:
-                self.console.print(f"[red]Capture failed: {e}[/]")
+                ConsoleHelper.error(self.console, f"Capture failed: {e}")
             return True
 
         elif cmd == "/imagemage":
@@ -2555,25 +2555,25 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             if len(parts) == 1:
                 # Load imagemage
                 if 'imagemage' in self.loaded_optional_tools:
-                    self.console.print("[yellow]imagemage already loaded[/]")
+                    ConsoleHelper.warning(self.console, "imagemage already loaded")
                 else:
                     self.loaded_optional_tools.add('imagemage')
-                    self.console.print("[green]✓[/] imagemage loaded (generate_image tool available)")
-                    self.console.print("[dim]/imagemage off to unload[/]")
+                    ConsoleHelper.success(self.console, "imagemage loaded (generate_image tool available)")
+                    ConsoleHelper.dim(self.console, "/imagemage off to unload")
             elif parts[1] == "off":
                 if 'imagemage' in self.loaded_optional_tools:
                     self.loaded_optional_tools.discard('imagemage')
-                    self.console.print("[green]✓[/] imagemage unloaded")
+                    ConsoleHelper.success(self.console, "imagemage unloaded")
                 else:
-                    self.console.print("[yellow]imagemage not loaded[/]")
+                    ConsoleHelper.warning(self.console, "imagemage not loaded")
             elif parts[1] == "status":
                 if 'imagemage' in self.loaded_optional_tools:
-                    self.console.print("[green]imagemage: loaded[/] (generate_image available)")
+                    ConsoleHelper.success(self.console, "imagemage: loaded (generate_image available)")
                 else:
-                    self.console.print("[dim]imagemage: not loaded[/]")
-                    self.console.print("[dim]/imagemage to load[/]")
+                    ConsoleHelper.dim(self.console, "imagemage: not loaded")
+                    ConsoleHelper.dim(self.console, "/imagemage to load")
             else:
-                self.console.print("[red]Usage: /imagemage, /imagemage off, /imagemage status[/]")
+                ConsoleHelper.error(self.console, "Usage: /imagemage, /imagemage off, /imagemage status")
             return True
 
         elif cmd == "/mcp":
@@ -2585,7 +2585,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             elif parts[1] == "unload" and len(parts) >= 3:
                 self._handle_mcp_unload(parts[2])
             else:
-                self.console.print("[red]Usage: /mcp, /mcp load <server>, /mcp unload <server>[/]")
+                ConsoleHelper.error(self.console, "Usage: /mcp, /mcp load <server>, /mcp unload <server>")
             return True
 
         elif cmd == "/report":
@@ -2596,7 +2596,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
             return False
 
         else:
-            self.console.print(f"[red]Unknown command: {cmd}[/]")
+            ConsoleHelper.error(self.console, f"Unknown command: {cmd}")
             self.console.print("Type /help for available commands")
             return True
 
@@ -2847,7 +2847,7 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
                 if context_text or tui_attachments_refresh:
                     tui_info = f" + {len(tui_attachments_refresh)} TUI screenshot(s)" if tui_attachments_refresh else ""
-                    self.console.print(f"[green]✓[/] Context refreshed ({len(context_text)} chars{tui_info})")
+                    ConsoleHelper.success(self.console, f"Context refreshed ({len(context_text)} chars{tui_info})")
 
                     return ToolResult(
                         name=tool_call.name,
@@ -2856,14 +2856,14 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                         tool_call_id=tool_call_id
                     )
                 else:
-                    self.console.print("[yellow]No terminal content captured[/]")
+                    ConsoleHelper.warning(self.console, "No terminal content captured")
                     return ToolResult(
                         name=tool_call.name,
                         output="No terminal content captured",
                         tool_call_id=tool_call_id
                     )
             except Exception as e:
-                self.console.print(f"[red]Context refresh error: {e}[/]")
+                ConsoleHelper.error(self.console, f"Context refresh error: {e}")
                 return ToolResult(
                     name=tool_call.name,
                     output=f"Context refresh error: {e}",
@@ -3152,16 +3152,16 @@ Type !fragment <name> [...] to insert fragments""",
                 if check_counter >= 10:
                     # Check plugin availability
                     if not self._check_plugin_available():
-                        self.console.print("[yellow]Plugin unavailable, attempting reconnect...[/]")
+                        ConsoleHelper.warning(self.console, "Plugin unavailable, attempting reconnect...")
                         if not self._reconnect_plugin():
-                            self.console.print("[red]Plugin reconnection failed. Please restart assistant.[/]")
+                            ConsoleHelper.error(self.console, "Plugin reconnection failed. Please restart assistant.")
                             break
 
                     # Check D-Bus connection
                     if not self._check_dbus_connection():
-                        self.console.print("[yellow]D-Bus disconnected, attempting reconnect...[/]")
+                        ConsoleHelper.warning(self.console, "D-Bus disconnected, attempting reconnect...")
                         if not self._reconnect_dbus():
-                            self.console.print("[red]D-Bus reconnection failed. Please restart assistant.[/]")
+                            ConsoleHelper.error(self.console, "D-Bus reconnection failed. Please restart assistant.")
                             break
 
                     check_counter = 0
@@ -3196,7 +3196,7 @@ Type !fragment <name> [...] to insert fragments""",
                         sys.stdout.write("\033[90m(press again within 2 seconds to exit)\033[0m\n")
                         sys.stdout.flush()
                         continue
-                    self.console.print("\n[yellow]Exiting...[/]")
+                    ConsoleHelper.warning(self.console, "\nExiting...")
                     break
 
                 # Reset terminal state after prompt_toolkit to ensure clean state for Rich output
@@ -3371,8 +3371,8 @@ Type !fragment <name> [...] to insert fragments""",
 
                 except Exception as e:
                     print()  # Ensure newline even on error
-                    self.console.print(f"\n[red]Streaming error: {e}[/]")
-                    self.console.print("[yellow]Response may be incomplete. Please try again.[/]")
+                    ConsoleHelper.error(self.console, f"Streaming error: {e}")
+                    ConsoleHelper.warning(self.console, "Response may be incomplete. Please try again.")
                     # Don't process commands or update conversation on stream failure
                     continue
 

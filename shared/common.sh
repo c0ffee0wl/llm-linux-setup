@@ -95,9 +95,16 @@ store_checksum() {
 #############################################################################
 
 # Install apt package with existence check
+# Usage: install_apt_package package_name [command_name]
+# If command_name is provided, checks for that command instead of package_name
+# Examples:
+#   install_apt_package git                    # checks for 'git' command
+#   install_apt_package bubblewrap bwrap       # checks for 'bwrap' command
+#   install_apt_package poppler-utils pdftotext # checks for 'pdftotext' command
 install_apt_package() {
     local package="$1"
-    if ! command -v "$package" &> /dev/null; then
+    local command="${2:-$1}"  # Use second arg if provided, else package name
+    if ! command -v "$command" &> /dev/null; then
         log "Installing $package..."
         sudo apt-get install -y "$package"
     else
@@ -470,6 +477,90 @@ upgrade_npm_global_if_installed() {
         npm_install install -g "$package"
     else
         log "$package is up to date ($installed_version)"
+    fi
+}
+
+#############################################################################
+# GitHub Deb Package Management
+#############################################################################
+
+# Install or upgrade a deb package from GitHub releases
+# Supports version checking, process killing before upgrade, and architecture filtering
+#
+# Usage: install_github_deb_package package_name version github_url [kill_process] [arch_filter]
+#
+# Parameters:
+#   package_name  - Name of the package as registered in dpkg (e.g., "handy")
+#   version       - Version to install (e.g., "0.6.8")
+#   github_url    - URL template with {VERSION} and {ARCH} placeholders
+#                   Example: "https://github.com/user/repo/releases/download/v{VERSION}/Package_{VERSION}_{ARCH}.deb"
+#   kill_process  - Optional process name to kill before upgrade (case-insensitive)
+#   arch_filter   - Optional required architecture (default: "x86_64"). Set to "" to allow all.
+#
+# Returns: 0 on success or skip, 1 on failure
+#
+# Example:
+#   install_github_deb_package "handy" "0.6.8" \
+#     "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
+#     "handy" "x86_64"
+#
+install_github_deb_package() {
+    local package_name="$1"
+    local version="$2"
+    local github_url_template="$3"
+    local kill_process="${4:-}"
+    local arch_filter="${5:-x86_64}"
+
+    # Check architecture if filter is specified
+    if [ -n "$arch_filter" ]; then
+        local current_arch=$(uname -m)
+        if [ "$current_arch" != "$arch_filter" ]; then
+            log "Skipping $package_name: only $arch_filter deb package available (current: $current_arch)"
+            return 0
+        fi
+    fi
+
+    # Check installed version via dpkg
+    local installed_version=$(dpkg-query -W -f='${Version}' "$package_name" 2>/dev/null || echo "")
+
+    if [ -z "$installed_version" ]; then
+        log "Installing $package_name $version..."
+    elif [ "$installed_version" = "$version" ]; then
+        log "$package_name $version is already installed"
+        return 0
+    elif dpkg --compare-versions "$installed_version" ge "$version"; then
+        log "$package_name $installed_version is already installed (>= $version)"
+        return 0
+    else
+        log "Upgrading $package_name from $installed_version to $version..."
+    fi
+
+    # Kill process if specified and running (required for clean upgrade)
+    if [ -n "$kill_process" ]; then
+        if pgrep -xi "$kill_process" >/dev/null 2>&1; then
+            log "Stopping $kill_process process for upgrade..."
+            pkill -xi "$kill_process" || true
+            sleep 1
+        fi
+    fi
+
+    # Substitute version and architecture in URL template
+    local arch_deb="amd64"  # deb package architecture naming
+    local github_url="${github_url_template//\{VERSION\}/$version}"
+    github_url="${github_url//\{ARCH\}/$arch_deb}"
+
+    # Download and install
+    local deb_file="/tmp/${package_name}_${version}_${arch_deb}.deb"
+    curl -fL "$github_url" -o "$deb_file"
+
+    if [ -f "$deb_file" ]; then
+        sudo dpkg -i "$deb_file" || sudo apt-get install -f -y
+        rm -f "$deb_file"
+        log "$package_name $version installed via deb package"
+        return 0
+    else
+        warn "Failed to download $package_name"
+        return 1
     fi
 }
 

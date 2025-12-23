@@ -867,9 +867,8 @@ if command -v pipewire &>/dev/null; then
     PIPEWIRE_INSTALLED=true
 fi
 
-# Apply PipeWire VM audio fix for Terminator + VM + PipeWire
-if [ "$TERMINATOR_INSTALLED" = "true" ] && [ "$IS_VM" = "true" ] && \
-   [ "$PIPEWIRE_INSTALLED" = "true" ]; then
+# Apply PipeWire VM audio fix for VM + PipeWire
+if [ "$IS_VM" = "true" ] && [ "$PIPEWIRE_INSTALLED" = "true" ]; then
     apply_pipewire_vm_fix
 fi
 
@@ -1704,7 +1703,9 @@ EOF
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
-        if install_go; then
+        if command -v imagemage &>/dev/null; then
+            log "imagemage is already installed"
+        elif install_go; then
             log "Installing imagemage (Gemini image generation CLI)..."
             IMAGEMAGE_DIR="/tmp/imagemage-build"
             rm -rf "$IMAGEMAGE_DIR"
@@ -1718,47 +1719,9 @@ EOF
     fi
 
     # Install Handy (system-wide STT) via .deb package
-    ARCH=$(uname -m)
-    HANDY_VERSION="0.6.8"
-    if [ "$ARCH" = "x86_64" ]; then
-        # Check installed version via dpkg
-        INSTALLED_HANDY_VERSION=$(dpkg-query -W -f='${Version}' handy 2>/dev/null || echo "")
-
-        if [ -z "$INSTALLED_HANDY_VERSION" ]; then
-            log "Installing Handy (system-wide speech-to-text)..."
-        elif [ "$INSTALLED_HANDY_VERSION" = "$HANDY_VERSION" ]; then
-            log "Handy $HANDY_VERSION is already installed"
-            INSTALLED_HANDY_VERSION="skip"
-        elif dpkg --compare-versions "$INSTALLED_HANDY_VERSION" ge "$HANDY_VERSION"; then
-            log "Handy $INSTALLED_HANDY_VERSION is already installed (>= $HANDY_VERSION)"
-            INSTALLED_HANDY_VERSION="skip"
-        else
-            log "Upgrading Handy from $INSTALLED_HANDY_VERSION to $HANDY_VERSION..."
-        fi
-
-        if [ "$INSTALLED_HANDY_VERSION" != "skip" ]; then
-            # Kill Handy if running (required for clean upgrade)
-            if pgrep -xi handy >/dev/null 2>&1; then
-                log "Stopping Handy process for upgrade..."
-                pkill -xi handy || true
-                sleep 1
-            fi
-
-            HANDY_DEB="/tmp/handy_${HANDY_VERSION}_amd64.deb"
-            HANDY_URL="https://github.com/cjpais/Handy/releases/download/v${HANDY_VERSION}/Handy_${HANDY_VERSION}_amd64.deb"
-
-            curl -fL "$HANDY_URL" -o "$HANDY_DEB"
-            if [ -f "$HANDY_DEB" ]; then
-                sudo dpkg -i "$HANDY_DEB" || sudo apt-get install -f -y
-                rm -f "$HANDY_DEB"
-                log "Handy $HANDY_VERSION installed via deb package"
-            else
-                warn "Failed to download Handy"
-            fi
-        fi
-    else
-        log "Skipping Handy: only x86_64 deb package available"
-    fi
+    install_github_deb_package "handy" "0.6.8" \
+        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
+        "handy" "x86_64"
 fi
 
 #############################################################################
