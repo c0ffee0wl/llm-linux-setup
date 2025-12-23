@@ -21,11 +21,16 @@ class KnowledgeBaseMixin:
     Expects these attributes on self:
     - console: Rich Console for output
     - loaded_kbs: dict[str, str] for loaded KB content
+    - _debug: Debug logging method
     """
 
     # Type hints for attributes provided by main class
     console: 'Console'
     loaded_kbs: dict
+
+    def _debug(self, msg: str) -> None:
+        """Debug logging - implemented by main class."""
+        pass  # Overridden by TerminatorAssistantSession
 
     def _get_kb_dir(self) -> Path:
         """Get or create KB directory in config directory."""
@@ -58,6 +63,7 @@ class KnowledgeBaseMixin:
         try:
             content = kb_path.read_text()
             self.loaded_kbs[name] = content
+            self._debug(f"Loaded KB: {kb_path} ({len(content)} chars)")
             if not silent:
                 ConsoleHelper.success(self.console, f"Loaded KB: {name} ({len(content)} chars)")
             return True
