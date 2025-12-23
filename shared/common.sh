@@ -481,6 +481,195 @@ upgrade_npm_global_if_installed() {
 }
 
 #############################################################################
+# UV Package Manager
+#############################################################################
+
+# Install or upgrade uv via pipx
+# Sets up PATH and configures uv to prefer system Python
+install_or_upgrade_uv() {
+    export PATH=$HOME/.local/bin:$PATH
+    if ! command -v uv &> /dev/null; then
+        log "Installing uv..."
+        pipx install uv
+    else
+        log "uv is already installed, upgrading..."
+        pipx upgrade uv
+    fi
+
+    # Configure uv to prefer system Python (prevents issues with Python 3.14+ lacking package wheels)
+    configure_uv_system_python
+}
+
+#############################################################################
+# Rust Version Management
+#############################################################################
+
+# Minimum Rust version required (1.85 for edition2024 cargo tools)
+MINIMUM_RUST_VERSION=185
+
+# Install or upgrade Rust with intelligent version detection
+# Uses apt if repo version >= 1.85, otherwise falls back to rustup
+# Prompts user if upgrade needed from old apt version to rustup
+install_or_upgrade_rust() {
+    # Check what Rust version is available in repositories
+    log "Checking Rust version in repositories..."
+    local repo_rust_version=$(apt-cache policy rustc 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+\.[0-9]+' | head -1)
+
+    if [ -z "$repo_rust_version" ]; then
+        repo_rust_version="0.0"
+        warn "Could not determine repository Rust version"
+    fi
+
+    # Convert version to comparable number (e.g., "1.85" -> 185)
+    local repo_rust_version_num=$(echo "$repo_rust_version" | awk -F. '{print ($1 * 100) + $2}')
+
+    log "Repository has Rust version: $repo_rust_version (numeric: $repo_rust_version_num, minimum required: $MINIMUM_RUST_VERSION)"
+
+    # Install Rust - either from repo (if >= 1.85) or via rustup (if < 1.85)
+    if ! command -v cargo &> /dev/null; then
+        # Check if rustup is already managing Rust (rustup might be installed but not active)
+        if command -v rustup &> /dev/null; then
+            log "rustup is installed but cargo not found, installing Rust via rustup..."
+            rustup toolchain install stable
+            rustup default stable
+        elif [ "$repo_rust_version_num" -ge "$MINIMUM_RUST_VERSION" ]; then
+            log "Installing Rust from repositories (version $repo_rust_version)..."
+            sudo apt-get install -y cargo rustc
+        else
+            log "Repository version $repo_rust_version is < 1.85, installing Rust via rustup..."
+            install_rust_via_rustup
+        fi
+    else
+        # Rust is already installed - determine if it's managed by rustup or apt
+        if command -v rustup &> /dev/null; then
+            local current_rust_version=$(rustc --version | grep -oP 'rustc \K[0-9]+\.[0-9]+' | head -1)
+            log "Rust is already installed via rustup (version $current_rust_version)"
+
+            # Check if we need to update
+            update_rust_via_rustup
+        else
+            local current_rust_version=$(rustc --version | grep -oP 'rustc \K[0-9]+\.[0-9]+' | head -1)
+            local current_rust_version_num=$(echo "$current_rust_version" | awk -F. '{print ($1 * 100) + $2}')
+
+            log "Rust is already installed from system packages (version $current_rust_version)"
+
+            # If current version is < 1.85, offer to upgrade via rustup
+            if [ "$current_rust_version_num" -lt "$MINIMUM_RUST_VERSION" ]; then
+                warn "Installed Rust version $current_rust_version is too old (requires 1.85+)"
+                echo ""
+                read -p "Install Rust 1.85+ via rustup? This will shadow the system installation. (Y/n): " upgrade_rust
+                upgrade_rust=${upgrade_rust:-Y}
+
+                if [[ "$upgrade_rust" =~ ^[Yy]$ ]]; then
+                    install_rust_via_rustup
+                    log "Rust upgraded successfully. rustup version will take precedence over system version."
+                else
+                    warn "Continuing with old Rust version. Some cargo tool builds may fail."
+                    warn "To upgrade manually later, run: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+                fi
+            fi
+        fi
+    fi
+}
+
+#############################################################################
+# Node.js Version Management
+#############################################################################
+
+# Minimum Node.js version required (20 for Claude Code)
+MINIMUM_NODE_VERSION=20
+
+# Install or upgrade Node.js with intelligent version detection
+# Uses apt if repo version >= 20, otherwise falls back to nvm (Node 22)
+# Also ensures npm is installed
+install_or_upgrade_nodejs() {
+    # Check what Node.js version is available in repositories
+    log "Checking Node.js version in repositories..."
+    local repo_node_version=$(apt-cache policy nodejs 2>/dev/null | grep -oP 'Candidate:\s*\K[0-9]+' | head -1)
+
+    if [ -z "$repo_node_version" ]; then
+        repo_node_version=0
+        warn "Could not determine repository Node.js version"
+    fi
+
+    log "Repository has Node.js version: $repo_node_version"
+
+    # Install Node.js - either from repo (if >= 20) or via nvm (if < 20)
+    if ! command -v node &> /dev/null; then
+        if [ "$repo_node_version" -ge "$MINIMUM_NODE_VERSION" ]; then
+            log "Installing Node.js from repositories (version $repo_node_version)..."
+            sudo apt-get install -y nodejs
+
+            # Install npm separately for repository installations
+            if ! command -v npm &> /dev/null; then
+                log "Installing npm..."
+                sudo apt-get install -y npm
+            fi
+        else
+            log "Repository version $repo_node_version is < 20, installing Node 22 via nvm..."
+
+            # Install nvm
+            if [ ! -d "$HOME/.nvm" ]; then
+                log "Installing nvm..."
+                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+
+                # Source nvm immediately for this script
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            else
+                log "nvm is already installed"
+                export NVM_DIR="$HOME/.nvm"
+                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+            fi
+
+            # Install Node 22 via nvm
+            log "Installing Node.js 22 via nvm..."
+            nvm install 22
+            nvm use 22
+            nvm alias default 22
+        fi
+    else
+        local current_node_version=$(node --version | grep -oP 'v\K[0-9]+' || true)
+        log "Node.js is already installed (version $current_node_version)"
+
+        # If current version is < 20, warn user
+        if [ "$current_node_version" -lt "$MINIMUM_NODE_VERSION" ]; then
+            warn "Installed Node.js version $current_node_version is < 20. Consider upgrading to Node 22 via nvm."
+            warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
+            warn "Then: nvm install 22 && nvm use 22 && nvm alias default 22"
+        fi
+
+        # Ensure npm is installed even if node was already present
+        if ! command -v npm &> /dev/null; then
+            # Check if node is from nvm - if so, don't install apt npm
+            if which node 2>/dev/null | grep -q "\.nvm"; then
+                warn "Node.js is from nvm but npm is not found. Please fix your nvm installation."
+                warn "Try: nvm reinstall \$(node --version | tr -d 'v')"
+            else
+                log "npm is not installed, installing from repository..."
+                sudo apt-get install -y npm
+            fi
+        fi
+    fi
+}
+
+# Detect if npm needs sudo for global installs
+# Sets NPM_NEEDS_SUDO and NPM_PREFIX variables
+detect_npm_permissions() {
+    log "Detecting npm permissions..."
+    NPM_PREFIX=$(npm config get prefix 2>/dev/null || echo "/usr/local")
+    if mkdir -p "$NPM_PREFIX/lib/node_modules/.npm-test" 2>/dev/null; then
+        rm -rf "$NPM_PREFIX/lib/node_modules/.npm-test" 2>/dev/null
+        NPM_NEEDS_SUDO=false
+        log "npm can install globally without sudo"
+    else
+        NPM_NEEDS_SUDO=true
+        log "npm requires sudo for global installs"
+    fi
+    export NPM_NEEDS_SUDO NPM_PREFIX
+}
+
+#############################################################################
 # GitHub Deb Package Management
 #############################################################################
 
