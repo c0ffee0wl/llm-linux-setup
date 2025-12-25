@@ -12,8 +12,21 @@ A Terminator-integrated AI assistant that provides:
 Inspired by TmuxAI but designed for Terminator terminal emulator.
 """
 
-from .session import TerminatorAssistantSession
-from .cli import main
-
 __version__ = "1.0.0"
 __all__ = ["TerminatorAssistantSession", "main"]
+
+
+def __getattr__(name):
+    """Lazy import heavy modules to avoid unnecessary audio initialization.
+
+    This prevents importing session.py (which imports voice.py, which
+    initializes sounddevice/PortAudio) when only utility functions like
+    filter_new_blocks from context.py are needed.
+    """
+    if name == "TerminatorAssistantSession":
+        from .session import TerminatorAssistantSession
+        return TerminatorAssistantSession
+    elif name == "main":
+        from .cli import main
+        return main
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
