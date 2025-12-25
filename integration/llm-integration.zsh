@@ -8,6 +8,13 @@
 # Source common configuration
 source "${0:A:h}/llm-common.sh"
 
+# Exclude @ and llm-shell commands from shell history
+if [[ -n "$HISTORY_IGNORE" ]]; then
+    HISTORY_IGNORE="(${HISTORY_IGNORE//[()]/}|@ *|llm-shell *)"
+else
+    HISTORY_IGNORE="(@ *|llm-shell *)"
+fi
+
 # Define the command completion widget
 __llm_cmdcomp() {
   local old_cmd=$BUFFER

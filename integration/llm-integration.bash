@@ -8,6 +8,9 @@
 # Source common configuration
 source "$(dirname "${BASH_SOURCE[0]}")/llm-common.sh"
 
+# Exclude @ and llm-shell commands from shell history
+HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}@ *:llm-shell *"
+
 # Bind Ctrl+N to the LLM command completion
 bind -x '"\C-n": __llm_cmdcomp'
 
