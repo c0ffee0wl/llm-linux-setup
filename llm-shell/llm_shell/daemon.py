@@ -366,12 +366,15 @@ class ShellDaemon:
         tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
         tool_call_id = tool_call.tool_call_id
 
-        # Notify user about tool execution
-        writer.write(f"\n[Tool: {tool_name}]\n".encode())
+        # Send tool start marker (client shows spinner)
+        writer.write(f"\x02TOOL:{tool_name}\x03".encode())
         await writer.drain()
 
         # Check if we have an implementation
         if tool_name not in implementations:
+            # Send tool done marker before returning
+            writer.write(b"\x02TOOL_DONE\x03")
+            await writer.drain()
             return ToolResult(
                 name=tool_call.name,
                 output=f"Error: Tool '{tool_name}' not available",
@@ -390,6 +393,10 @@ class ShellDaemon:
             else:
                 output = result
 
+            # Send tool done marker
+            writer.write(b"\x02TOOL_DONE\x03")
+            await writer.drain()
+
             return ToolResult(
                 name=tool_call.name,
                 output=output,
@@ -397,6 +404,10 @@ class ShellDaemon:
             )
 
         except Exception as e:
+            # Send tool done marker even on error
+            writer.write(b"\x02TOOL_DONE\x03")
+            await writer.drain()
+
             return ToolResult(
                 name=tool_call.name,
                 output=f"Error executing {tool_name}: {e}",

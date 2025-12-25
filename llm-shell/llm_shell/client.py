@@ -14,11 +14,32 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from rich.console import Console
+import re
+
+from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
+from rich.spinner import Spinner
+from rich.text import Text
 
 from .utils import get_socket_path, get_terminal_session_id
+
+
+# Tool display configuration: tool_name -> action_verb (same as llm-assistant)
+TOOL_DISPLAY = {
+    'execute_python': 'Executing Python',
+    'fetch_url': 'Fetching',
+    'search_google': 'Searching',
+    'load_github': 'Loading repo',
+    'load_pdf': 'Extracting PDF',
+    'load_yt': 'Loading transcript',
+    'prompt_fabric': 'Executing Fabric pattern',
+    'suggest_command': 'Preparing command',
+}
+
+# Protocol markers (STX...ETX)
+TOOL_START_PATTERN = re.compile(r'\x02TOOL:([^\x03]+)\x03')
+TOOL_DONE_MARKER = '\x02TOOL_DONE\x03'
 
 
 # Maximum time to wait for daemon startup
@@ -218,10 +239,37 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
     # Send query and stream response with real-time markdown rendering
     if stream:
         accumulated_text = ""
+        active_tool = None  # Currently executing tool name
+
         with Live(refresh_per_second=10) as live:
             for chunk in stream_request("query", terminal_id, prompt):
-                accumulated_text += chunk
-                live.update(Markdown(accumulated_text))
+                # Check for tool start marker
+                tool_match = TOOL_START_PATTERN.search(chunk)
+                if tool_match:
+                    active_tool = tool_match.group(1)
+                    # Remove marker from chunk
+                    chunk = TOOL_START_PATTERN.sub('', chunk)
+
+                # Check for tool done marker
+                if TOOL_DONE_MARKER in chunk:
+                    active_tool = None
+                    # Remove marker from chunk
+                    chunk = chunk.replace(TOOL_DONE_MARKER, '')
+
+                # Add remaining text to accumulated
+                if chunk:
+                    accumulated_text += chunk
+
+                # Update display with optional spinner
+                if active_tool:
+                    action = TOOL_DISPLAY.get(active_tool, f'Executing {active_tool}')
+                    spinner_text = Text(f"{action}...", style="cyan")
+                    live.update(Group(
+                        Markdown(accumulated_text),
+                        Spinner("dots", text=spinner_text, style="cyan")
+                    ))
+                else:
+                    live.update(Markdown(accumulated_text))
 
         # Check for error after streaming completes
         if accumulated_text.startswith("ERROR:"):

@@ -96,6 +96,9 @@ llm-shell exposes these tools to the model:
 Tools are auto-executed when the model calls them. Results are sent back
 to the model for multi-turn tool use (max 10 iterations).
 
+During tool execution, a spinner is displayed showing the action (e.g., "Running Python...").
+The spinner disappears automatically when execution completes.
+
 ## Keybindings
 
 - `Ctrl+N` - AI command completion (via llm-cmd-comp)
