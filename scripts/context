@@ -40,8 +40,8 @@ __all__ = ['get_command_blocks', 'get_context', 'get_session_log_file']
 
 
 # Compiled regex for filtering AI-related commands
-# Matches commands starting with: context, llm, aichat, llm-assistant, llm-sidechat (legacy), or wut
-FILTERED_COMMANDS = re.compile(r'^(context|llm|aichat|llm-assistant|llm-sidechat|wut)(\s|$)', re.IGNORECASE)
+# Matches commands starting with: @, context, llm, llm-shell, aichat, llm-assistant, or wut
+FILTERED_COMMANDS = re.compile(r'^(@|context|llm|llm-shell|aichat|llm-assistant|wut)(\s|$)', re.IGNORECASE)
 
 
 def find_cast_file():
@@ -106,11 +106,13 @@ def should_exclude_block(block):
     Check if a prompt block should be excluded from output.
 
     Excludes blocks where the command starts with:
+    - @ (llm-shell queries)
     - context (with space or end of string)
     - llm (with space)
+    - llm-shell (with space or end of string)
     - aichat (with space or end of string)
     - llm-assistant (with space or end of string)
-    - llm-sidechat (legacy, with space or end of string)
+    - wut (with space or end of string)
 
     Args:
         block: Text block containing prompt + command + output

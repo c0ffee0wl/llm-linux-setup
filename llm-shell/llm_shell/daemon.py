@@ -225,8 +225,9 @@ class ShellDaemon:
             request = data.decode('utf-8').strip()
             self.last_activity = datetime.now()
 
-            # Parse request: "command:terminal_id:session_log:query"
-            parts = request.split(':', 3)
+            # Parse request using Unit Separator (0x1f) as delimiter
+            # Format: "command\x1fterminal_id\x1fsession_log\x1fquery"
+            parts = request.split('\x1f', 3)
             if len(parts) < 2:
                 writer.write(b"ERROR: Invalid request format\n")
                 await writer.drain()

@@ -41,6 +41,9 @@ TOOL_DISPLAY = {
 TOOL_START_PATTERN = re.compile(r'\x02TOOL:([^\x03]+)\x03')
 TOOL_DONE_MARKER = '\x02TOOL_DONE\x03'
 
+# Request field separator (Unit Separator, ASCII 31) - safe delimiter that won't appear in fields
+FIELD_SEP = '\x1f'
+
 
 # Maximum time to wait for daemon startup
 DAEMON_STARTUP_TIMEOUT = 5.0
@@ -122,7 +125,8 @@ def send_request(command: str, terminal_id: str, data: str = "") -> Optional[str
         sock.connect(str(socket_path))
 
         # Send request with session log file for context capture
-        request = f"{command}:{terminal_id}:{session_log}:{data}"
+        # Uses Unit Separator (0x1f) as delimiter - safe for paths containing colons
+        request = f"{command}{FIELD_SEP}{terminal_id}{FIELD_SEP}{session_log}{FIELD_SEP}{data}"
         sock.sendall(request.encode())
         sock.shutdown(socket.SHUT_WR)
 
@@ -154,7 +158,8 @@ def stream_request(command: str, terminal_id: str, data: str = ""):
         sock.connect(str(socket_path))
 
         # Send request with session log file for context capture
-        request = f"{command}:{terminal_id}:{session_log}:{data}"
+        # Uses Unit Separator (0x1f) as delimiter - safe for paths containing colons
+        request = f"{command}{FIELD_SEP}{terminal_id}{FIELD_SEP}{session_log}{FIELD_SEP}{data}"
         sock.sendall(request.encode())
         sock.shutdown(socket.SHUT_WR)
 
