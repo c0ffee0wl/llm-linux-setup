@@ -156,6 +156,38 @@ wut() {
     fi
 }
 
+# @ function - Shell-native AI assistant with conversation continuity
+# Usage: @ What's new about space travel?
+#        @ Tell me more                    -> Continues conversation
+#        @ /new                            -> Start fresh conversation
+#        @ /help                           -> Show commands
+@() {
+    if ! command -v llm-shell &> /dev/null; then
+        echo "Error: llm-shell is not installed. Run install-llm-tools.sh to install." >&2
+        return 1
+    fi
+
+    # Get terminal session ID for conversation tracking
+    local terminal_id=""
+    if [ -n "$TMUX_PANE" ]; then
+        terminal_id="tmux:$TMUX_PANE"
+    elif [ -n "$TERM_SESSION_ID" ]; then
+        terminal_id="iterm:$TERM_SESSION_ID"
+    elif [ -n "$KONSOLE_DBUS_SESSION" ]; then
+        terminal_id="konsole:$KONSOLE_DBUS_SESSION"
+    elif [ -n "$WINDOWID" ]; then
+        terminal_id="x11:$WINDOWID"
+    elif [ -n "$SESSION_LOG_FILE" ]; then
+        terminal_id="asciinema:$(basename "$SESSION_LOG_FILE" .cast)"
+    else
+        terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
+    fi
+    export TERMINAL_SESSION_ID="$terminal_id"
+
+    # Pass all arguments to llm-shell
+    llm-shell "$@"
+}
+
 # Alias for Claude Code Router
 alias routed-claude='ccr code'
 

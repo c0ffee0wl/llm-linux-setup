@@ -87,7 +87,7 @@ from .skills import SkillsMixin
 from .report import ReportMixin
 from .web import WebMixin
 from .terminal import TerminalMixin
-from .context import ContextMixin
+from .context import ContextMixin, filter_new_blocks
 from .watch import WatchMixin
 from .mcp import (
     MCPMixin,
@@ -1199,14 +1199,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                     blocks = self._split_into_command_blocks(content)
                     prev_hashes = self.previous_capture_block_hashes.get(term_uuid, set())
 
-                    # Compute current block hashes (always, for next comparison)
-                    current_hashes = set()
-                    new_blocks = []
-                    for block in blocks:
-                        block_hash = hashlib.sha256(block.strip().encode()).hexdigest()
-                        current_hashes.add(block_hash)
-                        if block_hash not in prev_hashes:
-                            new_blocks.append(block)
+                    # Use shared filter function (also used by llm-shell)
+                    new_blocks, current_hashes = filter_new_blocks(blocks, prev_hashes)
 
                     # Update previous = current for next capture
                     self.previous_capture_block_hashes[term_uuid] = current_hashes

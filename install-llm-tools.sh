@@ -1459,15 +1459,27 @@ PYTHON_USER_SITE=$(python3 -m site --user-site)
 mkdir -p "$PYTHON_USER_SITE/llm_tools"
 cp "$SCRIPT_DIR/llm-assistant/llm_assistant/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
-# Install Terminator assistant components (conditional)
+# Install llm-assistant package (unconditional - llm-shell depends on it)
+log "Installing llm-assistant package..."
+install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
+
+# Create wrapper script that calls into llm's environment
+cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
+#!/bin/sh
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_assistant "$@"
+EOF
+chmod +x "$HOME/.local/bin/llm-assistant"
+
+# Install Terminator-specific components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    PLUGINS=(
+    # Terminator-specific tool plugins (require D-Bus terminal access)
+    TERMINATOR_PLUGINS=(
         "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
         "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
         "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
     )
 
-    for plugin in "${PLUGINS[@]}"; do
+    for plugin in "${TERMINATOR_PLUGINS[@]}"; do
         install_or_upgrade_llm_plugin "$plugin"
     done
 
@@ -1483,20 +1495,27 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
        "$HOME/.config/terminator/plugins/terminator_assistant.py"
     log "Terminator assistant plugin installed"
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
+fi
 
-    # Install llm-assistant package into llm's environment
-    log "Installing llm-assistant package..."
-    install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
+# Install llm-shell (shell-native AI assistant)
+# Works in any terminal (not just Terminator)
+log "Installing llm-shell package..."
+install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-shell"
 
-    # Create wrapper script that calls into llm's environment
-    cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
+# Create wrapper scripts for llm-shell
+cat > "$HOME/.local/bin/llm-shell" << 'EOF'
 #!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_assistant "$@"
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_shell "$@"
 EOF
-    chmod +x "$HOME/.local/bin/llm-assistant"
+chmod +x "$HOME/.local/bin/llm-shell"
 
-    # Note: system_info.py and prompt_detection.py are now bundled in the package
+cat > "$HOME/.local/bin/llm-shell-daemon" << 'EOF'
+#!/bin/sh
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_shell.daemon "$@"
+EOF
+chmod +x "$HOME/.local/bin/llm-shell-daemon"
 
+if command -v terminator &> /dev/null; then
     # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
     MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
     HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
@@ -1569,6 +1588,12 @@ log "Installing/updating additional tools..."
 
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
+
+# Install/update llm-observability (log viewer for llm conversations)
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
+
+# Install/update llm-server (OpenAI-compatible HTTP wrapper for llm library)
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-server"
 
 # Install/update tldr (community-driven man pages with practical examples)
 install_or_upgrade_uv_tool tldr
@@ -1724,6 +1749,7 @@ log "============================================="
 log ""
 log "Installed tools:"
 log "  - llm (Simon Willison's CLI tool)"
+log "  - llm-shell (shell-native AI assistant with @ syntax)"
 log "  - llm plugins (gemini, anthropic, tools, sandboxed-shell, sandboxed-python, fragments, jq, fabric templates, context, llm-functions bridge)"
 log "  - Claude Code (Anthropic's agentic coding CLI)"
 log "  - Claude Code Router (proxy for Claude Code)"
@@ -1743,8 +1769,9 @@ log ""
 log "Next steps:"
 log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
-log "  3. Use Ctrl+N in your shell for AI command completion"
-log "  4. Test Claude Code Router: routed-claude"
+log "  3. Test llm-shell: @ What time is it?"
+log "  4. Use Ctrl+N for AI command completion, Ctrl+G to apply suggested commands"
+log "  5. Test Claude Code Router: routed-claude"
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"

@@ -1,57 +1,63 @@
 #!/bin/zsh
 #
-# LLM Command Completion for Zsh
-# Provides AI-powered command completion using Ctrl+N
-# and tab completion for llm commands
+# LLM Shell Integration for Zsh
+# - Ctrl+N: AI-powered command completion
+# - Ctrl+G: Apply suggested command from llm-shell
 #
 
 # Source common configuration
 source "${0:A:h}/llm-common.sh"
 
-# Set up llm tab completion
-
-# Add the completion directory to fpath
-#fpath=("${0:A:h}/llm-zsh-plugin/completions" $fpath)
-
-# Initialize completion system if not already done
-#autoload -Uz compinit
-#compinit -i
-
 # Define the command completion widget
 __llm_cmdcomp() {
   local old_cmd=$BUFFER
-  local cursor_pos=$CURSOR # Store original cursor position
+  local cursor_pos=$CURSOR
 
-  # Optional: Show a temporary indicator while processing
+  # Show a temporary indicator while processing
   BUFFER+=" ⌛"
   zle -I && zle redisplay
-  BUFFER=$old_cmd # Restore original buffer before executing llm cmdcomp
+  BUFFER=$old_cmd
 
-  # Clear the current line and move to a new line for llm's output if any
-  # (This is good practice if llm cmdcomp itself might print status messages)
+  # Move to a new line for llm's output
   echo
 
   # Call llm cmdcomp to get the suggested command
   local result=$(command llm cmdcomp "$old_cmd")
 
   if [ $? -eq 0 ] && [ -n "$result" ]; then
-    # If a command is returned successfully and is not empty:
-    BUFFER=$result         # Replace the current buffer with the suggested command
-    CURSOR=${#BUFFER}      # Move cursor to the end of the new command
-    #zle accept-line        # Execute the command immediately
+    BUFFER=$result
+    CURSOR=${#BUFFER}
   else
-    # If no command is returned, or an error occurred:
-    BUFFER=$old_cmd        # Restore the original buffer content
-    CURSOR=$cursor_pos     # Restore the original cursor position
-    #BUFFER=""              # Clear the buffer completely
-    #CURSOR=0               # Reset cursor to the beginning
-    #zle reset-prompt       # Refresh the prompt to show the original command
+    BUFFER=$old_cmd
+    CURSOR=$cursor_pos
   fi
-  zle reset-prompt       # Refresh the prompt to show the original command
+  zle reset-prompt
 }
 
-# Register the widget
-zle -N __llm_cmdcomp
+# Define the apply suggestion widget
+__llm_apply_suggest() {
+  # Apply suggested command from llm-shell's suggest_command tool
+  local suggest_file="/tmp/llm-shell-$(id -u)/suggest"
 
-# Bind Ctrl+N to the widget
+  if [[ -f "$suggest_file" ]]; then
+    local cmd
+    cmd="$(cat "$suggest_file")"
+    rm -f "$suggest_file"
+
+    if [[ -n "$cmd" ]]; then
+      BUFFER="$cmd"
+      CURSOR=${#BUFFER}
+    fi
+  fi
+  zle reset-prompt
+}
+
+# Register the widgets
+zle -N __llm_cmdcomp
+zle -N __llm_apply_suggest
+
+# Bind Ctrl+N to command completion
 bindkey '^N' __llm_cmdcomp
+
+# Bind Ctrl+G to apply suggested command
+bindkey '^G' __llm_apply_suggest

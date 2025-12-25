@@ -6,21 +6,18 @@ Extracts prompt blocks (prompt + command + output) from your terminal session.
 Each block contains everything from one prompt to the next, preserving the exact
 terminal formatting including multi-line commands.
 
-Usage:
+CLI Usage:
     context          # Show last prompt block (default)
     context 5        # Show last 5 prompt blocks
     context all      # Show entire session
     context -a       # Show entire session
     context -e       # Output SESSION_LOG_FILE environment variable
-Usage:
-    context [number|all]
-    context -a | --all
-    context -e | --environment
-Example:
-    context 5 (shows last 5 prompt blocks)
-    context all (shows entire history)
-    context -a (shows entire history)
-    context -e (outputs export command for SESSION_LOG_FILE)
+
+Library Usage:
+    from context import get_command_blocks, get_context
+
+    blocks = get_command_blocks(n_commands=3)  # Returns list of prompt blocks
+    context_str = get_context(n_commands=3)    # Returns formatted context string
 """
 
 import os
@@ -28,6 +25,7 @@ import sys
 import subprocess
 import tempfile
 import re
+from typing import List, Optional
 
 # Import shared prompt detection module
 try:
@@ -36,6 +34,9 @@ except ImportError:
     # Fallback for development - import from same directory
     from prompt_detection import PromptDetector
 import argparse
+
+# Public API for library usage
+__all__ = ['get_command_blocks', 'get_context', 'get_session_log_file']
 
 
 # Compiled regex for filtering AI-related commands
@@ -264,6 +265,95 @@ def format_output(blocks):
         result.append("#c# ")  # Blank line separator between blocks
 
     return '\n'.join(result)
+
+
+# =============================================================================
+# Public API - Library Functions
+# =============================================================================
+
+def get_session_log_file() -> Optional[str]:
+    """
+    Get the path to the current session's asciinema recording.
+
+    Returns:
+        Path to the .cast file, or None if not found.
+
+    Example:
+        >>> from context import get_session_log_file
+        >>> log_file = get_session_log_file()
+        >>> if log_file:
+        ...     print(f"Recording: {log_file}")
+    """
+    return find_cast_file()
+
+
+def get_command_blocks(n_commands: int = 3) -> List[str]:
+    """
+    Extract the last N command blocks from the current asciinema recording.
+
+    Each block contains a prompt line, the command, and its output
+    (everything from one prompt to the next).
+
+    Args:
+        n_commands: Number of recent prompt blocks to extract.
+                   Use None for all blocks.
+
+    Returns:
+        List of prompt block strings. Empty list if no session found
+        or no prompts detected.
+
+    Raises:
+        FileNotFoundError: If asciinema command is not installed.
+        subprocess.CalledProcessError: If cast file conversion fails.
+
+    Example:
+        >>> from context import get_command_blocks
+        >>> blocks = get_command_blocks(3)
+        >>> for block in blocks:
+        ...     print(block)
+        ...     print("---")
+    """
+    cast_file = find_cast_file()
+    if not cast_file:
+        return []
+
+    text = convert_cast_to_text(cast_file)
+    return extract_prompt_blocks(text, n_commands)
+
+
+def get_context(n_commands: int = 3, raw: bool = False) -> str:
+    """
+    Get formatted context string from the current asciinema recording.
+
+    This is the main entry point for library usage. Returns the last N
+    command blocks formatted for injection into AI prompts.
+
+    Args:
+        n_commands: Number of recent prompt blocks to include.
+                   Use None for all blocks.
+        raw: If True, return blocks joined without #c# prefix formatting.
+             If False (default), return with #c# prefix on each line.
+
+    Returns:
+        Formatted context string. Returns empty string if no session found.
+
+    Example:
+        >>> from context import get_context
+        >>> context_str = get_context(3)
+        >>> print(context_str)
+
+        # For raw output (no #c# prefix):
+        >>> raw_context = get_context(3, raw=True)
+    """
+    blocks = get_command_blocks(n_commands)
+
+    if not blocks:
+        return "" if raw else "#c# No prompts found in session recording."
+
+    if raw:
+        return '\n\n'.join(blocks)
+    else:
+        return format_output(blocks)
 
 
 def main():
