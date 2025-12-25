@@ -114,14 +114,15 @@ def send_request(command: str, terminal_id: str, data: str = "") -> Optional[str
     For streaming responses, yields chunks instead.
     """
     socket_path = get_socket_path()
+    session_log = os.environ.get('SESSION_LOG_FILE', '')
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(120)  # 2 minute timeout for long responses
         sock.connect(str(socket_path))
 
-        # Send request
-        request = f"{command}:{terminal_id}:{data}"
+        # Send request with session log file for context capture
+        request = f"{command}:{terminal_id}:{session_log}:{data}"
         sock.sendall(request.encode())
         sock.shutdown(socket.SHUT_WR)
 
@@ -145,14 +146,15 @@ def send_request(command: str, terminal_id: str, data: str = "") -> Optional[str
 def stream_request(command: str, terminal_id: str, data: str = ""):
     """Send request and stream response chunks."""
     socket_path = get_socket_path()
+    session_log = os.environ.get('SESSION_LOG_FILE', '')
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(120)
         sock.connect(str(socket_path))
 
-        # Send request
-        request = f"{command}:{terminal_id}:{data}"
+        # Send request with session log file for context capture
+        request = f"{command}:{terminal_id}:{session_log}:{data}"
         sock.sendall(request.encode())
         sock.shutdown(socket.SHUT_WR)
 

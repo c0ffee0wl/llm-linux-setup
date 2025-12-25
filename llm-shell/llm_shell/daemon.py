@@ -225,8 +225,8 @@ class ShellDaemon:
             request = data.decode('utf-8').strip()
             self.last_activity = datetime.now()
 
-            # Parse request: "command:terminal_id:query"
-            parts = request.split(':', 2)
+            # Parse request: "command:terminal_id:session_log:query"
+            parts = request.split(':', 3)
             if len(parts) < 2:
                 writer.write(b"ERROR: Invalid request format\n")
                 await writer.drain()
@@ -234,11 +234,12 @@ class ShellDaemon:
 
             command = parts[0]
             terminal_id = parts[1]
-            query = parts[2] if len(parts) > 2 else ""
+            session_log = parts[2] if len(parts) > 2 else ""
+            query = parts[3] if len(parts) > 3 else ""
 
             # Handle commands
             if command == "query":
-                await self.handle_query(terminal_id, query, writer)
+                await self.handle_query(terminal_id, query, writer, session_log)
             elif command == "new":
                 await self.handle_new(terminal_id, writer)
             elif command == "status":
@@ -259,7 +260,7 @@ class ShellDaemon:
             writer.close()
             await writer.wait_closed()
 
-    async def handle_query(self, terminal_id: str, query: str, writer: asyncio.StreamWriter):
+    async def handle_query(self, terminal_id: str, query: str, writer: asyncio.StreamWriter, session_log: str = ""):
         """Handle a query request with tool support."""
         if not query.strip():
             writer.write(b"ERROR: Empty query\n")
@@ -268,6 +269,10 @@ class ShellDaemon:
 
         state = self.get_conversation_state(terminal_id)
         conversation = state.get_or_create_conversation()
+
+        # Set SESSION_LOG_FILE for context capture (each terminal has its own)
+        if session_log:
+            os.environ['SESSION_LOG_FILE'] = session_log
 
         # Capture context with deduplication
         context, state.context_hashes = capture_shell_context(state.context_hashes)
