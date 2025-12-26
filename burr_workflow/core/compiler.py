@@ -421,12 +421,28 @@ class WorkflowCompiler:
 
         body_step = {k: v for k, v in step.items() if k != "loop"}
         base_action = self._get_base_action_for_step(body_step, f"{loop_id}_body")
+
+        # Extract retry configuration for loop body if present
+        body_retry_config = None
+        if "retry" in body_step:
+            retry = body_step["retry"]
+            body_retry_config = {
+                "max_attempts": retry.get("max_attempts", 3),
+                "backoff_base": retry.get("delay", 1.0),  # Schema: delay
+                "backoff_multiplier": retry.get("backoff", 2.0),  # Schema: backoff
+                "backoff_max": retry.get("max_delay", 60.0),  # Schema: max_delay
+                "retry_on": retry.get("retry_on"),  # Error types to retry
+                "jitter": retry.get("jitter", True),
+            }
+
         body_action = LoopBodyAdapter(
             base_action=base_action,
             step_id=f"{loop_id}_body",
             step_config=body_step,
             exec_context=self.exec_context,
             continue_on_error=continue_on_error,
+            retry_config=body_retry_config,
+            timeout=body_step.get("timeout"),
         )
         self._compiled_steps.append(CompiledStep(
             name=f"{loop_id}_body",
@@ -555,11 +571,29 @@ class WorkflowCompiler:
         """Get the appropriate action for a step and wrap it in BurrActionAdapter."""
         action = self._get_base_action_for_step(step, step_id)
 
+        # Extract retry configuration if present
+        retry_config = None
+        if "retry" in step:
+            retry = step["retry"]
+            retry_config = {
+                "max_attempts": retry.get("max_attempts", 3),
+                "backoff_base": retry.get("delay", 1.0),  # Schema: delay
+                "backoff_multiplier": retry.get("backoff", 2.0),  # Schema: backoff
+                "backoff_max": retry.get("max_delay", 60.0),  # Schema: max_delay
+                "retry_on": retry.get("retry_on"),  # Error types to retry
+                "jitter": retry.get("jitter", True),
+            }
+
+        # Extract timeout if present
+        timeout = step.get("timeout")
+
         return BurrActionAdapter(
             base_action=action,
             step_id=step_id,
             step_config=step,
             exec_context=self.exec_context,
+            retry_config=retry_config,
+            timeout=timeout,
         )
 
     def _get_next_step_name(self, current_index: int, total: int) -> str:

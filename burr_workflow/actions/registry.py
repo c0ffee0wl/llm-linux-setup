@@ -158,6 +158,8 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
     from .http import HTTPAction
     from .state import StateSetAction
     from .control import ExitAction, FailAction
+    from .human import HumanInputAction
+    from .script import PythonScriptAction, BashScriptAction
     from .iterator import (
         IteratorInitAction,
         IteratorCheckAction,
@@ -177,6 +179,13 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
     # Control flow
     registry.register("control/exit", ExitAction, aliases=["exit"])
     registry.register("control/fail", FailAction, aliases=["fail"])
+
+    # Human input (interactive workflows)
+    registry.register("human/input", HumanInputAction, aliases=["input", "human"])
+
+    # Script execution
+    registry.register("script/python", PythonScriptAction, aliases=["python"])
+    registry.register("script/bash", BashScriptAction, aliases=["bash"])
 
     # Iterator (internal, used by compiler)
     registry.register("__iterator/init", IteratorInitAction)
@@ -230,7 +239,12 @@ def register_llm_actions(
         registry: Registry to add actions to
         llm_client: LLM client for action execution
     """
-    from .llm import LLMExtractAction, LLMDecideAction, LLMGenerateAction
+    from .llm import (
+        LLMExtractAction,
+        LLMDecideAction,
+        LLMGenerateAction,
+        LLMInstructAction,
+    )
 
     # Create factories that capture the llm_client
     registry.register(
@@ -247,4 +261,9 @@ def register_llm_actions(
         "llm/generate",
         lambda: LLMGenerateAction(llm_client),
         aliases=["generate", "llm/analyze"],
+    )
+    registry.register(
+        "llm/instruct",
+        lambda: LLMInstructAction(llm_client),
+        aliases=["instruct"],
     )

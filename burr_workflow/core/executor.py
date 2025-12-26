@@ -570,8 +570,8 @@ class WorkflowExecutor:
                 if self.on_progress:
                     self.on_progress(self._progress)
                 
-                # Check for suspension request
-                if state.get("__suspend_requested"):
+                # Check for suspension request (human input needed)
+                if state.get("__suspend_for_input"):
                     return self._handle_suspension(app, state)
                 
                 # Check for workflow exit
@@ -614,9 +614,9 @@ class WorkflowExecutor:
         # Extract suspension details from state
         self._suspension = SuspensionRequest(
             step_id=self._progress.current_step or "unknown",
-            suspension_type=state.get("__suspend_type", "input"),
+            suspension_type=state.get("__suspend_input_type", "input"),
             prompt=state.get("__suspend_prompt", "User input required"),
-            options=state.get("__suspend_options"),
+            options=state.get("__suspend_choices"),
             default=state.get("__suspend_default"),
             timeout=state.get("__suspend_timeout"),
         )

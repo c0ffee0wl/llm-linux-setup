@@ -206,6 +206,15 @@ RESERVED_STATE_KEYS = frozenset([
     "__interrupted",
     "__workflow_exit",
     "__workflow_failed",
+    # Suspension control (for human input)
+    "__suspend_for_input",
+    "__suspend_step_id",
+    "__suspend_prompt",
+    "__suspend_input_type",
+    "__suspend_choices",
+    "__suspend_timeout",
+    "__suspend_default",
+    "__resume_data",
 ])
 
 

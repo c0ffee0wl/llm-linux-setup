@@ -433,3 +433,107 @@ Be thorough but concise. Focus on the most important findings."""
                 error=f"LLM analysis failed: {e}",
                 error_type="LLMError",
             )
+
+
+class LLMInstructAction(AbstractAction):
+    """Simple instruction-based LLM action.
+
+    A streamlined action for straightforward instruction + input patterns.
+    Simpler than llm/generate when you just need to apply an instruction.
+
+    Usage:
+        - uses: llm/instruct
+          with:
+            instruction: "Summarize the following text in 3 bullet points"
+            input: ${{ steps.fetch.outputs.content }}
+            model: "gpt-4"  # optional model override
+
+    Outputs:
+        - response: The LLM's response text
+        - model: The model used
+    """
+
+    action_type: ClassVar[str] = "llm/instruct"
+
+    def __init__(self, llm_client: "LLMClient"):
+        """Initialize with LLM client.
+
+        Args:
+            llm_client: LLM client for completions
+        """
+        self.llm_client = llm_client
+
+    @property
+    def reads(self) -> list[str]:
+        return []
+
+    @property
+    def writes(self) -> list[str]:
+        return []
+
+    async def execute(
+        self,
+        step_config: dict[str, Any],
+        context: dict[str, Any],
+        exec_context: Optional["ExecutionContext"] = None,
+    ) -> ActionResult:
+        """Execute instruction on input.
+
+        Args:
+            step_config: Step configuration
+            context: Workflow context
+            exec_context: Execution context
+
+        Returns:
+            ActionResult with LLM response
+        """
+        from ..evaluator import ContextEvaluator
+
+        with_config = self._get_with_config(step_config)
+        evaluator = ContextEvaluator(context)
+
+        # Get inputs
+        instruction = with_config.get("instruction", "")
+        instruction = evaluator.resolve(instruction)
+
+        input_text = with_config.get("input", "")
+        input_text = evaluator.resolve(input_text)
+
+        model = with_config.get("model")
+
+        if not instruction:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error="No instruction provided for llm/instruct",
+                error_type="ValidationError",
+            )
+
+        # Build prompt - instruction first, then input (if any)
+        if input_text:
+            full_prompt = f"""{instruction}
+
+INPUT:
+{input_text}"""
+        else:
+            full_prompt = instruction
+
+        try:
+            response = await self.llm_client.complete(
+                prompt=full_prompt,
+                model=model,
+            )
+            return ActionResult(
+                outputs={
+                    "response": response,
+                    "model": model or "default",
+                },
+                outcome="success",
+            )
+        except Exception as e:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error=f"LLM instruction failed: {e}",
+                error_type="LLMError",
+            )

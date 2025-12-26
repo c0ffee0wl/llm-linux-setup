@@ -24,6 +24,7 @@ run_and_update() and expects it to return appropriately based on is_async().
 """
 
 import asyncio
+import random
 import traceback
 from typing import Any, Coroutine, Optional, TYPE_CHECKING, Union
 
@@ -60,6 +61,8 @@ class BurrActionAdapter(SingleStepAction):
         step_id: str,
         step_config: dict,
         exec_context: Optional["ExecutionContext"] = None,
+        retry_config: Optional[dict] = None,
+        timeout: Optional[float] = None,
     ):
         """Initialize the Burr action adapter.
 
@@ -68,12 +71,20 @@ class BurrActionAdapter(SingleStepAction):
             step_id: Unique identifier for this step
             step_config: Original YAML step configuration
             exec_context: Execution context for shell/prompts/logging
+            retry_config: Optional retry configuration dict with keys:
+                - max_attempts: Number of attempts (default 3)
+                - backoff_base: Base delay in seconds (default 1.0)
+                - backoff_max: Maximum delay (default 60.0)
+                - jitter: Add randomness to backoff (default True)
+            timeout: Optional per-step timeout in seconds
         """
         super().__init__()
         self.base_action = base_action
         self.step_id = step_id
         self.step_config = step_config
         self.exec_context = exec_context
+        self.retry_config = retry_config
+        self.timeout = timeout
         # NOTE: Do NOT set self._name here! Burr's ApplicationBuilder calls
         # with_name() which raises ValueError if _name is already set.
         # The name property falls back to step_id when _name is None.
@@ -118,40 +129,219 @@ class BurrActionAdapter(SingleStepAction):
     async def _async_execute_and_update(
         self, state: State, **run_kwargs
     ) -> tuple[dict, State]:
-        """Execute async action and apply result to state."""
-        # Convert State to mutable context dict
+        """Execute async action with optional timeout and retry support."""
+        if self.timeout:
+            try:
+                return await asyncio.wait_for(
+                    self._async_execute_with_retry(state, **run_kwargs),
+                    timeout=self.timeout,
+                )
+            except asyncio.TimeoutError:
+                result = CoreActionResult(
+                    outcome="failure",
+                    outputs={},
+                    error=f"Step '{self.step_id}' timed out after {self.timeout}s",
+                    error_type="TimeoutError",
+                )
+                return self._apply_result_to_state(state, result)
+        else:
+            return await self._async_execute_with_retry(state, **run_kwargs)
+
+    async def _async_execute_with_retry(
+        self, state: State, **run_kwargs
+    ) -> tuple[dict, State]:
+        """Execute async action with retry support."""
         ctx = dict(state.get_all())
 
-        # Execute the action
-        result = await self.base_action.execute(
-            step_config=self.step_config,
-            context=ctx,
-            exec_context=self.exec_context,
-        )
+        # Retry configuration
+        max_attempts = 1
+        backoff_base = 1.0
+        backoff_multiplier = 2.0
+        backoff_max = 60.0
+        jitter = True
+        retry_on = None  # None = default retryable errors
 
+        if self.retry_config:
+            max_attempts = self.retry_config.get("max_attempts", 3)
+            backoff_base = self.retry_config.get("backoff_base", 1.0)
+            backoff_multiplier = self.retry_config.get("backoff_multiplier", 2.0)
+            backoff_max = self.retry_config.get("backoff_max", 60.0)
+            jitter = self.retry_config.get("jitter", True)
+            retry_on = self.retry_config.get("retry_on")  # User-specified error types
+
+        last_error = None
+        last_result = None
+
+        for attempt in range(max_attempts):
+            try:
+                result = await self.base_action.execute(
+                    step_config=self.step_config,
+                    context=ctx,
+                    exec_context=self.exec_context,
+                )
+                last_result = result
+
+                # Success or non-failure outcome - return immediately
+                if result.outcome != "failure":
+                    return self._apply_result_to_state(state, result)
+
+                # Failure but no retry config - return immediately
+                if not self.retry_config:
+                    return self._apply_result_to_state(state, result)
+
+                # Check if error is retryable
+                if not self._is_retryable_error(result, retry_on):
+                    return self._apply_result_to_state(state, result)
+
+                last_error = result.error
+
+            except Exception as e:
+                last_error = str(e)
+                if attempt == max_attempts - 1:
+                    raise
+
+            # Backoff before retry (if not last attempt)
+            if attempt < max_attempts - 1:
+                delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max)
+                if jitter:
+                    delay *= (0.5 + random.random())
+                await asyncio.sleep(delay)
+
+                if self.exec_context:
+                    self.exec_context.log(
+                        "warning",
+                        f"Retrying '{self.step_id}' (attempt {attempt + 2}/{max_attempts})"
+                    )
+
+        # All retries exhausted - return last result or create failure
+        if last_result:
+            return self._apply_result_to_state(state, last_result)
+
+        result = CoreActionResult(
+            outcome="failure",
+            outputs={},
+            error=f"Max retries ({max_attempts}) exceeded. Last error: {last_error}",
+            error_type="RetryExhaustedError",
+        )
         return self._apply_result_to_state(state, result)
+
+    def _is_retryable_error(
+        self,
+        result: CoreActionResult,
+        retry_on: Optional[list[str]] = None,
+    ) -> bool:
+        """Check if error should trigger retry.
+
+        Args:
+            result: The action result with error information
+            retry_on: User-specified error types to retry on (None = use defaults)
+
+        Returns:
+            True if the error is retryable
+        """
+        if retry_on is not None:
+            # User specified which errors to retry
+            return result.error_type in retry_on
+
+        # Default retryable error types (network/transient issues)
+        default_retryable = {
+            "TimeoutError",
+            "ConnectionError",
+            "HTTPError",
+            "ConnectionRefusedError",
+            "ConnectionResetError",
+            "OSError",
+            "timeout",  # Common string representation
+            "connection_error",
+        }
+        return result.error_type in default_retryable
 
     def _sync_execute_and_update(
         self, state: State, **run_kwargs
     ) -> tuple[dict, State]:
-        """Execute sync action and apply result to state."""
+        """Execute sync action with retry support (timeout not supported for sync)."""
         ctx = dict(state.get_all())
 
-        # For sync actions that may return coroutines (defensive)
-        result = self.base_action.execute(
-            step_config=self.step_config,
-            context=ctx,
-            exec_context=self.exec_context,
-        )
+        # Retry configuration
+        max_attempts = 1
+        backoff_base = 1.0
+        backoff_multiplier = 2.0
+        backoff_max = 60.0
+        jitter = True
+        retry_on = None  # None = default retryable errors
 
-        # Handle if it accidentally returned a coroutine
-        if asyncio.iscoroutine(result):
-            loop = asyncio.new_event_loop()
+        if self.retry_config:
+            max_attempts = self.retry_config.get("max_attempts", 3)
+            backoff_base = self.retry_config.get("backoff_base", 1.0)
+            backoff_multiplier = self.retry_config.get("backoff_multiplier", 2.0)
+            backoff_max = self.retry_config.get("backoff_max", 60.0)
+            jitter = self.retry_config.get("jitter", True)
+            retry_on = self.retry_config.get("retry_on")  # User-specified error types
+
+        last_error = None
+        last_result = None
+
+        for attempt in range(max_attempts):
             try:
-                result = loop.run_until_complete(result)
-            finally:
-                loop.close()
+                result = self.base_action.execute(
+                    step_config=self.step_config,
+                    context=ctx,
+                    exec_context=self.exec_context,
+                )
 
+                # Handle if it accidentally returned a coroutine
+                if asyncio.iscoroutine(result):
+                    loop = asyncio.new_event_loop()
+                    try:
+                        result = loop.run_until_complete(result)
+                    finally:
+                        loop.close()
+
+                last_result = result
+
+                # Success or non-failure outcome - return immediately
+                if result.outcome != "failure":
+                    return self._apply_result_to_state(state, result)
+
+                # Failure but no retry config - return immediately
+                if not self.retry_config:
+                    return self._apply_result_to_state(state, result)
+
+                # Check if error is retryable
+                if not self._is_retryable_error(result, retry_on):
+                    return self._apply_result_to_state(state, result)
+
+                last_error = result.error
+
+            except Exception as e:
+                last_error = str(e)
+                if attempt == max_attempts - 1:
+                    raise
+
+            # Backoff before retry (if not last attempt)
+            if attempt < max_attempts - 1:
+                import time
+                delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max)
+                if jitter:
+                    delay *= (0.5 + random.random())
+                time.sleep(delay)
+
+                if self.exec_context:
+                    self.exec_context.log(
+                        "warning",
+                        f"Retrying '{self.step_id}' (attempt {attempt + 2}/{max_attempts})"
+                    )
+
+        # All retries exhausted - return last result or create failure
+        if last_result:
+            return self._apply_result_to_state(state, last_result)
+
+        result = CoreActionResult(
+            outcome="failure",
+            outputs={},
+            error=f"Max retries ({max_attempts}) exceeded. Last error: {last_error}",
+            error_type="RetryExhaustedError",
+        )
         return self._apply_result_to_state(state, result)
 
     def _apply_result_to_state(
@@ -208,6 +398,10 @@ class BurrActionAdapter(SingleStepAction):
             "__loop_break_index", "__loop_failed",
             # Condition control
             "__condition_met",
+            # Suspension control (for human input)
+            "__suspend_for_input", "__suspend_step_id", "__suspend_prompt",
+            "__suspend_input_type", "__suspend_choices", "__suspend_timeout",
+            "__suspend_default",
         }
         for key in internal_control_keys:
             if key in result.outputs:
@@ -266,6 +460,8 @@ class LoopBodyAdapter(BurrActionAdapter):
         step_config: dict,
         exec_context: Optional["ExecutionContext"] = None,
         continue_on_error: bool = False,
+        retry_config: Optional[dict] = None,
+        timeout: Optional[float] = None,
     ):
         """Initialize the loop body adapter.
 
@@ -275,12 +471,16 @@ class LoopBodyAdapter(BurrActionAdapter):
             step_config: Original YAML step configuration
             exec_context: Execution context for shell/prompts/logging
             continue_on_error: Whether to catch exceptions and continue loop
+            retry_config: Optional retry configuration (passed to parent)
+            timeout: Optional per-step timeout (passed to parent)
         """
         super().__init__(
             base_action=base_action,
             step_id=step_id,
             step_config=step_config,
             exec_context=exec_context,
+            retry_config=retry_config,
+            timeout=timeout,
         )
         self.continue_on_error = continue_on_error
 

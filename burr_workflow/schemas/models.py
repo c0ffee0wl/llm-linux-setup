@@ -74,7 +74,18 @@ class InputDefinition(BaseModel):
 # ==============================================================================
 
 class RetryConfig(BaseModel):
-    """Configuration for step retry behavior."""
+    """Configuration for step retry behavior.
+
+    Example:
+        retry:
+          max_attempts: 3
+          delay: 2.0
+          backoff: 2.0
+          max_delay: 60.0
+          retry_on:
+            - TimeoutError
+            - ConnectionError
+    """
     max_attempts: int = Field(default=3, ge=1, le=10)
     delay: float = Field(
         default=1.0,
@@ -91,9 +102,13 @@ class RetryConfig(BaseModel):
         ge=0,
         description="Maximum delay between retries",
     )
+    jitter: bool = Field(
+        default=True,
+        description="Add randomness to backoff (0.5-1.5x) to prevent thundering herd",
+    )
     retry_on: Optional[list[str]] = Field(
         default=None,
-        description="Error types to retry on (None = all errors)",
+        description="Error types to retry on (None = default network errors)",
     )
 
 
