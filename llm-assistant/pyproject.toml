@@ -18,7 +18,8 @@ voice = ["sounddevice", "numpy", "onnx-asr"]
 tts = ["google-cloud-texttospeech", "google-auth", "strip-markdown"]
 web = ["fastapi", "uvicorn"]
 clipboard = ["pyperclip"]
-all = ["llm-assistant[voice,tts,web,clipboard]"]
+workflow = ["burr_workflow", "ruamel.yaml>=0.18.0"]
+all = ["llm-assistant[voice,tts,web,clipboard,workflow]"]
 
 [project.scripts]
 llm-assistant = "llm_assistant.cli:main"

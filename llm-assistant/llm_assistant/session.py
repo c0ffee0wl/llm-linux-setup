@@ -89,6 +89,7 @@ from .web import WebMixin
 from .terminal import TerminalMixin
 from .context import ContextMixin, filter_new_blocks
 from .watch import WatchMixin
+from .workflow import WorkflowMixin
 from .mcp import (
     MCPMixin,
     _ensure_mcp_loaded,
@@ -118,7 +119,7 @@ except ImportError:
 
 
 
-class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
+class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin, WorkflowMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
     """Main assistant session manager for Terminator"""
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: Optional[int] = None,
@@ -295,6 +296,9 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         self.rag_top_k: int = 5                           # Number of results to retrieve
         self.rag_search_mode: str = "hybrid"              # hybrid|vector|keyword
         self.pending_rag_context: Optional[str] = None    # One-shot search result
+
+        # Workflow system (burr_workflow integration)
+        self._workflow_init()
 
         # Auto mode: LLM-judged autonomous command execution
         # False = off, "normal" = safe only, "full" = safe + caution
@@ -2613,6 +2617,12 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
         elif cmd == "/report":
             return self._handle_report_command(args)
+
+        elif cmd == "/workflow":
+            import asyncio
+            return asyncio.get_event_loop().run_until_complete(
+                self._handle_workflow_command(args)
+            )
 
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit
