@@ -43,6 +43,13 @@ from .executor import (
     SuspensionRequest,
     run_workflow,
 )
+from .guardrails import (
+    GuardrailRouter,
+    GuardrailError,
+    GuardrailAbort,
+    GuardrailRetryExhausted,
+    ValidationResult as GuardrailValidationResult,
+)
 
 __all__ = [
     # Errors
@@ -82,4 +89,10 @@ __all__ = [
     "StepProgress",
     "SuspensionRequest",
     "run_workflow",
+    # Guardrails
+    "GuardrailRouter",
+    "GuardrailError",
+    "GuardrailAbort",
+    "GuardrailRetryExhausted",
+    "GuardrailValidationResult",
 ]

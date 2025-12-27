@@ -32,6 +32,7 @@ from .errors import (
 from .types import ActionResult as CoreActionResult, RESERVED_STATE_KEYS
 from .parser import WorkflowParser, SourceLocation
 from .adapters import BurrActionAdapter
+from .guardrails import GuardrailRouter
 from ..evaluator.security import validate_step_id, SecurityError
 
 if TYPE_CHECKING:
@@ -196,6 +197,9 @@ class WorkflowCompiler:
         self._compiled_steps: list[CompiledStep] = []
         self._step_ids: list[str] = []
         self._step_counter = 0
+
+        # Create a shared GuardrailRouter for all steps
+        self.guardrail_router = GuardrailRouter(llm_client=llm_client)
 
     def compile(
         self,
@@ -435,6 +439,9 @@ class WorkflowCompiler:
                 "jitter": retry.get("jitter", True),
             }
 
+        # Extract guardrails for loop body if present
+        body_guardrails = body_step.get("guardrails")
+
         body_action = LoopBodyAdapter(
             base_action=base_action,
             step_id=f"{loop_id}_body",
@@ -443,6 +450,8 @@ class WorkflowCompiler:
             continue_on_error=continue_on_error,
             retry_config=body_retry_config,
             timeout=body_step.get("timeout"),
+            guardrails=body_guardrails,
+            guardrail_router=self.guardrail_router if body_guardrails else None,
         )
         self._compiled_steps.append(CompiledStep(
             name=f"{loop_id}_body",
@@ -587,6 +596,9 @@ class WorkflowCompiler:
         # Extract timeout if present
         timeout = step.get("timeout")
 
+        # Extract guardrails if present
+        guardrails = step.get("guardrails")
+
         return BurrActionAdapter(
             base_action=action,
             step_id=step_id,
@@ -594,6 +606,8 @@ class WorkflowCompiler:
             exec_context=self.exec_context,
             retry_config=retry_config,
             timeout=timeout,
+            guardrails=guardrails,
+            guardrail_router=self.guardrail_router if guardrails else None,
         )
 
     def _get_next_step_name(self, current_index: int, total: int) -> str:

@@ -32,9 +32,10 @@ from burr.core.action import SingleStepAction
 from burr.core.state import State
 
 from .types import ActionResult as CoreActionResult, RESERVED_STATE_KEYS
+from .guardrails import GuardrailRouter, GuardrailAbort, GuardrailRetryExhausted
 
 if TYPE_CHECKING:
-    from ..protocols import ExecutionContext
+    from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
 
 
@@ -63,6 +64,8 @@ class BurrActionAdapter(SingleStepAction):
         exec_context: Optional["ExecutionContext"] = None,
         retry_config: Optional[dict] = None,
         timeout: Optional[float] = None,
+        guardrails: Optional[list[dict]] = None,
+        guardrail_router: Optional[GuardrailRouter] = None,
     ):
         """Initialize the Burr action adapter.
 
@@ -77,6 +80,8 @@ class BurrActionAdapter(SingleStepAction):
                 - backoff_max: Maximum delay (default 60.0)
                 - jitter: Add randomness to backoff (default True)
             timeout: Optional per-step timeout in seconds
+            guardrails: Optional list of guardrail configurations for this step
+            guardrail_router: Optional shared GuardrailRouter instance
         """
         super().__init__()
         self.base_action = base_action
@@ -85,6 +90,8 @@ class BurrActionAdapter(SingleStepAction):
         self.exec_context = exec_context
         self.retry_config = retry_config
         self.timeout = timeout
+        self.guardrails = guardrails or []
+        self.guardrail_router = guardrail_router
         # NOTE: Do NOT set self._name here! Burr's ApplicationBuilder calls
         # with_name() which raises ValueError if _name is already set.
         # The name property falls back to step_id when _name is None.
@@ -150,7 +157,7 @@ class BurrActionAdapter(SingleStepAction):
     async def _async_execute_with_retry(
         self, state: State, **run_kwargs
     ) -> tuple[dict, State]:
-        """Execute async action with retry support."""
+        """Execute async action with retry support and guardrails."""
         ctx = dict(state.get_all())
 
         # Retry configuration
@@ -171,6 +178,7 @@ class BurrActionAdapter(SingleStepAction):
 
         last_error = None
         last_result = None
+        guardrail_retry_requested = False
 
         for attempt in range(max_attempts):
             try:
@@ -181,9 +189,56 @@ class BurrActionAdapter(SingleStepAction):
                 )
                 last_result = result
 
-                # Success or non-failure outcome - return immediately
+                # Success or non-failure outcome - apply guardrails if configured
                 if result.outcome != "failure":
-                    return self._apply_result_to_state(state, result)
+                    output, new_state = self._apply_result_to_state(state, result)
+
+                    # Apply guardrails if configured
+                    if self.guardrails and self.guardrail_router:
+                        try:
+                            next_step = await self.guardrail_router.validate_and_route(
+                                output=output,
+                                guardrails=self.guardrails,
+                                context=ctx,
+                                step_id=self.step_id,
+                            )
+
+                            if next_step == "__retry__":
+                                # Guardrail requested retry
+                                guardrail_retry_requested = True
+                                last_error = ctx.get("__guardrail_error", "Guardrail validation failed")
+                                if self.exec_context:
+                                    self.exec_context.log(
+                                        "warning",
+                                        f"Guardrail retry for '{self.step_id}' (attempt {attempt + 2}): {last_error}"
+                                    )
+                                # Continue to next iteration for retry
+                                continue
+                            elif next_step != "next":
+                                # Route to specific step
+                                new_state = new_state.update(__guardrail_next=next_step)
+
+                        except GuardrailAbort as e:
+                            # Guardrail requested abort
+                            result = CoreActionResult(
+                                outcome="failure",
+                                outputs={},
+                                error=str(e),
+                                error_type="GuardrailAbort",
+                            )
+                            return self._apply_result_to_state(state, result)
+
+                        except GuardrailRetryExhausted as e:
+                            # Guardrail retry limit exceeded
+                            result = CoreActionResult(
+                                outcome="failure",
+                                outputs={},
+                                error=str(e),
+                                error_type="GuardrailRetryExhausted",
+                            )
+                            return self._apply_result_to_state(state, result)
+
+                    return output, new_state
 
                 # Failure but no retry config - return immediately
                 if not self.retry_config:
@@ -200,8 +255,8 @@ class BurrActionAdapter(SingleStepAction):
                 if attempt == max_attempts - 1:
                     raise
 
-            # Backoff before retry (if not last attempt)
-            if attempt < max_attempts - 1:
+            # Backoff before retry (if not last attempt and not guardrail retry)
+            if attempt < max_attempts - 1 and not guardrail_retry_requested:
                 delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max)
                 if jitter:
                     delay *= (0.5 + random.random())
@@ -212,6 +267,9 @@ class BurrActionAdapter(SingleStepAction):
                         "warning",
                         f"Retrying '{self.step_id}' (attempt {attempt + 2}/{max_attempts})"
                     )
+
+            # Reset guardrail retry flag for next iteration
+            guardrail_retry_requested = False
 
         # All retries exhausted - return last result or create failure
         if last_result:
@@ -401,7 +459,10 @@ class BurrActionAdapter(SingleStepAction):
             # Suspension control (for human input)
             "__suspend_for_input", "__suspend_step_id", "__suspend_prompt",
             "__suspend_input_type", "__suspend_choices", "__suspend_timeout",
-            "__suspend_default",
+            "__suspend_default", "__suspend_feedback_type",
+            # Guardrail control
+            "__guardrail_next", "__guardrail_warning", "__guardrail_retry_count",
+            "__guardrail_error",
         }
         for key in internal_control_keys:
             if key in result.outputs:
@@ -462,6 +523,8 @@ class LoopBodyAdapter(BurrActionAdapter):
         continue_on_error: bool = False,
         retry_config: Optional[dict] = None,
         timeout: Optional[float] = None,
+        guardrails: Optional[list[dict]] = None,
+        guardrail_router: Optional[GuardrailRouter] = None,
     ):
         """Initialize the loop body adapter.
 
@@ -473,6 +536,8 @@ class LoopBodyAdapter(BurrActionAdapter):
             continue_on_error: Whether to catch exceptions and continue loop
             retry_config: Optional retry configuration (passed to parent)
             timeout: Optional per-step timeout (passed to parent)
+            guardrails: Optional list of guardrail configurations (passed to parent)
+            guardrail_router: Optional shared GuardrailRouter instance (passed to parent)
         """
         super().__init__(
             base_action=base_action,
@@ -481,6 +546,8 @@ class LoopBodyAdapter(BurrActionAdapter):
             exec_context=exec_context,
             retry_config=retry_config,
             timeout=timeout,
+            guardrails=guardrails,
+            guardrail_router=guardrail_router,
         )
         self.continue_on_error = continue_on_error
 

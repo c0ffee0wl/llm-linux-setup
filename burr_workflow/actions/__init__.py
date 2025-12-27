@@ -1,11 +1,12 @@
 """Workflow actions for burr_workflow."""
 
 from .base import BaseAction, ActionResult
-from .registry import ActionRegistry, get_default_registry
+from .registry import ActionRegistry, get_default_registry, register_report_actions
 from .shell import ShellAction
 from .http import HTTPAction
 from .state import StateSetAction
 from .control import ExitAction, FailAction
+from .report import ReportAddAction, ReportListAction
 from .iterator import (
     IteratorInitAction,
     IteratorCheckAction,
@@ -27,12 +28,15 @@ __all__ = [
     # Registry
     "ActionRegistry",
     "get_default_registry",
+    "register_report_actions",
     # Actions
     "ShellAction",
     "HTTPAction",
     "StateSetAction",
     "ExitAction",
     "FailAction",
+    "ReportAddAction",
+    "ReportListAction",
     # Iterator (legacy - for backwards compatibility)
     "IteratorInitAction",
     "IteratorCheckAction",

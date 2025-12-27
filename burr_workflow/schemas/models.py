@@ -407,9 +407,9 @@ class WorkflowDefinition(BaseModel):
     # Identity
     name: str = Field(description="Workflow name")
     description: Optional[str] = None
-    version: str = Field(
+    schema_version: str = Field(
         default="1.0",
-        description="Schema version",
+        description="Schema version (use 'schema_version' not 'version')",
     )
 
     # Inputs and environment
@@ -468,9 +468,9 @@ class WorkflowDefinition(BaseModel):
         description="Maximum parallel step execution (future)",
     )
 
-    @field_validator("version")
+    @field_validator("schema_version")
     @classmethod
-    def validate_version(cls, v: str) -> str:
+    def validate_schema_version(cls, v: str) -> str:
         """Validate schema version is supported."""
         from ..core.types import SUPPORTED_SCHEMA_VERSIONS, DEPRECATED_VERSIONS
         if v not in SUPPORTED_SCHEMA_VERSIONS and v not in DEPRECATED_VERSIONS:

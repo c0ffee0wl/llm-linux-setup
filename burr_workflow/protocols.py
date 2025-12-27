@@ -402,6 +402,52 @@ class PersistenceBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class ReportBackend(Protocol):
+    """Protocol for finding storage backends.
+
+    This allows burr_workflow to have report/add action without
+    depending on a specific finding storage implementation.
+
+    Implementations:
+        - ReportMixin: llm-assistant's finding management
+        - FileReportBackend: Standalone file-based storage
+    """
+
+    @property
+    def findings_project(self) -> Optional[str]:
+        """Current project name, or None if not initialized.
+
+        Returns:
+            Project name string or None
+        """
+        ...
+
+    async def add_finding(
+        self,
+        note: str,
+        *,
+        severity_override: Optional[int] = None,
+        context: Optional[str] = None,
+    ) -> dict[str, Any]:
+        """Add a finding with optional LLM analysis.
+
+        Args:
+            note: Quick note describing the vulnerability
+            severity_override: Override LLM-suggested severity (1-9 OWASP scale)
+            context: Optional terminal/execution context for analysis
+
+        Returns:
+            Dict with:
+                - finding_id: Unique finding identifier (e.g., "F001")
+                - title: Finding title (LLM-generated or from note)
+                - severity: Severity 1-9 (9 = critical)
+                - success: Whether finding was added successfully
+                - error: Error message if not successful
+        """
+        ...
+
+
 class LLMSchemaValidationError(Exception):
     """LLM output doesn't match expected schema."""
     pass

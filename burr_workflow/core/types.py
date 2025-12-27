@@ -182,6 +182,12 @@ class WorkflowState(TypedDict, total=False):
     __workflow_exit: bool
     __workflow_failed: bool
 
+    # Internal: Guardrail control
+    __guardrail_next: str
+    __guardrail_warning: str
+    __guardrail_retry_count: int
+    __guardrail_error: str
+
 
 # Reserved state keys that user actions cannot override
 # This prevents control flow hijacking from user-generated output
@@ -214,7 +220,13 @@ RESERVED_STATE_KEYS = frozenset([
     "__suspend_choices",
     "__suspend_timeout",
     "__suspend_default",
+    "__suspend_feedback_type",
     "__resume_data",
+    # Guardrail control
+    "__guardrail_next",
+    "__guardrail_warning",
+    "__guardrail_retry_count",
+    "__guardrail_error",
 ])
 
 

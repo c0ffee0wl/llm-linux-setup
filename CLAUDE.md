@@ -62,13 +62,6 @@ The repository includes an **automatic session recording and context extraction 
    - Allows AI to query recent terminal history including command outputs
    - Usage: `llm --tool context "what did I just run?"`
 
-5. **Google Search Tool** (`llm-tools-google-search`): LLM plugin for web search (installed from git)
-   - Uses Vertex/Gemini with `google_search` grounding as backend
-   - Enables any model to perform Google Search by calling the tool
-   - Prefers Vertex if configured, falls back to standard Gemini API
-   - Returns structured JSON with search results and source URLs
-   - Usage: `llm --tool search_google "latest CVEs for log4j"`
-
 **Architecture Flow**: Shell starts → asciinema records → `$SESSION_LOG_FILE` points to recording → `context` script parses it → `llm-tools-context` exposes it to AI
 
 **Configuration**:
@@ -311,11 +304,6 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`upgrade_npm_global_if_installed(package_name)`**: Conditional upgrade only if package already installed
 - **`prompt_for_session_log_dir()`**: Interactive first-run prompt for session log storage preference (used in Phase 5)
 - **`prompt_for_session_log_silent()`**: Interactive first-run prompt for silent mode preference (used in Phase 5)
-- **`apply_pipewire_vm_fix()`**: Apply WirePlumber configuration to fix audio stuttering in VMs (used after Terminator detection)
-  - Creates `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf`
-  - Sets `api.alsa.period-size = 1024` and `api.alsa.headroom = 8192`
-  - Restarts PipeWire services if running
-  - Only runs when: Terminator installed + VM detected + PipeWire installed
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -540,6 +528,10 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 
 See [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md) for comprehensive documentation on the llm-assistant terminal assistant, including architecture, components, usage, and troubleshooting.
 
+### Workflow Engine
+
+See [`burr_workflow/CLAUDE.md`](burr_workflow/CLAUDE.md) for documentation on the YAML-based workflow engine built on Burr, including the compilation pipeline, protocol-based integration, action system, and security features.
+
 ### Speech-to-Text Transcription
 
 The repository includes **speech-to-text transcription tools** using onnx-asr with NVIDIA's Parakeet TDT model:
@@ -596,20 +588,6 @@ The difference is:
 
 **Note**: This tool supports 25 European languages. For 99+ language support (including Asian
 languages), consider using the standalone whisper-ctranslate2 tool: `uv tool install whisper-ctranslate2`
-
-## Key Files & Components
-
-- **`install-llm-tools.sh`**: Main installation/update script with self-update logic
-- **`integration/llm-common.sh`**: Shared shell configuration, llm wrapper function, asciinema auto-recording, routed-claude alias, code subcommand handler
-- **`integration/llm-integration.bash`** / **`integration/llm-integration.zsh`**: Shell-specific keybindings (Ctrl+N for command completion) and tab completion setup
-- **`integration/llm-zsh-plugin/`**: Fork of llm-zsh-plugin with custom extensions for `code` and `rag` subcommands
-- **`scripts/context`**: Python script for extracting terminal history from asciinema recordings
-- **`llm-tools-context/`**: LLM plugin package that exposes `context` tool to AI models
-- **`llm-templates/llm.yaml`**: Custom assistant template with security/IT expertise configuration (German-language template)
-- **`llm-templates/llm-code.yaml`**: Code-only generation template - outputs clean, executable code without explanations or markdown formatting
-- **`llm-templates/llm-wut.yaml`**: Template for explaining terminal command output (used by `wut` function)
-- **`scripts/transcribe`**: Speech-to-text Python script using onnx-asr with Parakeet TDT model
-- **`docs/MICROSOFT_MCP_SETUP.md`**: Comprehensive guide for Codex CLI, Azure MCP Server, Lokka (Microsoft 365 MCP), and Microsoft Learn MCP setup and configuration
 
 ## Common Commands
 
@@ -730,43 +708,6 @@ llm plugins | grep context
 
 **Completion conflicts or errors**: Delete the plugin and let the script reinstall: `rm -rf "$SCRIPT_DIR/integration/llm-zsh-plugin"` then run `./install-llm-tools.sh`.
 
-### PipeWire VM Audio Fix
-
-When running in a **virtual machine** with **Terminator** and **PipeWire**, the installation script automatically applies a WirePlumber configuration fix to prevent audio stuttering/crackling.
-
-**What it does**:
-- Creates `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf`
-- Sets larger buffer sizes: `api.alsa.period-size = 1024`, `api.alsa.headroom = 8192`
-- Restarts PipeWire services to apply changes
-
-**Conditions** (all must be true):
-1. Terminator terminal is installed
-2. Running in a VM (detected via `systemd-detect-virt`)
-3. PipeWire is installed
-
-**Manual fix** (if automatic fix didn't apply):
-```bash
-mkdir -p ~/.config/wireplumber/wireplumber.conf.d
-cat > ~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf << 'EOF'
-monitor.alsa.rules = [
-  {
-    matches = [
-      { node.name = "~alsa_output.*" }
-    ]
-    actions = {
-      update-props = {
-        api.alsa.period-size   = 1024
-        api.alsa.headroom      = 8192
-      }
-    }
-  }
-]
-EOF
-systemctl --user restart wireplumber pipewire pipewire-pulse
-```
-
-**Reference**: [PipeWire Troubleshooting Wiki](https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Troubleshooting#stuttering-audio-in-virtual-machine)
-
 ### Adding New LLM Plugins
 
 Edit the `PLUGINS` array in Phase 3 of `install-llm-tools.sh`:
@@ -859,75 +800,6 @@ bash -c "source integration/llm-integration.bash && bind -P | grep llm"
 zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 ```
 
-## Azure MCP and Codex CLI
-
-The repository includes comprehensive support for **Codex CLI** (OpenAI's coding agent) and **Model Context Protocol (MCP)** servers for enhanced AI-powered development workflows.
-
-### Automatic Codex CLI Installation
-
-When Azure OpenAI is configured, the installation script automatically:
-- Installs Codex CLI via npm (Phase 7)
-- Creates `~/.codex/config.toml` with Azure OpenAI credentials
-- Exports environment variables to `~/.profile`:
-  - `AZURE_OPENAI_API_KEY`
-  - `AZURE_RESOURCE_NAME`
-
-**To use Codex CLI:**
-```bash
-# Load environment variables (if not already loaded)
-source ~/.profile
-
-# Start Codex
-codex
-```
-
-### VS Code Extension
-
-Codex is also available as a **Visual Studio Code extension**, providing IDE-integrated AI coding assistance:
-- Search for "Codex" in VS Code Extensions marketplace
-- Supports VS Code, VS Code Insiders, Cursor, and Windsurf
-- Features: inline suggestions, delegate tasks to cloud agent, review diffs, create PRs
-
-### MCP Server Integration
-
-The system supports integration with three official Microsoft MCP servers:
-
-1. **Azure MCP Server**: Connect to 40+ Azure services (Storage, Compute, AI Services, Communication, etc.)
-2. **Lokka**: Microsoft 365 and Microsoft Graph integration for tenant management
-3. **Microsoft Learn MCP**: Access to trusted Microsoft documentation and code samples
-
-**Comprehensive Setup Guide**: See [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md) for:
-- Codex quickstart guide and VS Code extension installation
-- MCP server configuration in Codex (`codex mcp add`)
-- Azure authentication with `az login`
-- Service principal and certificate-based authentication
-- App registration for Microsoft 365 access
-- Testing and troubleshooting steps
-
-**Quick Start:**
-```bash
-# Install Azure MCP (optional - not automatic)
-npm install -g @azure/mcp
-
-# Authenticate to Azure
-az login
-
-# Configure MCP server in Codex
-codex mcp add azure -- npx -y @azure/mcp@latest server start
-
-# Configure Lokka (Microsoft 365)
-codex mcp add lokka -- npx -y @merill/lokka
-
-# Configure Microsoft Learn MCP
-npm install -g mcp-remote
-codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/api/mcp
-```
-
-**References:**
-- Codex Quickstart: https://developers.openai.com/codex/quickstart
-- Codex MCP Guide: https://developers.openai.com/codex/mcp/
-- Detailed Setup: [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md)
-
 ## Important File Locations
 
 ### Configuration Files
@@ -948,15 +820,15 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure
-- `install-llm-tools.sh` - Main installation script with 7 phases
+- `install-llm-tools.sh` - Main installation/update script with self-update 
 - `integration/llm-common.sh` - Shared shell config, llm wrapper, asciinema auto-recording
 - `integration/llm-integration.{bash,zsh}` - Shell-specific keybindings (Ctrl+N) and tab completion setup
 - `integration/llm-zsh-plugin/` - Cloned llm-zsh-plugin with custom extensions
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
 - `llm-assistant/` - Assistant components: llm_assistant/ package, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
+- `burr_workflow/` - YAML-based workflow engine built on Burr (see [`burr_workflow/CLAUDE.md`](burr_workflow/CLAUDE.md))
 - `scripts/context` - Python script for extracting terminal history from recordings
 - `llm-tools-context/` - LLM plugin exposing context as tool
-- `llm-tools-google-search` - LLM plugin for Google Search via Vertex/Gemini (git repo)
 - `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-report}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
@@ -982,7 +854,6 @@ codex mcp add microsoft-learn -- npx -y mcp-remote https://learn.microsoft.com/a
 14. **Node.js Version Management**: Script automatically detects Node.js version and installs via nvm if repository version < 20
 15. **Go Optional**: Go 1.22+ is required for imagemage but installation is apt-only; if repo version is insufficient, imagemage is skipped with a warning
 16. **Per-Pane Recording in tmux**: Each tmux pane gets its own independent recording session (intentional design for workflow isolation)
-17. **Optional llm-functions Integration**: The script installs argc (prerequisite) and llm-tools-llm-functions (bridge plugin) to prepare the environment for optional llm-functions usage, but llm-functions itself is NOT automatically installed - users must install it separately if they want to build custom tools
 
 ## Special Packages & Forks
 

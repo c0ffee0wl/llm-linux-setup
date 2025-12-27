@@ -12,7 +12,7 @@ from ..core.errors import ActionNotFoundError
 from .base import BaseAction
 
 if TYPE_CHECKING:
-    from ..protocols import ExecutionContext, LLMClient
+    from ..protocols import ExecutionContext, LLMClient, ReportBackend
 
 
 # Type alias for action factory functions
@@ -266,4 +266,28 @@ def register_llm_actions(
         "llm/instruct",
         lambda: LLMInstructAction(llm_client),
         aliases=["instruct"],
+    )
+
+
+def register_report_actions(
+    registry: ActionRegistry,
+    report_backend: "ReportBackend",
+) -> None:
+    """Register report actions with a specific backend.
+
+    Args:
+        registry: Registry to add actions to
+        report_backend: Report backend for finding storage
+    """
+    from .report import ReportAddAction, ReportListAction
+
+    # Create factories that capture the report_backend
+    registry.register(
+        "report/add",
+        lambda: ReportAddAction(report_backend),
+        aliases=["report"],
+    )
+    registry.register(
+        "report/list",
+        lambda: ReportListAction(report_backend),
     )

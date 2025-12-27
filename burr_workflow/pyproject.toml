@@ -44,6 +44,10 @@ dev = [
     "mypy>=1.0.0",
 ]
 
+[project.scripts]
+workflow-validate = "burr_workflow.cli:workflow_validate_cmd"
+workflow-schema = "burr_workflow.cli:workflow_schema_cmd"
+
 [project.urls]
 Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
 Repository = "https://github.com/c0ffee0wl/llm-linux-setup"

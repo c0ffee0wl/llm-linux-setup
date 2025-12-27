@@ -69,6 +69,7 @@ from .protocols import (
     ActionProvider,
     LLMClient,
     PersistenceBackend,
+    ReportBackend,
 )
 
 # Evaluator
@@ -94,11 +95,13 @@ from .actions import (
     BaseAction,
     ActionRegistry,
     get_default_registry,
+    register_report_actions,
     ShellAction,
     HTTPAction,
     StateSetAction,
     ExitAction,
     FailAction,
+    ReportAddAction,
 )
 
 # Configuration
@@ -150,6 +153,7 @@ __all__ = [
     "ActionProvider",
     "LLMClient",
     "PersistenceBackend",
+    "ReportBackend",
     # Evaluator
     "ContextEvaluator",
     "PathValidator",
@@ -163,11 +167,13 @@ __all__ = [
     "BaseAction",
     "ActionRegistry",
     "get_default_registry",
+    "register_report_actions",
     "ShellAction",
     "HTTPAction",
     "StateSetAction",
     "ExitAction",
     "FailAction",
+    "ReportAddAction",
     # Config
     "WorkflowSettings",
     "get_settings",

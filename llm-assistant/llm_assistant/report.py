@@ -13,7 +13,7 @@ import re
 import subprocess
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import llm
 import yaml
@@ -242,6 +242,166 @@ language_name: {language_name}
 
         ConsoleHelper.success(self.console, f"Added [{sev_color}]{finding_id}[/] ({severity} {sev_label}): {finding_meta['title']}")
         return True
+
+    async def add_finding(
+        self,
+        note: str,
+        *,
+        severity_override: Optional[int] = None,
+        context: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Add a finding with optional LLM analysis.
+
+        This async method implements the ReportBackend protocol from burr_workflow,
+        enabling workflow-driven finding creation.
+
+        Args:
+            note: Quick note describing the vulnerability
+            severity_override: Override LLM-suggested severity (1-9 OWASP scale)
+            context: Optional terminal/execution context for analysis
+
+        Returns:
+            Dict with:
+                - finding_id: Unique finding identifier (e.g., "F001")
+                - title: Finding title (LLM-generated or from note)
+                - severity: Severity 1-9 (9 = critical)
+                - success: Whether finding was added successfully
+                - error: Error message if not successful
+        """
+        # Validate project initialized
+        if not self.findings_project:
+            return {
+                "finding_id": None,
+                "title": None,
+                "severity": None,
+                "success": False,
+                "error": "No findings project initialized. Use /report init <project> <lang>",
+            }
+
+        note = note.strip().strip('"\'')
+        if not note:
+            return {
+                "finding_id": None,
+                "title": None,
+                "severity": None,
+                "success": False,
+                "error": "Empty note provided",
+            }
+
+        project_dir = self.findings_base_dir / self.findings_project
+        findings_file = project_dir / "findings.md"
+
+        if not findings_file.exists():
+            return {
+                "finding_id": None,
+                "title": None,
+                "severity": None,
+                "success": False,
+                "error": f"Project file not found: {findings_file}",
+            }
+
+        # Parse existing findings
+        project_meta, findings = self._parse_findings_file(findings_file)
+
+        if not project_meta:
+            return {
+                "finding_id": None,
+                "title": None,
+                "severity": None,
+                "success": False,
+                "error": "Could not parse project file (missing or invalid YAML frontmatter)",
+            }
+
+        # Get language from project metadata
+        language_name = project_meta.get('language_name', 'English')
+
+        # Generate next finding ID
+        finding_id = self._get_next_finding_id(findings)
+
+        # Use provided context or capture from terminals
+        if context is None:
+            try:
+                terminals = self._get_all_terminals_with_content()
+                if terminals:
+                    context_parts = []
+                    for t in terminals:
+                        if t.get('uuid') != self.chat_terminal_uuid:
+                            context_parts.append(f"=== Terminal {t.get('title', 'unknown')} ===\n{t.get('content', '')[:2000]}")
+                    context = "\n\n".join(context_parts)[:5000]
+            except Exception:
+                pass
+
+        # Capture evidence (terminal context)
+        evidence = self._capture_report_evidence(finding_id, project_dir)
+
+        # LLM analysis with schema enforcement
+        try:
+            analysis = self._analyze_finding(note, context, language=language_name)
+        except Exception as e:
+            # Fallback to manual entry
+            analysis = {
+                "suggested_title": note[:60],
+                "severity": 5,
+                "severity_rationale": f"Manual entry - LLM analysis failed: {e}",
+                "description": note,
+                "remediation": "To be determined"
+            }
+
+        # Apply severity override if provided
+        severity = severity_override if severity_override is not None else analysis.get("severity", 5)
+
+        # Build finding metadata
+        finding_meta = {
+            "id": finding_id,
+            "title": analysis.get("suggested_title", note[:60]),
+            "severity": severity,
+            "severity_rationale": analysis.get("severity_rationale", ""),
+            "created": datetime.now().isoformat(),
+            "evidence": evidence
+        }
+
+        # Build finding markdown body
+        finding_body = f"""
+### Description
+
+{analysis.get('description', note)}
+
+### Remediation
+
+{analysis.get('remediation', 'To be determined')}
+
+### Evidence
+
+"""
+        if evidence:
+            for ev in evidence:
+                ev_path = ev.get('path', '')
+                finding_body += f"- {ev.get('type', 'file').title()}: [{Path(ev_path).name}]({ev_path})\n"
+        else:
+            finding_body += "(none captured)\n"
+
+        # Append to findings list
+        findings.append((finding_meta, finding_body))
+
+        # Write updated file
+        try:
+            self._write_findings_file(findings_file, project_meta, findings)
+        except Exception as e:
+            return {
+                "finding_id": finding_id,
+                "title": finding_meta['title'],
+                "severity": severity,
+                "success": False,
+                "error": f"Failed to write findings file: {e}",
+            }
+
+        return {
+            "finding_id": finding_id,
+            "title": finding_meta['title'],
+            "severity": severity,
+            "success": True,
+            "error": None,
+        }
 
     def _analyze_finding(self, quick_note: str, context: Optional[str] = None,
                          language: str = "English") -> dict:

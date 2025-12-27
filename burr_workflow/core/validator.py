@@ -151,6 +151,14 @@ class WorkflowValidator:
     W_NO_TIMEOUT = "W004"
     W_HARDCODED_SECRET = "W005"
     W_MISSING_ERROR_HANDLER = "W006"
+    W_BOTH_RUN_AND_USES = "W007"
+    W_SHELL_INJECTION = "W008"
+
+    # Pattern for unquoted variables in shell commands
+    # Matches ${{ ... }} NOT followed by | shell_quote
+    UNQUOTED_VAR_PATTERN = re.compile(
+        r'\$\{\{(?!.*\|\s*shell_quote)[^}]+\}\}'
+    )
     
     # Dangerous patterns in expressions (for security)
     DANGEROUS_PATTERNS = [
@@ -227,8 +235,11 @@ class WorkflowValidator:
         
         # Phase 5: Expression validation
         self._validate_expressions(workflow, result)
-        
-        # Phase 6: Check for unused steps (warning only)
+
+        # Phase 6: Shell safety checks
+        self._validate_shell_safety(workflow, result)
+
+        # Phase 7: Check for unused steps (warning only)
         self._check_unused_steps(workflow, result)
         
         # Strict mode: convert warnings to errors
@@ -243,19 +254,19 @@ class WorkflowValidator:
     def _validate_structure(self, workflow: dict, result: ValidationResult) -> None:
         """Validate basic workflow structure."""
         # Schema version (must be first check)
-        version = workflow.get("version")
-        if not version:
+        schema_version = workflow.get("schema_version")
+        if not schema_version:
             result.add_error(
                 self.E_INVALID_VERSION,
-                "Workflow must have a 'version' field",
+                "Workflow must have a 'schema_version' field",
                 location="workflow",
-                suggestion="Add 'version: \"1.0\"' at the top level",
+                suggestion="Add 'schema_version: \"1.0\"' at the top level",
             )
-        elif str(version) not in self.SUPPORTED_VERSIONS:
+        elif str(schema_version) not in self.SUPPORTED_VERSIONS:
             result.add_error(
                 self.E_INVALID_VERSION,
-                f"Unsupported schema version: {version}",
-                location="workflow.version",
+                f"Unsupported schema version: {schema_version}",
+                location="workflow.schema_version",
                 suggestion=f"Supported versions: {', '.join(sorted(self.SUPPORTED_VERSIONS))}",
             )
 
@@ -592,6 +603,59 @@ class WorkflowValidator:
         if not expr.strip():
             raise ValueError("Empty expression")
     
+    def _validate_shell_safety(self, workflow: dict, result: ValidationResult) -> None:
+        """Check for shell injection vulnerabilities in run commands.
+
+        Scans all 'run:' commands for unquoted ${{ }} expressions that could
+        lead to shell injection if user-controlled data is passed through.
+        """
+        main_job = workflow.get("jobs", {}).get("main", {})
+        steps = main_job.get("steps", [])
+
+        for idx, step in enumerate(steps):
+            if not isinstance(step, dict):
+                continue
+
+            run_cmd = step.get("run")
+            if run_cmd is None:
+                continue
+
+            location = f"jobs.main.steps[{idx}]"
+            step_id = step.get("id") or step.get("name") or f"step_{idx}"
+
+            # Handle both string and array commands
+            commands = [run_cmd] if isinstance(run_cmd, str) else run_cmd
+
+            for cmd_idx, cmd in enumerate(commands):
+                if not isinstance(cmd, str):
+                    continue
+
+                # Find unquoted variable expressions
+                for match in self.UNQUOTED_VAR_PATTERN.finditer(cmd):
+                    expr = match.group(0)
+
+                    # Extract the variable part (between ${{ and }})
+                    var_part = expr[4:-2].strip()  # Remove '${{' and '}}'
+
+                    # Build helpful suggestion
+                    if isinstance(run_cmd, str):
+                        suggestion = (
+                            f"Use '| shell_quote' filter: ${{{{ {var_part} | shell_quote }}}} "
+                            f"or convert to array syntax: run: ['cmd', ${{{{ {var_part} }}}}]"
+                        )
+                    else:
+                        # Already array syntax, just needs shell_quote
+                        suggestion = (
+                            f"Use '| shell_quote' filter: ${{{{ {var_part} | shell_quote }}}}"
+                        )
+
+                    result.add_warning(
+                        self.W_SHELL_INJECTION,
+                        f"Unquoted variable in shell command: {expr}",
+                        location=location,
+                        suggestion=suggestion,
+                    )
+
     def _check_unused_steps(self, workflow: dict, result: ValidationResult) -> None:
         """Check for steps that are never referenced."""
         # First step is always "used" as entry point

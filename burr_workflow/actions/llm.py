@@ -436,21 +436,41 @@ Be thorough but concise. Focus on the most important findings."""
 
 
 class LLMInstructAction(AbstractAction):
-    """Simple instruction-based LLM action.
+    """LLM instruction action with optional feedback collection.
 
-    A streamlined action for straightforward instruction + input patterns.
-    Simpler than llm/generate when you just need to apply an instruction.
+    Two modes of operation:
 
-    Usage:
+    1. Simple mode (no await_feedback):
+        Just applies an instruction to input and returns the LLM response.
+
+    2. Airgapped mode (await_feedback: true):
+        Generates instructions, suspends workflow for user feedback,
+        and optionally analyzes the feedback with LLM.
+
+    Usage (simple):
         - uses: llm/instruct
           with:
             instruction: "Summarize the following text in 3 bullet points"
             input: ${{ steps.fetch.outputs.content }}
-            model: "gpt-4"  # optional model override
 
-    Outputs:
+    Usage (airgapped with feedback):
+        - uses: llm/instruct
+          with:
+            prompt: |
+              Generate instructions for running Mimikatz on the target.
+              Target: ${{ inputs.target_host }}
+            await_feedback: true
+            feedback_type: multiline  # text, multiline, file_path, json
+            analyze_feedback: true    # Parse feedback with LLM
+
+    Outputs (simple mode):
         - response: The LLM's response text
         - model: The model used
+
+    Outputs (airgapped mode):
+        - instructions: Generated instructions
+        - feedback: User-provided feedback (after resume)
+        - feedback_analysis: Parsed feedback (if analyze_feedback=true)
     """
 
     action_type: ClassVar[str] = "llm/instruct"
@@ -465,7 +485,7 @@ class LLMInstructAction(AbstractAction):
 
     @property
     def reads(self) -> list[str]:
-        return []
+        return ["__resume_data"]
 
     @property
     def writes(self) -> list[str]:
@@ -477,7 +497,7 @@ class LLMInstructAction(AbstractAction):
         context: dict[str, Any],
         exec_context: Optional["ExecutionContext"] = None,
     ) -> ActionResult:
-        """Execute instruction on input.
+        """Execute instruction, optionally with feedback collection.
 
         Args:
             step_config: Step configuration
@@ -485,13 +505,33 @@ class LLMInstructAction(AbstractAction):
             exec_context: Execution context
 
         Returns:
-            ActionResult with LLM response
+            ActionResult with LLM response or suspension for feedback
         """
         from ..evaluator import ContextEvaluator
 
         with_config = self._get_with_config(step_config)
         evaluator = ContextEvaluator(context)
+        step_id = step_config.get("id", "llm_instruct")
 
+        # Check for airgapped mode
+        await_feedback = with_config.get("await_feedback", False)
+
+        if await_feedback:
+            return await self._execute_airgapped(
+                step_config, with_config, context, evaluator, step_id, exec_context
+            )
+        else:
+            return await self._execute_simple(
+                with_config, evaluator, exec_context
+            )
+
+    async def _execute_simple(
+        self,
+        with_config: dict[str, Any],
+        evaluator: "ContextEvaluator",
+        exec_context: Optional["ExecutionContext"],
+    ) -> ActionResult:
+        """Simple mode: apply instruction to input."""
         # Get inputs
         instruction = with_config.get("instruction", "")
         instruction = evaluator.resolve(instruction)
@@ -537,3 +577,195 @@ INPUT:
                 error=f"LLM instruction failed: {e}",
                 error_type="LLMError",
             )
+
+    async def _execute_airgapped(
+        self,
+        step_config: dict[str, Any],
+        with_config: dict[str, Any],
+        context: dict[str, Any],
+        evaluator: "ContextEvaluator",
+        step_id: str,
+        exec_context: Optional["ExecutionContext"],
+    ) -> ActionResult:
+        """Airgapped mode: generate instructions, wait for feedback."""
+        # Check if we're resuming with feedback
+        resume_data = context.get("__resume_data", {})
+
+        if step_id in resume_data:
+            # Phase 2: Process feedback
+            return await self._process_feedback(
+                with_config, resume_data[step_id], evaluator, exec_context
+            )
+        else:
+            # Phase 1: Generate instructions and suspend
+            return await self._generate_and_suspend(
+                with_config, evaluator, step_id, exec_context
+            )
+
+    async def _generate_and_suspend(
+        self,
+        with_config: dict[str, Any],
+        evaluator: "ContextEvaluator",
+        step_id: str,
+        exec_context: Optional["ExecutionContext"],
+    ) -> ActionResult:
+        """Generate instructions and suspend for feedback."""
+        prompt = with_config.get("prompt", "")
+        prompt = evaluator.resolve(prompt)
+
+        if not prompt:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error="No prompt provided for llm/instruct in airgapped mode",
+                error_type="ValidationError",
+            )
+
+        feedback_type = with_config.get("feedback_type", "text")
+        valid_types = {"text", "multiline", "file_path", "json"}
+        if feedback_type not in valid_types:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error=f"Invalid feedback_type '{feedback_type}'. Must be one of: {valid_types}",
+                error_type="ValidationError",
+            )
+
+        model = with_config.get("model")
+
+        # Generate instructions via LLM
+        system_prompt = """You are an expert at generating clear, step-by-step instructions.
+Generate precise instructions that can be followed by a human operator.
+Be specific about commands, paths, and expected outputs."""
+
+        try:
+            instructions = await self.llm_client.complete(
+                prompt=prompt,
+                system=system_prompt,
+                model=model,
+            )
+        except Exception as e:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error=f"Failed to generate instructions: {e}",
+                error_type="LLMError",
+            )
+
+        if exec_context:
+            exec_context.log(
+                "info",
+                f"Generated instructions for '{step_id}', awaiting feedback"
+            )
+
+        # Build feedback prompt based on type
+        feedback_prompts = {
+            "text": "Please provide the result or output:",
+            "multiline": "Please paste the output (multi-line supported):",
+            "file_path": "Please provide the path to the output file:",
+            "json": "Please provide the result as JSON:",
+        }
+
+        # Suspend for user feedback
+        return ActionResult(
+            outcome="suspended",
+            outputs={
+                # Suspension metadata for executor
+                "__suspend_for_input": True,
+                "__suspend_step_id": step_id,
+                "__suspend_prompt": f"Instructions generated:\n\n{instructions}\n\n{feedback_prompts[feedback_type]}",
+                "__suspend_input_type": "multiline" if feedback_type in ("multiline", "json") else "text",
+                "__suspend_feedback_type": feedback_type,
+                # Store instructions for later use
+                "__instruct_instructions": instructions,
+                "__instruct_analyze": with_config.get("analyze_feedback", False),
+                # User-visible output
+                "awaiting_feedback": True,
+                "instructions": instructions,
+                "feedback_type": feedback_type,
+            }
+        )
+
+    async def _process_feedback(
+        self,
+        with_config: dict[str, Any],
+        feedback: Any,
+        evaluator: "ContextEvaluator",
+        exec_context: Optional["ExecutionContext"],
+    ) -> ActionResult:
+        """Process user feedback, optionally analyzing with LLM."""
+        # Get stored values from context (passed via resume)
+        analyze_feedback = with_config.get("analyze_feedback", False)
+        feedback_type = with_config.get("feedback_type", "text")
+        model = with_config.get("model")
+
+        # Handle file_path type - read the file
+        if feedback_type == "file_path" and isinstance(feedback, str):
+            import os
+            try:
+                with open(os.path.expanduser(feedback), "r") as f:
+                    feedback_content = f.read()
+            except Exception as e:
+                return ActionResult(
+                    outputs={"feedback": feedback, "error": str(e)},
+                    outcome="failure",
+                    error=f"Failed to read file at path: {e}",
+                    error_type="FileError",
+                )
+        else:
+            feedback_content = feedback
+
+        # Handle JSON type - parse it
+        parsed_json = None
+        if feedback_type == "json" and isinstance(feedback_content, str):
+            import json
+            try:
+                parsed_json = json.loads(feedback_content)
+            except json.JSONDecodeError as e:
+                return ActionResult(
+                    outputs={"feedback": feedback_content, "parse_error": str(e)},
+                    outcome="failure",
+                    error=f"Invalid JSON in feedback: {e}",
+                    error_type="ValidationError",
+                )
+
+        outputs: dict[str, Any] = {
+            "feedback": feedback_content,
+            "feedback_type": feedback_type,
+        }
+
+        if parsed_json is not None:
+            outputs["parsed_json"] = parsed_json
+
+        # Optionally analyze feedback with LLM
+        if analyze_feedback:
+            try:
+                analysis_prompt = f"""Analyze the following feedback/output and extract key findings:
+
+FEEDBACK:
+{feedback_content}
+
+Provide a structured analysis identifying:
+1. Success/failure status
+2. Key data points or findings
+3. Any errors or issues
+4. Recommended next steps"""
+
+                analysis = await self.llm_client.complete(
+                    prompt=analysis_prompt,
+                    model=model,
+                )
+                outputs["feedback_analysis"] = analysis
+
+                if exec_context:
+                    exec_context.log("info", "Feedback analyzed successfully")
+
+            except Exception as e:
+                outputs["analysis_error"] = str(e)
+                if exec_context:
+                    exec_context.log("warning", f"Failed to analyze feedback: {e}")
+
+        return ActionResult(
+            outputs=outputs,
+            outcome="success",
+        )

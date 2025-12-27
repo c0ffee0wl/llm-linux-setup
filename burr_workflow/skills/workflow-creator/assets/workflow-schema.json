@@ -1,0 +1,696 @@
+{
+  "$defs": {
+    "CaptureMode": {
+      "description": "Output capture mode for shell commands.",
+      "enum": [
+        "memory",
+        "file",
+        "none"
+      ],
+      "title": "CaptureMode",
+      "type": "string"
+    },
+    "GuardrailConfig": {
+      "description": "Configuration for output validation and steering.",
+      "properties": {
+        "type": {
+          "enum": [
+            "regex",
+            "json_schema",
+            "llm_judge"
+          ],
+          "title": "Type",
+          "type": "string"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Regex pattern (for type=regex)",
+          "title": "Pattern"
+        },
+        "schema": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JSON Schema (for type=json_schema)",
+          "title": "Schema"
+        },
+        "prompt": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "LLM judge prompt (for type=llm_judge)",
+          "title": "Prompt"
+        },
+        "on_fail": {
+          "default": "error",
+          "enum": [
+            "error",
+            "retry",
+            "continue"
+          ],
+          "title": "On Fail",
+          "type": "string"
+        },
+        "max_retries": {
+          "default": 3,
+          "minimum": 1,
+          "title": "Max Retries",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "type"
+      ],
+      "title": "GuardrailConfig",
+      "type": "object"
+    },
+    "InputDefinition": {
+      "description": "Definition for a workflow input parameter.",
+      "properties": {
+        "description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Description"
+        },
+        "type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "string",
+          "description": "Input type: string, number, boolean, array, object",
+          "title": "Type"
+        },
+        "default": {
+          "anyOf": [
+            {},
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Default"
+        },
+        "required": {
+          "default": true,
+          "description": "Whether this input is required",
+          "title": "Required",
+          "type": "boolean"
+        },
+        "enum": {
+          "anyOf": [
+            {
+              "items": {},
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Allowed values (if restricted)",
+          "title": "Enum"
+        },
+        "pattern": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Regex pattern for validation (strings only)",
+          "title": "Pattern"
+        },
+        "secret": {
+          "default": false,
+          "description": "Whether this input contains sensitive data",
+          "title": "Secret",
+          "type": "boolean"
+        }
+      },
+      "title": "InputDefinition",
+      "type": "object"
+    },
+    "JobDefinition": {
+      "description": "Definition for a workflow job.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "steps": {
+          "items": {
+            "$ref": "#/$defs/StepDefinition"
+          },
+          "title": "Steps",
+          "type": "array"
+        },
+        "finally": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/StepDefinition"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Cleanup steps (always run)",
+          "title": "Finally"
+        }
+      },
+      "required": [
+        "steps"
+      ],
+      "title": "JobDefinition",
+      "type": "object"
+    },
+    "ResultStorageMode": {
+      "description": "How to store loop results.",
+      "enum": [
+        "memory",
+        "file",
+        "none"
+      ],
+      "title": "ResultStorageMode",
+      "type": "string"
+    },
+    "RetryConfig": {
+      "description": "Configuration for step retry behavior.\n\nExample:\n    retry:\n      max_attempts: 3\n      delay: 2.0\n      backoff: 2.0\n      max_delay: 60.0\n      retry_on:\n        - TimeoutError\n        - ConnectionError",
+      "properties": {
+        "max_attempts": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Attempts",
+          "type": "integer"
+        },
+        "delay": {
+          "default": 1.0,
+          "description": "Initial delay between retries in seconds",
+          "minimum": 0,
+          "title": "Delay",
+          "type": "number"
+        },
+        "backoff": {
+          "default": 2.0,
+          "description": "Exponential backoff multiplier",
+          "minimum": 1.0,
+          "title": "Backoff",
+          "type": "number"
+        },
+        "max_delay": {
+          "default": 60.0,
+          "description": "Maximum delay between retries",
+          "minimum": 0,
+          "title": "Max Delay",
+          "type": "number"
+        },
+        "jitter": {
+          "default": true,
+          "description": "Add randomness to backoff (0.5-1.5x) to prevent thundering herd",
+          "title": "Jitter",
+          "type": "boolean"
+        },
+        "retry_on": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Error types to retry on (None = default network errors)",
+          "title": "Retry On"
+        }
+      },
+      "title": "RetryConfig",
+      "type": "object"
+    },
+    "ShellSafetyMode": {
+      "description": "Shell safety enforcement mode.",
+      "enum": [
+        "strict",
+        "auto_quote",
+        "lenient"
+      ],
+      "title": "ShellSafetyMode",
+      "type": "string"
+    },
+    "StepDefinition": {
+      "description": "Definition for a single workflow step.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Human-readable step name",
+          "title": "Name"
+        },
+        "id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step ID for referencing outputs",
+          "title": "Id"
+        },
+        "run": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Shell command (string or array)",
+          "title": "Run"
+        },
+        "uses": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Action type (e.g., 'llm/extract', 'http/request')",
+          "title": "Uses"
+        },
+        "with": {
+          "anyOf": [
+            {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Action-specific configuration",
+          "title": "With"
+        },
+        "if": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Condition expression (step skipped if false)",
+          "title": "If"
+        },
+        "loop": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Expression returning list to iterate over",
+          "title": "Loop"
+        },
+        "break_if": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Condition to break out of loop early",
+          "title": "Break If"
+        },
+        "max_iterations": {
+          "default": 10000,
+          "description": "Maximum loop iterations (safety limit)",
+          "minimum": 1,
+          "title": "Max Iterations",
+          "type": "integer"
+        },
+        "max_results": {
+          "default": 100,
+          "description": "Maximum results to keep in state (sliding window)",
+          "minimum": 0,
+          "title": "Max Results",
+          "type": "integer"
+        },
+        "max_errors": {
+          "default": 50,
+          "description": "Maximum errors to accumulate before failing loop",
+          "minimum": 0,
+          "title": "Max Errors",
+          "type": "integer"
+        },
+        "continue_on_error": {
+          "default": false,
+          "description": "Continue loop even if iteration fails",
+          "title": "Continue On Error",
+          "type": "boolean"
+        },
+        "aggregate_results": {
+          "default": true,
+          "description": "Whether to store iteration results",
+          "title": "Aggregate Results",
+          "type": "boolean"
+        },
+        "result_storage": {
+          "$ref": "#/$defs/ResultStorageMode",
+          "default": "memory",
+          "description": "Where to store loop results"
+        },
+        "interactive": {
+          "default": false,
+          "description": "Run command interactively (no capture)",
+          "title": "Interactive",
+          "type": "boolean"
+        },
+        "capture_mode": {
+          "$ref": "#/$defs/CaptureMode",
+          "default": "memory",
+          "description": "How to capture command output"
+        },
+        "timeout": {
+          "default": 300,
+          "description": "Timeout in seconds (default: 5 minutes)",
+          "maximum": 86400,
+          "minimum": 1,
+          "title": "Timeout",
+          "type": "integer"
+        },
+        "on_failure": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Step ID to jump to on failure",
+          "title": "On Failure"
+        },
+        "resume_from": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Where to continue after error handler",
+          "title": "Resume From"
+        },
+        "retry": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RetryConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "guardrails": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/GuardrailConfig"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Guardrails"
+        },
+        "idempotent": {
+          "default": true,
+          "description": "Whether step is safe to re-run on resume",
+          "title": "Idempotent",
+          "type": "boolean"
+        }
+      },
+      "title": "StepDefinition",
+      "type": "object"
+    }
+  },
+  "description": "Root workflow definition model.",
+  "properties": {
+    "name": {
+      "description": "Workflow name",
+      "title": "Name",
+      "type": "string"
+    },
+    "description": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Description"
+    },
+    "schema_version": {
+      "default": "1.0",
+      "description": "Schema version (use 'schema_version' not 'version')",
+      "title": "Schema Version",
+      "type": "string"
+    },
+    "inputs": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "$ref": "#/$defs/InputDefinition"
+              },
+              {}
+            ]
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Input parameter definitions",
+      "title": "Inputs"
+    },
+    "env": {
+      "anyOf": [
+        {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "type": "object"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Environment variables",
+      "title": "Env"
+    },
+    "jobs": {
+      "additionalProperties": {
+        "$ref": "#/$defs/JobDefinition"
+      },
+      "description": "Job definitions (usually just 'main')",
+      "title": "Jobs",
+      "type": "object"
+    },
+    "finally": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/StepDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Workflow-level cleanup",
+      "title": "Finally"
+    },
+    "on_complete": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/StepDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Steps to run on successful completion",
+      "title": "On Complete"
+    },
+    "on_failure": {
+      "anyOf": [
+        {
+          "items": {
+            "$ref": "#/$defs/StepDefinition"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Steps to run on workflow failure",
+      "title": "On Failure"
+    },
+    "shell_safety": {
+      "$ref": "#/$defs/ShellSafetyMode",
+      "default": "strict",
+      "description": "Shell injection prevention mode"
+    },
+    "workspace": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Working directory for the workflow",
+      "title": "Workspace"
+    },
+    "secrets_dir": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Directory containing secret files",
+      "title": "Secrets Dir"
+    },
+    "default_timeout": {
+      "default": 300,
+      "description": "Default step timeout in seconds",
+      "minimum": 1,
+      "title": "Default Timeout",
+      "type": "integer"
+    },
+    "max_parallel": {
+      "default": 1,
+      "description": "Maximum parallel step execution (future)",
+      "minimum": 1,
+      "title": "Max Parallel",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "name",
+    "jobs"
+  ],
+  "title": "Burr Workflow Definition",
+  "type": "object",
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}
