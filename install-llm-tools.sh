@@ -1586,11 +1586,7 @@ if has_desktop_environment; then
     # Install espanso-llm-ask-ai package
     if command -v espanso &>/dev/null; then
         # Get packages directory (with fallback to default path)
-        ESPANSO_PACKAGES_DIR="$(espanso path packages 2>/dev/null)"
-        if [ -z "$ESPANSO_PACKAGES_DIR" ]; then
-            # Fallback to default location if espanso config not yet initialized
-            ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
-        fi
+        ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
 
         # Create packages directory if it doesn't exist
         mkdir -p "$ESPANSO_PACKAGES_DIR"
@@ -1598,7 +1594,7 @@ if has_desktop_environment; then
         LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-ai"
         if [ ! -d "$LLM_ASK_AI_DIR" ]; then
             log "Installing espanso-llm-ask-ai package..."
-            git clone --depth 1 https://github.com/bgeneto/espanso-llm-ask-ai.git "$LLM_ASK_AI_DIR"
+            git clone --depth 1 https://github.com/c0ffee0wl/espanso-llm-ask-llm.git "$LLM_ASK_AI_DIR"
         else
             log "espanso-llm-ask-ai already installed"
         fi
@@ -1610,7 +1606,7 @@ if has_desktop_environment; then
             cat > "$ENV_FILE" << 'ENVEOF'
 API_KEY=sk-placeholder
 BASE_URL=http://localhost:11435/v1
-MODEL=gpt-4.1-mini
+MODEL=server-configured-model
 ENVEOF
         fi
 
@@ -1618,7 +1614,7 @@ ENVEOF
         if ! espanso status &>/dev/null; then
             log "Registering espanso service..."
             espanso service register || true
-            espanso restart || true
+            espanso start || true
         fi
 
     fi
@@ -1638,6 +1634,29 @@ install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
 
 # Install/update llm-server (OpenAI-compatible HTTP wrapper for llm library)
 install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-server"
+
+# Register llm-server as systemd socket-activated user service
+# Socket activation enables on-demand startup when port 11435 is accessed
+if command -v llm-server &>/dev/null; then
+    if ! systemctl --user is-active llm-server.socket &>/dev/null; then
+        log "Registering llm-server systemd service..."
+        llm-server --service || warn "Failed to register llm-server service, continuing..."
+    else
+        log "llm-server service is already running"
+    fi
+fi
+
+# Configure VS Code for local LLM mode (if any VS Code variant is installed)
+# configure-vscode disables telemetry and cloud-dependent features
+if command -v configure-vscode &>/dev/null; then
+    if command -v code &>/dev/null || \
+       command -v code-insiders &>/dev/null || \
+       command -v codium &>/dev/null || \
+       command -v code-oss &>/dev/null; then
+        log "Configuring VS Code for local LLM mode..."
+        configure-vscode --all || warn "Failed to configure VS Code settings, continuing..."
+    fi
+fi
 
 # Install/update tldr (community-driven man pages with practical examples)
 install_or_upgrade_uv_tool tldr

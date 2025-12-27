@@ -187,9 +187,12 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
     """Register built-in actions with the registry."""
     from .shell import ShellAction
     from .http import HTTPAction
-    from .state import StateSetAction
-    from .control import ExitAction, FailAction
-    from .human import HumanInputAction
+    from .state import StateSetAction, StateAppendAction
+    from .control import ExitAction, FailAction, BreakAction, ContinueAction, WaitAction
+    from .human import HumanInputAction, HumanDecideAction
+    from .file import FileReadAction, FileWriteAction
+    from .parse import ParseJSONAction, ParseRegexAction
+    from .notify import NotifyDesktopAction, NotifyWebhookAction
     from .script import PythonScriptAction, BashScriptAction
     from .iterator import (
         IteratorInitAction,
@@ -206,13 +209,30 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
 
     # State manipulation
     registry.register("state/set", StateSetAction, aliases=["set"])
+    registry.register("state/append", StateAppendAction, aliases=["append"])
 
     # Control flow
     registry.register("control/exit", ExitAction, aliases=["exit"])
     registry.register("control/fail", FailAction, aliases=["fail"])
+    registry.register("control/break", BreakAction, aliases=["break"])
+    registry.register("control/continue", ContinueAction, aliases=["continue"])
+    registry.register("control/wait", WaitAction, aliases=["wait"])
 
     # Human input (interactive workflows)
-    registry.register("human/input", HumanInputAction, aliases=["input", "human"])
+    registry.register("human/input", HumanInputAction, aliases=["input"])
+    registry.register("human/decide", HumanDecideAction, aliases=["decide", "human"])
+
+    # File operations
+    registry.register("file/read", FileReadAction, aliases=["read"])
+    registry.register("file/write", FileWriteAction, aliases=["write"])
+
+    # Parse operations
+    registry.register("parse/json", ParseJSONAction, aliases=["json"])
+    registry.register("parse/regex", ParseRegexAction, aliases=["regex"])
+
+    # Notifications
+    registry.register("notify/desktop", NotifyDesktopAction, aliases=["notify"])
+    registry.register("notify/webhook", NotifyWebhookAction, aliases=["webhook"])
 
     # Script execution
     registry.register("script/python", PythonScriptAction, aliases=["python"])
@@ -291,7 +311,7 @@ def register_llm_actions(
     registry.register(
         "llm/generate",
         lambda: LLMGenerateAction(llm_client),
-        aliases=["generate", "llm/analyze"],
+        aliases=["generate"],
     )
     registry.register(
         "llm/instruct",

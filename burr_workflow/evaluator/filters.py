@@ -252,6 +252,84 @@ def extract_ip(value: str) -> list[str]:
     return re.findall(pattern, str(value))
 
 
+def is_valid_ip(value: str) -> bool:
+    """Validate IPv4/IPv6 address format.
+
+    Args:
+        value: IP address string
+
+    Returns:
+        True if valid IP address format
+    """
+    import ipaddress
+    try:
+        ipaddress.ip_address(str(value))
+        return True
+    except ValueError:
+        return False
+
+
+def is_private_ip(value: str) -> bool:
+    """Check if IP is RFC1918/RFC4193 private address.
+
+    Args:
+        value: IP address string
+
+    Returns:
+        True if private IP address
+    """
+    import ipaddress
+    try:
+        return ipaddress.ip_address(str(value)).is_private
+    except ValueError:
+        return False
+
+
+def in_cidr(value: str, cidr: str) -> bool:
+    """Check if IP is within CIDR range.
+
+    Args:
+        value: IP address string
+        cidr: CIDR notation (e.g., "10.0.0.0/8")
+
+    Returns:
+        True if IP is in the CIDR range
+    """
+    import ipaddress
+    try:
+        return ipaddress.ip_address(str(value)) in ipaddress.ip_network(cidr, strict=False)
+    except ValueError:
+        return False
+
+
+def file_exists(value: str) -> bool:
+    """Check if file exists at path.
+
+    Args:
+        value: File path
+
+    Returns:
+        True if file exists
+    """
+    import os
+    return os.path.isfile(os.path.expanduser(str(value)))
+
+
+def in_list(value: Any, items: list) -> bool:
+    """Check if value is in list.
+
+    Useful with lines filter: ${{ target | in_list(scope | lines) }}
+
+    Args:
+        value: Value to check
+        items: List to search in
+
+    Returns:
+        True if value is in list
+    """
+    return str(value) in [str(i).strip() for i in items]
+
+
 # Dictionary of all safe filters
 SAFE_FILTERS: dict[str, Callable[..., Any]] = {
     # String manipulation
@@ -275,4 +353,15 @@ SAFE_FILTERS: dict[str, Callable[..., Any]] = {
     "format_bytes": format_bytes,
     "extract_domain": extract_domain,
     "extract_ip": extract_ip,
+
+    # Network validation
+    "is_valid_ip": is_valid_ip,
+    "is_private_ip": is_private_ip,
+    "in_cidr": in_cidr,
+
+    # Filesystem
+    "file_exists": file_exists,
+
+    # List operations
+    "in_list": in_list,
 }

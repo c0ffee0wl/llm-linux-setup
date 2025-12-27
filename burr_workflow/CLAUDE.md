@@ -69,11 +69,14 @@ Actions in `actions/` implement `BaseAction` protocol with `execute()` async met
 
 - **Shell**: `run:` command execution with array syntax for safety
 - **HTTP**: `uses: http/request` with httpx
-- **LLM**: `uses: llm/extract|decide|generate|analyze|instruct` via `LLMClient` protocol
-- **Human**: `uses: human/input` with suspension mechanism
-- **Script**: `uses: script/python|bash` for subprocess script execution
+- **LLM**: `uses: llm/extract|decide|generate|instruct` via `LLMClient` protocol (generate supports format parameter: prose/bullets/numbered/json)
+- **Human**: `uses: human/input` (free-form: text/multiline/file/editor) or `human/decide` (constrained: confirm/choices)
+- **Script**: `uses: script/python|bash` for subprocess script execution with optional `sandbox: true` (bwrap isolation)
 - **State**: `uses: state/set` for variable manipulation
-- **Control**: `uses: control/exit|fail` for flow control
+- **Control**: `uses: control/exit|fail|wait` for flow control (wait supports duration or polling until condition)
+- **File**: `uses: file/read|write` for file I/O (read supports text/binary/auto, write supports create/overwrite/append)
+- **Parse**: `uses: parse/json|regex` for structured data extraction (json uses jmespath, regex supports named groups)
+- **Notify**: `uses: notify/desktop|webhook` for notifications (desktop auto-detects notify-send/terminal-notifier)
 - **Report**: `uses: report/add` for pentest findings via `ReportBackend`
 
 Actions are registered in `actions/registry.py`. Use `register_llm_actions()` or `register_report_actions()` to inject dependencies.
@@ -91,7 +94,7 @@ Complete workflow creation documentation is available in `skills/workflow-creato
 `evaluator/context.py` provides secure Jinja2 evaluation with `${{ expr }}` syntax:
 
 - **SecureNativeEnvironment**: Sandbox + NativeEnvironment (preserves Python types)
-- **Whitelisted filters**: `shell_quote`, `safe_path`, `json_parse`, `first`, `last`, `join`, etc.
+- **Whitelisted filters**: `shell_quote`, `safe_path`, `json_parse`, `first`, `last`, `join`, `is_valid_ip`, `is_private_ip`, `in_cidr`, `file_exists`, `in_list`, etc.
 - **Dangerous pattern detection**: Blocks `__class__`, `eval`, `import`, `subprocess`, etc.
 - **ChainableUndefined**: Graceful handling of missing keys (`${{ steps.missing.outputs }}` → null)
 
@@ -107,6 +110,16 @@ The following GHA-style functions are available as filters:
 | `format` | `${{ '{0}:{1}' \| format(host, port) }}` | String formatting with positional args |
 | `toJSON` | `${{ value \| toJSON }}` | Serialize to JSON string |
 | `fromJSON` | `${{ json_str \| fromJSON }}` | Parse JSON string |
+
+#### Network and Validation Filters
+
+| Filter | Usage | Description |
+|--------|-------|-------------|
+| `is_valid_ip` | `${{ host \| is_valid_ip }}` | Check if string is valid IPv4/IPv6 address |
+| `is_private_ip` | `${{ host \| is_private_ip }}` | Check if IP is RFC1918/RFC4193 private |
+| `in_cidr` | `${{ host \| in_cidr('10.0.0.0/8') }}` | Check if IP is in CIDR range |
+| `file_exists` | `${{ path \| file_exists }}` | Check if file exists on disk |
+| `in_list` | `${{ value \| in_list(allowed) }}` | Check if value is in list |
 
 ### Shell Safety
 

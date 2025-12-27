@@ -178,7 +178,16 @@ class LLMActionConfig(BaseModel):
         default=None,
         description="Decision options (llm/decide)",
     )
-    temperature: float = Field(default=0.7, ge=0, le=2)
+    model: Optional[str] = Field(
+        default=None,
+        description="Model override (default: client's configured model)",
+    )
+    temperature: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=2,
+        description="Sampling temperature (default varies by action type)",
+    )
     max_tokens: Optional[int] = Field(default=None, ge=1)
     chunk_size: Optional[int] = Field(
         default=None,

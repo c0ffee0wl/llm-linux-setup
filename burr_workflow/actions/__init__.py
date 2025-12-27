@@ -4,8 +4,13 @@ from .base import BaseAction, ActionResult
 from .registry import ActionRegistry, get_default_registry, register_report_actions
 from .shell import ShellAction
 from .http import HTTPAction
-from .state import StateSetAction
-from .control import ExitAction, FailAction
+from .state import StateSetAction, StateAppendAction
+from .control import ExitAction, FailAction, BreakAction, ContinueAction, WaitAction
+from .human import HumanInputAction, HumanDecideAction
+from .file import FileReadAction, FileWriteAction
+from .parse import ParseJSONAction, ParseRegexAction
+from .notify import NotifyDesktopAction, NotifyWebhookAction
+from .script import PythonScriptAction, BashScriptAction
 from .report import ReportAddAction, ReportListAction
 from .iterator import (
     IteratorInitAction,
@@ -33,8 +38,22 @@ __all__ = [
     "ShellAction",
     "HTTPAction",
     "StateSetAction",
+    "StateAppendAction",
     "ExitAction",
     "FailAction",
+    "BreakAction",
+    "ContinueAction",
+    "WaitAction",
+    "HumanInputAction",
+    "HumanDecideAction",
+    "FileReadAction",
+    "FileWriteAction",
+    "ParseJSONAction",
+    "ParseRegexAction",
+    "NotifyDesktopAction",
+    "NotifyWebhookAction",
+    "PythonScriptAction",
+    "BashScriptAction",
     "ReportAddAction",
     "ReportListAction",
     # Iterator (legacy - for backwards compatibility)

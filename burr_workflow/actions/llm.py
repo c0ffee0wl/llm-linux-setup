@@ -27,6 +27,8 @@ class LLMExtractAction(AbstractAction):
                 ports: { type: array, items: { type: integer } }
               required: [hosts, ports]
             prompt: "Extract all discovered hosts and open ports"
+            model: gpt-4          # optional
+            temperature: 0.2      # optional (default: 0.3)
     """
 
     action_type: ClassVar[str] = "llm/extract"
@@ -97,11 +99,19 @@ Respond with valid JSON matching the schema. No additional text."""
 Extract exactly what is requested, in valid JSON format.
 If information is not present, use null or empty arrays as appropriate."""
 
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+
         try:
             result = await self.llm_client.complete_json(
                 prompt=full_prompt,
                 schema=schema,
                 system=system_prompt,
+                **kwargs,
             )
             return ActionResult(outputs=result, outcome="success")
         except Exception as e:
@@ -125,6 +135,8 @@ class LLMDecideAction(AbstractAction):
               - escalate_to_human
               - abort_workflow
             prompt: "Based on the analysis, what should we do next?"
+            model: gpt-4          # optional
+            temperature: 0.0      # optional (default: 0.0 for deterministic)
     """
 
     action_type: ClassVar[str] = "llm/decide"
@@ -201,10 +213,18 @@ VALID CHOICES (respond with exactly one):
 
 Respond with ONLY the choice text, nothing else."""
 
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+
         try:
             choice = await self.llm_client.complete_choice(
                 prompt=full_prompt,
                 choices=choices,
+                **kwargs,
             )
             return ActionResult(
                 outputs={"decision": choice, "choices": choices},
@@ -220,15 +240,40 @@ Respond with ONLY the choice text, nothing else."""
 
 
 class LLMGenerateAction(AbstractAction):
-    """Generate free-form text using LLM.
+    """Generate text using LLM with optional formatting.
+
+    Combines the functionality of generate and analyze actions.
 
     Usage:
+        # Simple generation
         - uses: llm/generate
           with:
             prompt: "Summarize the following security findings"
-            context: ${{ steps.analysis.outputs }}
-            temperature: 0.7
-            max_tokens: 500
+            input: ${{ steps.analysis.outputs }}
+            model: gpt-4          # optional
+            temperature: 0.7      # optional (default: 0.7)
+            max_tokens: 500       # optional
+
+        # With formatting (absorbed from llm/analyze)
+        - uses: llm/generate
+          with:
+            prompt: "List all vulnerabilities found"
+            input: ${{ steps.scan.outputs.stdout }}
+            format: bullets  # prose | bullets | numbered | json
+
+    Parameters:
+        - prompt: The instruction/question for the LLM
+        - input: Content to analyze/process (alias: context)
+        - format: Output format - prose (default), bullets, numbered, json
+        - system: Optional system prompt override
+        - model: Optional model override
+        - temperature: Optional temperature (default: 0.7)
+        - max_tokens: Optional max tokens
+
+    Outputs:
+        - text: The generated text
+        - response: Alias for text
+        - parsed: Parsed JSON object (only when format=json)
     """
 
     action_type: ClassVar[str] = "llm/generate"
@@ -255,7 +300,7 @@ class LLMGenerateAction(AbstractAction):
         context: dict[str, Any],
         exec_context: Optional["ExecutionContext"] = None,
     ) -> ActionResult:
-        """Generate text response.
+        """Generate text response with optional formatting.
 
         Args:
             step_config: Step configuration
@@ -270,20 +315,29 @@ class LLMGenerateAction(AbstractAction):
         with_config = self._get_with_config(step_config)
         evaluator = ContextEvaluator(context)
 
-        # Get inputs
+        # Get inputs (support both 'input' and 'context' for backwards compat)
         prompt = with_config.get("prompt", "")
         prompt = evaluator.resolve(prompt)
 
-        input_context = with_config.get("context", "")
-        if input_context:
-            input_context = evaluator.resolve_all(input_context)
-            if isinstance(input_context, dict):
+        input_content = with_config.get("input", with_config.get("context", ""))
+        if input_content:
+            input_content = evaluator.resolve_all(input_content)
+            if isinstance(input_content, dict):
                 import json
-                input_context = json.dumps(input_context, indent=2)
+                input_content = json.dumps(input_content, indent=2)
 
         system_prompt = with_config.get("system", None)
-        temperature = with_config.get("temperature", 0.7)
-        max_tokens = with_config.get("max_tokens", None)
+        output_format = with_config.get("format", "prose")
+
+        # Validate format
+        valid_formats = {"prose", "bullets", "numbered", "json"}
+        if output_format not in valid_formats:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error=f"Invalid format '{output_format}'. Must be one of: {valid_formats}",
+                error_type="ValidationError",
+            )
 
         if not prompt:
             return ActionResult(
@@ -292,24 +346,52 @@ class LLMGenerateAction(AbstractAction):
                 error="No prompt provided for llm/generate",
             )
 
+        # Build format instruction
+        format_instructions = {
+            "prose": "",
+            "bullets": "\n\nRespond with bullet points (use - for each item).",
+            "numbered": "\n\nRespond with a numbered list (1. 2. 3. etc.).",
+            "json": "\n\nRespond with valid JSON only. No additional text or markdown.",
+        }
+
         # Build full prompt
-        if input_context:
+        if input_content:
             full_prompt = f"""{prompt}
 
-CONTEXT:
-{input_context}"""
+CONTENT:
+{input_content}{format_instructions.get(output_format, "")}"""
         else:
-            full_prompt = prompt
+            full_prompt = f"{prompt}{format_instructions.get(output_format, '')}"
+
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+        if "max_tokens" in with_config:
+            kwargs["max_tokens"] = with_config["max_tokens"]
 
         try:
             response = await self.llm_client.complete(
                 prompt=full_prompt,
                 system=system_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
+                **kwargs,
             )
+
+            outputs: dict[str, Any] = {"text": response, "response": response}
+
+            # Parse JSON if format requested
+            if output_format == "json":
+                try:
+                    import json
+                    outputs["parsed"] = json.loads(response)
+                except json.JSONDecodeError:
+                    # Keep raw response, don't fail
+                    pass
+
             return ActionResult(
-                outputs={"text": response, "response": response},
+                outputs=outputs,
                 outcome="success",
             )
         except Exception as e:
@@ -317,120 +399,6 @@ CONTEXT:
                 outputs={},
                 outcome="failure",
                 error=f"LLM generation failed: {e}",
-                error_type="LLMError",
-            )
-
-
-class LLMAnalyzeAction(AbstractAction):
-    """Analyze content with optional structured output.
-
-    Alias for llm/generate with analysis-focused defaults.
-
-    Usage:
-        - uses: llm/analyze
-          with:
-            content: ${{ steps.scan.outputs.raw_output }}
-            prompt: "Identify potential security vulnerabilities"
-            output_format: bullet_points
-    """
-
-    action_type: ClassVar[str] = "llm/analyze"
-
-    def __init__(self, llm_client: "LLMClient"):
-        """Initialize with LLM client.
-
-        Args:
-            llm_client: LLM client for completions
-        """
-        self.llm_client = llm_client
-
-    @property
-    def reads(self) -> list[str]:
-        return []
-
-    @property
-    def writes(self) -> list[str]:
-        return []
-
-    async def execute(
-        self,
-        step_config: dict[str, Any],
-        context: dict[str, Any],
-        exec_context: Optional["ExecutionContext"] = None,
-    ) -> ActionResult:
-        """Analyze content.
-
-        Args:
-            step_config: Step configuration
-            context: Workflow context
-            exec_context: Execution context
-
-        Returns:
-            ActionResult with analysis
-        """
-        from ..evaluator import ContextEvaluator
-
-        with_config = self._get_with_config(step_config)
-        evaluator = ContextEvaluator(context)
-
-        # Get inputs
-        content = with_config.get("content", with_config.get("input", ""))
-        content = evaluator.resolve(content)
-
-        prompt = with_config.get("prompt", "Analyze the following content")
-        output_format = with_config.get("output_format", "prose")
-
-        if not content:
-            return ActionResult(
-                outputs={},
-                outcome="failure",
-                error="No content provided for analysis",
-            )
-
-        # Build format instruction
-        format_instructions = {
-            "prose": "Provide your analysis in clear paragraphs.",
-            "bullet_points": "Present your findings as bullet points.",
-            "numbered": "Present your findings as a numbered list.",
-            "json": "Return your analysis as a JSON object with relevant fields.",
-        }
-
-        format_instruction = format_instructions.get(output_format, format_instructions["prose"])
-
-        full_prompt = f"""{prompt}
-
-CONTENT TO ANALYZE:
-{content}
-
-{format_instruction}"""
-
-        system_prompt = """You are an expert analyst. Provide clear, actionable insights.
-Be thorough but concise. Focus on the most important findings."""
-
-        try:
-            response = await self.llm_client.complete(
-                prompt=full_prompt,
-                system=system_prompt,
-                temperature=0.5,  # Lower for more focused analysis
-            )
-
-            outputs: dict[str, Any] = {"analysis": response}
-
-            # Try to parse as JSON if format requested
-            if output_format == "json":
-                try:
-                    import json
-                    outputs["parsed"] = json.loads(response)
-                except json.JSONDecodeError:
-                    pass  # Keep as string
-
-            return ActionResult(outputs=outputs, outcome="success")
-
-        except Exception as e:
-            return ActionResult(
-                outputs={},
-                outcome="failure",
-                error=f"LLM analysis failed: {e}",
                 error_type="LLMError",
             )
 
@@ -452,6 +420,8 @@ class LLMInstructAction(AbstractAction):
           with:
             instruction: "Summarize the following text in 3 bullet points"
             input: ${{ steps.fetch.outputs.content }}
+            model: gpt-4          # optional
+            temperature: 0.7      # optional (default: 0.7)
 
     Usage (airgapped with feedback):
         - uses: llm/instruct
@@ -539,8 +509,6 @@ class LLMInstructAction(AbstractAction):
         input_text = with_config.get("input", "")
         input_text = evaluator.resolve(input_text)
 
-        model = with_config.get("model")
-
         if not instruction:
             return ActionResult(
                 outputs={},
@@ -558,15 +526,22 @@ INPUT:
         else:
             full_prompt = instruction
 
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+
         try:
             response = await self.llm_client.complete(
                 prompt=full_prompt,
-                model=model,
+                **kwargs,
             )
             return ActionResult(
                 outputs={
                     "response": response,
-                    "model": model or "default",
+                    "model": with_config.get("model") or "default",
                 },
                 outcome="success",
             )
@@ -631,18 +606,23 @@ INPUT:
                 error_type="ValidationError",
             )
 
-        model = with_config.get("model")
-
         # Generate instructions via LLM
         system_prompt = """You are an expert at generating clear, step-by-step instructions.
 Generate precise instructions that can be followed by a human operator.
 Be specific about commands, paths, and expected outputs."""
 
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+
         try:
             instructions = await self.llm_client.complete(
                 prompt=prompt,
                 system=system_prompt,
-                model=model,
+                **kwargs,
             )
         except Exception as e:
             return ActionResult(
@@ -697,7 +677,6 @@ Be specific about commands, paths, and expected outputs."""
         # Get stored values from context (passed via resume)
         analyze_feedback = with_config.get("analyze_feedback", False)
         feedback_type = with_config.get("feedback_type", "text")
-        model = with_config.get("model")
 
         # Handle file_path type - read the file
         if feedback_type == "file_path" and isinstance(feedback, str):
@@ -751,9 +730,16 @@ Provide a structured analysis identifying:
 3. Any errors or issues
 4. Recommended next steps"""
 
+                # Build optional kwargs - only include if explicitly set
+                kwargs: dict[str, Any] = {}
+                if "model" in with_config:
+                    kwargs["model"] = with_config["model"]
+                if "temperature" in with_config:
+                    kwargs["temperature"] = with_config["temperature"]
+
                 analysis = await self.llm_client.complete(
                     prompt=analysis_prompt,
-                    model=model,
+                    **kwargs,
                 )
                 outputs["feedback_analysis"] = analysis
 

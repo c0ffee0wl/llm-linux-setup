@@ -270,6 +270,7 @@ class LLMClient(Protocol):
         prompt: str,
         *,
         system: Optional[str] = None,
+        model: Optional[str] = None,
         temperature: float = 0.7,
         max_tokens: Optional[int] = None,
     ) -> str:
@@ -278,6 +279,7 @@ class LLMClient(Protocol):
         Args:
             prompt: The user prompt
             system: Optional system prompt
+            model: Optional model override (default: client's configured model)
             temperature: Sampling temperature (0.0 = deterministic)
             max_tokens: Maximum tokens to generate
 
@@ -292,6 +294,8 @@ class LLMClient(Protocol):
         schema: dict[str, Any],
         *,
         system: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.3,
         max_retries: int = 3,
     ) -> dict[str, Any]:
         """Generate structured JSON output matching a schema.
@@ -303,6 +307,8 @@ class LLMClient(Protocol):
             prompt: The user prompt describing what to extract
             schema: JSON Schema defining expected output structure
             system: Optional system prompt
+            model: Optional model override (default: client's configured model)
+            temperature: Sampling temperature (default 0.3 for structured output)
             max_retries: Retry count for schema validation failures
 
         Returns:
@@ -319,6 +325,8 @@ class LLMClient(Protocol):
         choices: list[str],
         *,
         system: Optional[str] = None,
+        model: Optional[str] = None,
+        temperature: float = 0.0,
     ) -> str:
         """Select from predefined choices.
 
@@ -329,6 +337,8 @@ class LLMClient(Protocol):
             prompt: The decision prompt
             choices: Valid choices to select from
             system: Optional system prompt
+            model: Optional model override (default: client's configured model)
+            temperature: Sampling temperature (default 0.0 for deterministic choice)
 
         Returns:
             Selected choice (guaranteed to be in choices list)

@@ -16,6 +16,7 @@ from jinja2.nativetypes import NativeEnvironment
 from jinja2.sandbox import ImmutableSandboxedEnvironment
 
 from ..core.errors import ExpressionError, SecurityError
+from .filters import SAFE_FILTERS
 
 
 class SecureNativeEnvironment(NativeEnvironment):
@@ -90,12 +91,24 @@ class ContextEvaluator:
     EXPR_PATTERN = re.compile(r"\$\{\{\s*(.+?)\s*\}\}", re.DOTALL)
 
     # Whitelisted filters (no arbitrary function calls)
+    # Includes all filters from SAFE_FILTERS plus built-in evaluator filters
     ALLOWED_FILTERS = frozenset([
+        # Built-in collection/string/type filters
         "length", "keys", "values", "first", "last", "join",
         "default", "shell_quote", "safe_path", "lower", "upper",
         "trim", "split", "sort", "unique", "int", "float", "string",
         # GitHub Actions compatible functions
         "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
+        # Filters from SAFE_FILTERS (filters.py)
+        "safe_filename", "regex_replace", "regex_match", "truncate", "lines", "indent",
+        "json_encode", "json_decode", "base64_encode", "base64_decode",
+        "url_encode", "url_decode", "format_bytes", "extract_domain", "extract_ip",
+        # Network validation filters
+        "is_valid_ip", "is_private_ip", "in_cidr",
+        # Filesystem filters
+        "file_exists",
+        # List operations
+        "in_list",
     ])
 
     # Dangerous patterns to block (defense-in-depth)
@@ -196,6 +209,10 @@ class ContextEvaluator:
         self.env.filters["format"] = self._gha_format
         self.env.filters["toJSON"] = lambda v: json.dumps(v)
         self.env.filters["fromJSON"] = lambda s: json.loads(s) if isinstance(s, str) else s
+
+        # Register all filters from SAFE_FILTERS (filters.py)
+        for name, fn in SAFE_FILTERS.items():
+            self.env.filters[name] = fn
 
     def update_context(self, updates: dict[str, Any]) -> None:
         """Update the evaluation context.

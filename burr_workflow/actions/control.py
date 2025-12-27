@@ -1,9 +1,10 @@
 """
 Control flow actions for workflow management.
 
-Provides early exit, failure, and workflow control.
+Provides early exit, failure, wait, and workflow control.
 """
 
+import asyncio
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
 from .base import AbstractAction, ActionResult
@@ -254,4 +255,140 @@ class ContinueAction(AbstractAction):
             outputs={},
             outcome="skipped",
             next_hint="__loop_advance",
+        )
+
+
+class WaitAction(AbstractAction):
+    """Wait for a duration or until a condition is met.
+
+    Usage:
+        # Simple duration wait
+        - uses: control/wait
+          with:
+            duration: 30  # seconds
+
+        # Wait until condition with polling
+        - uses: control/wait
+          with:
+            until: ${{ steps.check.outputs.ready == true }}
+            interval: 5      # poll every 5 seconds
+            timeout: 300     # fail after 5 minutes
+
+    Parameters:
+        - duration: Wait for this many seconds (simple wait)
+        - until: Expression to evaluate repeatedly (conditional wait)
+        - interval: Poll interval in seconds (default: 5, for 'until' mode)
+        - timeout: Maximum wait time in seconds (default: 300, for 'until' mode)
+
+    Outputs:
+        - waited: Number of seconds waited
+        - condition_met: True if 'until' condition was met (only for until mode)
+    """
+
+    action_type: ClassVar[str] = "control/wait"
+
+    @property
+    def reads(self) -> list[str]:
+        return []
+
+    @property
+    def writes(self) -> list[str]:
+        return []
+
+    async def execute(
+        self,
+        step_config: dict[str, Any],
+        context: dict[str, Any],
+        exec_context: Optional["ExecutionContext"] = None,
+    ) -> ActionResult:
+        """Wait for duration or until condition.
+
+        Args:
+            step_config: Step configuration
+            context: Workflow context
+            exec_context: Execution context
+
+        Returns:
+            ActionResult with wait information
+        """
+        from ..evaluator import ContextEvaluator
+
+        with_config = self._get_with_config(step_config)
+
+        duration = with_config.get("duration")
+        until_expr = with_config.get("until")
+        interval = with_config.get("interval", 5)
+        timeout = with_config.get("timeout", 300)
+
+        # Validate: must have either duration or until
+        if duration is None and until_expr is None:
+            return ActionResult(
+                outcome="failure",
+                outputs={},
+                error="Must specify either 'duration' or 'until' for control/wait",
+                error_type="ValidationError",
+            )
+
+        # Simple duration wait
+        if duration is not None:
+            try:
+                wait_seconds = float(duration)
+                if wait_seconds < 0:
+                    return ActionResult(
+                        outcome="failure",
+                        outputs={},
+                        error=f"Duration must be non-negative: {duration}",
+                        error_type="ValidationError",
+                    )
+
+                if exec_context:
+                    exec_context.log("info", f"Waiting for {wait_seconds} seconds...")
+
+                await asyncio.sleep(wait_seconds)
+
+                return ActionResult(
+                    outcome="success",
+                    outputs={"waited": wait_seconds}
+                )
+            except (ValueError, TypeError):
+                return ActionResult(
+                    outcome="failure",
+                    outputs={},
+                    error=f"Invalid duration value: {duration}",
+                    error_type="ValidationError",
+                )
+
+        # Conditional wait with polling
+        evaluator = ContextEvaluator(context)
+        elapsed = 0.0
+
+        if exec_context:
+            exec_context.log("info", f"Waiting until condition is met (timeout: {timeout}s)...")
+
+        while elapsed < timeout:
+            # Evaluate condition
+            try:
+                result = evaluator.evaluate_condition(until_expr)
+                if result:
+                    if exec_context:
+                        exec_context.log("info", f"Condition met after {elapsed:.1f} seconds")
+                    return ActionResult(
+                        outcome="success",
+                        outputs={"waited": elapsed, "condition_met": True}
+                    )
+            except Exception as e:
+                if exec_context:
+                    exec_context.log("warning", f"Condition evaluation error: {e}")
+                # Continue polling on evaluation error
+
+            # Wait for interval
+            await asyncio.sleep(interval)
+            elapsed += interval
+
+        # Timeout reached
+        return ActionResult(
+            outcome="failure",
+            outputs={"waited": elapsed, "condition_met": False},
+            error=f"Condition not met within {timeout} seconds",
+            error_type="TimeoutError",
         )

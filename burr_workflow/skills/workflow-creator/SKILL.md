@@ -163,6 +163,16 @@ inputs:
 | `first` / `last` | `${{ list \| first }}` | First/last element |
 | `join` | `${{ list \| join(',') }}` | Join list elements |
 
+### Network and Validation Filters
+
+| Filter | Usage | Purpose |
+|--------|-------|---------|
+| `is_valid_ip` | `${{ host \| is_valid_ip }}` | Check if valid IPv4/IPv6 |
+| `is_private_ip` | `${{ host \| is_private_ip }}` | Check if RFC1918/RFC4193 private |
+| `in_cidr` | `${{ host \| in_cidr('10.0.0.0/8') }}` | Check if IP in CIDR range |
+| `file_exists` | `${{ path \| file_exists }}` | Check if file exists |
+| `in_list` | `${{ value \| in_list(allowed) }}` | Check if value in list |
+
 ### GHA-Compatible Functions
 
 These filters provide GitHub Actions expression compatibility:
@@ -216,12 +226,12 @@ See `references/actions.md` for complete reference.
     prompt: "Should we proceed to exploitation?"
     choices: ["proceed", "skip", "manual_review"]
 
-# Analyze content (outputs: analysis)
-- uses: llm/analyze
+# Generate text with optional formatting (outputs: text, response)
+- uses: llm/generate
   with:
-    content: ${{ steps.scan.outputs.stdout }}
     prompt: "Identify security vulnerabilities"
-    output_format: bullet_points  # prose, bullet_points, numbered, json
+    input: ${{ steps.scan.outputs.stdout }}
+    format: bullets  # prose (default), bullets, numbered, json
 
 # Simple instruction (outputs: response)
 - uses: llm/instruct
@@ -232,11 +242,29 @@ See `references/actions.md` for complete reference.
 
 ### Human Input
 ```yaml
+# Free-form text input
 - uses: human/input
   with:
     prompt: "Enter target IP"
-    options: ["192.168.1.1", "10.0.0.1", "custom"]
-    default: "192.168.1.1"
+    input_type: text  # text (default), multiline, file, editor
+
+# Binary confirmation
+- uses: human/decide
+  with:
+    prompt: "Proceed with exploitation?"
+
+# Single choice selection
+- uses: human/decide
+  with:
+    prompt: "Select target"
+    choices: ["192.168.1.1", "10.0.0.1", "custom"]
+
+# Multi-selection
+- uses: human/decide
+  with:
+    prompt: "Select targets to scan"
+    choices: ["host1", "host2", "host3"]
+    multi: true
 ```
 
 ### Control Flow
@@ -245,6 +273,18 @@ See `references/actions.md` for complete reference.
 - uses: control/exit
   with:
     message: "Completed early"
+
+# Wait for duration
+- uses: control/wait
+  with:
+    duration: 30  # seconds
+
+# Wait until condition
+- uses: control/wait
+  with:
+    until: ${{ steps.check.outputs.ready == true }}
+    interval: 5    # poll every 5s
+    timeout: 300   # fail after 5min
 
 # Set state
 - uses: state/set
@@ -266,10 +306,11 @@ See `references/actions.md` for complete reference.
       INPUT: "${{ steps.fetch.outputs.response }}"
     timeout: 60
 
-# Python script (file)
+# Python script with sandbox (bwrap isolation)
 - uses: script/python
   with:
     path: scripts/analyze.py
+    sandbox: true  # read-only root, no network, PID isolation
     env:
       TARGET: "${{ inputs.target }}"
 
@@ -281,6 +322,64 @@ See `references/actions.md` for complete reference.
       echo "Processing..."
       mkdir -p /tmp/workspace
     timeout: 30
+```
+
+### File Operations
+```yaml
+# Read file
+- uses: file/read
+  with:
+    path: config.yaml
+    encoding: utf-8  # utf-8 (default), binary, auto
+
+# Write file
+- uses: file/write
+  with:
+    path: results/${{ inputs.target }}.txt
+    content: ${{ steps.scan.outputs.stdout }}
+    mode: overwrite  # create, overwrite (default), append
+    mkdir: true      # create parent directories
+```
+
+### Parse Operations
+```yaml
+# Parse JSON with queries
+- uses: parse/json
+  with:
+    input: ${{ steps.api.outputs.body }}
+    queries:
+      hosts: ".results[].hostname"
+      count: ".results | length"
+    defaults:
+      hosts: []
+
+# Extract with regex
+- uses: parse/regex
+  with:
+    input: ${{ steps.scan.outputs.stdout }}
+    pattern: '(?P<user>\w+):(?P<hash>[a-f0-9]{32})'
+    mode: all  # first, all (default)
+```
+
+### Notifications
+```yaml
+# Desktop notification
+- uses: notify/desktop
+  with:
+    title: "Scan Complete"
+    message: "Found ${{ count }} vulnerabilities"
+    urgency: normal  # low, normal, critical
+    icon: security   # optional xdg icon name
+
+# Webhook notification
+- uses: notify/webhook
+  with:
+    url: ${{ env.SLACK_WEBHOOK_URL }}
+    method: POST
+    body:
+      text: "Workflow complete"
+    headers:
+      Authorization: "Bearer ${{ env.TOKEN }}"
 ```
 
 ## Cleanup Blocks
