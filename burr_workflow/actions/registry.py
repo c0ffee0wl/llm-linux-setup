@@ -9,6 +9,7 @@ from functools import lru_cache
 from typing import Any, Callable, Optional, Type, TYPE_CHECKING
 
 from ..core.errors import ActionNotFoundError
+from ..protocols import ActionProvider
 from .base import BaseAction
 
 if TYPE_CHECKING:
@@ -19,8 +20,11 @@ if TYPE_CHECKING:
 ActionFactory = Callable[..., BaseAction]
 
 
-class ActionRegistry:
+class ActionRegistry(ActionProvider):
     """Registry for action types.
+
+    Implements the ActionProvider protocol for type-checking while providing
+    additional features (aliases, factory functions, dependency injection).
 
     Maps action type names (e.g., 'shell', 'http/request', 'llm/extract')
     to action classes or factory functions.
@@ -150,6 +154,33 @@ class ActionRegistry:
             Dict mapping alias to action type
         """
         return dict(self._aliases)
+
+    # ActionProvider protocol methods
+
+    def get_action(self, action_type: str) -> Optional[type]:
+        """Get action class by type name (ActionProvider protocol).
+
+        Unlike get(), this returns the class/factory, not an instance.
+
+        Args:
+            action_type: Action type (e.g., 'shell', 'llm/extract')
+
+        Returns:
+            Action class or factory, or None if not found
+        """
+        resolved_type = self._aliases.get(action_type, action_type)
+        return self._actions.get(resolved_type)
+
+    def register_action(self, action_type: str, action_class: type) -> None:
+        """Register custom action type (ActionProvider protocol).
+
+        Simpler interface than register() - no alias support.
+
+        Args:
+            action_type: Action type name
+            action_class: Action class implementing BaseAction
+        """
+        self._actions[action_type] = action_class
 
 
 def _register_builtin_actions(registry: ActionRegistry) -> None:

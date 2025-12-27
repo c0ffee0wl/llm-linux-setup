@@ -25,6 +25,7 @@ run_and_update() and expects it to return appropriately based on is_async().
 
 import asyncio
 import random
+import time
 import traceback
 from typing import Any, Coroutine, Optional, TYPE_CHECKING, Union
 
@@ -182,11 +183,16 @@ class BurrActionAdapter(SingleStepAction):
 
         for attempt in range(max_attempts):
             try:
+                # Track execution time
+                start_time = time.monotonic()
                 result = await self.base_action.execute(
                     step_config=self.step_config,
                     context=ctx,
                     exec_context=self.exec_context,
                 )
+                # Set duration if not already set by action
+                if result.duration_ms is None:
+                    result.duration_ms = (time.monotonic() - start_time) * 1000
                 last_result = result
 
                 # Success or non-failure outcome - apply guardrails if configured
@@ -341,6 +347,8 @@ class BurrActionAdapter(SingleStepAction):
 
         for attempt in range(max_attempts):
             try:
+                # Track execution time
+                start_time = time.monotonic()
                 result = self.base_action.execute(
                     step_config=self.step_config,
                     context=ctx,
@@ -355,6 +363,9 @@ class BurrActionAdapter(SingleStepAction):
                     finally:
                         loop.close()
 
+                # Set duration if not already set by action
+                if result.duration_ms is None:
+                    result.duration_ms = (time.monotonic() - start_time) * 1000
                 last_result = result
 
                 # Success or non-failure outcome - return immediately
@@ -378,7 +389,6 @@ class BurrActionAdapter(SingleStepAction):
 
             # Backoff before retry (if not last attempt)
             if attempt < max_attempts - 1:
-                import time
                 delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max)
                 if jitter:
                     delay *= (0.5 + random.random())
@@ -435,6 +445,8 @@ class BurrActionAdapter(SingleStepAction):
             step_result["error"] = result.error
         if result.error_type:
             step_result["error_type"] = result.error_type
+        if result.duration_ms is not None:
+            step_result["duration_ms"] = result.duration_ms
 
         # Get current steps dict immutably
         current_steps = dict(state.get("steps") or {})

@@ -15,7 +15,6 @@ class ShellSafetyMode(str, Enum):
     """Shell safety enforcement mode."""
     STRICT = "strict"  # Unquoted variables are compile-time errors
     AUTO_QUOTE = "auto_quote"  # Automatically add shell_quote
-    LENIENT = "lenient"  # Warnings only (not recommended)
 
 
 class CaptureMode(str, Enum):
@@ -407,9 +406,17 @@ class WorkflowDefinition(BaseModel):
     # Identity
     name: str = Field(description="Workflow name")
     description: Optional[str] = None
+    version: Optional[str] = Field(
+        default=None,
+        description="Workflow version (semver recommended, e.g., '1.0.0')",
+    )
+    author: Optional[str] = Field(
+        default=None,
+        description="Workflow author or maintainer",
+    )
     schema_version: str = Field(
         default="1.0",
-        description="Schema version (use 'schema_version' not 'version')",
+        description="Schema version for compatibility",
     )
 
     # Inputs and environment

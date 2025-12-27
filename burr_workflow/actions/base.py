@@ -110,11 +110,13 @@ class BaseAction(Protocol):
         ...
 
 
-class AbstractAction:
+class AbstractAction(BaseAction):
     """Base class for action implementations.
 
     Provides common functionality for actions. Subclasses should
     override `action_type`, `reads`, `writes`, and `execute`.
+
+    Explicitly inherits from BaseAction Protocol for type checking.
     """
 
     action_type: ClassVar[str] = "abstract"

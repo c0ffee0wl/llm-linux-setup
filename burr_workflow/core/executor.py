@@ -21,11 +21,13 @@ Usage:
 
 import asyncio
 import signal
+import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Optional, TYPE_CHECKING
 import logging
+import time
 
 from burr.core.state import State
 
@@ -37,7 +39,7 @@ from .errors import (
 
 if TYPE_CHECKING:
     from burr.core import Application
-    from ..protocols import ExecutionContext, OutputHandler, PersistenceBackend
+    from ..protocols import ExecutionContext, OutputHandler, PersistenceBackend, AuditLogger
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +72,7 @@ class ExecutionProgress:
     """Overall execution progress."""
     workflow_name: str
     status: ExecutionStatus
+    workflow_version: Optional[str] = None
     current_step: Optional[str] = None
     steps_completed: int = 0
     steps_total: int = 0
@@ -155,17 +158,19 @@ class WorkflowExecutor:
         exec_context: Optional["ExecutionContext"] = None,
         output_handler: Optional["OutputHandler"] = None,
         persistence: Optional["PersistenceBackend"] = None,
+        audit_logger: Optional["AuditLogger"] = None,
         on_progress: Optional[ProgressCallback] = None,
         on_step: Optional[StepCallback] = None,
         default_timeout: int = 3600,  # 1 hour default
         step_timeout: int = 300,  # 5 minutes per step
     ):
         """Initialize the executor.
-        
+
         Args:
             exec_context: Execution context for shell/prompts
             output_handler: Handler for output display
             persistence: Backend for state persistence
+            audit_logger: Audit logger for execution logging
             on_progress: Callback for progress updates
             on_step: Callback for step transitions
             default_timeout: Default workflow timeout in seconds
@@ -174,16 +179,19 @@ class WorkflowExecutor:
         self.exec_context = exec_context
         self.output_handler = output_handler
         self.persistence = persistence
+        self.audit_logger = audit_logger
         self.on_progress = on_progress
         self.on_step = on_step
         self.default_timeout = default_timeout
         self.step_timeout = step_timeout
-        
+
         # Execution state
         self._interrupted = False
         self._current_app: Optional["Application"] = None
         self._progress: Optional[ExecutionProgress] = None
         self._suspension: Optional[SuspensionRequest] = None
+        self._execution_id: Optional[str] = None
+        self._start_time: Optional[float] = None
 
     def _validate_and_coerce_inputs(
         self,
@@ -365,18 +373,20 @@ class WorkflowExecutor:
         inputs: Optional[dict[str, Any]] = None,
         timeout: Optional[int] = None,
         resume_from: Optional[str] = None,
+        workflow_version: Optional[str] = None,
     ) -> ExecutionResult:
         """Run a workflow application.
-        
+
         Args:
             app: Compiled Burr Application
             inputs: Input values for the workflow
             timeout: Workflow timeout in seconds (overrides default)
             resume_from: Optional checkpoint to resume from
-            
+            workflow_version: Optional workflow version for tracking
+
         Returns:
             ExecutionResult with final state and outputs
-            
+
         Raises:
             WorkflowExecutionError: If execution fails
             WorkflowTimeoutError: If timeout exceeded
@@ -385,20 +395,33 @@ class WorkflowExecutor:
         self._current_app = app
         self._interrupted = False
         self._suspension = None
-        
+        self._start_time = time.monotonic()
+        self._execution_id = str(uuid.uuid4())[:8]  # Short ID for readability
+
         timeout = timeout or self.default_timeout
-        
+        workflow_name = getattr(app, 'uid', 'workflow')
+
         # Initialize progress tracking
         self._progress = ExecutionProgress(
-            workflow_name=getattr(app, 'uid', 'workflow'),
+            workflow_name=workflow_name,
             status=ExecutionStatus.RUNNING,
+            workflow_version=workflow_version,
             started_at=datetime.now(),
             steps_total=self._count_steps(app),
         )
-        
+
+        # Log workflow start
+        if self.audit_logger:
+            await self.audit_logger.workflow_start(
+                workflow_name=workflow_name,
+                workflow_version=workflow_version,
+                inputs=inputs or {},
+                execution_id=self._execution_id,
+            )
+
         # Set up signal handlers for graceful interruption
         original_handlers = self._setup_signal_handlers()
-        
+
         try:
             # Run with timeout
             result = await asyncio.wait_for(
@@ -406,37 +429,46 @@ class WorkflowExecutor:
                 timeout=timeout,
             )
             return result
-            
+
         except asyncio.TimeoutError:
             self._progress.status = ExecutionStatus.TIMEOUT
-            return ExecutionResult(
+            error_msg = f"Workflow timeout after {timeout} seconds"
+            result = ExecutionResult(
                 status=ExecutionStatus.TIMEOUT,
                 final_state=self._get_current_state(app),
                 outputs={},
                 progress=self._progress,
-                error=f"Workflow timeout after {timeout} seconds",
+                error=error_msg,
             )
-            
+            await self._log_workflow_end("timeout", error_msg)
+            return result
+
         except KeyboardInterrupt:
             self._progress.status = ExecutionStatus.INTERRUPTED
-            return ExecutionResult(
+            error_msg = "Workflow interrupted by user"
+            result = ExecutionResult(
                 status=ExecutionStatus.INTERRUPTED,
                 final_state=self._get_current_state(app),
                 outputs={},
                 progress=self._progress,
-                error="Workflow interrupted by user",
+                error=error_msg,
             )
-            
+            await self._log_workflow_end("interrupted", error_msg)
+            return result
+
         except WorkflowExecutionError as e:
             self._progress.status = ExecutionStatus.FAILED
-            return ExecutionResult(
+            error_msg = str(e)
+            result = ExecutionResult(
                 status=ExecutionStatus.FAILED,
                 final_state=self._get_current_state(app),
                 outputs={},
                 progress=self._progress,
-                error=str(e),
+                error=error_msg,
             )
-            
+            await self._log_workflow_end("failure", error_msg)
+            return result
+
         finally:
             self._restore_signal_handlers(original_handlers)
             self._current_app = None
@@ -542,58 +574,89 @@ class WorkflowExecutor:
             last_action = None
             last_result = None
 
+            # Note: Burr's aiterate() yields AFTER action execution completes.
+            # We cannot capture accurate per-step timing without Burr hooks.
+            # Step events are logged for audit trail; duration_ms reflects
+            # only the post-execution processing time, not actual step execution.
             async for action, result, state in app.aiterate(inputs=inputs):
                 if self._interrupted:
                     self._progress.status = ExecutionStatus.INTERRUPTED
                     break
-                
+
+                step_id = action.name
+                step_name = getattr(action, 'step_name', action.name)
+                step_type = getattr(action, 'step_type', 'unknown')
+                step_outcome = result.get("outcome", "success") if result else "success"
+                step_error = result.get("error") if result else None
+
+                # Get step duration from result if available (action may track it)
+                step_duration_ms = 0.0
+                if result and isinstance(result, dict):
+                    step_duration_ms = result.get("duration_ms", 0.0)
+
                 last_action = action
                 last_result = result
-                
+
+                # Log step completion (start event omitted - action already executed)
+                # For full before/after step events, use Burr's LifecycleHook system
+                if self.audit_logger:
+                    await self.audit_logger.step_end(
+                        step_id=step_id,
+                        outcome=step_outcome,
+                        duration_ms=step_duration_ms,
+                        execution_id=self._execution_id,
+                        output=result,
+                        error=step_error,
+                    )
+
                 # Update progress
                 self._progress.steps_completed += 1
-                self._progress.current_step = action.name
-                
+                self._progress.current_step = step_id
+
                 step_progress = StepProgress(
-                    step_id=action.name,
-                    step_name=getattr(action, 'step_name', action.name),
+                    step_id=step_id,
+                    step_name=step_name,
                     status="completed",
                     completed_at=datetime.now(),
-                    outcome=result.get("outcome", "success") if result else "success",
-                    error=result.get("error") if result else None,
+                    outcome=step_outcome,
+                    error=step_error,
                 )
                 self._progress.step_history.append(step_progress)
-                
+
                 # Fire callbacks
                 if self.on_step:
-                    self.on_step(action.name, "completed", result)
+                    self.on_step(step_id, "completed", result)
                 if self.on_progress:
                     self.on_progress(self._progress)
-                
+
                 # Check for suspension request (human input needed)
                 if state.get("__suspend_for_input"):
                     return self._handle_suspension(app, state)
-                
+
                 # Check for workflow exit
                 if state.get("__workflow_exit"):
                     break
-            
+
             # Workflow completed
             if not self._interrupted:
                 self._progress.status = ExecutionStatus.COMPLETED
-            
+
             final_state = self._get_current_state(app)
-            
+
+            # Log successful completion
+            await self._log_workflow_end("success", None)
+
             return ExecutionResult(
                 status=self._progress.status,
                 final_state=final_state,
                 outputs=self._extract_outputs(final_state),
                 progress=self._progress,
             )
-            
+
         except Exception as e:
             self._progress.status = ExecutionStatus.FAILED
             logger.exception(f"Workflow execution failed: {e}")
+            await self._log_workflow_end("failure", str(e))
             
             return ExecutionResult(
                 status=ExecutionStatus.FAILED,
@@ -639,19 +702,64 @@ class WorkflowExecutor:
     def _extract_outputs(self, state: dict[str, Any]) -> dict[str, Any]:
         """Extract workflow outputs from final state."""
         outputs = {}
-        
+
         # Get step outputs
         steps = state.get("steps", {})
         for step_id, step_data in steps.items():
             if isinstance(step_data, dict) and "outputs" in step_data:
                 outputs[step_id] = step_data["outputs"]
-        
+
         # Get explicit outputs
         if "outputs" in state:
             outputs["workflow"] = state["outputs"]
-        
+
         return outputs
-    
+
+    async def _log_workflow_end(
+        self,
+        outcome: str,
+        error: Optional[str],
+    ) -> None:
+        """Log workflow completion to audit logger."""
+        if not self.audit_logger or not self._execution_id:
+            return
+
+        # Calculate duration
+        duration_ms = 0.0
+        if self._start_time is not None:
+            duration_ms = (time.monotonic() - self._start_time) * 1000
+
+        # Count step outcomes from progress
+        total_steps = 0
+        successful_steps = 0
+        failed_steps = 0
+        skipped_steps = 0
+
+        if self._progress and self._progress.step_history:
+            for step in self._progress.step_history:
+                total_steps += 1
+                if step.outcome == "success":
+                    successful_steps += 1
+                elif step.outcome == "failure":
+                    failed_steps += 1
+                elif step.outcome == "skipped":
+                    skipped_steps += 1
+
+        try:
+            await self.audit_logger.workflow_end(
+                outcome=outcome,
+                duration_ms=duration_ms,
+                execution_id=self._execution_id,
+                total_steps=total_steps,
+                successful_steps=successful_steps,
+                failed_steps=failed_steps,
+                skipped_steps=skipped_steps,
+                error=error,
+            )
+            await self.audit_logger.flush()
+        except Exception as e:
+            logger.warning(f"Failed to log workflow end: {e}")
+
     def _count_steps(self, app: "Application") -> int:
         """Count total steps in the workflow."""
         try:

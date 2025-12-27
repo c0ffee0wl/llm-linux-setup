@@ -10,8 +10,11 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import NoReturn
+from typing import Any, NoReturn, Optional
 
+import ruamel.yaml
+
+from .core.flow_analyzer import FlowAnalyzer, FlowAnalysisResult
 from .core.validator import (
     ValidationLevel,
     ValidationResult,
@@ -20,8 +23,13 @@ from .core.validator import (
 from .schemas.models import WorkflowDefinition
 
 
-def format_message(msg) -> str:
-    """Format a validation message for display."""
+def format_message(msg, workflow_file: str = "") -> str:
+    """Format a validation message for display.
+
+    Args:
+        msg: ValidationMessage to format
+        workflow_file: Path to workflow file for source location prefix
+    """
     level_colors = {
         ValidationLevel.ERROR: "\033[91m",    # Red
         ValidationLevel.WARNING: "\033[93m",  # Yellow
@@ -37,10 +45,22 @@ def format_message(msg) -> str:
         color = level_colors.get(msg.level, "")
         level_str = f"{color}{level_str}{reset}"
 
+    # Build header with optional source location (file:line:column format)
+    header_parts = []
+    if workflow_file and msg.source_line is not None:
+        if msg.source_column is not None:
+            header_parts.append(f"{workflow_file}:{msg.source_line}:{msg.source_column}")
+        else:
+            header_parts.append(f"{workflow_file}:{msg.source_line}")
+
     parts = [f"[{msg.code}] {level_str}: {msg.message}"]
 
+    # Show source location if available
+    if header_parts:
+        parts.insert(0, header_parts[0])
+
     if msg.location:
-        parts.append(f"  Location: {msg.location}")
+        parts.append(f"  Path: {msg.location}")
 
     if msg.suggestion:
         parts.append(f"  Suggestion: {msg.suggestion}")
@@ -48,10 +68,15 @@ def format_message(msg) -> str:
     return "\n".join(parts)
 
 
-def print_result(result: ValidationResult) -> None:
-    """Print validation result to stderr."""
+def print_result(result: ValidationResult, workflow_file: str = "") -> None:
+    """Print validation result to stderr.
+
+    Args:
+        result: ValidationResult to print
+        workflow_file: Path to workflow file for source location prefix
+    """
     for msg in result.messages:
-        print(format_message(msg), file=sys.stderr)
+        print(format_message(msg, workflow_file), file=sys.stderr)
         print(file=sys.stderr)  # Blank line between messages
 
     # Summary
@@ -64,6 +89,119 @@ def print_result(result: ValidationResult) -> None:
         summary = "Validation complete: no issues found"
 
     print(summary, file=sys.stderr)
+
+
+def print_flow_analysis(
+    result: FlowAnalysisResult,
+    inputs: Optional[dict[str, Any]] = None,
+) -> None:
+    """Print flow analysis in human-readable format.
+
+    Args:
+        result: FlowAnalysisResult from FlowAnalyzer
+        inputs: Optional input values for display
+    """
+    use_colors = sys.stdout.isatty()
+
+    # Color codes
+    bold = "\033[1m" if use_colors else ""
+    dim = "\033[2m" if use_colors else ""
+    yellow = "\033[93m" if use_colors else ""
+    cyan = "\033[96m" if use_colors else ""
+    green = "\033[92m" if use_colors else ""
+    reset = "\033[0m" if use_colors else ""
+
+    # Header
+    version_str = f" v{result.workflow_version}" if result.workflow_version else ""
+    print(f"\n{bold}Dry Run: {result.workflow_name}{version_str}{reset}")
+
+    # Inputs
+    if inputs:
+        print(f"{dim}Inputs: {json.dumps(inputs)}{reset}")
+    print()
+
+    # Separator
+    print("Step Execution Flow:")
+    print("━" * 60)
+    print()
+
+    # Steps
+    for i, step in enumerate(result.steps, 1):
+        # Step header
+        suffix = ""
+        if step.is_loop:
+            suffix = f" {cyan}(loop){reset}"
+        elif step.is_conditional:
+            suffix = f" {yellow}(conditional){reset}"
+
+        print(f"{bold}[{i}] {step.step_id}{reset}{suffix}")
+
+        # Name if different from id
+        if step.step_name and step.step_name != step.step_id:
+            print(f"    {dim}name: {step.step_name}{reset}")
+
+        # Condition
+        if step.condition:
+            print(f"    {yellow}if: {step.condition}{reset}")
+
+        # Loop expression
+        if step.loop_expr:
+            print(f"    {cyan}loop: {step.loop_expr}{reset}")
+
+        # Action
+        if step.step_type == "run":
+            # Truncate long commands
+            action = step.action
+            if len(action) > 60:
+                action = action[:57] + "..."
+            print(f"    run: {action}")
+        elif step.step_type == "uses":
+            print(f"    uses: {step.action}")
+
+        # Flow analysis
+        if step.is_conditional:
+            print(f"    {dim}→ CONDITIONAL: depends on runtime value{reset}")
+            if step.next_steps:
+                next_str = ", ".join(step.next_steps)
+                print(f"    {dim}→ if true: execute → {next_str}{reset}")
+                print(f"    {dim}→ if false: skip → {next_str}{reset}")
+        elif step.is_loop:
+            print(f"    {dim}→ LOOP: iterates over {step.loop_expr}{reset}")
+            if step.max_iterations:
+                print(f"    {dim}→ max_iterations: {step.max_iterations}{reset}")
+            if step.next_steps:
+                next_str = ", ".join(step.next_steps)
+                print(f"    {dim}→ next: {next_str}{reset}")
+        else:
+            print(f"    {green}→ EXECUTES (unconditional){reset}")
+            if step.next_steps:
+                next_str = ", ".join(step.next_steps)
+                print(f"    {dim}→ next: {next_str}{reset}")
+
+        # On failure handler
+        if step.on_failure:
+            print(f"    {dim}→ on_failure: {step.on_failure}{reset}")
+
+        print()
+
+    # Summary
+    print("Summary:")
+    print(f"  {result.total_steps} steps total")
+    if result.conditional_count:
+        print(f"  {result.conditional_count} conditional")
+    if result.loop_count:
+        print(f"  {result.loop_count} loop")
+    if result.has_finally:
+        print(f"  {green}has finally block{reset}")
+    print()
+
+    # Data dependencies
+    if result.data_dependencies:
+        print("Data Dependencies:")
+        for step_id, deps in result.data_dependencies.items():
+            deps_str = ", ".join(f"{d}.outputs" for d in sorted(deps))
+            print(f"  {step_id} ← {deps_str}")
+        print()
 
 
 def workflow_validate_cmd() -> NoReturn:
@@ -109,6 +247,19 @@ Examples:
         help="Suppress output (only return exit code)",
     )
 
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Show execution flow without running (static analysis)",
+    )
+
+    parser.add_argument(
+        "--inputs",
+        type=str,
+        default=None,
+        help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')',
+    )
+
     args = parser.parse_args()
 
     # Read workflow file
@@ -131,6 +282,38 @@ Examples:
             print(f"Error reading file: {e}", file=sys.stderr)
         sys.exit(1)
 
+    # Handle dry-run mode
+    if args.dry_run:
+        # Parse YAML first
+        try:
+            yaml = ruamel.yaml.YAML()
+            workflow = yaml.load(yaml_content)
+        except Exception as e:
+            print(f"Error parsing YAML: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Still validate to catch errors
+        result = validate_workflow_yaml(yaml_content, strict=args.strict)
+        if not result.valid:
+            print_result(result, str(workflow_path))
+            sys.exit(1)
+
+        # Run flow analysis
+        analyzer = FlowAnalyzer(workflow)
+        flow_result = analyzer.analyze()
+
+        # Parse inputs if provided
+        inputs = None
+        if args.inputs:
+            try:
+                inputs = json.loads(args.inputs)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing --inputs JSON: {e}", file=sys.stderr)
+                sys.exit(1)
+
+        print_flow_analysis(flow_result, inputs)
+        sys.exit(0)
+
     # Validate
     try:
         result = validate_workflow_yaml(yaml_content, strict=args.strict)
@@ -141,7 +324,7 @@ Examples:
 
     # Print results
     if not args.quiet:
-        print_result(result)
+        print_result(result, str(workflow_path))
 
     # Determine exit code
     if not result.valid:

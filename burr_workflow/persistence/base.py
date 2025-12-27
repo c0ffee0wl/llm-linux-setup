@@ -1,13 +1,16 @@
 """
-Base persistence backend protocol.
+Base persistence backend implementation.
 
-Defines the interface that all persistence backends must implement.
+Provides an abstract base class with rich features (partitioning, execution
+tracking, cleanup) that conforms to the minimal PersistenceBackend Protocol.
 """
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Optional
+
+from ..protocols import PersistenceBackend
 
 
 @dataclass
@@ -37,8 +40,14 @@ class ExecutionRecord:
     step_count: int
 
 
-class PersistenceBackend(ABC):
+class BasePersistenceBackend(PersistenceBackend, ABC):
     """Abstract base class for persistence backends.
+
+    Extends the minimal PersistenceBackend Protocol with rich features:
+    - Partition key support for multi-tenant deployments
+    - Execution lifecycle tracking (start/end)
+    - Typed dataclasses for checkpoints and execution records
+    - Cleanup of old data
 
     Implementations must provide:
     - save_checkpoint: Save workflow state
@@ -200,3 +209,41 @@ class PersistenceBackend(ABC):
     async def close(self) -> None:
         """Close the backend connection."""
         pass
+
+    # Protocol-conforming wrapper methods
+    # These delegate to the richer ABC methods with default partition_key=None
+
+    async def save_state(
+        self,
+        workflow_id: str,
+        app_id: str,
+        state: dict[str, Any],
+        position: str,
+        sequence_id: int,
+    ) -> None:
+        """Protocol-conforming save_state wrapper.
+
+        Delegates to save_checkpoint with partition_key=None.
+        """
+        await self.save_checkpoint(
+            workflow_id=workflow_id,
+            app_id=app_id,
+            state=state,
+            position=position,
+            sequence_id=sequence_id,
+        )
+
+    async def load_state(
+        self,
+        workflow_id: str,
+        app_id: str,
+    ) -> Optional[dict[str, Any]]:
+        """Protocol-conforming load_state wrapper.
+
+        Delegates to load_checkpoint with partition_key=None.
+        Returns state dict or None.
+        """
+        checkpoint = await self.load_checkpoint(workflow_id, app_id)
+        if checkpoint is None:
+            return None
+        return checkpoint.state

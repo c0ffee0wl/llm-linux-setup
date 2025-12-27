@@ -282,8 +282,7 @@
       "description": "Shell safety enforcement mode.",
       "enum": [
         "strict",
-        "auto_quote",
-        "lenient"
+        "auto_quote"
       ],
       "title": "ShellSafetyMode",
       "type": "string"
@@ -541,9 +540,35 @@
       "default": null,
       "title": "Description"
     },
+    "version": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Workflow version (semver recommended, e.g., '1.0.0')",
+      "title": "Version"
+    },
+    "author": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Workflow author or maintainer",
+      "title": "Author"
+    },
     "schema_version": {
       "default": "1.0",
-      "description": "Schema version (use 'schema_version' not 'version')",
+      "description": "Schema version for compatibility",
       "title": "Schema Version",
       "type": "string"
     },

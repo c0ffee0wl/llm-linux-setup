@@ -60,6 +60,9 @@ from .core import (
     StepProgress,
     SuspensionRequest,
     run_workflow,
+    FlowAnalyzer,
+    FlowAnalysisResult,
+    StepAnalysis,
 )
 
 # Protocols for integration
@@ -70,6 +73,7 @@ from .protocols import (
     LLMClient,
     PersistenceBackend,
     ReportBackend,
+    AuditLogger,
 )
 
 # Evaluator
@@ -88,6 +92,7 @@ from .schemas import (
 # Persistence
 from .persistence import (
     SQLitePersistence,
+    FileAuditLogger,
 )
 
 # Actions
@@ -147,6 +152,10 @@ __all__ = [
     "StepProgress",
     "SuspensionRequest",
     "run_workflow",
+    # Flow Analyzer
+    "FlowAnalyzer",
+    "FlowAnalysisResult",
+    "StepAnalysis",
     # Protocols
     "ExecutionContext",
     "OutputHandler",
@@ -154,6 +163,7 @@ __all__ = [
     "LLMClient",
     "PersistenceBackend",
     "ReportBackend",
+    "AuditLogger",
     # Evaluator
     "ContextEvaluator",
     "PathValidator",
@@ -163,6 +173,7 @@ __all__ = [
     "JobDefinition",
     # Persistence
     "SQLitePersistence",
+    "FileAuditLogger",
     # Actions
     "BaseAction",
     "ActionRegistry",

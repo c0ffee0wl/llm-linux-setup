@@ -11,10 +11,10 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Optional
 
-from .base import ExecutionRecord, PersistenceBackend, WorkflowCheckpoint
+from .base import BasePersistenceBackend, ExecutionRecord, WorkflowCheckpoint
 
 
-class SQLitePersistence(PersistenceBackend):
+class SQLitePersistence(BasePersistenceBackend):
     """SQLite-based persistence backend.
 
     Stores workflow checkpoints and execution history in a SQLite database.

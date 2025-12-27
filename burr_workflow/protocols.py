@@ -448,6 +448,140 @@ class ReportBackend(Protocol):
         ...
 
 
+@runtime_checkable
+class AuditLogger(Protocol):
+    """Protocol for workflow execution audit logging.
+
+    Provides durable, append-only logging of workflow executions
+    for compliance, debugging, and analysis. Supports dual output:
+    - JSONL for crash-safe, machine-parseable raw events
+    - Markdown for human-readable summaries
+
+    Implementations:
+        - FileAuditLogger: llm-assistant's file-based audit
+        - CloudAuditLogger: Cloud storage integration
+    """
+
+    async def workflow_start(
+        self,
+        workflow_name: str,
+        workflow_version: Optional[str],
+        inputs: dict[str, Any],
+        *,
+        execution_id: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log workflow execution start.
+
+        Args:
+            workflow_name: Name of the workflow
+            workflow_version: Workflow version (semver)
+            inputs: Input parameters
+            execution_id: Unique execution identifier
+            timestamp: ISO 8601 timestamp (generated if not provided)
+        """
+        ...
+
+    async def step_start(
+        self,
+        step_id: str,
+        step_name: Optional[str],
+        step_type: str,
+        *,
+        execution_id: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log step start.
+
+        Args:
+            step_id: Step identifier
+            step_name: Human-readable step name
+            step_type: Type of action (run, uses, etc.)
+            execution_id: Workflow execution identifier
+            timestamp: ISO 8601 timestamp
+        """
+        ...
+
+    async def step_end(
+        self,
+        step_id: str,
+        outcome: str,
+        duration_ms: float,
+        *,
+        execution_id: str,
+        output: Optional[dict[str, Any]] = None,
+        error: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log step completion.
+
+        Args:
+            step_id: Step identifier
+            outcome: Step outcome (success, failure, skipped)
+            duration_ms: Execution duration in milliseconds
+            execution_id: Workflow execution identifier
+            output: Step output data (optional, may be truncated)
+            error: Error message if failed
+            timestamp: ISO 8601 timestamp
+        """
+        ...
+
+    async def workflow_end(
+        self,
+        outcome: str,
+        duration_ms: float,
+        *,
+        execution_id: str,
+        total_steps: int,
+        successful_steps: int,
+        failed_steps: int,
+        skipped_steps: int,
+        error: Optional[str] = None,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log workflow completion.
+
+        Args:
+            outcome: Final outcome (success, failure, cancelled)
+            duration_ms: Total execution duration in milliseconds
+            execution_id: Workflow execution identifier
+            total_steps: Total number of steps
+            successful_steps: Count of successful steps
+            failed_steps: Count of failed steps
+            skipped_steps: Count of skipped steps
+            error: Error message if workflow failed
+            timestamp: ISO 8601 timestamp
+        """
+        ...
+
+    async def log_event(
+        self,
+        event_type: str,
+        data: dict[str, Any],
+        *,
+        execution_id: str,
+        timestamp: Optional[str] = None,
+    ) -> None:
+        """Log arbitrary audit event.
+
+        For custom events not covered by step/workflow lifecycle.
+
+        Args:
+            event_type: Event type identifier
+            data: Event data
+            execution_id: Workflow execution identifier
+            timestamp: ISO 8601 timestamp
+        """
+        ...
+
+    async def flush(self) -> None:
+        """Ensure all pending writes are persisted.
+
+        Called at workflow end or on interrupt to prevent data loss.
+        """
+        ...
+
+
 class LLMSchemaValidationError(Exception):
     """LLM output doesn't match expected schema."""
     pass

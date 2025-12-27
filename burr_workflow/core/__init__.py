@@ -43,6 +43,11 @@ from .executor import (
     SuspensionRequest,
     run_workflow,
 )
+from .flow_analyzer import (
+    FlowAnalyzer,
+    FlowAnalysisResult,
+    StepAnalysis,
+)
 from .guardrails import (
     GuardrailRouter,
     GuardrailError,
@@ -89,6 +94,10 @@ __all__ = [
     "StepProgress",
     "SuspensionRequest",
     "run_workflow",
+    # Flow Analyzer
+    "FlowAnalyzer",
+    "FlowAnalysisResult",
+    "StepAnalysis",
     # Guardrails
     "GuardrailRouter",
     "GuardrailError",

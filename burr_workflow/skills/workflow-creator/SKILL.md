@@ -43,6 +43,8 @@ workflow-schema --pretty -o assets/workflow-schema.json
 ```yaml
 # yaml-language-server: $schema=./assets/workflow-schema.json
 name: "workflow-name"
+version: "1.0.0"  # Workflow version (semver recommended)
+author: "your-name"  # Optional maintainer
 schema_version: "1.0"
 description: "What this workflow does"
 

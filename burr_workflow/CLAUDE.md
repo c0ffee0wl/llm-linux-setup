@@ -135,6 +135,7 @@ The compiler creates Burr `SingleStepAction` nodes via `BurrActionAdapter`:
 
 ```yaml
 name: example-workflow
+version: "1.0.0"
 schema_version: "1.0"
 
 inputs:
