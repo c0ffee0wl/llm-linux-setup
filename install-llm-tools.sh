@@ -1579,11 +1579,11 @@ if has_desktop_environment; then
         "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
         "espanso" "x86_64"
 
-    # Install Python dependencies for espanso-llm-ask-ai (apt packages)
+    # Install Python dependencies for espanso-llm-ask-llm (apt packages)
     # python-is-python3 creates /usr/bin/python symlink (espanso scripts use 'python' not 'python3')
     install_apt_packages python3-openai python3-dotenv python-is-python3
 
-    # Install espanso-llm-ask-ai package
+    # Install espanso-llm-ask-llm package
     if command -v espanso &>/dev/null; then
         # Get packages directory (with fallback to default path)
         ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
@@ -1591,23 +1591,12 @@ if has_desktop_environment; then
         # Create packages directory if it doesn't exist
         mkdir -p "$ESPANSO_PACKAGES_DIR"
 
-        LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-ai"
+        LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-llm"
         if [ ! -d "$LLM_ASK_AI_DIR" ]; then
-            log "Installing espanso-llm-ask-ai package..."
+            log "Installing espanso-llm-ask-llm package..."
             git clone --depth 1 https://github.com/c0ffee0wl/espanso-llm-ask-llm.git "$LLM_ASK_AI_DIR"
         else
-            log "espanso-llm-ask-ai already installed"
-        fi
-
-        # Configure .env file for llm-server endpoint
-        ENV_FILE="$LLM_ASK_AI_DIR/.env"
-        if [ ! -f "$ENV_FILE" ]; then
-            log "Configuring espanso-llm-ask-ai for llm-server..."
-            cat > "$ENV_FILE" << 'ENVEOF'
-API_KEY=sk-placeholder
-BASE_URL=http://localhost:11435/v1
-MODEL=server-configured-model
-ENVEOF
+            log "espanso-llm-ask-llm already installed"
         fi
 
         # Register and start espanso service if newly installed
@@ -1848,7 +1837,7 @@ log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
 log ""
 log "  Desktop Tools (if GUI detected):"
 log "    - Handy            System-wide speech-to-text input"
-log "    - espanso          Text expander with LLM integration (:ask:ai trigger)"
+log "    - espanso          Text expander with LLM integration (:ask:llm trigger)"
 log ""
 log "Shell integration: $SCRIPT_DIR/integration/"
 log "  - llm-integration.bash (Bash)"
