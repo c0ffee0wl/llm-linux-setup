@@ -36,6 +36,7 @@ from .errors import (
     WorkflowTimeoutError,
     WorkflowInterruptedError,
 )
+from .hooks import StepTimingHook
 
 if TYPE_CHECKING:
     from burr.core import Application
@@ -175,6 +176,7 @@ class WorkflowExecutor:
         on_step: Optional[StepCallback] = None,
         default_timeout: int = 3600,  # 1 hour default
         step_timeout: int = 300,  # 5 minutes per step
+        capture_timing: bool = True,
     ):
         """Initialize the executor.
 
@@ -186,10 +188,15 @@ class WorkflowExecutor:
             on_step: Callback for step transitions
             default_timeout: Default workflow timeout in seconds
             step_timeout: Default timeout per step in seconds
+            capture_timing: Enable accurate step timing via Burr lifecycle hooks
 
         Note:
             For checkpoint/resume and Burr web UI tracking, configure
             db_path and enable_tracking when compiling the workflow.
+
+            For accurate step timing, pass executor.timing_hook to the compiler:
+                executor = WorkflowExecutor(capture_timing=True)
+                app = compiler.compile(workflow, timing_hook=executor.timing_hook)
         """
         self.exec_context = exec_context
         self.output_handler = output_handler
@@ -198,6 +205,12 @@ class WorkflowExecutor:
         self.on_step = on_step
         self.default_timeout = default_timeout
         self.step_timeout = step_timeout
+        self.capture_timing = capture_timing
+
+        # Create timing hook if enabled
+        self._timing_hook: Optional[StepTimingHook] = None
+        if capture_timing:
+            self._timing_hook = StepTimingHook()
 
         # Execution state
         self._interrupted = False
@@ -206,6 +219,17 @@ class WorkflowExecutor:
         self._suspension: Optional[SuspensionRequest] = None
         self._execution_id: Optional[str] = None
         self._start_time: Optional[float] = None
+
+    @property
+    def timing_hook(self) -> Optional[StepTimingHook]:
+        """Get the timing hook for passing to the compiler.
+
+        Example:
+            executor = WorkflowExecutor(capture_timing=True)
+            app = compiler.compile(workflow, timing_hook=executor.timing_hook)
+            result = await executor.run(app, inputs={...})
+        """
+        return self._timing_hook
 
     def _validate_and_coerce_inputs(
         self,
@@ -588,10 +612,8 @@ class WorkflowExecutor:
             last_action = None
             last_result = None
 
-            # Note: Burr's aiterate() yields AFTER action execution completes.
-            # We cannot capture accurate per-step timing without Burr hooks.
-            # Step events are logged for audit trail; duration_ms reflects
-            # only the post-execution processing time, not actual step execution.
+            # Burr's aiterate() yields AFTER action execution completes.
+            # Use the timing hook (if available) for accurate per-step timing.
             async for action, result, state in app.aiterate(inputs=inputs):
                 if self._interrupted:
                     self._progress.status = ExecutionStatus.INTERRUPTED
@@ -603,9 +625,12 @@ class WorkflowExecutor:
                 step_outcome = result.get("outcome", "success") if result else "success"
                 step_error = result.get("error") if result else None
 
-                # Get step duration from result if available (action may track it)
+                # Get step duration from timing hook if available (accurate)
+                # Fall back to result dict or 0.0 if hook not available
                 step_duration_ms = 0.0
-                if result and isinstance(result, dict):
+                if self._timing_hook:
+                    step_duration_ms = self._timing_hook.get_duration_ms(step_id)
+                elif result and isinstance(result, dict):
                     step_duration_ms = result.get("duration_ms", 0.0)
 
                 last_action = action

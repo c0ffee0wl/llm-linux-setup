@@ -157,6 +157,62 @@ result = await executor.run(app, inputs={"target": "example.com"})
 
 View execution in Burr UI: `burr --open` (opens http://localhost:7241)
 
+#### Lifecycle Hooks
+
+The executor uses Burr's lifecycle hooks for accurate step timing via `StepTimingHook`:
+
+```python
+from burr_workflow import StepTimingHook, WorkflowExecutor
+
+# Executor creates hook automatically when capture_timing=True (default)
+executor = WorkflowExecutor(capture_timing=True)
+result = await executor.run(app, inputs={...})
+
+# Access timing data via the hook
+hook = executor.timing_hook
+for step_id, timing in hook.timings.items():
+    print(f"{step_id}: {timing.duration_ms:.2f}ms")
+```
+
+**Why hooks?**: Burr's `aiterate()` yields AFTER action execution completes, making timing calculations inaccurate. The `StepTimingHook` captures precise pre/post timestamps using `PreRunStepHookAsync` and `PostRunStepHookAsync`.
+
+#### Graph Visualization
+
+Generate workflow diagrams via CLI with dual engine support:
+
+```bash
+# Mermaid to stdout (default, no dependencies)
+workflow-validate workflow.yaml --visualize
+workflow-validate workflow.yaml -v
+
+# Mermaid to file (embeddable in README)
+workflow-validate workflow.yaml -v workflow.md
+
+# Graphviz PNG (requires graphviz)
+workflow-validate workflow.yaml -v diagram.png --engine graphviz
+
+# SVG with transition conditions
+workflow-validate workflow.yaml -v diagram.svg -e graphviz --show-conditions
+```
+
+**Engines**:
+- **Mermaid** (default): Text-based flowcharts, embeds in markdown, no dependencies
+- **Graphviz**: High-quality images, requires `pip install burr_workflow[viz]` and `apt install graphviz`
+
+**Programmatic usage**:
+```python
+from burr_workflow import WorkflowCompiler, visualize, to_mermaid
+
+compiler = WorkflowCompiler()
+app = compiler.compile(workflow_dict)
+
+# Generate mermaid syntax
+mermaid_text = to_mermaid(app, include_conditions=True)
+
+# Generate visualization to file
+visualize(app, output_path=Path("diagram.png"), engine="graphviz")
+```
+
 ## Key Files
 
 | File | Purpose |
@@ -164,6 +220,8 @@ View execution in Burr UI: `burr --open` (opens http://localhost:7241)
 | `core/compiler.py` | YAML→Burr graph compilation, runs validator before compile |
 | `core/executor.py` | `WorkflowExecutor`, suspension/resume, progress tracking |
 | `core/validator.py` | 7-phase validation, error codes E000-E015, warning codes W001-W008 |
+| `core/hooks.py` | `StepTimingHook` for accurate step timing via Burr lifecycle hooks |
+| `core/visualize.py` | `visualize()`, `to_mermaid()` for workflow graph rendering |
 | `evaluator/context.py` | `ContextEvaluator`, secure expression evaluation |
 | `evaluator/security.py` | `PathValidator`, path traversal prevention |
 | `schemas/models.py` | Pydantic v2 models (`WorkflowDefinition`, `StepDefinition`) |

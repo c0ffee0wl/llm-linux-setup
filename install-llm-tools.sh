@@ -1579,15 +1579,6 @@ if has_desktop_environment; then
         "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
         "espanso" "x86_64"
 
-    # Register and start espanso service if newly installed
-    if command -v espanso &>/dev/null; then
-        if ! espanso status &>/dev/null; then
-            log "Registering espanso service..."
-            espanso service register || true
-            espanso start || true
-        fi
-    fi
-
     # Install Python dependencies for espanso-llm-ask-ai (apt packages)
     # python-is-python3 creates /usr/bin/python symlink (espanso scripts use 'python' not 'python3')
     install_apt_packages python3-openai python3-dotenv python-is-python3
@@ -1622,6 +1613,14 @@ BASE_URL=http://localhost:11435/v1
 MODEL=gpt-4.1-mini
 ENVEOF
         fi
+
+        # Register and start espanso service if newly installed
+        if ! espanso status &>/dev/null; then
+            log "Registering espanso service..."
+            espanso service register || true
+            espanso restart || true
+        fi
+
     fi
 fi
 

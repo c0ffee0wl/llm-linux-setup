@@ -260,6 +260,32 @@ Examples:
         help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')',
     )
 
+    # Visualization options
+    parser.add_argument(
+        "--visualize", "-v",
+        nargs="?",
+        const="-",  # stdout by default
+        metavar="OUTPUT",
+        help="Generate workflow diagram (default: mermaid to stdout)",
+    )
+    parser.add_argument(
+        "--engine", "-e",
+        choices=["mermaid", "graphviz"],
+        default="mermaid",
+        help="Visualization engine (default: mermaid)",
+    )
+    parser.add_argument(
+        "--format", "-f",
+        choices=["md", "png", "svg", "pdf", "dot"],
+        default="md",
+        help="Output format (default: md for mermaid, png for graphviz)",
+    )
+    parser.add_argument(
+        "--show-conditions",
+        action="store_true",
+        help="Include transition conditions in diagram",
+    )
+
     args = parser.parse_args()
 
     # Read workflow file
@@ -313,6 +339,63 @@ Examples:
 
         print_flow_analysis(flow_result, inputs)
         sys.exit(0)
+
+    # Handle visualization mode
+    if args.visualize is not None:
+        # Parse YAML first
+        try:
+            yaml = ruamel.yaml.YAML()
+            workflow = yaml.load(yaml_content)
+        except Exception as e:
+            print(f"Error parsing YAML: {e}", file=sys.stderr)
+            sys.exit(1)
+
+        # Validate to catch errors
+        result = validate_workflow_yaml(yaml_content, strict=args.strict)
+        if not result.valid:
+            print_result(result, str(workflow_path))
+            sys.exit(1)
+
+        # Compile to get the Burr Application
+        try:
+            from burr_workflow import WorkflowCompiler
+            from burr_workflow.core.visualize import visualize
+
+            compiler = WorkflowCompiler()
+            app = compiler.compile(workflow)
+
+            # Determine output path
+            output_path = None if args.visualize == "-" else Path(args.visualize)
+
+            # Generate visualization
+            result_str = visualize(
+                app,
+                output_path=output_path,
+                engine=args.engine,
+                format=args.format,
+                include_conditions=args.show_conditions,
+            )
+
+            if args.visualize == "-":
+                print(result_str)  # Mermaid to stdout
+            elif not args.quiet:
+                print(f"Generated: {result_str}", file=sys.stderr)
+
+            sys.exit(0)
+
+        except ImportError as e:
+            if "graphviz" in str(e).lower():
+                print(
+                    "Error: graphviz not installed. "
+                    "Run: pip install burr_workflow[viz]",
+                    file=sys.stderr,
+                )
+            else:
+                print(f"Import error: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Visualization error: {e}", file=sys.stderr)
+            sys.exit(1)
 
     # Validate
     try:

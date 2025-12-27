@@ -55,6 +55,14 @@ from .guardrails import (
     GuardrailRetryExhausted,
     ValidationResult as GuardrailValidationResult,
 )
+from .hooks import (
+    StepTimingHook,
+    StepTiming,
+)
+from .visualize import (
+    visualize,
+    to_mermaid,
+)
 
 __all__ = [
     # Errors
@@ -104,4 +112,10 @@ __all__ = [
     "GuardrailAbort",
     "GuardrailRetryExhausted",
     "GuardrailValidationResult",
+    # Hooks
+    "StepTimingHook",
+    "StepTiming",
+    # Visualization
+    "visualize",
+    "to_mermaid",
 ]

@@ -28,6 +28,7 @@ from burr.core.persistence import SQLitePersister
 from burr.core.state import State
 from burr.tracking import LocalTrackingClient
 
+from .hooks import StepTimingHook
 from .errors import (
     WorkflowCompilationError,
     WorkflowValidationError,
@@ -214,6 +215,7 @@ class WorkflowCompiler:
         db_path: Optional[Path] = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
+        timing_hook: Optional[StepTimingHook] = None,
     ) -> "Application":
         """Compile a workflow dictionary to a Burr Application.
 
@@ -224,6 +226,7 @@ class WorkflowCompiler:
             db_path: Path to SQLite database for checkpointing (optional)
             enable_tracking: Enable Burr web UI tracking
             tracking_project: Project name for tracking (default: "burr_workflow")
+            timing_hook: Optional StepTimingHook for accurate step timing
 
         Returns:
             Burr Application ready for execution
@@ -275,6 +278,7 @@ class WorkflowCompiler:
             db_path=db_path,
             enable_tracking=enable_tracking,
             tracking_project=tracking_project,
+            timing_hook=timing_hook,
         )
 
     def _generate_step_id(self, step: dict, index: int) -> str:
@@ -695,6 +699,7 @@ class WorkflowCompiler:
         db_path: Optional[Path] = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
+        timing_hook: Optional[StepTimingHook] = None,
     ) -> "Application":
         """Build the final Burr Application from compiled steps.
 
@@ -709,6 +714,7 @@ class WorkflowCompiler:
             db_path: Path to SQLite database for checkpointing (optional)
             enable_tracking: Enable Burr web UI tracking
             tracking_project: Project name for tracking (default: "burr_workflow")
+            timing_hook: Optional StepTimingHook for accurate step timing
         """
         builder = ApplicationBuilder()
 
@@ -784,6 +790,10 @@ class WorkflowCompiler:
             tracker = LocalTrackingClient(project=tracking_project)
             builder = builder.with_tracker(tracker)
 
+        # Add timing hook if provided (for accurate step timing)
+        if timing_hook is not None:
+            builder = builder.with_hooks(timing_hook)
+
         return builder.build()
 
     def compile_from_yaml(
@@ -794,6 +804,7 @@ class WorkflowCompiler:
         db_path: Optional[Path] = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
+        timing_hook: Optional[StepTimingHook] = None,
     ) -> "Application":
         """Compile workflow from YAML string.
 
@@ -806,6 +817,7 @@ class WorkflowCompiler:
             db_path: Path to SQLite database for checkpointing (optional)
             enable_tracking: Enable Burr web UI tracking
             tracking_project: Project name for tracking
+            timing_hook: Optional StepTimingHook for accurate step timing
 
         Returns:
             Burr Application
@@ -818,6 +830,7 @@ class WorkflowCompiler:
             db_path=db_path,
             enable_tracking=enable_tracking,
             tracking_project=tracking_project,
+            timing_hook=timing_hook,
         )
 
     def compile_with_validation(
@@ -828,6 +841,7 @@ class WorkflowCompiler:
         db_path: Optional[Path] = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
+        timing_hook: Optional[StepTimingHook] = None,
     ) -> "Application":
         """Compile workflow with Pydantic validation.
 
@@ -838,6 +852,7 @@ class WorkflowCompiler:
             db_path: Path to SQLite database for checkpointing (optional)
             enable_tracking: Enable Burr web UI tracking
             tracking_project: Project name for tracking
+            timing_hook: Optional StepTimingHook for accurate step timing
 
         Returns:
             Burr Application
@@ -872,6 +887,7 @@ class WorkflowCompiler:
             db_path=db_path,
             enable_tracking=enable_tracking,
             tracking_project=tracking_project,
+            timing_hook=timing_hook,
         )
 
 

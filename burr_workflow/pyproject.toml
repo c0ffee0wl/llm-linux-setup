@@ -43,6 +43,9 @@ dev = [
     "ruff>=0.1.0",
     "mypy>=1.0.0",
 ]
+viz = [
+    "graphviz>=0.20",
+]
 
 [project.scripts]
 workflow-validate = "burr_workflow.cli:workflow_validate_cmd"

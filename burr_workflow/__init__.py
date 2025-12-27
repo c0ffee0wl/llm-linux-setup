@@ -66,6 +66,10 @@ from .core import (
     FlowAnalyzer,
     FlowAnalysisResult,
     StepAnalysis,
+    StepTimingHook,
+    StepTiming,
+    visualize,
+    to_mermaid,
 )
 
 # Protocols for integration
@@ -157,6 +161,12 @@ __all__ = [
     "FlowAnalyzer",
     "FlowAnalysisResult",
     "StepAnalysis",
+    # Hooks
+    "StepTimingHook",
+    "StepTiming",
+    # Visualization
+    "visualize",
+    "to_mermaid",
     # Protocols
     "ExecutionContext",
     "OutputHandler",
