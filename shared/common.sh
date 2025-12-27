@@ -216,6 +216,18 @@ has_desktop_environment() {
     return 1
 }
 
+# Check if running on Wayland display server
+# Returns 0 if Wayland, 1 if X11 or unknown
+is_wayland() {
+    if [ "${XDG_SESSION_TYPE:-}" = "wayland" ]; then
+        return 0
+    fi
+    if [ -n "${WAYLAND_DISPLAY:-}" ]; then
+        return 0
+    fi
+    return 1
+}
+
 #############################################################################
 # File Management
 #############################################################################
@@ -250,6 +262,29 @@ install_apt_package() {
         sudo apt-get install -y "$package"
     else
         log "$package is already installed"
+    fi
+}
+
+# Install multiple apt packages efficiently in a single apt call
+# Usage: install_apt_packages package1 package2 package3 ...
+# Checks each package via dpkg and installs only missing ones
+# More efficient than multiple install_apt_package calls for batch installs
+# Examples:
+#   install_apt_packages python3-gi python3-gi-cairo python3-dbus
+#   install_apt_packages build-essential libdbus-glib-1-dev libcairo2-dev
+install_apt_packages() {
+    local missing=()
+    for pkg in "$@"; do
+        if ! dpkg -l "$pkg" 2>/dev/null | grep -q "^ii"; then
+            missing+=("$pkg")
+        fi
+    done
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        log "Installing ${missing[*]}..."
+        sudo apt-get install -y "${missing[@]}"
+    else
+        log "All packages already installed: $*"
     fi
 }
 

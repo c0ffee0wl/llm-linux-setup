@@ -22,6 +22,7 @@ Use the `workflow-validate` CLI to validate workflow YAML files:
 workflow-validate workflow.yaml              # Validate with warnings
 workflow-validate workflow.yaml --strict     # Treat warnings as errors
 workflow-validate workflow.yaml -q           # Quiet mode, exit code only
+workflow-validate workflow.yaml --dry-run    # Show execution flow without running
 ```
 
 ## IDE Schema Validation
@@ -161,6 +162,19 @@ inputs:
 | `keys` / `values` | `${{ dict \| keys }}` | Dict keys/values |
 | `first` / `last` | `${{ list \| first }}` | First/last element |
 | `join` | `${{ list \| join(',') }}` | Join list elements |
+
+### GHA-Compatible Functions
+
+These filters provide GitHub Actions expression compatibility:
+
+| Function | Usage | Purpose |
+|----------|-------|---------|
+| `contains` | `${{ array \| contains('value') }}` | Check if string/array contains value |
+| `startsWith` | `${{ string \| startsWith('http') }}` | Check if string starts with prefix |
+| `endsWith` | `${{ filename \| endsWith('.yaml') }}` | Check if string ends with suffix |
+| `format` | `${{ '{0}@{1}' \| format(user, host) }}` | String formatting with positional args |
+| `toJSON` | `${{ value \| toJSON }}` | Serialize to JSON string |
+| `fromJSON` | `${{ json_str \| fromJSON }}` | Parse JSON string |
 
 ## Available Actions
 

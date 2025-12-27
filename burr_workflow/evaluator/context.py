@@ -5,6 +5,7 @@ Uses NativeEnvironment to preserve Python types (lists, dicts, ints)
 with sandboxed security to prevent template injection attacks.
 """
 
+import json
 import re
 import shlex
 from datetime import datetime
@@ -93,6 +94,8 @@ class ContextEvaluator:
         "length", "keys", "values", "first", "last", "join",
         "default", "shell_quote", "safe_path", "lower", "upper",
         "trim", "split", "sort", "unique", "int", "float", "string",
+        # GitHub Actions compatible functions
+        "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
     ])
 
     # Dangerous patterns to block (defense-in-depth)
@@ -180,6 +183,20 @@ class ContextEvaluator:
         from .security import safe_path_filter
         self.env.filters["safe_path"] = safe_path_filter
 
+        # GitHub Actions compatible functions
+        self.env.filters["contains"] = lambda haystack, needle: (
+            needle in haystack if isinstance(haystack, (str, list, tuple)) else False
+        )
+        self.env.filters["startsWith"] = lambda s, prefix: (
+            str(s).startswith(str(prefix)) if s is not None else False
+        )
+        self.env.filters["endsWith"] = lambda s, suffix: (
+            str(s).endswith(str(suffix)) if s is not None else False
+        )
+        self.env.filters["format"] = self._gha_format
+        self.env.filters["toJSON"] = lambda v: json.dumps(v)
+        self.env.filters["fromJSON"] = lambda s: json.loads(s) if isinstance(s, str) else s
+
     def update_context(self, updates: dict[str, Any]) -> None:
         """Update the evaluation context.
 
@@ -195,6 +212,23 @@ class ContextEvaluator:
             ctx: New context dictionary
         """
         self.ctx = ctx
+
+    def _gha_format(self, fmt: str, *args: Any) -> str:
+        """GitHub Actions format() function.
+
+        Replaces {0}, {1}, etc. with positional arguments.
+
+        Args:
+            fmt: Format string with {0}, {1}, etc. placeholders
+            *args: Values to substitute
+
+        Returns:
+            Formatted string
+        """
+        result = str(fmt)
+        for i, arg in enumerate(args):
+            result = result.replace("{" + str(i) + "}", str(arg))
+        return result
 
     def _check_dangerous_patterns(self, expr: str) -> None:
         """Check for dangerous patterns in expression.

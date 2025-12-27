@@ -1,17 +1,14 @@
-"""Persistence backends for workflow state and audit logging."""
+"""Persistence backends for workflow audit logging.
 
-from .base import BasePersistenceBackend, ExecutionRecord, WorkflowCheckpoint
-from .sqlite import SQLitePersistence
+Note:
+    For workflow state checkpointing, use Burr's built-in SQLitePersister
+    by passing db_path to WorkflowCompiler.compile().
+
+    For Burr web UI tracking, pass enable_tracking=True to compile().
+"""
+
 from .audit import FileAuditLogger
 
-# Re-export PersistenceBackend Protocol from protocols for convenience
-from ..protocols import PersistenceBackend
-
 __all__ = [
-    "PersistenceBackend",  # Protocol from protocols.py
-    "BasePersistenceBackend",  # ABC with rich features
-    "ExecutionRecord",
-    "WorkflowCheckpoint",
-    "SQLitePersistence",
     "FileAuditLogger",
 ]

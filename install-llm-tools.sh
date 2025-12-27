@@ -888,15 +888,9 @@ log "Installing prerequisites..."
 
 sudo apt-get update
 
-# Install basic prerequisites
-install_apt_package git
-install_apt_package jq
-install_apt_package xsel
-install_apt_package python3
-install_apt_package pipx
-
-# Install curl (needed for nvm installer if required)
-install_apt_package curl
+# Install basic prerequisites (batch install for efficiency)
+log "Installing basic prerequisites..."
+install_apt_packages git jq xsel python3 pipx curl
 
 # Install bubblewrap (provides bwrap for sandboxing, used by llm-functions and code execution tools)
 install_apt_package bubblewrap bwrap
@@ -907,36 +901,30 @@ install_apt_package coreutils sha256sum
 # Install document processors
 log "Installing document processors..."
 install_apt_package poppler-utils pdftotext
-
-install_apt_package pandoc
-install_apt_package ffmpeg
+install_apt_packages pandoc ffmpeg
 
 # Install PyGObject and build dependencies for Terminator assistant integration (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Runtime packages (for system Python)
     log "Installing PyGObject runtime packages..."
-    sudo apt-get install -y python3-gi python3-gi-cairo python3-dbus python3-dev gir1.2-vte-2.91
+    install_apt_packages python3-gi python3-gi-cairo python3-dbus python3-dev gir1.2-vte-2.91
 
     # Build dependencies (for pip installations in isolated environments)
     log "Installing PyGObject build dependencies..."
-    sudo apt-get install -y build-essential libdbus-glib-1-dev libcairo2-dev libgirepository-2.0-dev # gobject-introspection
+    install_apt_packages build-essential libdbus-glib-1-dev libcairo2-dev libgirepository-2.0-dev
 
     # Python file format parsing libraries (for llm-assistant structured data handling)
     log "Installing Python file format parsing libraries..."
-    install_apt_package python3-lxml      # XML/HTML parsing with XPath
-    install_apt_package python3-yaml      # YAML parsing (PyYAML)
-    install_apt_package python3-openpyxl  # Excel/XLSX handling
+    install_apt_packages python3-lxml python3-yaml python3-openpyxl
 
     # Screen capture dependencies (for llm-tools-capture-screen)
     log "Installing screen capture tools..."
-    install_apt_package maim
-    install_apt_package xdotool
-    install_apt_package flameshot
+    install_apt_packages maim xdotool flameshot
     # freerdp3 on newer distros (Kali 2024+), freerdp2 on older
     if apt-cache show freerdp3-x11 &>/dev/null; then
-        install_apt_package freerdp3-x11
+        install_apt_packages freerdp3-x11
     else
-        install_apt_package freerdp2-x11
+        install_apt_packages freerdp2-x11
     fi
 fi
 
@@ -1515,7 +1503,7 @@ exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_shell.daemon "$@"
 EOF
 chmod +x "$HOME/.local/bin/llm-shell-daemon"
 
-if command -v terminator &> /dev/null; then
+if has_desktop_environment; then
     # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
     MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
     HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
@@ -1557,6 +1545,11 @@ if command -v terminator &> /dev/null; then
         fi
     fi
 
+    # Install Handy (system-wide STT) via .deb package
+    install_github_deb_package "handy" "0.6.8" \
+        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
+        "handy" "x86_64"
+
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
         if command -v imagemage &>/dev/null; then
@@ -1574,10 +1567,62 @@ if command -v terminator &> /dev/null; then
         log "Skipping imagemage: Gemini not configured"
     fi
 
-    # Install Handy (system-wide STT) via .deb package
-    install_github_deb_package "handy" "0.6.8" \
-        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
-        "handy" "x86_64"
+    # Install espanso (text expander) - X11 or Wayland variant
+    ESPANSO_VERSION="2.3.0"
+    if is_wayland; then
+        ESPANSO_DEB="espanso-debian-wayland-amd64.deb"
+    else
+        ESPANSO_DEB="espanso-debian-x11-amd64.deb"
+    fi
+
+    install_github_deb_package "espanso" "$ESPANSO_VERSION" \
+        "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
+        "espanso" "x86_64"
+
+    # Register and start espanso service if newly installed
+    if command -v espanso &>/dev/null; then
+        if ! espanso status &>/dev/null; then
+            log "Registering espanso service..."
+            espanso service register || true
+            espanso start || true
+        fi
+    fi
+
+    # Install Python dependencies for espanso-llm-ask-ai (apt packages)
+    # python-is-python3 creates /usr/bin/python symlink (espanso scripts use 'python' not 'python3')
+    install_apt_packages python3-openai python3-dotenv python-is-python3
+
+    # Install espanso-llm-ask-ai package
+    if command -v espanso &>/dev/null; then
+        # Get packages directory (with fallback to default path)
+        ESPANSO_PACKAGES_DIR="$(espanso path packages 2>/dev/null)"
+        if [ -z "$ESPANSO_PACKAGES_DIR" ]; then
+            # Fallback to default location if espanso config not yet initialized
+            ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
+        fi
+
+        # Create packages directory if it doesn't exist
+        mkdir -p "$ESPANSO_PACKAGES_DIR"
+
+        LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-ai"
+        if [ ! -d "$LLM_ASK_AI_DIR" ]; then
+            log "Installing espanso-llm-ask-ai package..."
+            git clone --depth 1 https://github.com/bgeneto/espanso-llm-ask-ai.git "$LLM_ASK_AI_DIR"
+        else
+            log "espanso-llm-ask-ai already installed"
+        fi
+
+        # Configure .env file for llm-server endpoint
+        ENV_FILE="$LLM_ASK_AI_DIR/.env"
+        if [ ! -f "$ENV_FILE" ]; then
+            log "Configuring espanso-llm-ask-ai for llm-server..."
+            cat > "$ENV_FILE" << 'ENVEOF'
+API_KEY=sk-placeholder
+BASE_URL=http://localhost:11435/v1
+MODEL=gpt-4.1-mini
+ENVEOF
+        fi
+    fi
 fi
 
 #############################################################################
@@ -1778,6 +1823,14 @@ log "    - asciinema        Terminal session recorder"
 log "    - transcribe       Speech-to-text (25 European languages)"
 log "    - micro            Terminal text editor with LLM plugin"
 log "    - context          Terminal history extractor"
+log ""
+log "  MCP Servers:"
+log "    - arxiv-mcp-server   arXiv paper search and retrieval"
+log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
+log ""
+log "  Desktop Tools (if GUI detected):"
+log "    - Handy            System-wide speech-to-text input"
+log "    - espanso          Text expander with LLM integration (:ask:ai trigger)"
 log ""
 log "Shell integration: $SCRIPT_DIR/integration/"
 log "  - llm-integration.bash (Bash)"

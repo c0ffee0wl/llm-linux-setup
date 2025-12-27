@@ -21,6 +21,10 @@ from enum import Enum
 from typing import Any, Optional, Set, List, Dict
 import re
 
+from jinja2 import Environment
+from jinja2 import nodes
+from jinja2.exceptions import TemplateSyntaxError
+
 
 class ValidationLevel(Enum):
     """Severity level for validation messages."""
@@ -128,23 +132,84 @@ class ValidationResult:
             self.valid = False
 
 
+class Jinja2ExpressionValidator:
+    """Validates Jinja2 expressions using AST parsing.
+
+    This validator parses expressions into AST to:
+    1. Catch syntax errors before runtime
+    2. Validate filter names against a whitelist
+
+    Note: GHA functions (contains, startsWith, etc.) are implemented as
+    Jinja2 filters, not function calls. This validator checks filter usage.
+    """
+
+    # Filters actually registered in evaluator/context.py
+    # Note: filters.py defines SAFE_FILTERS but they are NOT registered at runtime
+    ALLOWED_FILTERS = frozenset([
+        # Collection filters
+        "length", "keys", "values", "first", "last", "join", "sort", "unique",
+        # String filters
+        "lower", "upper", "trim", "split",
+        # Type conversion filters
+        "int", "float", "string",
+        # Safety filters
+        "default", "shell_quote", "safe_path",
+        # GitHub Actions compatible functions (implemented as filters)
+        "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
+    ])
+
+    def __init__(self) -> None:
+        """Initialize with a minimal Jinja2 environment for parsing only."""
+        self.env = Environment()
+
+    def validate(self, expr: str) -> list[tuple[str, str]]:
+        """Parse and validate a Jinja2 expression.
+
+        Args:
+            expr: The inner expression (without ${{ }})
+
+        Returns:
+            List of (error_type, message) tuples for any issues found.
+            error_type is "SYNTAX" for parse errors, "FILTER" for unknown filters.
+        """
+        errors: list[tuple[str, str]] = []
+
+        # Wrap expression for Jinja2 parsing
+        template_str = f"{{{{ {expr} }}}}"
+
+        try:
+            ast = self.env.parse(template_str)
+        except TemplateSyntaxError as e:
+            return [("SYNTAX", f"Invalid Jinja2 syntax: {e.message}")]
+
+        # Walk AST to find all Filter nodes
+        for node in ast.find_all(nodes.Filter):
+            if node.name not in self.ALLOWED_FILTERS:
+                errors.append((
+                    "FILTER",
+                    f"Unknown filter '{node.name}'"
+                ))
+
+        return errors
+
+
 class WorkflowValidator:
     """Static workflow validator.
-    
+
     Performs comprehensive validation of workflow definitions before
     compilation. All checks are static (no execution) and can detect:
-    
+
     - Missing required fields
     - Invalid step references
     - Duplicate step IDs
     - Expression syntax errors
     - Dangerous patterns in expressions
     - Loop safety issues
-    
+
     Usage:
         validator = WorkflowValidator()
         result = validator.validate(workflow_dict)
-        
+
         if not result.valid:
             for error in result.errors:
                 print(f"[{error.code}] {error.message}")
@@ -169,6 +234,7 @@ class WorkflowValidator:
     E_INVALID_LOOP = "E012"
     E_MISSING_ACTION = "E013"
     E_INVALID_TYPE = "E014"
+    E_UNKNOWN_FILTER = "E015"  # Unknown Jinja2 filter in expression
     
     # Warning codes
     W_UNUSED_STEP = "W001"
@@ -228,6 +294,7 @@ class WorkflowValidator:
         self._step_ids: Set[str] = set()
         self._step_outputs: Dict[str, Set[str]] = {}
         self._referenced_steps: Set[str] = set()
+        self._jinja_validator = Jinja2ExpressionValidator()
 
     @staticmethod
     def _get_source_loc(node: Any, key: Optional[str] = None) -> tuple[Optional[int], Optional[int]]:
@@ -696,17 +763,26 @@ class WorkflowValidator:
                         source_column=source_col,
                     )
 
-            # Basic syntax check (balanced brackets, etc.)
-            try:
-                self._check_expression_syntax(expr)
-            except ValueError as e:
-                result.add_error(
-                    self.E_INVALID_EXPR,
-                    f"Invalid expression syntax: {e}",
-                    location=location,
-                    source_line=source_line,
-                    source_column=source_col,
-                )
+            # Jinja2 AST-based validation (syntax and filter checks)
+            jinja_errors = self._jinja_validator.validate(expr)
+            for error_type, message in jinja_errors:
+                if error_type == "SYNTAX":
+                    result.add_error(
+                        self.E_INVALID_EXPR,
+                        message,
+                        location=location,
+                        source_line=source_line,
+                        source_column=source_col,
+                    )
+                elif error_type == "FILTER":
+                    result.add_error(
+                        self.E_UNKNOWN_FILTER,
+                        message,
+                        location=location,
+                        suggestion="Check spelling or use a supported filter",
+                        source_line=source_line,
+                        source_column=source_col,
+                    )
 
             # Track step references in expressions
             step_refs = re.findall(r"steps\.(\w+)", expr)
@@ -732,26 +808,6 @@ class WorkflowValidator:
                     source_line=source_line,
                     source_column=source_col,
                 )
-    
-    def _check_expression_syntax(self, expr: str) -> None:
-        """Basic expression syntax check."""
-        # Check balanced parentheses
-        stack = []
-        pairs = {"(": ")", "[": "]", "{": "}"}
-        
-        for char in expr:
-            if char in pairs:
-                stack.append(pairs[char])
-            elif char in pairs.values():
-                if not stack or stack.pop() != char:
-                    raise ValueError(f"Unbalanced bracket: {char}")
-        
-        if stack:
-            raise ValueError(f"Unclosed bracket: {stack[-1]}")
-        
-        # Check for empty expressions
-        if not expr.strip():
-            raise ValueError("Empty expression")
     
     def _validate_shell_safety(self, workflow: dict, result: ValidationResult) -> None:
         """Check for shell injection vulnerabilities in run commands.

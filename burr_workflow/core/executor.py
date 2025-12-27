@@ -39,7 +39,7 @@ from .errors import (
 
 if TYPE_CHECKING:
     from burr.core import Application
-    from ..protocols import ExecutionContext, OutputHandler, PersistenceBackend, AuditLogger
+    from ..protocols import ExecutionContext, OutputHandler, AuditLogger
 
 logger = logging.getLogger(__name__)
 
@@ -131,22 +131,35 @@ StepCallback = Callable[[str, str, Optional[dict]], None]  # step_id, status, ou
 
 class WorkflowExecutor:
     """Executes compiled Burr workflow applications.
-    
+
     The executor provides a higher-level API for running workflows with:
-    - Automatic state persistence and resume
     - Progress tracking via callbacks
     - Graceful interruption handling (Ctrl+C)
     - Timeout management at workflow and step level
     - Suspension for human input requests
-    
+    - Audit logging (FileAuditLogger)
+
+    Note:
+        For checkpoint/resume and Burr web UI tracking, configure these
+        at compile time via WorkflowCompiler.compile():
+        - db_path: SQLite database for state checkpointing
+        - enable_tracking: Enable Burr web UI at http://localhost:7241
+
     Example:
+        # Compile with persistence enabled
+        compiler = WorkflowCompiler()
+        app = compiler.compile(
+            workflow_dict,
+            db_path=Path("./workflow.db"),
+            enable_tracking=True,
+        )
+
         executor = WorkflowExecutor(
-            persistence=SQLitePersistence("./workflows.db"),
             on_progress=lambda p: print(f"Progress: {p.percent_complete}%"),
         )
-        
+
         result = await executor.run(app, inputs={"target": "example.com"})
-        
+
         if result.suspended:
             # Handle human input request
             user_input = input(result.suspension.prompt)
@@ -157,7 +170,6 @@ class WorkflowExecutor:
         self,
         exec_context: Optional["ExecutionContext"] = None,
         output_handler: Optional["OutputHandler"] = None,
-        persistence: Optional["PersistenceBackend"] = None,
         audit_logger: Optional["AuditLogger"] = None,
         on_progress: Optional[ProgressCallback] = None,
         on_step: Optional[StepCallback] = None,
@@ -169,16 +181,18 @@ class WorkflowExecutor:
         Args:
             exec_context: Execution context for shell/prompts
             output_handler: Handler for output display
-            persistence: Backend for state persistence
             audit_logger: Audit logger for execution logging
             on_progress: Callback for progress updates
             on_step: Callback for step transitions
             default_timeout: Default workflow timeout in seconds
             step_timeout: Default timeout per step in seconds
+
+        Note:
+            For checkpoint/resume and Burr web UI tracking, configure
+            db_path and enable_tracking when compiling the workflow.
         """
         self.exec_context = exec_context
         self.output_handler = output_handler
-        self.persistence = persistence
         self.audit_logger = audit_logger
         self.on_progress = on_progress
         self.on_step = on_step

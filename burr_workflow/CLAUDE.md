@@ -50,16 +50,18 @@ YAML → Parser → Validator → Compiler → Burr Application → Executor →
 
 ### Protocol-Based Integration
 
-The package is designed for standalone use OR integration with llm-assistant. Six protocols in `protocols.py` define integration points:
+The package is designed for standalone use OR integration with llm-assistant. Five protocols in `protocols.py` define integration points:
 
 | Protocol | Purpose |
 |----------|---------|
 | `ExecutionContext` | Shell execution, user prompts, logging |
 | `OutputHandler` | Progress display, step start/end callbacks |
 | `LLMClient` | AI completions (extract, decide, generate) |
-| `PersistenceBackend` | State save/restore for resume |
 | `ActionProvider` | Custom action registration |
 | `ReportBackend` | Finding storage (pentest integration) |
+| `AuditLogger` | Execution audit trail (FileAuditLogger) |
+
+**Note**: State persistence uses Burr's built-in `SQLitePersister` - see "Burr Integration Notes" below.
 
 ### Action System
 
@@ -93,6 +95,19 @@ Complete workflow creation documentation is available in `skills/workflow-creato
 - **Dangerous pattern detection**: Blocks `__class__`, `eval`, `import`, `subprocess`, etc.
 - **ChainableUndefined**: Graceful handling of missing keys (`${{ steps.missing.outputs }}` → null)
 
+#### GitHub Actions Compatible Functions
+
+The following GHA-style functions are available as filters:
+
+| Function | Usage | Description |
+|----------|-------|-------------|
+| `contains` | `${{ value \| contains('needle') }}` | Check if string/array contains value |
+| `startsWith` | `${{ value \| startsWith('prefix') }}` | Check if string starts with prefix |
+| `endsWith` | `${{ value \| endsWith('suffix') }}` | Check if string ends with suffix |
+| `format` | `${{ '{0}:{1}' \| format(host, port) }}` | String formatting with positional args |
+| `toJSON` | `${{ value \| toJSON }}` | Serialize to JSON string |
+| `fromJSON` | `${{ json_str \| fromJSON }}` | Parse JSON string |
+
 ### Shell Safety
 
 The validator includes shell injection detection (`W_SHELL_INJECTION` warning):
@@ -117,13 +132,38 @@ The compiler creates Burr `SingleStepAction` nodes via `BurrActionAdapter`:
 - Loop support via iterator nodes (`IteratorInitNode`, `IteratorCheckNode`, etc.)
 - Finally blocks via `CleanupAction` that runs on both success and failure
 
+#### Persistence & Tracking
+
+Burr's built-in persistence and tracking are available via `compile()` parameters:
+
+- **db_path**: SQLite database for state checkpointing (enables resume after interruption)
+- **enable_tracking**: Write execution data to `~/.burr/` for Burr web UI
+
+```python
+from pathlib import Path
+from burr_workflow import WorkflowCompiler, WorkflowExecutor
+
+compiler = WorkflowCompiler()
+app = compiler.compile(
+    workflow_dict,
+    db_path=Path("./workflow.db"),
+    enable_tracking=True,
+    tracking_project="my-project",
+)
+
+executor = WorkflowExecutor()
+result = await executor.run(app, inputs={"target": "example.com"})
+```
+
+View execution in Burr UI: `burr --open` (opens http://localhost:7241)
+
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `core/compiler.py` | YAML→Burr graph compilation, `CompiledStep` dataclass |
+| `core/compiler.py` | YAML→Burr graph compilation, runs validator before compile |
 | `core/executor.py` | `WorkflowExecutor`, suspension/resume, progress tracking |
-| `core/validator.py` | 7-phase validation, error codes E000-E014, warning codes W001-W008 |
+| `core/validator.py` | 7-phase validation, error codes E000-E015, warning codes W001-W008 |
 | `evaluator/context.py` | `ContextEvaluator`, secure expression evaluation |
 | `evaluator/security.py` | `PathValidator`, path traversal prevention |
 | `schemas/models.py` | Pydantic v2 models (`WorkflowDefinition`, `StepDefinition`) |
@@ -174,9 +214,12 @@ Error codes follow consistent patterns:
 - `E0xx`: Structure errors (missing fields, invalid types)
 - `E007`: Duplicate step ID
 - `E008`: Invalid reference
-- `E009`: Invalid expression syntax
+- `E009`: Invalid expression syntax (Jinja2 parse errors)
 - `E010`: Dangerous expression pattern
+- `E015`: Unknown Jinja2 filter
 - `W001-W008`: Warnings (unused steps, missing IDs, shell injection, etc.)
+
+**Note**: The compiler automatically runs the full validator before compilation, so expression syntax errors and unknown filters are caught before execution starts.
 
 ## Schema Updates
 

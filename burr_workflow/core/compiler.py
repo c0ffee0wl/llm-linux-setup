@@ -20,9 +20,13 @@ from typing import Any, Callable, Optional, Union, TYPE_CHECKING
 import asyncio
 import re
 
+from pathlib import Path
+
 from burr.core import ApplicationBuilder, default
 from burr.core.action import Action, Condition, SingleStepAction
+from burr.core.persistence import SQLitePersister
 from burr.core.state import State
+from burr.tracking import LocalTrackingClient
 
 from .errors import (
     WorkflowCompilationError,
@@ -31,6 +35,7 @@ from .errors import (
 )
 from .types import ActionResult as CoreActionResult, RESERVED_STATE_KEYS
 from .parser import WorkflowParser, SourceLocation
+from .validator import validate_workflow
 from .adapters import BurrActionAdapter
 from .guardrails import GuardrailRouter
 from ..evaluator.security import validate_step_id, SecurityError
@@ -206,6 +211,9 @@ class WorkflowCompiler:
         workflow: dict,
         initial_state: Optional[dict] = None,
         app_id: Optional[str] = None,
+        db_path: Optional[Path] = None,
+        enable_tracking: bool = False,
+        tracking_project: str = "burr_workflow",
     ) -> "Application":
         """Compile a workflow dictionary to a Burr Application.
 
@@ -213,6 +221,9 @@ class WorkflowCompiler:
             workflow: Parsed YAML workflow as dictionary
             initial_state: Initial state values (inputs, env)
             app_id: Optional application ID for tracking
+            db_path: Path to SQLite database for checkpointing (optional)
+            enable_tracking: Enable Burr web UI tracking
+            tracking_project: Project name for tracking (default: "burr_workflow")
 
         Returns:
             Burr Application ready for execution
@@ -223,8 +234,17 @@ class WorkflowCompiler:
         self._compiled_steps = []
         self._step_counter = 0
 
-        # Validate structure
-        self._validate_workflow_structure(workflow)
+        # Run full static validation before compilation
+        validation_result = validate_workflow(workflow)
+        if not validation_result.valid:
+            # Collect all error messages
+            error_msgs = [
+                f"[{e.code}] {e.message}" + (f" at {e.source_location}" if e.source_location else "")
+                for e in validation_result.errors
+            ]
+            raise WorkflowValidationError(
+                f"Workflow validation failed:\n  " + "\n  ".join(error_msgs)
+            )
 
         # Extract main job steps
         main_job = workflow.get("jobs", {}).get("main", {})
@@ -248,20 +268,14 @@ class WorkflowCompiler:
         self._add_cleanup_node(finally_steps)
 
         # Phase 3: Build Burr Application
-        return self._build_application(workflow, initial_state, app_id)
-
-    def _validate_workflow_structure(self, workflow: dict) -> None:
-        """Basic structural validation."""
-        if "name" not in workflow:
-            raise WorkflowValidationError("Workflow must have a 'name' field")
-
-        if "jobs" not in workflow:
-            raise WorkflowValidationError("Workflow must have a 'jobs' section")
-
-        if "main" not in workflow.get("jobs", {}):
-            raise WorkflowValidationError(
-                "Workflow must have a 'main' job in 'jobs' section"
-            )
+        return self._build_application(
+            workflow,
+            initial_state,
+            app_id,
+            db_path=db_path,
+            enable_tracking=enable_tracking,
+            tracking_project=tracking_project,
+        )
 
     def _generate_step_id(self, step: dict, index: int) -> str:
         """Generate a unique step ID with validation.
@@ -678,12 +692,23 @@ class WorkflowCompiler:
         workflow: dict,
         initial_state: Optional[dict],
         app_id: Optional[str],
+        db_path: Optional[Path] = None,
+        enable_tracking: bool = False,
+        tracking_project: str = "burr_workflow",
     ) -> "Application":
         """Build the final Burr Application from compiled steps.
 
         IMPORTANT: Cleanup transitions are added FIRST to ensure they take
         priority over default transitions. Burr evaluates transitions in order,
         and the first matching condition wins.
+
+        Args:
+            workflow: Workflow configuration dict
+            initial_state: Initial state values
+            app_id: Application ID for persistence/tracking
+            db_path: Path to SQLite database for checkpointing (optional)
+            enable_tracking: Enable Burr web UI tracking
+            tracking_project: Project name for tracking (default: "burr_workflow")
         """
         builder = ApplicationBuilder()
 
@@ -745,6 +770,20 @@ class WorkflowCompiler:
         if app_id:
             builder = builder.with_identifiers(app_id=app_id)
 
+        # Add persistence if db_path provided
+        if db_path:
+            persister = SQLitePersister(
+                db_path=str(db_path),
+                table_name="burr_state",
+            )
+            persister.initialize()
+            builder = builder.with_state_persister(persister)
+
+        # Add tracking if enabled (for Burr web UI)
+        if enable_tracking:
+            tracker = LocalTrackingClient(project=tracking_project)
+            builder = builder.with_tracker(tracker)
+
         return builder.build()
 
     def compile_from_yaml(
@@ -752,6 +791,9 @@ class WorkflowCompiler:
         yaml_content: str,
         initial_state: Optional[dict] = None,
         app_id: Optional[str] = None,
+        db_path: Optional[Path] = None,
+        enable_tracking: bool = False,
+        tracking_project: str = "burr_workflow",
     ) -> "Application":
         """Compile workflow from YAML string.
 
@@ -761,18 +803,31 @@ class WorkflowCompiler:
             yaml_content: YAML workflow definition
             initial_state: Initial state values
             app_id: Optional application ID
+            db_path: Path to SQLite database for checkpointing (optional)
+            enable_tracking: Enable Burr web UI tracking
+            tracking_project: Project name for tracking
 
         Returns:
             Burr Application
         """
         workflow = self.parser.parse_string(yaml_content)
-        return self.compile(workflow, initial_state, app_id)
+        return self.compile(
+            workflow,
+            initial_state,
+            app_id,
+            db_path=db_path,
+            enable_tracking=enable_tracking,
+            tracking_project=tracking_project,
+        )
 
     def compile_with_validation(
         self,
         workflow: Union[dict, str],
         initial_state: Optional[dict] = None,
         app_id: Optional[str] = None,
+        db_path: Optional[Path] = None,
+        enable_tracking: bool = False,
+        tracking_project: str = "burr_workflow",
     ) -> "Application":
         """Compile workflow with Pydantic validation.
 
@@ -780,6 +835,9 @@ class WorkflowCompiler:
             workflow: Workflow dict or YAML string
             initial_state: Initial state values
             app_id: Optional application ID
+            db_path: Path to SQLite database for checkpointing (optional)
+            enable_tracking: Enable Burr web UI tracking
+            tracking_project: Project name for tracking
 
         Returns:
             Burr Application
@@ -807,7 +865,14 @@ class WorkflowCompiler:
         except Exception as e:
             raise WorkflowValidationError(f"Schema validation failed: {e}")
 
-        return self.compile(workflow_dict, initial_state, app_id)
+        return self.compile(
+            workflow_dict,
+            initial_state,
+            app_id,
+            db_path=db_path,
+            enable_tracking=enable_tracking,
+            tracking_project=tracking_project,
+        )
 
 
 # Type import for return type hints

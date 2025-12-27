@@ -340,69 +340,6 @@ class LLMClient(Protocol):
 
 
 @runtime_checkable
-class PersistenceBackend(Protocol):
-    """Protocol for workflow state persistence.
-
-    Enables save/restore of workflow state for:
-    - Resume after interruption
-    - Crash recovery
-    - Workflow history/audit
-    """
-
-    async def save_state(
-        self,
-        workflow_id: str,
-        app_id: str,
-        state: dict[str, Any],
-        position: str,
-        sequence_id: int,
-    ) -> None:
-        """Save workflow state.
-
-        Args:
-            workflow_id: Workflow definition ID
-            app_id: Application/execution instance ID
-            state: Current state dictionary
-            position: Current node/action name
-            sequence_id: Step sequence number
-        """
-        ...
-
-    async def load_state(
-        self,
-        workflow_id: str,
-        app_id: str,
-    ) -> Optional[dict[str, Any]]:
-        """Load workflow state.
-
-        Args:
-            workflow_id: Workflow definition ID
-            app_id: Application/execution instance ID
-
-        Returns:
-            State dictionary or None if not found
-        """
-        ...
-
-    async def list_executions(
-        self,
-        workflow_id: str,
-        *,
-        limit: int = 10,
-    ) -> list[dict[str, Any]]:
-        """List recent executions of a workflow.
-
-        Args:
-            workflow_id: Workflow definition ID
-            limit: Maximum number of results
-
-        Returns:
-            List of execution metadata
-        """
-        ...
-
-
-@runtime_checkable
 class ReportBackend(Protocol):
     """Protocol for finding storage backends.
 

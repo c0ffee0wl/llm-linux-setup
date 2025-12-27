@@ -6,25 +6,28 @@ This package provides a YAML-based workflow definition language with:
 - Shell command execution with safety features
 - HTTP requests and LLM integration
 - Loop constructs with state management
-- Persistence and resume capabilities
+- Persistence and resume capabilities (via Burr's SQLitePersister)
+- Web UI tracking (via Burr's LocalTrackingClient)
 
 Usage:
-    from burr_workflow import (
-        WorkflowCompiler,
-        WorkflowExecutor,
-        SQLitePersistence,
-    )
+    from pathlib import Path
+    from burr_workflow import WorkflowCompiler, WorkflowExecutor
 
     # Load workflow
     with open("workflow.yaml") as f:
         workflow = yaml.safe_load(f)
 
-    # Compile and execute
+    # Compile with optional persistence and tracking
     compiler = WorkflowCompiler()
-    graph = compiler.compile(workflow)
+    app = compiler.compile(
+        workflow,
+        db_path=Path("./workflow.db"),  # Enable checkpointing
+        enable_tracking=True,            # Enable Burr web UI
+    )
 
-    executor = WorkflowExecutor(persistence=SQLitePersistence("./workflow.db"))
-    await executor.run(graph, inputs={"target": "example.com"})
+    # Execute
+    executor = WorkflowExecutor()
+    await executor.run(app, inputs={"target": "example.com"})
 """
 
 __version__ = "0.1.0"
@@ -71,7 +74,6 @@ from .protocols import (
     OutputHandler,
     ActionProvider,
     LLMClient,
-    PersistenceBackend,
     ReportBackend,
     AuditLogger,
 )
@@ -89,9 +91,8 @@ from .schemas import (
     JobDefinition,
 )
 
-# Persistence
+# Persistence (audit logging only - state persistence uses Burr's SQLitePersister)
 from .persistence import (
-    SQLitePersistence,
     FileAuditLogger,
 )
 
@@ -161,7 +162,6 @@ __all__ = [
     "OutputHandler",
     "ActionProvider",
     "LLMClient",
-    "PersistenceBackend",
     "ReportBackend",
     "AuditLogger",
     # Evaluator
@@ -172,7 +172,6 @@ __all__ = [
     "StepDefinition",
     "JobDefinition",
     # Persistence
-    "SQLitePersistence",
     "FileAuditLogger",
     # Actions
     "BaseAction",

@@ -589,6 +589,41 @@ The difference is:
 **Note**: This tool supports 25 European languages. For 99+ language support (including Asian
 languages), consider using the standalone whisper-ctranslate2 tool: `uv tool install whisper-ctranslate2`
 
+### Text Expansion with espanso
+
+The repository includes **espanso** text expander with LLM integration:
+
+**Components**:
+- **espanso**: Cross-platform text expander (installed via .deb, x86_64 only)
+- **espanso-llm-ask-ai**: LLM integration package for AI-powered text expansion
+
+**Installation**:
+- Only installed when a desktop environment is detected (`has_desktop_environment`)
+- Automatically selects X11 or Wayland variant based on `$XDG_SESSION_TYPE`
+- Service registered and started automatically after installation
+
+**Usage**:
+- Type `:ask:ai` in any text field to trigger the LLM prompt
+- Enter your question in the popup dialog
+- The AI response replaces the trigger text
+
+**Configuration** (`~/.config/espanso/match/packages/espanso-llm-ask-ai/.env`):
+```
+API_KEY=sk-placeholder
+BASE_URL=http://localhost:11435/v1
+MODEL=gpt-4.1-mini
+```
+
+**Requirements**:
+- llm-server running on port 11435 (`llm-server --port 11435`)
+- Python packages: `python3-openai`, `python3-dotenv`, `python-is-python3` (installed via apt)
+
+**Troubleshooting**:
+- If espanso doesn't start: `espanso service register && espanso start`
+- Check status: `espanso status`
+- View logs: `espanso log`
+- Reload config: `espanso restart`
+
 ## Common Commands
 
 ### Installation and Updates
@@ -817,6 +852,8 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 - `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/` - Shared INT8 Parakeet model (used by Handy and llm-assistant)
+- `~/.config/espanso/` - espanso text expander configuration directory
+- `~/.config/espanso/match/packages/espanso-llm-ask-ai/.env` - espanso LLM integration config (API endpoint, model)
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure
@@ -929,5 +966,18 @@ llm --ta -T 'MCP("/path/to/custom/mcp.json")' "your prompt"
 - `http` - Streamable HTTP (for remote servers like Microsoft Learn)
 - `sse` - Server-Sent Events
 - `stdio` - Local process (command + args)
+
+**Pre-installed MCP Servers**:
+
+The install script pre-configures these MCP servers in `~/.llm-tools-mcp/mcp.json`:
+
+- **arxiv**: arXiv paper search and retrieval
+  - Command: `arxiv-mcp-server` (installed via uv)
+  - Usage: Search academic papers, get abstracts, download PDFs
+
+- **chrome-devtools** (if Chrome/Chromium detected): Browser automation
+  - Command: `npx chrome-devtools-mcp@latest --browser-url=http://127.0.0.1:9222`
+  - Requires: Chrome launched with `--remote-debugging-port=9222`
+  - Tools: navigate, screenshot, click, type, evaluate JavaScript
 
 **llm-assistant Integration**: MCP tools are whitelisted via `EXTERNAL_TOOL_PLUGINS` and display nicely with custom action verbs.
