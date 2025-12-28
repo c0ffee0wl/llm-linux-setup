@@ -908,20 +908,23 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             detection_method is "marker", "regex", or "" if not detected
         """
         # Configuration
-        initial_delay = 0.3
         signal_timeout = 0.5  # Timeout for signal wait (also serves as poll fallback)
+        status_display_threshold = 0.5  # Only show status if waiting longer than this
 
-        # Initial delay for command to start
+        # Subscribe to content changes if receiver is available (check early for delay decision)
+        use_signals = (hasattr(self, 'content_change_receiver') and
+                      self.content_change_receiver and
+                      self.content_change_receiver.is_running())
+
+        # Reduced initial delay when signals available (faster response)
+        initial_delay = 0.1 if use_signals else 0.3
         time.sleep(initial_delay)
 
         content_changed = initial_content is None  # If no initial content, skip change detection
         content = ""  # Initialize to avoid NameError if loop doesn't execute
         start_time = time.time()
 
-        # Subscribe to content changes if receiver is available
-        use_signals = (hasattr(self, 'content_change_receiver') and
-                      self.content_change_receiver and
-                      self.content_change_receiver.is_running())
+        # Subscribe to content changes (use_signals already determined above)
         if use_signals:
             self.subscribe_content_changes(terminal_uuid)
             # Drain any pending signals from before subscription
@@ -929,14 +932,19 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             self._debug("Using signal-based prompt detection")
 
         try:
-            # Use Rich Status for visual feedback
-            with Status("[cyan]Waiting for output (0.3s)[/]", console=self.console, spinner="dots", spinner_style="cyan") as status:
+            # Use Rich Status for visual feedback (initially hidden until threshold)
+            with Status("", console=self.console, spinner="dots", spinner_style="cyan") as status:
                 while time.time() - start_time < max_wait:
                     try:
                         # Wait for content change signal or timeout
                         if use_signals:
                             # Block until signal or timeout
                             changed_uuid = self.content_change_receiver.get_change(timeout=signal_timeout)
+                            # Debug logging for signal monitoring
+                            if changed_uuid:
+                                self._debug(f"Signal received for terminal {changed_uuid}")
+                            else:
+                                self._debug("Timeout waiting for signal")
                             # Only process if it's our terminal (or timeout)
                             if changed_uuid and changed_uuid != terminal_uuid:
                                 continue  # Signal for different terminal, keep waiting
@@ -959,10 +967,11 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                             if detected:
                                 return (True, content, method)
 
-                        # Visual feedback with dynamic status
+                        # Visual feedback only after threshold (skip for fast commands)
                         elapsed = time.time() - start_time + initial_delay
-                        status_msg = "Waiting for output" if not content_changed else "Waiting for prompt"
-                        status.update(f"[cyan]{status_msg} ({elapsed:.1f}s)[/]")
+                        if elapsed >= status_display_threshold:
+                            status_msg = "Waiting for output" if not content_changed else "Waiting for prompt"
+                            status.update(f"[cyan]{status_msg} ({elapsed:.1f}s)[/]")
 
                     except dbus.exceptions.DBusException as e:
                         ConsoleHelper.error(self.console, f"Plugin D-Bus error during capture: {e}")

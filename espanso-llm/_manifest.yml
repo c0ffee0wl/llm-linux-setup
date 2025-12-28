@@ -1,6 +1,6 @@
 name: espanso-llm
 title: LLM Inline Assistant
-description: AI-powered text expansion (@llm, @llmc, @llma) using llm-inlineassistant daemon
+description: AI-powered text expansion (:llm:, :llmc:, :llma:) using llm-inlineassistant daemon
 version: 1.0.0
 author: c0ffee0wl
 website: https://github.com/c0ffee0wl/llm-linux-setup

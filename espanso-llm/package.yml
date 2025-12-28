@@ -1,17 +1,17 @@
 # espanso-llm - LLM Inline Assistant triggers
 #
 # Triggers:
-#   @llm  - Quick query without tools (simple mode)
-#   @llmc - Query with clipboard as context (simple mode)
-#   @llma - Full assistant with tools enabled
+#   :llm:  - Quick query without tools (simple mode)
+#   :llmc: - Query with clipboard as context (simple mode)
+#   :llma: - Full assistant with tools enabled
 #
-# All triggers use word boundary matching (word: true)
-# to avoid accidental expansion.
+# Triggers use colon syntax without word boundary matching
+# for more reliable activation.
 
 matches:
-  # @llm - Simple mode (no tools, quick answers)
-  - trigger: "@llm"
-    word: true
+  # :llm: - Simple mode (no tools, quick answers)
+  - trigger: ":llm:"
+    word: false
     replace: "{{output}}"
     vars:
       - name: form1
@@ -31,9 +31,9 @@ matches:
             - "simple"
             - "{{form1.query}}"
 
-  # @llmc - Simple mode with clipboard context
-  - trigger: "@llmc"
-    word: true
+  # :llmc: - Simple mode with clipboard context
+  - trigger: ":llmc:"
+    word: false
     replace: "{{output}}"
     vars:
       - name: clip
@@ -55,9 +55,9 @@ matches:
             - "simple"
             - "Context from clipboard:\n{{clip}}\n\nUser request: {{form1.query}}"
 
-  # @llma - Assistant mode (with tools)
-  - trigger: "@llma"
-    word: true
+  # :llma: - Assistant mode (with tools)
+  - trigger: ":llma:"
+    word: false
     replace: "{{output}}"
     vars:
       - name: form1

@@ -251,6 +251,10 @@ class PromptDetector:
         Find all prompt lines in text.
         Used by context tool to split recording into command blocks.
 
+        Uses marker-priority detection: when INPUT_START_MARKER is present in the text,
+        ONLY lines containing that marker are considered as prompts. This eliminates
+        false positives from command output that happens to match prompt regex patterns.
+
         Args:
             text_or_lines: Either a text string or a list of lines
 
@@ -262,9 +266,17 @@ class PromptDetector:
         else:
             lines = list(text_or_lines)
 
+        # Check if markers are present (for marker-priority detection)
+        full_text = '\n'.join(lines)
+        has_markers = cls.has_unicode_markers(full_text)
+
         prompt_lines = []
         for i, line in enumerate(lines):
             if not line.strip():
+                continue
+            # When markers are present, ONLY accept lines with INPUT_START_MARKER
+            # This eliminates false positives from command output
+            if has_markers and cls.INPUT_START_MARKER not in line:
                 continue
             if cls.is_prompt_line(line):
                 prompt_lines.append((i, line))

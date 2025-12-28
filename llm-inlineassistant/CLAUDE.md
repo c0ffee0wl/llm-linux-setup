@@ -7,7 +7,7 @@ llm-inlineassistant provides an inline AI assistant with daemon architecture tha
 ## Key Features
 
 - **`@ <query>` syntax**: Fast, natural way to interact with AI from command line
-- **`@llm`/`@llma` espanso triggers**: AI-powered text expansion in any application
+- **`:llm:`/`:llma:` espanso triggers**: AI-powered text expansion in any application
 - **Daemon architecture**: <100ms response time after first call
 - **Per-terminal conversations**: Each terminal maintains its own conversation
 - **Asciinema context**: Automatically includes recent command history (shell mode)
@@ -27,7 +27,7 @@ llm-inlineassistant provides an inline AI assistant with daemon architecture tha
 └─────────────────┘                      │ - per-terminal queues  │
                                          └────────────────────────┘
 ┌─────────────────┐
-│ @llm query      │ ──────────────────▶  Same daemon
+│ :llm: query     │ ──────────────────▶  Same daemon
 │ (espanso)       │
 └─────────────────┘
 ```
@@ -55,9 +55,9 @@ llm-inlineassistant provides an inline AI assistant with daemon architecture tha
 
 ### Espanso (text expansion)
 
-- `@llm` - Quick query without tools (simple mode)
-- `@llmc` - Query with clipboard as context (simple mode)
-- `@llma` - Full assistant with tools enabled
+- `:llm:` - Quick query without tools (simple mode)
+- `:llmc:` - Query with clipboard as context (simple mode)
+- `:llma:` - Full assistant with tools enabled
 
 ## File Structure
 
