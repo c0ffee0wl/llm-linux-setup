@@ -3,11 +3,14 @@
 Provides a single render() function for all templates.
 """
 
-from jinja2 import Environment, PackageLoader, select_autoescape
+from jinja2 import PackageLoader, select_autoescape
+from jinja2.sandbox import SandboxedEnvironment
 
 
-# Create Jinja2 environment with package loader
-_env = Environment(
+# Create sandboxed Jinja2 environment with package loader
+# SandboxedEnvironment prevents template code from accessing unsafe attributes
+# or calling dangerous methods, providing defense-in-depth against SSTI attacks
+_env = SandboxedEnvironment(
     loader=PackageLoader('llm_assistant', 'templates'),
     autoescape=select_autoescape(['html']),
     trim_blocks=True,
