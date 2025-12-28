@@ -19,13 +19,12 @@ Create workflows using GitHub Actions-like YAML syntax. Workflows compile to Bur
 Create new workflow files from templates:
 
 ```bash
-workflow create my-scan --template=osint      # Create from OSINT template
-workflow create recon -t scan                 # Port scanning template
-workflow create my-workflow                   # Minimal template (default)
+workflow create my-workflow                   # Create from minimal template
+workflow create my-scan -o ./workflows/       # Specify output directory
 workflow create --list-templates              # Show available templates
 ```
 
-Available templates: `minimal`, `osint`, `scan`, `credential`, `interactive`, `api`
+Currently available: `minimal` (more templates coming soon)
 
 ## Validation
 

@@ -1,22 +1,17 @@
 """Template registry and loader for workflow scaffolding.
 
 Provides pre-built workflow templates for common use cases.
-Templates support Jinja2 variable substitution for customization.
+Templates use __PLACEHOLDER__ syntax for variable substitution to avoid
+conflicts with workflow ${{ expression }} syntax.
 """
 
 import importlib.resources
 from typing import Dict, Optional
 
-from jinja2 import Template
-
 # Template registry: name -> description
+# TODO: Add more templates (osint, scan, credential, interactive, api)
 TEMPLATES: Dict[str, str] = {
     "minimal": "Bare minimum valid workflow",
-    "osint": "OSINT reconnaissance workflow",
-    "scan": "Port scanning with analysis",
-    "credential": "Credential testing with loop break",
-    "interactive": "Human-in-the-loop workflow",
-    "api": "API integration with error handling",
 }
 
 
@@ -54,9 +49,11 @@ def get_template(name: str, variables: Optional[Dict[str, str]] = None) -> str:
     files = importlib.resources.files("burr_workflow.templates")
     template_content = (files / f"{name}.yaml").read_text(encoding="utf-8")
 
-    # Render with variables if provided
+    # Simple string substitution using __PLACEHOLDER__ syntax
+    # This avoids conflicts with workflow ${{ expression }} syntax
     if variables:
-        template = Template(template_content)
-        return template.render(**variables)
+        for key, value in variables.items():
+            placeholder = f"__{key.upper()}__"
+            template_content = template_content.replace(placeholder, value)
 
     return template_content

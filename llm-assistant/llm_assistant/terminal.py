@@ -501,3 +501,342 @@ class TerminalMixin:
             return exec_term['cwd'] if exec_term else "unknown"
         except Exception:
             return "unknown"
+
+    def has_selection(self, terminal_uuid: str) -> bool:
+        """Check if terminal has text selected.
+
+        Args:
+            terminal_uuid: UUID of terminal to check
+
+        Returns:
+            True if terminal has active text selection, False otherwise
+        """
+        try:
+            return bool(self.plugin_dbus.has_selection(terminal_uuid))
+        except Exception as e:
+            self._debug(f"has_selection error: {e}")
+            return False
+
+    def get_selection(self, terminal_uuid: str) -> Optional[str]:
+        """Get currently selected text in terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Selected text as string, None if no selection or error
+        """
+        try:
+            result = str(self.plugin_dbus.get_selection(terminal_uuid))
+            if result.startswith('ERROR:'):
+                self._debug(f"get_selection error: {result}")
+                return None
+            return result if result else None
+        except Exception as e:
+            self._debug(f"get_selection error: {e}")
+            return None
+
+    def paste_from_clipboard(self, terminal_uuid: str) -> bool:
+        """Paste clipboard content to terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal to paste to
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            return bool(self.plugin_dbus.paste_from_clipboard(terminal_uuid))
+        except Exception as e:
+            self._debug(f"paste_from_clipboard error: {e}")
+            return False
+
+    def get_foreground_process(self, terminal_uuid: str) -> Optional[Dict[str, str]]:
+        """Get info about the foreground process in the terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Dict with process info (pid, name, cmdline) or None on error
+        """
+        try:
+            result = self.plugin_dbus.get_foreground_process(terminal_uuid)
+            # Convert dbus dict to regular Python dict
+            if result:
+                return {str(k): str(v) for k, v in result.items()}
+            return None
+        except Exception as e:
+            self._debug(f"get_foreground_process error: {e}")
+            return None
+
+    def scroll_by_lines(self, terminal_uuid: str, lines: int) -> bool:
+        """Scroll terminal by N lines (positive=down, negative=up).
+
+        Args:
+            terminal_uuid: UUID of terminal to scroll
+            lines: Number of lines to scroll
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            return bool(self.plugin_dbus.scroll_by_lines(terminal_uuid, lines))
+        except Exception as e:
+            self._debug(f"scroll_by_lines error: {e}")
+            return False
+
+    def get_scrollback_info(self, terminal_uuid: str) -> Optional[Dict[str, int]]:
+        """Get scrollback buffer information for a terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Dict with scrollback info (total_lines, visible_lines,
+            current_position, scrollback_lines) or None on error
+        """
+        try:
+            result = self.plugin_dbus.get_scrollback_info(terminal_uuid)
+            # Convert dbus dict to regular Python dict
+            if result:
+                return {str(k): int(v) for k, v in result.items()}
+            return None
+        except Exception as e:
+            self._debug(f"get_scrollback_info error: {e}")
+            return None
+
+    def search_in_scrollback(self, terminal_uuid: str, pattern: str,
+                             case_sensitive: bool = False) -> List[Dict]:
+        """Search for regex/text pattern in terminal scrollback.
+
+        Args:
+            terminal_uuid: UUID of terminal to search
+            pattern: Regex pattern to search for
+            case_sensitive: If True, search is case-sensitive
+
+        Returns:
+            List of dicts with match info (line_number, text, start_col, end_col)
+        """
+        try:
+            result = self.plugin_dbus.search_in_scrollback(
+                terminal_uuid, pattern, case_sensitive
+            )
+            # Convert dbus array to regular Python list
+            matches = []
+            for match in result:
+                matches.append({
+                    'line_number': int(match.get('line_number', 0)),
+                    'text': str(match.get('text', '')),
+                    'start_col': int(match.get('start_col', 0)),
+                    'end_col': int(match.get('end_col', 0))
+                })
+            return matches
+        except Exception as e:
+            self._debug(f"search_in_scrollback error: {e}")
+            return []
+
+    def subscribe_content_changes(self, terminal_uuid: str) -> bool:
+        """Subscribe to content change notifications for a terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal to watch
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            result = str(self.plugin_dbus.subscribe_content_changes(terminal_uuid))
+            if result.startswith('ERROR'):
+                self._debug(f"subscribe_content_changes error: {result}")
+                return False
+            return True
+        except Exception as e:
+            self._debug(f"subscribe_content_changes error: {e}")
+            return False
+
+    def unsubscribe_content_changes(self, terminal_uuid: str) -> bool:
+        """Unsubscribe from content change notifications for a terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal to stop watching
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            return bool(self.plugin_dbus.unsubscribe_content_changes(terminal_uuid))
+        except Exception as e:
+            self._debug(f"unsubscribe_content_changes error: {e}")
+            return False
+
+    def get_subscribed_terminals(self) -> List[str]:
+        """Get list of terminal UUIDs currently subscribed for content changes.
+
+        Returns:
+            List of terminal UUID strings
+        """
+        try:
+            result = self.plugin_dbus.get_subscribed_terminals()
+            return [str(uuid) for uuid in result]
+        except Exception as e:
+            self._debug(f"get_subscribed_terminals error: {e}")
+            return []
+
+
+# =============================================================================
+# D-Bus Signal Receiver (for event-driven monitoring)
+# =============================================================================
+
+import threading
+import queue
+
+# Plugin D-Bus constants (for signal reception)
+PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Assistant'
+PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Assistant'
+
+
+class ContentChangeReceiver:
+    """Receives D-Bus signals for terminal content changes.
+
+    Runs a GLib mainloop in a dedicated thread to receive D-Bus signals.
+    Signals are delivered to a thread-safe queue that can be consumed
+    by the main thread or asyncio event loop.
+
+    Usage:
+        receiver = ContentChangeReceiver()
+        receiver.start()
+
+        # In main loop:
+        try:
+            terminal_uuid = receiver.get_change(timeout=0.1)
+            if terminal_uuid:
+                # Handle content change
+                pass
+        except queue.Empty:
+            pass
+
+        receiver.stop()
+    """
+
+    def __init__(self, debug_callback=None):
+        """Initialize the receiver.
+
+        Args:
+            debug_callback: Optional callable for debug output
+        """
+        self._loop = None
+        self._thread = None
+        self._change_queue = queue.Queue()
+        self._running = False
+        self._debug = debug_callback or (lambda x: None)
+        self._bus = None
+
+    def start(self) -> bool:
+        """Start the GLib mainloop thread for signal reception.
+
+        Returns:
+            True if started successfully, False on error
+        """
+        if self._running:
+            return True
+
+        try:
+            # Import GLib here to avoid import errors if not available
+            from dbus.mainloop.glib import DBusGMainLoop
+            from gi.repository import GLib
+
+            def run_mainloop():
+                try:
+                    # Set up D-Bus with GLib mainloop
+                    DBusGMainLoop(set_as_default=True)
+                    self._loop = GLib.MainLoop()
+                    self._bus = dbus.SessionBus()
+
+                    # Add signal receiver for content_changed
+                    self._bus.add_signal_receiver(
+                        self._on_content_changed,
+                        signal_name='content_changed',
+                        dbus_interface=PLUGIN_BUS_NAME,
+                        path=PLUGIN_BUS_PATH
+                    )
+
+                    self._debug("ContentChangeReceiver: mainloop started")
+                    self._running = True
+                    self._loop.run()
+                except Exception as e:
+                    self._debug(f"ContentChangeReceiver: mainloop error: {e}")
+                finally:
+                    self._running = False
+
+            self._thread = threading.Thread(target=run_mainloop, daemon=True)
+            self._thread.start()
+
+            # Wait briefly for thread to start
+            time.sleep(0.1)
+            return self._running
+
+        except ImportError as e:
+            self._debug(f"ContentChangeReceiver: GLib not available: {e}")
+            return False
+        except Exception as e:
+            self._debug(f"ContentChangeReceiver: start error: {e}")
+            return False
+
+    def stop(self):
+        """Stop the GLib mainloop thread."""
+        if self._loop:
+            try:
+                self._loop.quit()
+            except Exception as e:
+                self._debug(f"ContentChangeReceiver: stop error: {e}")
+        self._running = False
+        self._loop = None
+
+    def _on_content_changed(self, terminal_uuid):
+        """D-Bus signal handler - queues terminal UUID for processing."""
+        try:
+            self._change_queue.put_nowait(str(terminal_uuid))
+        except queue.Full:
+            pass  # Drop if queue is full
+
+    def get_change(self, timeout: float = None) -> Optional[str]:
+        """Get next terminal UUID that changed.
+
+        Args:
+            timeout: Max seconds to wait (None=block forever, 0=non-blocking)
+
+        Returns:
+            Terminal UUID string, or None if no change available
+
+        Raises:
+            queue.Empty: If timeout and no change available
+        """
+        try:
+            return self._change_queue.get(block=(timeout is None or timeout > 0),
+                                          timeout=timeout)
+        except queue.Empty:
+            return None
+
+    def get_all_changes(self) -> List[str]:
+        """Get all pending terminal UUIDs that changed (non-blocking).
+
+        Returns:
+            List of terminal UUID strings
+        """
+        changes = []
+        while True:
+            try:
+                changes.append(self._change_queue.get_nowait())
+            except queue.Empty:
+                break
+        return changes
+
+    def is_running(self) -> bool:
+        """Check if the receiver is running."""
+        return self._running
+
+    @property
+    def queue(self) -> queue.Queue:
+        """Direct access to the change queue for advanced usage."""
+        return self._change_queue

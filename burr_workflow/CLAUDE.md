@@ -26,7 +26,7 @@ workflow analyze workflow.yaml --inputs '{"target": "example.com"}'
 workflow schema --pretty -o workflow-schema.json
 
 # Create new workflow from template
-workflow create my-scan --template=osint
+workflow create my-workflow
 workflow create --list-templates
 
 # Run tests
@@ -249,7 +249,7 @@ visualize(app, output_path=Path("diagram.png"), engine="graphviz")
 | `protocols.py` | Integration protocols for loose coupling |
 | `actions/registry.py` | Action type→class mapping, `get_default_registry()` |
 | `cli.py` | Unified `workflow` CLI with subcommands (validate, analyze, schema, create) |
-| `templates/` | Workflow scaffolding templates (minimal, osint, scan, credential, interactive, api) |
+| `templates/` | Workflow scaffolding templates |
 
 ## Workflow YAML Structure
 

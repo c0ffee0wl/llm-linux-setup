@@ -45,7 +45,7 @@ PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Assistant'
 PLUGIN_BUS_PATH = '/net/tenshu/Terminator2/Assistant'
 
 # Plugin version for diagnostics
-PLUGIN_VERSION = "3.3-cache-eviction"
+PLUGIN_VERSION = "4.0-signals"
 
 # Cache size limit to prevent unbounded memory growth
 CACHE_MAX_SIZE = 100
@@ -169,6 +169,10 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
         # Thread-safe lock for cache operations (D-Bus calls may come from different threads)
         self.cache_lock = threading.Lock()
+
+        # Content change signal subscriptions (Phase 4)
+        # Key: terminal_uuid, Value: dict with 'handler_id', 'ref_count', 'vte'
+        self.content_watchers = {}
 
         dbg('TerminatorAssistant initialized')
 
@@ -1071,9 +1075,542 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             self.tui_cache_time.clear()
         dbg('All caches cleared (content + TUI detection)')
 
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
+    def has_selection(self, terminal_uuid):
+        """
+        Check if terminal has text selected.
+
+        Args:
+            terminal_uuid: UUID of terminal to check
+
+        Returns:
+            True if terminal has active text selection, False otherwise
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return False
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return False
+
+            has_sel = vte.get_has_selection()
+            dbg(f'has_selection for {terminal_uuid}: {has_sel}')
+            return has_sel
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error checking selection: {e}')
+            return False
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')
+    def get_selection(self, terminal_uuid):
+        """
+        Get currently selected text in terminal.
+
+        Uses GTK clipboard to retrieve the selection text after copying
+        from VTE's selection buffer.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Selected text as string, empty string if no selection,
+            or error message starting with "ERROR:"
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return "ERROR: Terminal not found"
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return "ERROR: VTE not accessible"
+
+            # Check if there's actually a selection
+            if not vte.get_has_selection():
+                dbg(f'get_selection for {terminal_uuid}: no selection')
+                return ""
+
+            # Get the GTK clipboard
+            from gi.repository import Gtk
+            clipboard = Gtk.Clipboard.get_default(Gdk.Display.get_default())
+            if not clipboard:
+                err(f'Could not access clipboard')
+                return "ERROR: Clipboard not accessible"
+
+            # Save current clipboard content to restore later
+            original_text = clipboard.wait_for_text()
+
+            # Copy VTE selection to clipboard
+            # Use copy_clipboard() which copies the VTE selection to CLIPBOARD
+            vte.copy_clipboard()
+
+            # Wait for clipboard to update (GTK operations may be async)
+            # Give GTK a chance to process the copy
+            while Gtk.events_pending():
+                Gtk.main_iteration_do(False)
+
+            # Get the selection text from clipboard
+            selected_text = clipboard.wait_for_text()
+
+            # Restore original clipboard content if it was different
+            if original_text is not None and original_text != selected_text:
+                clipboard.set_text(original_text, -1)
+                clipboard.store()
+
+            if selected_text is None:
+                dbg(f'get_selection for {terminal_uuid}: clipboard returned None')
+                return ""
+
+            dbg(f'get_selection for {terminal_uuid}: {len(selected_text)} chars')
+            return selected_text
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error getting selection: {e}')
+            return f"ERROR: {str(e)}"
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
+    def paste_from_clipboard(self, terminal_uuid):
+        """
+        Paste clipboard content to terminal.
+
+        Uses Terminator's built-in paste_clipboard() method which handles
+        bracketed paste mode and other terminal-specific escaping.
+
+        Args:
+            terminal_uuid: UUID of terminal to paste to
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return False
+
+            # Use Terminator's built-in paste method
+            # This handles bracketed paste mode, escaping, etc.
+            terminal.paste_clipboard()
+
+            dbg(f'paste_from_clipboard: pasted to {terminal_uuid}')
+            return True
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error pasting from clipboard: {e}')
+            return False
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='a{ss}')
+    def get_foreground_process(self, terminal_uuid):
+        """
+        Get info about the foreground process in the terminal.
+
+        Uses tcgetpgrp() on the PTY file descriptor to get the foreground
+        process group, then reads process info from /proc.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Dict with process info (all string values for D-Bus compatibility):
+            - pid: Process ID as string
+            - name: Command name (from /proc/PID/comm)
+            - cmdline: Full command line (from /proc/PID/cmdline)
+            Returns empty dict on error.
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return {}
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return {}
+
+            # Get the PTY object
+            pty = vte.get_pty()
+            if not pty:
+                err(f'PTY not accessible for terminal {terminal_uuid}')
+                return {}
+
+            # Get PTY file descriptor
+            fd = pty.get_fd()
+            if fd < 0:
+                err(f'Invalid PTY fd for terminal {terminal_uuid}')
+                return {}
+
+            try:
+                # Get foreground process group ID
+                fg_pid = os.tcgetpgrp(fd)
+                if fg_pid <= 0:
+                    dbg(f'No foreground process for terminal {terminal_uuid}')
+                    return {}
+
+                # Read process info from /proc
+                result = {'pid': str(fg_pid)}
+
+                # Get command name (short name)
+                try:
+                    with open(f'/proc/{fg_pid}/comm', 'r') as f:
+                        result['name'] = f.read().strip()
+                except (OSError, IOError):
+                    result['name'] = ''
+
+                # Get full command line
+                try:
+                    with open(f'/proc/{fg_pid}/cmdline', 'r') as f:
+                        cmdline = f.read()
+                        # cmdline is null-separated, convert to space-separated
+                        result['cmdline'] = cmdline.replace('\0', ' ').strip()
+                except (OSError, IOError):
+                    result['cmdline'] = ''
+
+                dbg(f'get_foreground_process for {terminal_uuid}: {result}')
+                return result
+
+            except OSError as e:
+                # tcgetpgrp can fail if the process has terminated
+                dbg(f'tcgetpgrp failed for terminal {terminal_uuid}: {e}')
+                return {}
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error getting foreground process: {e}')
+            return {}
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='si', out_signature='b')
+    def scroll_by_lines(self, terminal_uuid, lines):
+        """
+        Scroll terminal by N lines (positive=down, negative=up).
+
+        Args:
+            terminal_uuid: UUID of terminal to scroll
+            lines: Number of lines to scroll (positive=down, negative=up)
+
+        Returns:
+            True on success, False on error
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return False
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return False
+
+            vadj = vte.get_vadjustment()
+            if not vadj:
+                err(f'Vadjustment not accessible for terminal {terminal_uuid}')
+                return False
+
+            # Calculate new position with bounds checking
+            current_pos = vadj.get_value()
+            max_pos = vadj.get_upper() - vadj.get_page_size()
+            new_pos = current_pos + lines
+
+            # Clamp to valid range
+            new_pos = max(0.0, min(new_pos, max_pos))
+
+            vadj.set_value(new_pos)
+            dbg(f'scroll_by_lines for {terminal_uuid}: {lines} lines, new_pos={new_pos}')
+            return True
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error scrolling terminal: {e}')
+            return False
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='a{si}')
+    def get_scrollback_info(self, terminal_uuid):
+        """
+        Get scrollback buffer information for a terminal.
+
+        Args:
+            terminal_uuid: UUID of terminal
+
+        Returns:
+            Dict with scrollback info (integer values for D-Bus compatibility):
+            - total_lines: Total lines in buffer (including scrollback)
+            - visible_lines: Number of visible lines (page size)
+            - current_position: Current scroll position (row number)
+            - scrollback_lines: Lines above visible viewport
+            Returns empty dict on error.
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return {}
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return {}
+
+            vadj = vte.get_vadjustment()
+            if not vadj:
+                err(f'Vadjustment not accessible for terminal {terminal_uuid}')
+                return {}
+
+            result = {
+                'total_lines': int(vadj.get_upper()),
+                'visible_lines': int(vadj.get_page_size()),
+                'current_position': int(vadj.get_value()),
+                'scrollback_lines': int(vadj.get_upper() - vadj.get_page_size())
+            }
+
+            dbg(f'get_scrollback_info for {terminal_uuid}: {result}')
+            return result
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error getting scrollback info: {e}')
+            return {}
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='ssb', out_signature='aa{sv}')
+    def search_in_scrollback(self, terminal_uuid, pattern, case_sensitive):
+        """
+        Search for regex/text pattern in terminal scrollback.
+
+        Args:
+            terminal_uuid: UUID of terminal to search
+            pattern: Regex pattern to search for
+            case_sensitive: If True, search is case-sensitive
+
+        Returns:
+            List of dicts with match info:
+            - line_number: Line number in buffer (int)
+            - text: Matching line text (string)
+            - start_col: Start column of match (int)
+            - end_col: End column of match (int)
+            Returns empty list on error or no matches.
+        """
+        import re
+
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return []
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return []
+
+            # Get full scrollback content
+            vadj = vte.get_vadjustment()
+            if not vadj:
+                return []
+
+            total_lines = int(vadj.get_upper())
+            term_width = vte.get_column_count()
+
+            # Capture full scrollback
+            vte_version = Vte.get_minor_version()
+            if vte_version >= 72:
+                result = vte.get_text_range_format(
+                    Vte.Format.TEXT,
+                    0, 0,
+                    total_lines - 1, term_width - 1
+                )
+                content = result[0] if isinstance(result, tuple) else (result or '')
+            else:
+                result = vte.get_text_range(
+                    0, 0,
+                    total_lines - 1, term_width - 1,
+                    lambda *a: True
+                )
+                content = result[0] if isinstance(result, tuple) else (result or '')
+
+            if not content:
+                return []
+
+            # Compile regex pattern
+            flags = 0 if case_sensitive else re.IGNORECASE
+            try:
+                regex = re.compile(pattern, flags)
+            except re.error as e:
+                err(f'Invalid regex pattern "{pattern}": {e}')
+                return []
+
+            # Search line by line
+            matches = []
+            lines = content.split('\n')
+            for line_num, line in enumerate(lines):
+                for match in regex.finditer(line):
+                    matches.append({
+                        'line_number': dbus.Int32(line_num),
+                        'text': line,
+                        'start_col': dbus.Int32(match.start()),
+                        'end_col': dbus.Int32(match.end())
+                    })
+
+            dbg(f'search_in_scrollback for {terminal_uuid}: found {len(matches)} matches')
+            return matches
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error searching scrollback: {e}')
+            return []
+
+    @dbus.service.signal(PLUGIN_BUS_NAME, signature='s')
+    def content_changed(self, terminal_uuid):
+        """D-Bus signal emitted when terminal content changes.
+
+        This signal is emitted whenever the VTE 'contents-changed' signal fires
+        for a subscribed terminal. Clients can listen to this to get real-time
+        notifications instead of polling.
+
+        Args:
+            terminal_uuid: UUID of the terminal that changed
+        """
+        pass  # Signal body is handled by D-Bus
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='s')
+    def subscribe_content_changes(self, terminal_uuid):
+        """
+        Register for VTE content-changed signal notifications.
+
+        Connects to the VTE's 'contents-changed' signal and emits a D-Bus signal
+        when content changes. Uses reference counting to handle multiple subscribers.
+
+        Args:
+            terminal_uuid: UUID of terminal to watch
+
+        Returns:
+            "OK" on success, or error message starting with "ERROR:"
+        """
+        try:
+            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+            if not terminal:
+                err(f'Terminal {terminal_uuid} not found')
+                return "ERROR: Terminal not found"
+
+            vte = terminal.get_vte()
+            if not vte:
+                err(f'VTE not accessible for terminal {terminal_uuid}')
+                return "ERROR: VTE not accessible"
+
+            # Check if already subscribed (ref counting)
+            if terminal_uuid in self.content_watchers:
+                self.content_watchers[terminal_uuid]['ref_count'] += 1
+                dbg(f'subscribe_content_changes: incremented ref_count for {terminal_uuid} to {self.content_watchers[terminal_uuid]["ref_count"]}')
+                return "OK"
+
+            # Connect to VTE's contents-changed signal
+            handler_id = vte.connect('contents-changed',
+                                     self._on_content_changed,
+                                     terminal_uuid)
+
+            self.content_watchers[terminal_uuid] = {
+                'handler_id': handler_id,
+                'ref_count': 1,
+                'vte': vte  # Keep reference to VTE for cleanup
+            }
+
+            dbg(f'subscribe_content_changes: subscribed to {terminal_uuid}')
+            return "OK"
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error subscribing to content changes: {e}')
+            return f"ERROR: {str(e)}"
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
+    def unsubscribe_content_changes(self, terminal_uuid):
+        """
+        Unregister from VTE content-changed signal notifications.
+
+        Uses reference counting - only disconnects when ref_count reaches 0.
+
+        Args:
+            terminal_uuid: UUID of terminal to stop watching
+
+        Returns:
+            True on success (including decremented ref count), False on error
+        """
+        try:
+            if terminal_uuid not in self.content_watchers:
+                dbg(f'unsubscribe_content_changes: {terminal_uuid} not subscribed')
+                return False
+
+            watcher = self.content_watchers[terminal_uuid]
+            watcher['ref_count'] -= 1
+
+            if watcher['ref_count'] > 0:
+                dbg(f'unsubscribe_content_changes: decremented ref_count for {terminal_uuid} to {watcher["ref_count"]}')
+                return True
+
+            # Ref count reached 0, disconnect signal
+            try:
+                vte = watcher.get('vte')
+                if vte:
+                    vte.disconnect(watcher['handler_id'])
+            except Exception as e:
+                dbg(f'Error disconnecting signal for {terminal_uuid}: {e}')
+                # Continue with cleanup even if disconnect fails
+
+            del self.content_watchers[terminal_uuid]
+            dbg(f'unsubscribe_content_changes: unsubscribed from {terminal_uuid}')
+            return True
+
+        except Exception as e:
+            err(f'TerminatorAssistant: Error unsubscribing from content changes: {e}')
+            return False
+
+    @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='as')
+    def get_subscribed_terminals(self):
+        """
+        Get list of terminal UUIDs currently subscribed for content changes.
+
+        Returns:
+            List of terminal UUID strings
+        """
+        return list(self.content_watchers.keys())
+
+    def _on_content_changed(self, vte, terminal_uuid):
+        """VTE signal handler - emits D-Bus signal when content changes.
+
+        This is called by GTK when the VTE terminal content changes.
+        It emits a D-Bus signal that clients can listen to.
+
+        Args:
+            vte: The VTE widget that changed
+            terminal_uuid: UUID of the terminal (passed via connect)
+        """
+        try:
+            # Emit D-Bus signal
+            self.content_changed(terminal_uuid)
+            dbg(f'_on_content_changed: emitted signal for {terminal_uuid}')
+        except Exception as e:
+            err(f'Error emitting content_changed signal: {e}')
+
+    def _cleanup_content_watchers(self):
+        """Clean up all content change subscriptions.
+
+        Called during unload() to ensure all VTE signal handlers are disconnected.
+        """
+        for terminal_uuid, watcher in list(self.content_watchers.items()):
+            try:
+                vte = watcher.get('vte')
+                if vte:
+                    vte.disconnect(watcher['handler_id'])
+            except Exception as e:
+                dbg(f'Error cleaning up watcher for {terminal_uuid}: {e}')
+
+        self.content_watchers.clear()
+        dbg('All content watchers cleaned up')
+
     def unload(self):
         """Clean up when plugin is unloaded"""
         self.clear_cache()
+        self._cleanup_content_watchers()
 
         # Release D-Bus service if we acquired it
         if self.bus_name:
