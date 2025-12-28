@@ -28,12 +28,13 @@ class StateSetAction(AbstractAction):
 
     @property
     def reads(self) -> list[str]:
-        return []
+        # Reads from context to resolve expressions like ${{ steps.scan.outputs.total }}
+        return ["steps", "inputs", "env"]
 
     @property
     def writes(self) -> list[str]:
-        # Dynamic - depends on variables being set
-        return []
+        # Writes resolved variables to step outputs
+        return ["steps"]
 
     async def execute(
         self,
@@ -89,11 +90,13 @@ class StateAppendAction(AbstractAction):
 
     @property
     def reads(self) -> list[str]:
-        return []
+        # Reads from context to resolve value expressions and get current list
+        return ["steps", "inputs", "env"]
 
     @property
     def writes(self) -> list[str]:
-        return []
+        # Writes appended list to step outputs
+        return ["steps"]
 
     async def execute(
         self,

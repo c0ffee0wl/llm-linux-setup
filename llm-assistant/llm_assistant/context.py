@@ -293,11 +293,15 @@ class ContextMixin:
             ConsoleHelper.error(self.console, f"Error squashing context: {e}")
 
     def _strip_context(self, prompt_text):
-        """Remove <terminal_context> and <conversation_summary> sections from prompt.
+        """Remove injected context sections from prompt for clean display.
 
-        Terminal context is ephemeral and captured fresh on each prompt.
-        Stripping it for DB storage preserves privacy; stripping it for
-        web companion shows clean user messages.
+        Strips:
+        - <terminal_context>: Ephemeral terminal captures
+        - <conversation_summary>: Squash summaries
+        - <retrieved_documents>: RAG search results
+
+        Stripping these for DB storage preserves privacy; stripping for
+        web companion shows clean user messages (debug view shows full content).
 
         Uses XML-style tags for robust parsing (less likely to appear in user content).
         """
@@ -317,6 +321,14 @@ class ContextMixin:
         # Remove conversation summary section
         result = re.sub(
             r'<conversation_summary>.*?</conversation_summary>\s*',
+            '',
+            result,
+            flags=re.DOTALL
+        )
+
+        # Remove RAG retrieved documents section
+        result = re.sub(
+            r'<retrieved_documents>.*?</retrieved_documents>\s*',
             '',
             result,
             flags=re.DOTALL

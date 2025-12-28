@@ -107,6 +107,7 @@ class WorkflowMixin:
         Registers:
         - All default burr_workflow actions (shell, http, state/*, control/*, etc.)
         - human/input: Interactive user prompts via exec_context.prompt_user()
+        - human/decide: Constrained decisions (confirm/choice) via exec_context.prompt_user()
         - report/add: Pentest finding management via ReportMixin
 
         Args:
@@ -116,13 +117,14 @@ class WorkflowMixin:
             ActionRegistry with all registered actions
         """
         from burr_workflow.actions import get_default_registry
-        from .actions import HumanInputAction, ReportAddAction
+        from .actions import HumanInputAction, HumanDecideAction, ReportAddAction
 
         # Start with default registry
         registry = get_default_registry(llm_client=llm_client)
 
-        # Register llm-assistant specific actions
+        # Register llm-assistant specific actions (override burr_workflow defaults)
         registry.register("human/input", HumanInputAction)
+        registry.register("human/decide", HumanDecideAction)
         registry.register("report/add", ReportAddAction)
 
         return registry
