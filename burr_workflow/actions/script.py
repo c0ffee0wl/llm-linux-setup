@@ -167,16 +167,51 @@ class ScriptAction(BaseAction):
         return proc.returncode or 0, out.decode("utf-8", errors="replace"), err.decode("utf-8", errors="replace")
 
     async def _run_sandboxed(self, script_path: str, env: dict, timeout: float) -> tuple[int, str, str]:
-        """Run script in bwrap sandbox (read-only root, no network, PID isolation)."""
+        """Run script in bwrap sandbox with comprehensive isolation.
+
+        Security features:
+        - Read-only filesystem (except /tmp)
+        - No network access
+        - Isolated PID, IPC, and cgroup namespaces
+        - All capabilities dropped
+        - Clean environment with only essential variables
+        """
+        uid = os.getuid()
+
         args = [
             "bwrap",
+            # Die if parent process dies - prevents orphan sandboxes
+            "--die-with-parent",
+            # Mount entire filesystem as read-only
             "--ro-bind", "/", "/",
-            "--tmpfs", "/tmp",
+            # Mount /dev and /proc for functionality
             "--dev", "/dev",
             "--proc", "/proc",
-            "--unshare-net",
+            # Writable /tmp for script output (1GB limit to prevent memory exhaustion)
+            "--size", str(1024 * 1024 * 1024),
+            "--tmpfs", "/tmp",
+            # Isolate system directories
+            "--tmpfs", "/var",
+            "--tmpfs", "/run",
+            "--dir", f"/run/user/{uid}",
+            # Isolate namespaces
             "--unshare-pid",
-            "--die-with-parent",
+            "--unshare-cgroup",
+            "--unshare-ipc",
+            "--unshare-uts",
+            "--unshare-net",
+            # Set neutral hostname
+            "--hostname", "sandbox",
+            # Drop all capabilities for maximum security
+            "--cap-drop", "ALL",
+            # Clear environment for isolation
+            "--clearenv",
+            # Set essential environment variables
+            "--setenv", "PATH", env.get("PATH", "/usr/bin:/bin:/usr/sbin:/sbin"),
+            "--setenv", "HOME", "/tmp",
+            "--setenv", "USER", env.get("USER", "sandbox"),
+            "--setenv", "PYTHONDONTWRITEBYTECODE", "1",
+            "--setenv", "PYTHONUNBUFFERED", "1",
             "--",
             self.interpreter, script_path,
         ]
