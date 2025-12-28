@@ -9,8 +9,7 @@ import shutil
 import sys
 from typing import Any, Optional, TYPE_CHECKING
 
-from .base import BaseAction
-from ..core.types import ActionResult
+from .base import BaseAction, ActionResult
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext

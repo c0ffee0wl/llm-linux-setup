@@ -32,7 +32,8 @@ from typing import Any, Coroutine, Optional, TYPE_CHECKING, Union
 from burr.core.action import SingleStepAction
 from burr.core.state import State
 
-from .types import ActionResult as CoreActionResult, RESERVED_STATE_KEYS
+from .types import RESERVED_STATE_KEYS
+from ..actions.base import ActionResult
 from .guardrails import GuardrailRouter, GuardrailAbort, GuardrailRetryExhausted
 
 if TYPE_CHECKING:
@@ -145,7 +146,7 @@ class BurrActionAdapter(SingleStepAction):
                     timeout=self.timeout,
                 )
             except asyncio.TimeoutError:
-                result = CoreActionResult(
+                result = ActionResult(
                     outcome="failure",
                     outputs={},
                     error=f"Step '{self.step_id}' timed out after {self.timeout}s",
@@ -226,7 +227,7 @@ class BurrActionAdapter(SingleStepAction):
 
                         except GuardrailAbort as e:
                             # Guardrail requested abort
-                            result = CoreActionResult(
+                            result = ActionResult(
                                 outcome="failure",
                                 outputs={},
                                 error=str(e),
@@ -236,7 +237,7 @@ class BurrActionAdapter(SingleStepAction):
 
                         except GuardrailRetryExhausted as e:
                             # Guardrail retry limit exceeded
-                            result = CoreActionResult(
+                            result = ActionResult(
                                 outcome="failure",
                                 outputs={},
                                 error=str(e),
@@ -281,7 +282,7 @@ class BurrActionAdapter(SingleStepAction):
         if last_result:
             return self._apply_result_to_state(state, last_result)
 
-        result = CoreActionResult(
+        result = ActionResult(
             outcome="failure",
             outputs={},
             error=f"Max retries ({max_attempts}) exceeded. Last error: {last_error}",
@@ -291,7 +292,7 @@ class BurrActionAdapter(SingleStepAction):
 
     def _is_retryable_error(
         self,
-        result: CoreActionResult,
+        result: ActionResult,
         retry_on: Optional[list[str]] = None,
     ) -> bool:
         """Check if error should trigger retry.
@@ -355,13 +356,25 @@ class BurrActionAdapter(SingleStepAction):
                     exec_context=self.exec_context,
                 )
 
-                # Handle if it accidentally returned a coroutine
+                # Handle if action accidentally returned a coroutine in sync context
                 if asyncio.iscoroutine(result):
-                    loop = asyncio.new_event_loop()
+                    # Check if we're already in an event loop
                     try:
-                        result = loop.run_until_complete(result)
-                    finally:
-                        loop.close()
+                        running_loop = asyncio.get_running_loop()
+                    except RuntimeError:
+                        running_loop = None
+
+                    if running_loop is not None:
+                        # Already in async context - this is a programming error
+                        result.close()  # Clean up the coroutine
+                        raise RuntimeError(
+                            f"Action {self.name} returned a coroutine in sync context "
+                            "while an event loop is running. The action should be marked "
+                            "as async or the execute() method should be synchronous."
+                        )
+
+                    # No running loop - use asyncio.run() (Python 3.7+)
+                    result = asyncio.run(result)
 
                 # Set duration if not already set by action
                 if result.duration_ms is None:
@@ -404,7 +417,7 @@ class BurrActionAdapter(SingleStepAction):
         if last_result:
             return self._apply_result_to_state(state, last_result)
 
-        result = CoreActionResult(
+        result = ActionResult(
             outcome="failure",
             outputs={},
             error=f"Max retries ({max_attempts}) exceeded. Last error: {last_error}",
@@ -413,7 +426,7 @@ class BurrActionAdapter(SingleStepAction):
         return self._apply_result_to_state(state, result)
 
     def _apply_result_to_state(
-        self, state: State, result: CoreActionResult
+        self, state: State, result: ActionResult
     ) -> tuple[dict, State]:
         """Apply ActionResult to Burr State, creating a new immutable state.
 

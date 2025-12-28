@@ -194,12 +194,6 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
     from .parse import ParseJSONAction, ParseRegexAction
     from .notify import NotifyDesktopAction, NotifyWebhookAction
     from .script import PythonScriptAction, BashScriptAction
-    from .iterator import (
-        IteratorInitAction,
-        IteratorCheckAction,
-        IteratorAdvanceAction,
-        IteratorFinalizeAction,
-    )
 
     # Shell commands
     registry.register("shell", ShellAction, aliases=["run"])
@@ -237,12 +231,6 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
     # Script execution
     registry.register("script/python", PythonScriptAction, aliases=["python"])
     registry.register("script/bash", BashScriptAction, aliases=["bash"])
-
-    # Iterator (internal, used by compiler)
-    registry.register("__iterator/init", IteratorInitAction)
-    registry.register("__iterator/check", IteratorCheckAction)
-    registry.register("__iterator/advance", IteratorAdvanceAction)
-    registry.register("__iterator/finalize", IteratorFinalizeAction)
 
 
 def get_default_registry(

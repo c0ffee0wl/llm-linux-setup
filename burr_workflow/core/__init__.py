@@ -12,12 +12,12 @@ from .errors import (
 )
 from .types import (
     StepOutcome,
-    ActionResult,
     StepResult,
     LoopContext,
     WorkflowState,
     RESERVED_STATE_KEYS,
 )
+from ..actions.base import ActionResult
 from .compiler import (
     WorkflowCompiler,
     CompiledStep,

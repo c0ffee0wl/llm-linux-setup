@@ -58,7 +58,7 @@ class WorkflowMixin:
     workflow_executor: Optional[Any] = None
     workflow_running: bool = False
     workflow_waiting_for_input: bool = False
-    
+
     # Internal state
     _workflow_ctx: dict = None
     _workflow_progress: Optional[Any] = None
@@ -66,6 +66,7 @@ class WorkflowMixin:
     _current_process: Optional[Any] = None
     _current_process_pgid: Optional[int] = None
     _original_sigint_handler: Optional[Any] = None
+    _workflow_llm_client: Optional[Any] = None  # For timeout coordination
     
     def _workflow_init(self) -> None:
         """Initialize workflow state. Call from session __init__."""
@@ -77,6 +78,28 @@ class WorkflowMixin:
         self._workflow_ctx = {}
         self._workflow_progress = None
         self._interrupt_requested = False
+        self._workflow_db_path = None
+
+    def _get_workflow_db_path(self, workflow_name: str) -> Path:
+        """Get the database path for workflow persistence.
+
+        Creates the workflows directory if it doesn't exist.
+
+        Args:
+            workflow_name: Name of the workflow (sanitized for filename)
+
+        Returns:
+            Path to the SQLite database for this workflow
+        """
+        # Sanitize workflow name for filename
+        import re
+        safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', workflow_name)[:50]
+
+        # Use llm-assistant config directory
+        config_dir = Path.home() / ".config" / "llm-assistant" / "workflows"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        return config_dir / f"{safe_name}.db"
 
     def _create_workflow_action_registry(self, llm_client: Optional[Any] = None) -> "ActionRegistry":
         """Create action registry with default + custom llm-assistant actions.
@@ -152,7 +175,7 @@ class WorkflowMixin:
             for warning in result.warnings:
                 self.console.print(f"[yellow]Warning: [{warning.code}] {warning.message}[/]")
             
-            # Create execution context
+            # Create execution context with session reference for actions like report/add
             exec_context = AssistantExecutionContext(
                 console=self.console,
                 execute_fn=getattr(self, 'execute_command', None),
@@ -160,29 +183,39 @@ class WorkflowMixin:
                 working_dir=os.getcwd(),
                 on_process_start=self._workflow_register_process,
                 on_process_end=self._workflow_unregister_process,
+                session=self,  # For ReportAddAction and other session-aware actions
             )
             
-            # Create LLM client
+            # Create LLM client (store for timeout coordination)
             llm_client = AssistantLLMClient(
                 model=self.model,
                 conversation=getattr(self, 'conversation', None),
             )
+            self._workflow_llm_client = llm_client
             
             # Create action registry with custom actions
             action_registry = self._create_workflow_action_registry(llm_client)
 
-            # Compile workflow
+            # Compile workflow with persistence
             compiler = WorkflowCompiler(
                 action_registry=action_registry,
                 exec_context=exec_context,
                 llm_client=llm_client,
             )
-            
-            self.workflow_app = compiler.compile(workflow_dict)
+
+            # Get workflow name for persistence
+            workflow_name = workflow_dict.get("name", workflow_path.stem)
+            self._workflow_db_path = self._get_workflow_db_path(workflow_name)
+
+            self.workflow_app = compiler.compile(
+                workflow_dict,
+                db_path=self._workflow_db_path,
+            )
             self.current_workflow = workflow_dict
             self._workflow_ctx = {
-                "name": workflow_dict.get("name", "Unknown"),
+                "name": workflow_name,
                 "steps": {},
+                "db_path": str(self._workflow_db_path),
             }
             
             # Create executor
@@ -225,15 +258,20 @@ class WorkflowMixin:
         
         self.workflow_running = True
         self._interrupt_requested = False
-        
+
         # Set up interrupt handler
         self._setup_workflow_signal_handler()
-        
+
+        # Coordinate LLM timeout with workflow timeout
+        if timeout and self._workflow_llm_client:
+            import time
+            self._workflow_llm_client.set_workflow_timeout(timeout, time.monotonic())
+
         try:
             self.console.print(
                 f"[bold]▶ Running workflow: {self._workflow_ctx.get('name', 'Unknown')}[/]"
             )
-            
+
             result = await self.workflow_executor.run(
                 self.workflow_app,
                 inputs=inputs,
@@ -277,6 +315,9 @@ class WorkflowMixin:
         finally:
             self.workflow_running = False
             self._restore_signal_handler()
+            # Clear LLM timeout coordination
+            if self._workflow_llm_client:
+                self._workflow_llm_client.clear_workflow_timeout()
     
     async def _workflow_resume(self, input_value: Any = None) -> bool:
         """Resume a suspended workflow with user input.

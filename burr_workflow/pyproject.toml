@@ -48,8 +48,7 @@ viz = [
 ]
 
 [project.scripts]
-workflow-validate = "burr_workflow.cli:workflow_validate_cmd"
-workflow-schema = "burr_workflow.cli:workflow_schema_cmd"
+workflow = "burr_workflow.cli:main"
 
 [project.urls]
 Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
@@ -58,6 +57,9 @@ Repository = "https://github.com/c0ffee0wl/llm-linux-setup"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["burr_workflow*"]
+
+[tool.setuptools.package-data]
+"burr_workflow.templates" = ["*.yaml"]
 
 [tool.ruff]
 target-version = "py310"

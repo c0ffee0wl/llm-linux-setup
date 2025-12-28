@@ -14,15 +14,28 @@ description: |
 
 Create workflows using GitHub Actions-like YAML syntax. Workflows compile to Burr state machine graphs for execution with persistence, resume, and observability.
 
-## Validation
+## Scaffolding
 
-Use the `workflow-validate` CLI to validate workflow YAML files:
+Create new workflow files from templates:
 
 ```bash
-workflow-validate workflow.yaml              # Validate with warnings
-workflow-validate workflow.yaml --strict     # Treat warnings as errors
-workflow-validate workflow.yaml -q           # Quiet mode, exit code only
-workflow-validate workflow.yaml --dry-run    # Show execution flow without running
+workflow create my-scan --template=osint      # Create from OSINT template
+workflow create recon -t scan                 # Port scanning template
+workflow create my-workflow                   # Minimal template (default)
+workflow create --list-templates              # Show available templates
+```
+
+Available templates: `minimal`, `osint`, `scan`, `credential`, `interactive`, `api`
+
+## Validation
+
+Use the `workflow` CLI to validate workflow YAML files:
+
+```bash
+workflow validate workflow.yaml              # Validate with warnings
+workflow validate workflow.yaml --strict     # Treat warnings as errors
+workflow validate workflow.yaml -q           # Quiet mode, exit code only
+workflow analyze workflow.yaml               # Show execution flow (static analysis)
 ```
 
 ## IDE Schema Validation
@@ -36,7 +49,7 @@ For autocomplete and validation in VS Code/editors with YAML support, add this c
 The current schema is available in `assets/workflow-schema.json`. To regenerate:
 
 ```bash
-workflow-schema --pretty -o assets/workflow-schema.json
+workflow schema --pretty -o assets/workflow-schema.json
 ```
 
 ## Workflow Structure

@@ -15,7 +15,7 @@ Usage in YAML:
     # Access result via ${{ steps.add_sqli_finding.outputs.finding_id }}
 """
 
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import Any, ClassVar, Optional, Tuple, TYPE_CHECKING
 
 from burr_workflow.actions.base import AbstractAction, ActionResult
 
@@ -51,6 +51,63 @@ class ReportAddAction(AbstractAction):
     """
 
     action_type: ClassVar[str] = "report/add"
+
+    @classmethod
+    def validate_requirements(cls, exec_context: "ExecutionContext") -> tuple[bool, str]:
+        """Validate that requirements are met for this action.
+
+        This can be called during workflow compilation to provide early
+        warning about missing dependencies.
+
+        Args:
+            exec_context: The execution context to validate
+
+        Returns:
+            Tuple of (is_valid, error_message)
+        """
+        if exec_context is None:
+            return False, "No execution context available"
+
+        session = cls._get_session_from_context(exec_context)
+        if session is None:
+            return False, "Cannot access session from execution context"
+
+        if not hasattr(session, "_report_add"):
+            return False, "Session does not have ReportMixin (report functionality not available)"
+
+        return True, ""
+
+    @staticmethod
+    def _get_session_from_context(exec_context: "ExecutionContext") -> Optional[Any]:
+        """Extract session reference from execution context.
+
+        Tries multiple access patterns for robustness:
+        1. Direct _session attribute
+        2. session property/attribute
+        3. Bound method introspection via _prompt_fn
+
+        Args:
+            exec_context: Execution context
+
+        Returns:
+            Session object or None if not found
+        """
+        # Try direct attribute first (preferred)
+        session = getattr(exec_context, "_session", None)
+        if session is not None:
+            return session
+
+        # Try session property
+        session = getattr(exec_context, "session", None)
+        if session is not None:
+            return session
+
+        # Fall back to bound method introspection
+        prompt_fn = getattr(exec_context, "_prompt_fn", None)
+        if prompt_fn and hasattr(prompt_fn, "__self__"):
+            return prompt_fn.__self__
+
+        return None
 
     @property
     def reads(self) -> list[str]:
@@ -93,39 +150,21 @@ class ReportAddAction(AbstractAction):
         evaluator = ContextEvaluator(context)
         note = evaluator.resolve(note) if "${{" in note else note
 
-        # Check for exec_context
-        if exec_context is None:
+        # Validate requirements using the class method
+        is_valid, error_msg = self.validate_requirements(exec_context)
+        if not is_valid:
+            error_type = "missing_context" if "context" in error_msg else \
+                         "missing_session" if "session" in error_msg else \
+                         "unsupported_operation"
             return ActionResult(
                 outputs={"success": False},
                 outcome="failure",
-                error="No execution context available",
-                error_type="missing_context",
+                error=error_msg,
+                error_type=error_type,
             )
 
-        # Get session reference from exec_context
-        session = getattr(exec_context, "_session", None)
-        if session is None:
-            # Try to get from _prompt_fn's __self__ if it's a bound method
-            prompt_fn = getattr(exec_context, "_prompt_fn", None)
-            if prompt_fn and hasattr(prompt_fn, "__self__"):
-                session = prompt_fn.__self__
-
-        if session is None:
-            return ActionResult(
-                outputs={"success": False},
-                outcome="failure",
-                error="Cannot access session for report functionality",
-                error_type="missing_session",
-            )
-
-        # Check for ReportMixin
-        if not hasattr(session, "_report_add"):
-            return ActionResult(
-                outputs={"success": False},
-                outcome="failure",
-                error="Session does not have ReportMixin (report functionality not available)",
-                error_type="unsupported_operation",
-            )
+        # Get session reference using the robust helper
+        session = self._get_session_from_context(exec_context)
 
         # Check for active project
         if not getattr(session, "findings_project", None):

@@ -13,8 +13,7 @@ import shutil
 import tempfile
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
-from .base import BaseAction
-from ..core.types import ActionResult
+from .base import BaseAction, ActionResult
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext

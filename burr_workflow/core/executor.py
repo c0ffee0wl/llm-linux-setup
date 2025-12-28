@@ -21,6 +21,7 @@ Usage:
 
 import asyncio
 import signal
+import threading
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -212,8 +213,8 @@ class WorkflowExecutor:
         if capture_timing:
             self._timing_hook = StepTimingHook()
 
-        # Execution state
-        self._interrupted = False
+        # Execution state (use threading.Event for thread-safe signal handling)
+        self._interrupted = threading.Event()
         self._current_app: Optional["Application"] = None
         self._progress: Optional[ExecutionProgress] = None
         self._suspension: Optional[SuspensionRequest] = None
@@ -375,15 +376,25 @@ class WorkflowExecutor:
             if isinstance(value, tuple):
                 return list(value)
             if isinstance(value, str):
-                # Try JSON parsing
+                # Try JSON parsing first
                 import json
                 try:
                     parsed = json.loads(value)
                     if isinstance(parsed, list):
                         return parsed
+                    elif isinstance(parsed, dict):
+                        # Valid JSON but not an array - error, don't fall through
+                        raise ValueError(
+                            f"Expected JSON array but got object. "
+                            f"Use 'object' type for JSON objects."
+                        )
+                    else:
+                        # Scalar JSON value (string, number, bool, null)
+                        # Wrap in array
+                        return [parsed]
                 except json.JSONDecodeError:
                     pass
-                # Split by comma as fallback
+                # Split by comma as fallback for plain strings
                 return [v.strip() for v in value.split(",")]
             raise ValueError(f"Cannot convert {type(value).__name__} to array")
 
@@ -431,7 +442,7 @@ class WorkflowExecutor:
             WorkflowInterruptedError: If interrupted by signal
         """
         self._current_app = app
-        self._interrupted = False
+        self._interrupted.clear()  # Reset interrupt flag for new execution
         self._suspension = None
         self._start_time = time.monotonic()
         self._execution_id = str(uuid.uuid4())[:8]  # Short ID for readability
@@ -551,9 +562,9 @@ class WorkflowExecutor:
         Returns:
             StepProgress for the executed step, or None if complete
         """
-        if self._interrupted:
+        if self._interrupted.is_set():
             return None
-        
+
         # Execute single step
         try:
             result = app.step()
@@ -615,7 +626,7 @@ class WorkflowExecutor:
             # Burr's aiterate() yields AFTER action execution completes.
             # Use the timing hook (if available) for accurate per-step timing.
             async for action, result, state in app.aiterate(inputs=inputs):
-                if self._interrupted:
+                if self._interrupted.is_set():
                     self._progress.status = ExecutionStatus.INTERRUPTED
                     break
 
@@ -677,7 +688,7 @@ class WorkflowExecutor:
                     break
 
             # Workflow completed
-            if not self._interrupted:
+            if not self._interrupted.is_set():
                 self._progress.status = ExecutionStatus.COMPLETED
 
             final_state = self._get_current_state(app)
@@ -800,17 +811,22 @@ class WorkflowExecutor:
             logger.warning(f"Failed to log workflow end: {e}")
 
     def _count_steps(self, app: "Application") -> int:
-        """Count total steps in the workflow."""
+        """Count total steps in the workflow.
+
+        Uses the public Application.graph property to access the ApplicationGraph,
+        which contains the actions list as List[Action].
+        """
         try:
-            # Burr exposes actions through the graph
-            if hasattr(app, '_graph') and hasattr(app._graph, '_actions'):
-                # Exclude internal nodes
+            # Use public API: app.graph returns ApplicationGraph with actions: List[Action]
+            graph = app.graph
+            if graph and hasattr(graph, 'actions'):
+                # Exclude internal nodes (prefixed with __)
                 return len([
-                    a for a in app._graph._actions
-                    if not a.startswith("__")
+                    action.name for action in graph.actions
+                    if not action.name.startswith("__")
                 ])
-        except Exception:
-            pass
+        except (AttributeError, TypeError) as e:
+            logger.debug(f"Failed to count workflow steps: {e}")
         return 0
     
     def _setup_signal_handlers(self) -> dict:
@@ -818,7 +834,7 @@ class WorkflowExecutor:
         original = {}
         
         def handle_interrupt(signum, frame):
-            self._interrupted = True
+            self._interrupted.set()
             logger.info("Workflow interruption requested")
         
         try:
@@ -840,7 +856,7 @@ class WorkflowExecutor:
     
     def interrupt(self) -> None:
         """Request workflow interruption."""
-        self._interrupted = True
+        self._interrupted.set()
         logger.info("Workflow interruption requested programmatically")
     
     @property

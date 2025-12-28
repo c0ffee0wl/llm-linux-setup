@@ -106,12 +106,21 @@ from .actions import (
     ActionRegistry,
     get_default_registry,
     register_report_actions,
+    register_llm_actions,
     ShellAction,
     HTTPAction,
     StateSetAction,
     ExitAction,
     FailAction,
     ReportAddAction,
+)
+
+# Guardrails
+from .core.guardrails import (
+    GuardrailRouter,
+    GuardrailError,
+    GuardrailAbort,
+    GuardrailRetryExhausted,
 )
 
 # Configuration
@@ -188,12 +197,18 @@ __all__ = [
     "ActionRegistry",
     "get_default_registry",
     "register_report_actions",
+    "register_llm_actions",
     "ShellAction",
     "HTTPAction",
     "StateSetAction",
     "ExitAction",
     "FailAction",
     "ReportAddAction",
+    # Guardrails
+    "GuardrailRouter",
+    "GuardrailError",
+    "GuardrailAbort",
+    "GuardrailRetryExhausted",
     # Config
     "WorkflowSettings",
     "get_settings",

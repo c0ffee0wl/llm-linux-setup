@@ -34,7 +34,7 @@ from .errors import (
     WorkflowValidationError,
     ActionNotFoundError,
 )
-from .types import ActionResult as CoreActionResult, RESERVED_STATE_KEYS
+from .types import RESERVED_STATE_KEYS
 from .parser import WorkflowParser, SourceLocation
 from .validator import validate_workflow
 from .adapters import BurrActionAdapter
@@ -118,14 +118,10 @@ class CleanupAction(SingleStepAction):
             try:
                 action = self._get_action_for_step(step)
                 if action:
-                    # Execute cleanup step (simplified - sync only for cleanup)
-                    loop = asyncio.new_event_loop()
-                    try:
-                        result = loop.run_until_complete(
-                            action.execute(step, ctx, self.exec_context)
-                        )
-                    finally:
-                        loop.close()
+                    # Execute cleanup step
+                    # Handle both sync and async contexts safely
+                    coro = action.execute(step, ctx, self.exec_context)
+                    result = self._run_coro_safely(coro)
                     if result.outcome != "success":
                         warnings.append(
                             f"Finally step {step.get('id', 'unknown')} "
@@ -141,6 +137,53 @@ class CleanupAction(SingleStepAction):
         )
 
         return {"cleanup_complete": True}, new_state
+
+    def _run_coro_safely(self, coro):
+        """Run a coroutine safely, handling nested event loop scenarios.
+
+        This method handles the case where we might already be inside an
+        async context (nested event loops) by using different strategies:
+        1. If no event loop is running, use asyncio.run() (clean lifecycle)
+        2. If an event loop IS running, use nest_asyncio if available,
+           otherwise fall back to new_event_loop() with proper cleanup
+
+        Args:
+            coro: The coroutine to execute
+
+        Returns:
+            The result of the coroutine
+        """
+        try:
+            # Check if we're already in an async context
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+
+            if loop is None:
+                # No running loop - use asyncio.run() for clean lifecycle
+                return asyncio.run(coro)
+            else:
+                # Already in async context - try nest_asyncio for proper nesting
+                try:
+                    import nest_asyncio
+                    nest_asyncio.apply()
+                    return loop.run_until_complete(coro)
+                except ImportError:
+                    # Fall back to new event loop (works but not ideal)
+                    new_loop = asyncio.new_event_loop()
+                    try:
+                        return new_loop.run_until_complete(coro)
+                    finally:
+                        new_loop.close()
+        except Exception:
+            # If all else fails, try synchronous fallback
+            # This handles truly edge cases
+            new_loop = asyncio.new_event_loop()
+            try:
+                return new_loop.run_until_complete(coro)
+            finally:
+                new_loop.close()
 
     def _get_action_for_step(self, step: dict) -> Optional["BaseAction"]:
         """Get the appropriate action for a step."""

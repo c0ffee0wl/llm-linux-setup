@@ -14,12 +14,20 @@ cd burr_workflow
 uv pip install -e ".[dev,test]"
 
 # Validate a workflow YAML file
-workflow-validate workflow.yaml
-workflow-validate workflow.yaml --strict  # treat warnings as errors
-workflow-validate workflow.yaml -q        # quiet mode, exit code only
+workflow validate workflow.yaml
+workflow validate workflow.yaml --strict  # treat warnings as errors
+workflow validate workflow.yaml -q        # quiet mode, exit code only
+
+# Analyze execution flow (static analysis)
+workflow analyze workflow.yaml
+workflow analyze workflow.yaml --inputs '{"target": "example.com"}'
 
 # Export JSON Schema for IDE validation
-workflow-schema --pretty -o workflow-schema.json
+workflow schema --pretty -o workflow-schema.json
+
+# Create new workflow from template
+workflow create my-scan --template=osint
+workflow create --list-templates
 
 # Run tests
 pytest tests/
@@ -195,17 +203,17 @@ Generate workflow diagrams via CLI with dual engine support:
 
 ```bash
 # Mermaid to stdout (default, no dependencies)
-workflow-validate workflow.yaml --visualize
-workflow-validate workflow.yaml -v
+workflow validate workflow.yaml --visualize
+workflow validate workflow.yaml -v
 
 # Mermaid to file (embeddable in README)
-workflow-validate workflow.yaml -v workflow.md
+workflow validate workflow.yaml -v workflow.md
 
 # Graphviz PNG (requires graphviz)
-workflow-validate workflow.yaml -v diagram.png --engine graphviz
+workflow validate workflow.yaml -v diagram.png --engine graphviz
 
 # SVG with transition conditions
-workflow-validate workflow.yaml -v diagram.svg -e graphviz --show-conditions
+workflow validate workflow.yaml -v diagram.svg -e graphviz --show-conditions
 ```
 
 **Engines**:
@@ -240,7 +248,8 @@ visualize(app, output_path=Path("diagram.png"), engine="graphviz")
 | `schemas/models.py` | Pydantic v2 models (`WorkflowDefinition`, `StepDefinition`) |
 | `protocols.py` | Integration protocols for loose coupling |
 | `actions/registry.py` | Action type→class mapping, `get_default_registry()` |
-| `cli.py` | `workflow-validate` and `workflow-schema` CLI entrypoints |
+| `cli.py` | Unified `workflow` CLI with subcommands (validate, analyze, schema, create) |
+| `templates/` | Workflow scaffolding templates (minimal, osint, scan, credential, interactive, api) |
 
 ## Workflow YAML Structure
 
@@ -297,7 +306,7 @@ Error codes follow consistent patterns:
 When modifying `schemas/models.py` (Pydantic models), regenerate the JSON Schema for IDE validation:
 
 ```bash
-workflow-schema --pretty -o skills/workflow-creator/assets/workflow-schema.json
+workflow schema --pretty -o skills/workflow-creator/assets/workflow-schema.json
 ```
 
 This ensures VS Code autocomplete and validation stay in sync with the actual schema.

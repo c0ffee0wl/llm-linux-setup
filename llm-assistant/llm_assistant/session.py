@@ -825,10 +825,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         )
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt with memory and KB content appended.
+        """Build system prompt with memory, KB, and workflow context appended.
 
         The base system prompt is rendered by Jinja2 at init/mode change.
-        This method appends memory and KB content for the current request.
+        This method appends memory, KB, and workflow context for the current request.
         """
         prompt = self.system_prompt
 
@@ -841,6 +841,11 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         kb_content = self._get_loaded_kb_content()
         if kb_content:
             prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
+
+        # Append workflow context if a workflow is active (from WorkflowMixin)
+        workflow_context = self._get_workflow_context()
+        if workflow_context:
+            prompt = f"{prompt}\n\n{workflow_context}"
 
         return prompt
 

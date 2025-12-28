@@ -8,8 +8,10 @@ import base64
 import os
 from typing import Any, Optional, TYPE_CHECKING
 
-from .base import BaseAction
-from ..core.types import ActionResult
+from .base import BaseAction, ActionResult
+
+# Maximum file size to read into memory (100 MB default)
+DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext
@@ -88,6 +90,16 @@ class FileReadAction(BaseAction):
         try:
             # Get file size
             file_size = os.path.getsize(resolved_path)
+
+            # Check file size limit to prevent OOM
+            max_size = step_config.get("max_size", DEFAULT_MAX_FILE_SIZE)
+            if file_size > max_size:
+                return ActionResult(
+                    outcome="failure",
+                    outputs={"path": resolved_path, "size": file_size, "max_size": max_size},
+                    error=f"File too large: {file_size} bytes (limit: {max_size} bytes)",
+                    error_type="FileSizeError",
+                )
 
             # Read file
             if encoding == "binary":

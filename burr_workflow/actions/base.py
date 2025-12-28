@@ -25,12 +25,14 @@ class ActionResult:
         error: Error message if failed
         error_type: Error classification for on_failure routing
         next_hint: Optional hint for transition routing
+        duration_ms: Execution duration in milliseconds (set by adapter if not by action)
     """
     outputs: dict[str, Any] = field(default_factory=dict)
     outcome: str = "success"
     error: Optional[str] = None
     error_type: Optional[str] = None
     next_hint: Optional[str] = None
+    duration_ms: Optional[float] = None
 
     def is_success(self) -> bool:
         """Check if action succeeded."""

@@ -1,9 +1,11 @@
 """
 Command-line interface for burr_workflow.
 
-Provides CLI commands:
-- workflow-validate: Static analysis of workflow YAML files
-- workflow-schema: Export JSON Schema for IDE validation
+Provides a unified CLI with subcommands:
+- workflow validate: Static analysis of workflow YAML files
+- workflow analyze: Show execution flow (static analysis)
+- workflow schema: Export JSON Schema for IDE validation
+- workflow create: Scaffold new workflow from template
 """
 
 import argparse
@@ -21,6 +23,7 @@ from .core.validator import (
     validate_workflow_yaml,
 )
 from .schemas.models import WorkflowDefinition
+from .templates import TEMPLATES, get_template, list_templates
 
 
 def format_message(msg, workflow_file: str = "") -> str:
@@ -204,111 +207,39 @@ def print_flow_analysis(
         print()
 
 
-def workflow_validate_cmd() -> NoReturn:
-    """CLI entrypoint for workflow-validate command.
+def _load_workflow_file(workflow_path: Path, quiet: bool = False) -> Optional[str]:
+    """Load and validate workflow file exists.
 
-    Exit codes:
-        0: Valid, no errors or warnings
-        1: Validation errors
-        2: Warnings only (without --strict)
+    Args:
+        workflow_path: Path to workflow YAML file
+        quiet: Suppress error messages
+
+    Returns:
+        File content as string, or None if error (exits with code 1)
     """
-    parser = argparse.ArgumentParser(
-        prog="workflow-validate",
-        description="Validate a burr_workflow YAML definition",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Exit codes:
-  0  Valid, no errors or warnings
-  1  Validation errors found
-  2  Warnings only (without --strict)
-
-Examples:
-  workflow-validate workflow.yaml
-  workflow-validate workflow.yaml --strict
-  workflow-validate -q workflow.yaml  # Only show exit code
-""",
-    )
-
-    parser.add_argument(
-        "workflow_file",
-        type=Path,
-        help="Path to workflow YAML file",
-    )
-
-    parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="Treat warnings as errors",
-    )
-
-    parser.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Suppress output (only return exit code)",
-    )
-
-    parser.add_argument(
-        "--dry-run",
-        action="store_true",
-        help="Show execution flow without running (static analysis)",
-    )
-
-    parser.add_argument(
-        "--inputs",
-        type=str,
-        default=None,
-        help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')',
-    )
-
-    # Visualization options
-    parser.add_argument(
-        "--visualize", "-v",
-        nargs="?",
-        const="-",  # stdout by default
-        metavar="OUTPUT",
-        help="Generate workflow diagram (default: mermaid to stdout)",
-    )
-    parser.add_argument(
-        "--engine", "-e",
-        choices=["mermaid", "graphviz"],
-        default="mermaid",
-        help="Visualization engine (default: mermaid)",
-    )
-    parser.add_argument(
-        "--format", "-f",
-        choices=["md", "png", "svg", "pdf", "dot"],
-        default="md",
-        help="Output format (default: md for mermaid, png for graphviz)",
-    )
-    parser.add_argument(
-        "--show-conditions",
-        action="store_true",
-        help="Include transition conditions in diagram",
-    )
-
-    args = parser.parse_args()
-
-    # Read workflow file
-    workflow_path: Path = args.workflow_file
-
     if not workflow_path.exists():
-        if not args.quiet:
+        if not quiet:
             print(f"Error: File not found: {workflow_path}", file=sys.stderr)
         sys.exit(1)
 
     if not workflow_path.is_file():
-        if not args.quiet:
+        if not quiet:
             print(f"Error: Not a file: {workflow_path}", file=sys.stderr)
         sys.exit(1)
 
     try:
-        yaml_content = workflow_path.read_text(encoding="utf-8")
+        return workflow_path.read_text(encoding="utf-8")
     except Exception as e:
-        if not args.quiet:
+        if not quiet:
             print(f"Error reading file: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Handle dry-run mode
+
+def cmd_validate(args: argparse.Namespace) -> NoReturn:
+    """Handle 'workflow validate' subcommand."""
+    yaml_content = _load_workflow_file(args.workflow_file, args.quiet)
+
+    # Handle dry-run/analyze mode
     if args.dry_run:
         # Parse YAML first
         try:
@@ -321,7 +252,7 @@ Examples:
         # Still validate to catch errors
         result = validate_workflow_yaml(yaml_content, strict=args.strict)
         if not result.valid:
-            print_result(result, str(workflow_path))
+            print_result(result, str(args.workflow_file))
             sys.exit(1)
 
         # Run flow analysis
@@ -353,7 +284,7 @@ Examples:
         # Validate to catch errors
         result = validate_workflow_yaml(yaml_content, strict=args.strict)
         if not result.valid:
-            print_result(result, str(workflow_path))
+            print_result(result, str(args.workflow_file))
             sys.exit(1)
 
         # Compile to get the Burr Application
@@ -397,7 +328,7 @@ Examples:
             print(f"Visualization error: {e}", file=sys.stderr)
             sys.exit(1)
 
-    # Validate
+    # Standard validation
     try:
         result = validate_workflow_yaml(yaml_content, strict=args.strict)
     except Exception as e:
@@ -407,7 +338,7 @@ Examples:
 
     # Print results
     if not args.quiet:
-        print_result(result, str(workflow_path))
+        print_result(result, str(args.workflow_file))
 
     # Determine exit code
     if not result.valid:
@@ -418,52 +349,43 @@ Examples:
         sys.exit(0)
 
 
-def workflow_schema_cmd() -> NoReturn:
-    """CLI entrypoint for workflow-schema command.
+def cmd_analyze(args: argparse.Namespace) -> NoReturn:
+    """Handle 'workflow analyze' subcommand (alias for validate --dry-run)."""
+    yaml_content = _load_workflow_file(args.workflow_file, args.quiet)
 
-    Exports the JSON Schema for workflow YAML files.
-    Can be used for IDE validation and autocomplete.
+    # Parse YAML
+    try:
+        yaml = ruamel.yaml.YAML()
+        workflow = yaml.load(yaml_content)
+    except Exception as e:
+        print(f"Error parsing YAML: {e}", file=sys.stderr)
+        sys.exit(1)
 
-    Exit codes:
-        0: Schema exported successfully
-        1: Error occurred
-    """
-    parser = argparse.ArgumentParser(
-        prog="workflow-schema",
-        description="Export JSON Schema for workflow YAML validation",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  workflow-schema                      # Print to stdout
-  workflow-schema -o schema.json       # Save to file
-  workflow-schema --pretty             # Pretty-print with indentation
+    # Validate first
+    result = validate_workflow_yaml(yaml_content, strict=False)
+    if not result.valid:
+        print_result(result, str(args.workflow_file))
+        sys.exit(1)
 
-Usage in YAML files:
-  Add this comment at the top of your workflow YAML:
-  # yaml-language-server: $schema=./workflow-schema.json
-""",
-    )
+    # Run flow analysis
+    analyzer = FlowAnalyzer(workflow)
+    flow_result = analyzer.analyze()
 
-    parser.add_argument(
-        "-o", "--output",
-        type=Path,
-        help="Output file path (default: stdout)",
-    )
+    # Parse inputs if provided
+    inputs = None
+    if args.inputs:
+        try:
+            inputs = json.loads(args.inputs)
+        except json.JSONDecodeError as e:
+            print(f"Error parsing --inputs JSON: {e}", file=sys.stderr)
+            sys.exit(1)
 
-    parser.add_argument(
-        "--pretty",
-        action="store_true",
-        help="Pretty-print with indentation",
-    )
+    print_flow_analysis(flow_result, inputs)
+    sys.exit(0)
 
-    parser.add_argument(
-        "-q", "--quiet",
-        action="store_true",
-        help="Suppress status messages",
-    )
 
-    args = parser.parse_args()
-
+def cmd_schema(args: argparse.Namespace) -> NoReturn:
+    """Handle 'workflow schema' subcommand."""
     try:
         # Generate schema from Pydantic model
         schema = WorkflowDefinition.model_json_schema()
@@ -495,10 +417,306 @@ Usage in YAML files:
         sys.exit(1)
 
 
+def cmd_create(args: argparse.Namespace) -> NoReturn:
+    """Handle 'workflow create' subcommand."""
+    # Handle --list-templates
+    if args.list_templates:
+        print("Available templates:\n")
+        for name, desc in sorted(list_templates().items()):
+            print(f"  {name:12} - {desc}")
+        print("\nUsage: workflow create <name> --template=<template>")
+        sys.exit(0)
+
+    # Validate name is provided
+    if not args.name:
+        print("Error: workflow name is required", file=sys.stderr)
+        print("Usage: workflow create <name> [--template=<template>]", file=sys.stderr)
+        sys.exit(1)
+
+    # Load template
+    try:
+        content = get_template(args.template)
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Substitute template variables
+    # Use {{ name }} instead of ${{ name }} to avoid conflict with workflow expressions
+    content = content.replace("{{ name }}", args.name)
+
+    # Determine output path
+    # Sanitize name for filename: lowercase, replace spaces with hyphens
+    filename = f"{args.name.replace(' ', '-').lower()}.yaml"
+    output_path = args.output_dir / filename
+
+    # Check if file exists
+    if output_path.exists():
+        print(f"Error: File already exists: {output_path}", file=sys.stderr)
+        print("Use a different name or delete the existing file.", file=sys.stderr)
+        sys.exit(1)
+
+    # Ensure output directory exists
+    try:
+        args.output_dir.mkdir(parents=True, exist_ok=True)
+    except Exception as e:
+        print(f"Error creating directory: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    # Write file
+    try:
+        output_path.write_text(content, encoding="utf-8")
+    except Exception as e:
+        print(f"Error writing file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+    if not args.quiet:
+        print(f"Created: {output_path}")
+        print(f"\nNext steps:")
+        print(f"  1. Edit {output_path} to customize your workflow")
+        print(f"  2. Validate: workflow validate {output_path}")
+        print(f"  3. Analyze:  workflow analyze {output_path}")
+
+    sys.exit(0)
+
+
 def main() -> NoReturn:
-    """Main entry point dispatching to subcommands."""
-    # Currently workflow-validate, but extensible for future commands
-    workflow_validate_cmd()
+    """Unified CLI entry point with subcommands."""
+    parser = argparse.ArgumentParser(
+        prog="workflow",
+        description="Workflow engine CLI for validation, analysis, and scaffolding",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Subcommands:
+  validate    Validate a workflow YAML file
+  analyze     Show execution flow (static analysis)
+  schema      Export JSON Schema for IDE validation
+  create      Create a new workflow from template
+
+Examples:
+  workflow validate my-workflow.yaml
+  workflow validate my-workflow.yaml --strict
+  workflow analyze my-workflow.yaml --inputs '{"target": "example.com"}'
+  workflow schema --pretty -o schema.json
+  workflow create my-scan --template=osint
+  workflow create --list-templates
+""",
+    )
+
+    subparsers = parser.add_subparsers(dest="command", metavar="<command>")
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # validate subcommand
+    # ─────────────────────────────────────────────────────────────────────────
+    validate_parser = subparsers.add_parser(
+        "validate",
+        help="Validate a workflow YAML file",
+        description="Validate a burr_workflow YAML definition",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Exit codes:
+  0  Valid, no errors or warnings
+  1  Validation errors found
+  2  Warnings only (without --strict)
+
+Examples:
+  workflow validate workflow.yaml
+  workflow validate workflow.yaml --strict
+  workflow validate workflow.yaml --dry-run
+  workflow validate workflow.yaml -v  # Generate mermaid diagram
+""",
+    )
+    validate_parser.add_argument(
+        "workflow_file",
+        type=Path,
+        help="Path to workflow YAML file",
+    )
+    validate_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as errors",
+    )
+    validate_parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress output (only return exit code)",
+    )
+    validate_parser.add_argument(
+        "--dry-run", "--analyze",
+        dest="dry_run",
+        action="store_true",
+        help="Show execution flow without running (static analysis)",
+    )
+    validate_parser.add_argument(
+        "--inputs",
+        type=str,
+        default=None,
+        help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')',
+    )
+    # Visualization options
+    validate_parser.add_argument(
+        "--visualize", "-v",
+        nargs="?",
+        const="-",  # stdout by default
+        metavar="OUTPUT",
+        help="Generate workflow diagram (default: mermaid to stdout)",
+    )
+    validate_parser.add_argument(
+        "--engine", "-e",
+        choices=["mermaid", "graphviz"],
+        default="mermaid",
+        help="Visualization engine (default: mermaid)",
+    )
+    validate_parser.add_argument(
+        "--format", "-f",
+        choices=["md", "png", "svg", "pdf", "dot"],
+        default="md",
+        help="Output format (default: md for mermaid, png for graphviz)",
+    )
+    validate_parser.add_argument(
+        "--show-conditions",
+        action="store_true",
+        help="Include transition conditions in diagram",
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # analyze subcommand (convenience alias for validate --dry-run)
+    # ─────────────────────────────────────────────────────────────────────────
+    analyze_parser = subparsers.add_parser(
+        "analyze",
+        help="Show execution flow (static analysis)",
+        description="Analyze workflow execution flow without running",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+This is equivalent to 'workflow validate --dry-run'.
+
+Examples:
+  workflow analyze workflow.yaml
+  workflow analyze workflow.yaml --inputs '{"target": "example.com"}'
+""",
+    )
+    analyze_parser.add_argument(
+        "workflow_file",
+        type=Path,
+        help="Path to workflow YAML file",
+    )
+    analyze_parser.add_argument(
+        "--inputs",
+        type=str,
+        default=None,
+        help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')',
+    )
+    analyze_parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress error messages",
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # schema subcommand
+    # ─────────────────────────────────────────────────────────────────────────
+    schema_parser = subparsers.add_parser(
+        "schema",
+        help="Export JSON Schema for IDE validation",
+        description="Export JSON Schema for workflow YAML validation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  workflow schema                      # Print to stdout
+  workflow schema -o schema.json       # Save to file
+  workflow schema --pretty             # Pretty-print with indentation
+
+Usage in YAML files:
+  Add this comment at the top of your workflow YAML:
+  # yaml-language-server: $schema=./workflow-schema.json
+""",
+    )
+    schema_parser.add_argument(
+        "-o", "--output",
+        type=Path,
+        help="Output file path (default: stdout)",
+    )
+    schema_parser.add_argument(
+        "--pretty",
+        action="store_true",
+        help="Pretty-print with indentation",
+    )
+    schema_parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress status messages",
+    )
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # create subcommand
+    # ─────────────────────────────────────────────────────────────────────────
+    create_parser = subparsers.add_parser(
+        "create",
+        help="Create a new workflow from template",
+        description="Scaffold a new workflow YAML file from a template",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Available templates:
+  minimal      Bare minimum valid workflow (default)
+  osint        OSINT reconnaissance workflow
+  scan         Port scanning with analysis
+  credential   Credential testing with loop break
+  interactive  Human-in-the-loop workflow
+  api          API integration with error handling
+
+Examples:
+  workflow create my-scan --template=osint
+  workflow create recon -t scan -o ./workflows/
+  workflow create --list-templates
+""",
+    )
+    create_parser.add_argument(
+        "name",
+        nargs="?",
+        help="Name for the new workflow",
+    )
+    create_parser.add_argument(
+        "-t", "--template",
+        default="minimal",
+        choices=list(TEMPLATES.keys()),
+        help="Template to use (default: minimal)",
+    )
+    create_parser.add_argument(
+        "-o", "--output-dir",
+        type=Path,
+        default=Path("."),
+        help="Output directory (default: current directory)",
+    )
+    create_parser.add_argument(
+        "--list-templates",
+        action="store_true",
+        help="List available templates and exit",
+    )
+    create_parser.add_argument(
+        "-q", "--quiet",
+        action="store_true",
+        help="Suppress status messages",
+    )
+
+    # Parse arguments
+    args = parser.parse_args()
+
+    # Handle no command
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+
+    # Dispatch to subcommand handler
+    if args.command == "validate":
+        cmd_validate(args)
+    elif args.command == "analyze":
+        cmd_analyze(args)
+    elif args.command == "schema":
+        cmd_schema(args)
+    elif args.command == "create":
+        cmd_create(args)
+    else:
+        parser.print_help()
+        sys.exit(1)
 
 
 if __name__ == "__main__":

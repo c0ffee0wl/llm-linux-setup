@@ -21,30 +21,8 @@ class StepOutcome(str, Enum):
     BREAK = "break"  # Loop exited via break_if
 
 
-@dataclass
-class ActionResult:
-    """Result returned by action execution.
-
-    This is the standardized result format that all actions
-    must return, enabling consistent state updates.
-    """
-
-    outputs: dict[str, Any]
-    outcome: StepOutcome = StepOutcome.SUCCESS
-    error: Optional[str] = None
-    error_type: Optional[str] = None
-
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for state storage."""
-        result = {
-            "outputs": self.outputs,
-            "outcome": self.outcome.value,
-        }
-        if self.error:
-            result["error"] = self.error
-        if self.error_type:
-            result["error_type"] = self.error_type
-        return result
+# ActionResult is now canonical in burr_workflow.actions.base
+# Import from there for new code
 
 
 @dataclass
