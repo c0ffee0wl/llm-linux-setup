@@ -1,1 +1,1 @@
-# Templates package for llm-shell
+# Templates package for llm-inlineassistant

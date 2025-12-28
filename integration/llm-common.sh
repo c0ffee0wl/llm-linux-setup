@@ -162,8 +162,8 @@ wut() {
 #        @ /new                            -> Start fresh conversation
 #        @ /help                           -> Show commands
 @() {
-    if ! command -v llm-shell &> /dev/null; then
-        echo "Error: llm-shell is not installed. Run install-llm-tools.sh to install." >&2
+    if ! command -v llm-inlineassistant &> /dev/null; then
+        echo "Error: llm-inlineassistant is not installed. Run install-llm-tools.sh to install." >&2
         return 1
     fi
 
@@ -184,8 +184,8 @@ wut() {
     fi
     export TERMINAL_SESSION_ID="$terminal_id"
 
-    # Pass all arguments to llm-shell
-    llm-shell "$@"
+    # Pass all arguments to llm-inlineassistant
+    llm-inlineassistant "$@"
 }
 
 # Alias for Claude Code Router

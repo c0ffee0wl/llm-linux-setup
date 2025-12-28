@@ -1,6 +1,6 @@
-"""CLI entry point for llm-shell.
+"""CLI entry point for llm-inlineassistant.
 
-Provides the main() function for the llm-shell command.
+Provides the main() function for the llm-inlineassistant command.
 """
 
 from .client import main

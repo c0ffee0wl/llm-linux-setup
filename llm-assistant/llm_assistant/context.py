@@ -5,7 +5,7 @@ This module provides context window management:
 - Context squashing (compression of old messages)
 - Context stripping (removing ephemeral terminal content)
 - Squash chain tracking for conversation continuity
-- Block-level hashing for context deduplication (shared with llm-shell)
+- Block-level hashing for context deduplication (shared with llm-inlineassistant)
 """
 
 import hashlib
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 # =============================================================================
-# Standalone Hash Functions (used by both llm-assistant and llm-shell)
+# Standalone Hash Functions (used by both llm-assistant and llm-inlineassistant)
 # =============================================================================
 
 def hash_blocks(blocks: List[str]) -> Set[str]:

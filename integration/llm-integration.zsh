@@ -2,17 +2,17 @@
 #
 # LLM Shell Integration for Zsh
 # - Ctrl+N: AI-powered command completion
-# - Ctrl+G: Apply suggested command from llm-shell
+# - Ctrl+G: Apply suggested command from llm-inlineassistant
 #
 
 # Source common configuration
 source "${0:A:h}/llm-common.sh"
 
-# Exclude @ and llm-shell commands from shell history
+# Exclude @ and llm-inlineassistant commands from shell history
 if [[ -n "$HISTORY_IGNORE" ]]; then
-    HISTORY_IGNORE="(${HISTORY_IGNORE//[()]/}|@ *|llm-shell *)"
+    HISTORY_IGNORE="(${HISTORY_IGNORE//[()]/}|@ *|llm-inlineassistant *)"
 else
-    HISTORY_IGNORE="(@ *|llm-shell *)"
+    HISTORY_IGNORE="(@ *|llm-inlineassistant *)"
 fi
 
 # Define the command completion widget
@@ -43,8 +43,8 @@ __llm_cmdcomp() {
 
 # Define the apply suggestion widget
 __llm_apply_suggest() {
-  # Apply suggested command from llm-shell's suggest_command tool
-  local suggest_file="/tmp/llm-shell-$(id -u)/suggest"
+  # Apply suggested command from llm-inlineassistant's suggest_command tool
+  local suggest_file="/tmp/llm-inlineassistant-$(id -u)/suggest"
 
   if [[ -f "$suggest_file" ]]; then
     local cmd

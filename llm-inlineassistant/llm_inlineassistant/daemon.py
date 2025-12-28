@@ -1,14 +1,14 @@
-"""llm-shell daemon - Unix socket server for fast startup.
+"""llm-inlineassistant daemon - Unix socket server for fast startup.
 
 Keeps a warm Python process with llm loaded, handling queries
 from shell clients with <100ms response time after first call.
 
 Architecture:
-- Listens on Unix socket at /tmp/llm-shell-{UID}.sock
+- Listens on Unix socket at /tmp/llm-inlineassistant-{UID}/daemon.sock
 - Maintains per-terminal conversation state
+- Per-terminal request queues for concurrent handling
 - Auto-terminates after 30 minutes idle
-- Streams responses back to client
-- Supports tools: execute_python, fetch_url, search_google
+- Streams responses as NDJSON events
 """
 
 import asyncio
@@ -18,7 +18,7 @@ import platform
 import signal
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
 
 import jinja2
 import llm
@@ -36,6 +36,16 @@ from .utils import (
     write_suggested_command,
 )
 from .context_capture import capture_shell_context, format_context_for_prompt
+
+
+# Error codes for structured error responses
+class ErrorCode:
+    EMPTY_QUERY = "EMPTY_QUERY"
+    MODEL_ERROR = "MODEL_ERROR"
+    TOOL_ERROR = "TOOL_ERROR"
+    TIMEOUT = "TIMEOUT"
+    PARSE_ERROR = "PARSE_ERROR"
+    INTERNAL = "INTERNAL"
 
 
 # External plugin tools to expose to the model
@@ -90,7 +100,7 @@ Returns:
 
 
 def get_shell_tools() -> List[Tool]:
-    """Get the tools available to llm-shell.
+    """Get the tools available to llm-inlineassistant.
 
     Returns list of Tool objects including built-in and plugin tools.
     Plugin tools that aren't installed are silently skipped.
@@ -142,8 +152,33 @@ def get_system_prompt() -> str:
     )
 
 
+def build_simple_system_prompt() -> str:
+    """Build the system prompt for simple mode with current date/time.
+
+    This matches the prompt used by espanso-llm for consistency.
+    """
+    now = datetime.now()
+    context = (
+        f"Current date: {now.strftime('%Y-%m-%d')}\n"
+        f"Current time: {now.strftime('%H:%M')}"
+    )
+
+    return (
+        "You are operating in a non-interactive mode.\n"
+        "Do NOT use introductory phrases, greetings, or opening messages.\n"
+        "You CANNOT ask the user for clarification, additional details, or preferences.\n"
+        "When given a request, make reasonable assumptions based on the context and provide a complete, helpful response immediately.\n"
+        "If a request is ambiguous, choose the most common or logical interpretation and proceed accordingly.\n"
+        "Always deliver a substantive response rather than asking questions.\n"
+        "NEVER ask the user for follow-up questions or clarifications.\n\n"
+        f"Context:\n{context}"
+    )
+
+
 # Idle timeout before daemon auto-terminates
 IDLE_TIMEOUT_MINUTES = 30
+# Worker idle timeout before cleanup (separate from daemon)
+WORKER_IDLE_MINUTES = 5
 
 
 class ConversationState:
@@ -194,7 +229,7 @@ class ConversationState:
 
 
 class ShellDaemon:
-    """Unix socket server for llm-shell."""
+    """Unix socket server for llm-inlineassistant."""
 
     def __init__(self, model_id: Optional[str] = None):
         self.socket_path = get_socket_path()
@@ -206,6 +241,11 @@ class ShellDaemon:
         self.running = True
         self.console = Console(stderr=True)
 
+        # Per-terminal request queues for concurrent handling
+        self.request_queues: Dict[str, asyncio.Queue] = {}
+        self.workers: Dict[str, asyncio.Task] = {}
+        self.worker_last_activity: Dict[str, datetime] = {}
+
     def get_conversation_state(self, terminal_id: str) -> ConversationState:
         """Get or create conversation state for terminal."""
         if terminal_id not in self.conversations:
@@ -215,63 +255,109 @@ class ShellDaemon:
         return self.conversations[terminal_id]
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        """Handle a client connection."""
+        """Handle a client connection with JSON protocol."""
         try:
-            # Read the request
+            # Read the JSON request
             data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
             if not data:
                 return
 
-            request = data.decode('utf-8').strip()
             self.last_activity = datetime.now()
 
-            # Parse request using Unit Separator (0x1f) as delimiter
-            # Format: "command\x1fterminal_id\x1fsession_log\x1fquery"
-            parts = request.split('\x1f', 3)
-            if len(parts) < 2:
-                writer.write(b"ERROR: Invalid request format\n")
-                await writer.drain()
+            # Parse JSON request
+            try:
+                request = json.loads(data.decode('utf-8').strip())
+            except json.JSONDecodeError as e:
+                await self._emit_error(writer, ErrorCode.PARSE_ERROR, f"Invalid JSON: {e}")
                 return
 
-            command = parts[0]
-            terminal_id = parts[1]
-            session_log = parts[2] if len(parts) > 2 else ""
-            query = parts[3] if len(parts) > 3 else ""
+            cmd = request.get('cmd', '')
+            tid = request.get('tid', 'unknown')
 
             # Handle commands
-            if command == "query":
-                await self.handle_query(terminal_id, query, writer, session_log)
-            elif command == "new":
-                await self.handle_new(terminal_id, writer)
-            elif command == "status":
-                await self.handle_status(terminal_id, writer)
-            elif command == "shutdown":
+            if cmd == 'query':
+                await self._queue_request(tid, request, writer)
+            elif cmd == 'new':
+                await self.handle_new(tid, writer)
+            elif cmd == 'status':
+                await self.handle_status(tid, writer)
+            elif cmd == 'shutdown':
                 await self.handle_shutdown(writer)
             else:
-                writer.write(f"ERROR: Unknown command: {command}\n".encode())
-                await writer.drain()
+                await self._emit_error(writer, ErrorCode.PARSE_ERROR, f"Unknown command: {cmd}")
 
         except asyncio.TimeoutError:
-            writer.write(b"ERROR: Request timeout\n")
-            await writer.drain()
+            await self._emit_error(writer, ErrorCode.TIMEOUT, "Request timeout")
         except Exception as e:
-            writer.write(f"ERROR: {e}\n".encode())
-            await writer.drain()
+            await self._emit_error(writer, ErrorCode.INTERNAL, str(e))
         finally:
             writer.close()
             await writer.wait_closed()
 
-    async def handle_query(self, terminal_id: str, query: str, writer: asyncio.StreamWriter, session_log: str = ""):
-        """Handle a query request with tool support."""
-        if not query.strip():
-            writer.write(b"ERROR: Empty query\n")
-            await writer.drain()
+    async def _queue_request(self, tid: str, request: dict, writer: asyncio.StreamWriter):
+        """Queue a request for the terminal's worker."""
+        # Get or create queue for this terminal
+        if tid not in self.request_queues:
+            self.request_queues[tid] = asyncio.Queue()
+            self.workers[tid] = asyncio.create_task(self._worker(tid))
+            self.worker_last_activity[tid] = datetime.now()
+
+        # Put request in queue and wait for completion
+        response_future: asyncio.Future = asyncio.get_event_loop().create_future()
+        await self.request_queues[tid].put((request, writer, response_future))
+
+        # Wait for the worker to complete processing
+        try:
+            await asyncio.wait_for(response_future, timeout=300)  # 5 min timeout
+        except asyncio.TimeoutError:
+            await self._emit_error(writer, ErrorCode.TIMEOUT, "Request processing timeout")
+
+    async def _worker(self, tid: str):
+        """Per-terminal worker that processes requests sequentially."""
+        queue = self.request_queues[tid]
+
+        try:
+            while True:
+                try:
+                    # Wait for request with timeout
+                    request, writer, future = await asyncio.wait_for(
+                        queue.get(),
+                        timeout=WORKER_IDLE_MINUTES * 60
+                    )
+                except asyncio.TimeoutError:
+                    # Worker idle timeout - clean up
+                    break
+
+                self.worker_last_activity[tid] = datetime.now()
+
+                try:
+                    await self._process_query(tid, request, writer)
+                    future.set_result(True)
+                except Exception as e:
+                    await self._emit_error(writer, ErrorCode.INTERNAL, str(e))
+                    future.set_exception(e)
+
+        finally:
+            # Clean up worker
+            del self.request_queues[tid]
+            del self.workers[tid]
+            del self.worker_last_activity[tid]
+
+    async def _process_query(self, tid: str, request: dict, writer: asyncio.StreamWriter):
+        """Process a query request with NDJSON streaming."""
+        query = request.get('q', '').strip()
+        session_log = request.get('log', '')
+        mode = request.get('mode', 'assistant')
+        custom_system_prompt = request.get('sys', '')
+
+        if not query:
+            await self._emit_error(writer, ErrorCode.EMPTY_QUERY, "Empty query")
             return
 
-        state = self.get_conversation_state(terminal_id)
+        state = self.get_conversation_state(tid)
         conversation = state.get_or_create_conversation()
 
-        # Set SESSION_LOG_FILE for context capture (each terminal has its own)
+        # Set SESSION_LOG_FILE for context capture
         if session_log:
             os.environ['SESSION_LOG_FILE'] = session_log
 
@@ -284,8 +370,16 @@ class ShellDaemon:
         else:
             full_prompt = query
 
-        # Get available tools
-        tools = get_shell_tools()
+        # Determine tools and system prompt based on mode
+        # - "assistant": Full tools, agent system prompt (default)
+        # - "simple": No tools, custom or simple system prompt
+        if mode == 'simple':
+            tools = []  # No tools in simple mode
+            system_prompt = custom_system_prompt or build_simple_system_prompt()
+        else:  # 'assistant' mode (default)
+            tools = get_shell_tools()
+            system_prompt = state.system_prompt
+
         implementations = get_tool_implementations()
 
         # Maximum tool call iterations to prevent infinite loops
@@ -293,11 +387,10 @@ class ShellDaemon:
 
         try:
             # Stream the response with system prompt and tools
-            # Only pass system prompt on first message of conversation
             if len(conversation.responses) == 0:
                 response = conversation.prompt(
                     full_prompt,
-                    system=state.system_prompt,
+                    system=system_prompt,
                     tools=tools if tools else None
                 )
             else:
@@ -306,11 +399,10 @@ class ShellDaemon:
                     tools=tools if tools else None
                 )
 
-            # Stream the response text
+            # Stream the response text as NDJSON events
             for chunk in response:
                 if chunk:
-                    writer.write(chunk.encode())
-                    await writer.drain()
+                    await self._emit(writer, {"type": "text", "content": chunk})
 
             # Check for tool calls
             tool_calls = list(response.tool_calls())
@@ -344,8 +436,7 @@ class ShellDaemon:
                 # Stream follow-up response
                 for chunk in followup_response:
                     if chunk:
-                        writer.write(chunk.encode())
-                        await writer.drain()
+                        await self._emit(writer, {"type": "text", "content": chunk})
 
                 # Check for more tool calls
                 tool_calls = list(followup_response.tool_calls())
@@ -354,12 +445,11 @@ class ShellDaemon:
                 if logs_on():
                     followup_response.log_to_db(db)
 
-            writer.write(b"\n")
-            await writer.drain()
+            # Signal completion
+            await self._emit(writer, {"type": "done"})
 
         except Exception as e:
-            writer.write(f"\nERROR: {e}\n".encode())
-            await writer.drain()
+            await self._emit_error(writer, ErrorCode.MODEL_ERROR, str(e))
 
     async def _execute_tool_call(
         self,
@@ -372,15 +462,20 @@ class ShellDaemon:
         tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
         tool_call_id = tool_call.tool_call_id
 
-        # Send tool start marker (client shows spinner)
-        writer.write(f"\x02TOOL:{tool_name}\x03".encode())
-        await writer.drain()
+        # Emit tool start event
+        await self._emit(writer, {
+            "type": "tool_start",
+            "tool": tool_name,
+            "args": tool_args
+        })
 
         # Check if we have an implementation
         if tool_name not in implementations:
-            # Send tool done marker before returning
-            writer.write(b"\x02TOOL_DONE\x03")
-            await writer.drain()
+            await self._emit(writer, {
+                "type": "tool_done",
+                "tool": tool_name,
+                "result": f"Error: Tool '{tool_name}' not available"
+            })
             return ToolResult(
                 name=tool_call.name,
                 output=f"Error: Tool '{tool_name}' not available",
@@ -399,9 +494,11 @@ class ShellDaemon:
             else:
                 output = result
 
-            # Send tool done marker
-            writer.write(b"\x02TOOL_DONE\x03")
-            await writer.drain()
+            await self._emit(writer, {
+                "type": "tool_done",
+                "tool": tool_name,
+                "result": output[:500] if len(output) > 500 else output  # Truncate for event
+            })
 
             return ToolResult(
                 name=tool_call.name,
@@ -410,22 +507,36 @@ class ShellDaemon:
             )
 
         except Exception as e:
-            # Send tool done marker even on error
-            writer.write(b"\x02TOOL_DONE\x03")
-            await writer.drain()
+            error_msg = f"Error executing {tool_name}: {e}"
+            await self._emit(writer, {
+                "type": "tool_done",
+                "tool": tool_name,
+                "result": error_msg
+            })
 
             return ToolResult(
                 name=tool_call.name,
-                output=f"Error executing {tool_name}: {e}",
+                output=error_msg,
                 tool_call_id=tool_call_id
             )
+
+    async def _emit(self, writer: asyncio.StreamWriter, event: dict):
+        """Emit a NDJSON event."""
+        line = json.dumps(event) + '\n'
+        writer.write(line.encode('utf-8'))
+        await writer.drain()
+
+    async def _emit_error(self, writer: asyncio.StreamWriter, code: str, message: str):
+        """Emit an error event and done."""
+        await self._emit(writer, {"type": "error", "code": code, "message": message})
+        await self._emit(writer, {"type": "done"})
 
     async def handle_new(self, terminal_id: str, writer: asyncio.StreamWriter):
         """Handle /new command - start fresh conversation."""
         state = self.get_conversation_state(terminal_id)
         state.reset()
-        writer.write(b"New conversation started.\n")
-        await writer.drain()
+        await self._emit(writer, {"type": "text", "content": "New conversation started."})
+        await self._emit(writer, {"type": "done"})
 
     async def handle_status(self, terminal_id: str, writer: asyncio.StreamWriter):
         """Handle status request."""
@@ -443,15 +554,16 @@ class ShellDaemon:
             "messages": len(conv.responses) if conv else 0,
             "uptime_minutes": (datetime.now() - self.last_activity).seconds // 60,
             "tools": tool_names,
+            "active_workers": len(self.workers),
         }
 
-        writer.write(json.dumps(status).encode() + b"\n")
-        await writer.drain()
+        await self._emit(writer, {"type": "text", "content": json.dumps(status, indent=2)})
+        await self._emit(writer, {"type": "done"})
 
     async def handle_shutdown(self, writer: asyncio.StreamWriter):
         """Handle shutdown request."""
-        writer.write(b"Shutting down daemon...\n")
-        await writer.drain()
+        await self._emit(writer, {"type": "text", "content": "Shutting down daemon..."})
+        await self._emit(writer, {"type": "done"})
         self.running = False
 
     async def idle_checker(self):
@@ -462,7 +574,7 @@ class ShellDaemon:
             idle_time = datetime.now() - self.last_activity
             if idle_time > timedelta(minutes=IDLE_TIMEOUT_MINUTES):
                 self.console.print(
-                    f"[dim]llm-shell daemon: idle timeout ({IDLE_TIMEOUT_MINUTES}m), shutting down[/]",
+                    f"[dim]llm-inlineassistant daemon: idle timeout ({IDLE_TIMEOUT_MINUTES}m), shutting down[/]",
                     highlight=False
                 )
                 self.running = False
@@ -474,6 +586,9 @@ class ShellDaemon:
         if self.socket_path.exists():
             self.socket_path.unlink()
 
+        # Ensure socket directory exists
+        self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
         # Start server
         self.server = await asyncio.start_unix_server(
             self.handle_client,
@@ -484,7 +599,7 @@ class ShellDaemon:
         os.chmod(self.socket_path, 0o600)
 
         self.console.print(
-            f"[dim]llm-shell daemon started (socket: {self.socket_path})[/]",
+            f"[dim]llm-inlineassistant daemon started (socket: {self.socket_path})[/]",
             highlight=False
         )
 
@@ -496,6 +611,11 @@ class ShellDaemon:
                 await asyncio.sleep(0.1)
         finally:
             idle_task.cancel()
+
+            # Cancel all workers
+            for task in self.workers.values():
+                task.cancel()
+
             self.server.close()
             await self.server.wait_closed()
 
@@ -503,14 +623,14 @@ class ShellDaemon:
             if self.socket_path.exists():
                 self.socket_path.unlink()
 
-            self.console.print("[dim]llm-shell daemon stopped[/]", highlight=False)
+            self.console.print("[dim]llm-inlineassistant daemon stopped[/]", highlight=False)
 
 
 def main():
-    """Entry point for llm-shell-daemon."""
+    """Entry point for llm-inlineassistant-daemon."""
     import argparse
 
-    parser = argparse.ArgumentParser(description="llm-shell daemon server")
+    parser = argparse.ArgumentParser(description="llm-inlineassistant daemon server")
     parser.add_argument("-m", "--model", help="Model to use")
     parser.add_argument("--foreground", "-f", action="store_true",
                         help="Run in foreground (don't daemonize)")

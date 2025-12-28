@@ -1,4 +1,4 @@
-"""Context capture for llm-shell.
+"""Context capture for llm-inlineassistant.
 
 Captures terminal context from asciinema recordings and applies
 block-level hashing for deduplication.
@@ -36,7 +36,7 @@ def _try_import_context():
     global _get_command_blocks_func
 
     # Try scripts directory (when running from source)
-    # Path: llm_shell/context_capture.py -> llm_shell -> llm-shell -> llm-linux-setup/scripts
+    # Path: llm_inlineassistant/context_capture.py -> llm_inlineassistant -> llm-inlineassistant -> llm-linux-setup/scripts
     scripts_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'scripts')
     context_script = os.path.join(scripts_dir, 'context')
     if os.path.isfile(context_script):

@@ -1447,7 +1447,7 @@ PYTHON_USER_SITE=$(python3 -m site --user-site)
 mkdir -p "$PYTHON_USER_SITE/llm_tools"
 cp "$SCRIPT_DIR/llm-assistant/llm_assistant/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
 
-# Install llm-assistant package (unconditional - llm-shell depends on it)
+# Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
 log "Installing llm-assistant package..."
 install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
 
@@ -1485,23 +1485,23 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 fi
 
-# Install llm-shell (shell-native AI assistant)
-# Works in any terminal (not just Terminator)
-log "Installing llm-shell package..."
-install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-shell"
+# Install llm-inlineassistant (inline AI assistant with daemon architecture)
+# Works in any terminal (not just Terminator) and espanso text expander
+log "Installing llm-inlineassistant package..."
+install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-inlineassistant"
 
-# Create wrapper scripts for llm-shell
-cat > "$HOME/.local/bin/llm-shell" << 'EOF'
+# Create wrapper scripts for llm-inlineassistant
+cat > "$HOME/.local/bin/llm-inlineassistant" << 'EOF'
 #!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_shell "$@"
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_inlineassistant "$@"
 EOF
-chmod +x "$HOME/.local/bin/llm-shell"
+chmod +x "$HOME/.local/bin/llm-inlineassistant"
 
-cat > "$HOME/.local/bin/llm-shell-daemon" << 'EOF'
+cat > "$HOME/.local/bin/llm-inlineassistant-daemon" << 'EOF'
 #!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_shell.daemon "$@"
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_inlineassistant.daemon "$@"
 EOF
-chmod +x "$HOME/.local/bin/llm-shell-daemon"
+chmod +x "$HOME/.local/bin/llm-inlineassistant-daemon"
 
 if has_desktop_environment; then
     # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
@@ -1579,11 +1579,7 @@ if has_desktop_environment; then
         "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
         "espanso" "x86_64"
 
-    # Install Python dependencies for espanso-llm-ask-llm (apt packages)
-    # python-is-python3 creates /usr/bin/python symlink (espanso scripts use 'python' not 'python3')
-    install_apt_packages python3-openai python3-dotenv python-is-python3
-
-    # Install espanso-llm-ask-llm package
+    # Install espanso-llm package (uses llm-inlineassistant daemon, no external dependencies)
     if command -v espanso &>/dev/null; then
         # Get packages directory (with fallback to default path)
         ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
@@ -1591,13 +1587,18 @@ if has_desktop_environment; then
         # Create packages directory if it doesn't exist
         mkdir -p "$ESPANSO_PACKAGES_DIR"
 
-        LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-llm"
-        if [ ! -d "$LLM_ASK_AI_DIR" ]; then
-            log "Installing espanso-llm-ask-llm package..."
-            git clone --depth 1 https://github.com/c0ffee0wl/espanso-llm-ask-llm.git "$LLM_ASK_AI_DIR"
-        else
-            log "espanso-llm-ask-llm already installed"
+        # Remove old espanso-llm-ask-llm if present (replaced by espanso-llm)
+        OLD_LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-llm"
+        if [ -d "$OLD_LLM_ASK_AI_DIR" ]; then
+            log "Removing old espanso-llm-ask-llm package (replaced by espanso-llm)..."
+            rm -rf "$OLD_LLM_ASK_AI_DIR"
         fi
+
+        # Copy espanso-llm package from repository
+        ESPANSO_LLM_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm"
+        log "Installing espanso-llm package..."
+        rm -rf "$ESPANSO_LLM_DIR"
+        cp -r "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
 
         # Register and start espanso service if newly installed
         if ! espanso status &>/dev/null; then
@@ -1803,7 +1804,7 @@ log "Installed tools:"
 log ""
 log "  AI Assistants:"
 log "    - llm              Simon Willison's LLM CLI tool"
-log "    - llm-shell        Shell-native AI assistant (@ syntax)"
+log "    - llm-inlineassistant  Inline AI assistant (@ syntax, espanso triggers)"
 log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
 log "    - Claude Code      Anthropic's agentic coding CLI"
 log "    - Claude Code Router  Multi-provider proxy for Claude Code"
@@ -1837,7 +1838,7 @@ log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
 log ""
 log "  Desktop Tools (if GUI detected):"
 log "    - Handy            System-wide speech-to-text input"
-log "    - espanso          Text expander with LLM integration (:llm: trigger)"
+log "    - espanso          Text expander with LLM integration (@llm, @llmc, @llma)"
 log ""
 log "Shell integration: $SCRIPT_DIR/integration/"
 log "  - llm-integration.bash (Bash)"
@@ -1846,7 +1847,7 @@ log ""
 log "Next steps:"
 log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
 log "  2. Test llm: llm 'Hello, how are you?'"
-log "  3. Test llm-shell: @ What date is it?"
+log "  3. Test llm-inlineassistant: @ What date is it?"
 log "  4. Use Ctrl+N for AI command completion, Ctrl+G to apply suggested commands"
 log "  5. Test Claude Code Router: routed-claude"
 log ""

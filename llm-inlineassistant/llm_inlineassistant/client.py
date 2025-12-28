@@ -1,20 +1,19 @@
-"""llm-shell client - Communicates with the daemon via Unix socket.
+"""llm-inlineassistant client - Communicates with the daemon via Unix socket.
 
 Handles:
 - Daemon startup if not running
-- Query sending with streaming response
+- Query sending with NDJSON streaming response
 - Slash commands (/new, /status, etc.)
 """
 
+import json
 import os
 import socket
 import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Optional
-
-import re
+from typing import Iterator, Optional, Tuple
 
 from rich.console import Console, Group
 from rich.live import Live
@@ -37,16 +36,13 @@ TOOL_DISPLAY = {
     'suggest_command': 'Preparing command',
 }
 
-# Protocol markers (STX...ETX)
-TOOL_START_PATTERN = re.compile(r'\x02TOOL:([^\x03]+)\x03')
-TOOL_DONE_MARKER = '\x02TOOL_DONE\x03'
-
-# Request field separator (Unit Separator, ASCII 31) - safe delimiter that won't appear in fields
-FIELD_SEP = '\x1f'
-
 
 # Maximum time to wait for daemon startup
 DAEMON_STARTUP_TIMEOUT = 5.0
+# Socket recv buffer size
+RECV_BUFFER_SIZE = 8192
+# Request timeout in seconds
+REQUEST_TIMEOUT = 120
 
 
 def is_daemon_running() -> bool:
@@ -70,7 +66,13 @@ def start_daemon(model: Optional[str] = None) -> bool:
 
     Returns True if daemon started successfully.
     """
-    cmd = ["llm-shell-daemon"]
+    # Try absolute path first (for espanso and GUI apps)
+    daemon_path = Path.home() / ".local" / "bin" / "llm-inlineassistant-daemon"
+    if daemon_path.exists():
+        cmd = [str(daemon_path)]
+    else:
+        cmd = ["llm-inlineassistant-daemon"]
+
     if model:
         cmd.extend(["-m", model])
 
@@ -111,71 +113,100 @@ def ensure_daemon(model: Optional[str] = None) -> bool:
     return start_daemon(model)
 
 
-def send_request(command: str, terminal_id: str, data: str = "") -> Optional[str]:
-    """Send request to daemon and return response.
+def send_json_request(request: dict) -> Iterator[dict]:
+    """Send JSON request to daemon and yield NDJSON events.
 
-    For streaming responses, yields chunks instead.
+    Args:
+        request: JSON request dict
+
+    Yields:
+        Event dicts from NDJSON response
     """
     socket_path = get_socket_path()
-    session_log = os.environ.get('SESSION_LOG_FILE', '')
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(120)  # 2 minute timeout for long responses
+        sock.settimeout(REQUEST_TIMEOUT)
         sock.connect(str(socket_path))
 
-        # Send request with session log file for context capture
-        # Uses Unit Separator (0x1f) as delimiter - safe for paths containing colons
-        request = f"{command}{FIELD_SEP}{terminal_id}{FIELD_SEP}{session_log}{FIELD_SEP}{data}"
-        sock.sendall(request.encode())
+        # Send JSON request
+        request_bytes = json.dumps(request).encode('utf-8')
+        sock.sendall(request_bytes)
         sock.shutdown(socket.SHUT_WR)
 
-        # Read response
-        response = []
+        # Parse NDJSON response
+        buffer = ""
         while True:
-            chunk = sock.recv(4096)
-            if not chunk:
+            try:
+                chunk = sock.recv(RECV_BUFFER_SIZE)
+                if not chunk:
+                    break
+                buffer += chunk.decode('utf-8')
+
+                # Process complete lines
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                        yield event
+                        if event.get('type') == 'done':
+                            sock.close()
+                            return
+                    except json.JSONDecodeError:
+                        continue
+
+            except socket.timeout:
+                yield {"type": "error", "code": "TIMEOUT", "message": "Request timed out"}
+                yield {"type": "done"}
                 break
-            response.append(chunk.decode('utf-8'))
-
-        sock.close()
-        return ''.join(response)
-
-    except socket.timeout:
-        return "ERROR: Request timed out"
-    except (socket.error, OSError) as e:
-        return f"ERROR: Socket error: {e}"
-
-
-def stream_request(command: str, terminal_id: str, data: str = ""):
-    """Send request and stream response chunks."""
-    socket_path = get_socket_path()
-    session_log = os.environ.get('SESSION_LOG_FILE', '')
-
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(120)
-        sock.connect(str(socket_path))
-
-        # Send request with session log file for context capture
-        # Uses Unit Separator (0x1f) as delimiter - safe for paths containing colons
-        request = f"{command}{FIELD_SEP}{terminal_id}{FIELD_SEP}{session_log}{FIELD_SEP}{data}"
-        sock.sendall(request.encode())
-        sock.shutdown(socket.SHUT_WR)
-
-        # Stream response
-        while True:
-            chunk = sock.recv(1024)
-            if not chunk:
-                break
-            yield chunk.decode('utf-8')
 
         sock.close()
 
     except socket.timeout:
-        yield "\nERROR: Request timed out\n"
+        yield {"type": "error", "code": "TIMEOUT", "message": "Connection timed out"}
+        yield {"type": "done"}
     except (socket.error, OSError) as e:
-        yield f"\nERROR: Socket error: {e}\n"
+        yield {"type": "error", "code": "SOCKET_ERROR", "message": str(e)}
+        yield {"type": "done"}
+
+
+def stream_request(query: str, mode: str = "assistant", system_prompt: str = "") -> Iterator[Tuple[str, str]]:
+    """Send query and yield parsed events.
+
+    Args:
+        query: Query text
+        mode: "assistant" (with tools) or "simple" (no tools)
+        system_prompt: Custom system prompt (for simple mode)
+
+    Yields:
+        Tuple of (event_type, data)
+    """
+    terminal_id = get_terminal_session_id()
+    session_log = os.environ.get('SESSION_LOG_FILE', '')
+
+    request = {
+        "cmd": "query",
+        "tid": terminal_id,
+        "log": session_log,
+        "q": query,
+        "mode": mode,
+        "sys": system_prompt,
+    }
+
+    for event in send_json_request(request):
+        event_type = event.get("type", "")
+        if event_type == "text":
+            yield ("text", event.get("content", ""))
+        elif event_type == "tool_start":
+            yield ("tool_start", event.get("tool", ""))
+        elif event_type == "tool_done":
+            yield ("tool_done", event.get("tool", ""))
+        elif event_type == "error":
+            yield ("error", event.get("message", "Unknown error"))
+        elif event_type == "done":
+            return
 
 
 def handle_slash_command(command: str, terminal_id: str) -> bool:
@@ -185,31 +216,43 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
     """
     console = Console()
 
+    request_base = {
+        "tid": terminal_id,
+    }
+
     if command in ('/new', '/reset'):
-        response = send_request("new", terminal_id)
-        console.print(f"[green]{response.strip()}[/]")
+        request = {**request_base, "cmd": "new"}
+        for event in send_json_request(request):
+            if event.get("type") == "text":
+                console.print(f"[green]{event.get('content', '')}[/]")
         return True
 
     elif command in ('/status', '/info'):
-        response = send_request("status", terminal_id)
-        try:
-            import json
-            status = json.loads(response)
-            console.print("[bold]llm-shell status:[/]")
-            console.print(f"  Model: {status.get('model', 'unknown')}")
-            console.print(f"  Conversation: {status.get('conversation_id', 'none')}")
-            console.print(f"  Messages: {status.get('messages', 0)}")
-        except json.JSONDecodeError:
-            console.print(response)
+        request = {**request_base, "cmd": "status"}
+        for event in send_json_request(request):
+            if event.get("type") == "text":
+                content = event.get('content', '')
+                try:
+                    status = json.loads(content)
+                    console.print("[bold]llm-inlineassistant status:[/]")
+                    console.print(f"  Model: {status.get('model', 'unknown')}")
+                    console.print(f"  Conversation: {status.get('conversation_id', 'none')}")
+                    console.print(f"  Messages: {status.get('messages', 0)}")
+                    console.print(f"  Tools: {len(status.get('tools', []))}")
+                    console.print(f"  Active workers: {status.get('active_workers', 0)}")
+                except json.JSONDecodeError:
+                    console.print(content)
         return True
 
     elif command == '/quit' or command == '/exit':
-        response = send_request("shutdown", terminal_id)
-        console.print(f"[dim]{response.strip()}[/]")
+        request = {**request_base, "cmd": "shutdown"}
+        for event in send_json_request(request):
+            if event.get("type") == "text":
+                console.print(f"[dim]{event.get('content', '')}[/]")
         return True
 
     elif command == '/help':
-        console.print("[bold]llm-shell commands:[/]")
+        console.print("[bold]llm-inlineassistant commands:[/]")
         console.print("  /new, /reset  - Start new conversation")
         console.print("  /status       - Show session info")
         console.print("  /quit         - Shutdown daemon")
@@ -220,7 +263,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
 
 
 def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
-    """Send a query to llm-shell daemon.
+    """Send a query to llm-inlineassistant daemon.
 
     Args:
         prompt: The user's query
@@ -235,7 +278,7 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
 
     # Ensure daemon is running
     if not ensure_daemon(model):
-        console.print("[red]ERROR: Could not start llm-shell daemon[/]")
+        console.print("[red]ERROR: Could not start llm-inlineassistant daemon[/]")
         return ""
 
     # Check for slash commands
@@ -246,28 +289,21 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
     # Send query and stream response with real-time markdown rendering
     if stream:
         accumulated_text = ""
-        active_tool = None  # Currently executing tool name
+        active_tool = None
+        error_message = None
 
         with Live(refresh_per_second=10) as live:
-            for chunk in stream_request("query", terminal_id, prompt):
-                # Check for tool start marker
-                tool_match = TOOL_START_PATTERN.search(chunk)
-                if tool_match:
-                    active_tool = tool_match.group(1)
-                    # Remove marker from chunk
-                    chunk = TOOL_START_PATTERN.sub('', chunk)
-
-                # Check for tool done marker
-                if TOOL_DONE_MARKER in chunk:
+            for event_type, data in stream_request(prompt):
+                if event_type == "text":
+                    accumulated_text += data
+                elif event_type == "tool_start":
+                    active_tool = data
+                elif event_type == "tool_done":
                     active_tool = None
-                    # Remove marker from chunk
-                    chunk = chunk.replace(TOOL_DONE_MARKER, '')
+                elif event_type == "error":
+                    error_message = data
 
-                # Add remaining text to accumulated
-                if chunk:
-                    accumulated_text += chunk
-
-                # Update display with optional spinner
+                # Update display
                 if active_tool:
                     action = TOOL_DISPLAY.get(active_tool, f'Executing {active_tool}')
                     spinner_text = Text(f"{action}...", style="cyan")
@@ -278,28 +314,34 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
                 else:
                     live.update(Markdown(accumulated_text))
 
-        # Check for error after streaming completes
-        if accumulated_text.startswith("ERROR:"):
-            console.print(accumulated_text.strip())
+        # Show error if any
+        if error_message:
+            console.print(f"[red]Error: {error_message}[/]")
 
         return accumulated_text
+
     else:
-        response_text = send_request("query", terminal_id, prompt)
-        # Render as markdown if we have content
-        if response_text and not response_text.startswith("ERROR:"):
-            console.print(Markdown(response_text))
-        else:
-            console.print(response_text)
-        return response_text
+        # Non-streaming mode: collect all text
+        accumulated_text = ""
+        for event_type, data in stream_request(prompt):
+            if event_type == "text":
+                accumulated_text += data
+            elif event_type == "error":
+                console.print(f"[red]Error: {data}[/]")
+
+        if accumulated_text:
+            console.print(Markdown(accumulated_text))
+
+        return accumulated_text
 
 
 def main():
-    """CLI entry point for llm-shell client."""
+    """CLI entry point for llm-inlineassistant client."""
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Shell-native AI assistant",
-        usage="@ <query>  or  llm-shell <query>"
+        description="Inline AI assistant",
+        usage="@ <query>  or  llm-inlineassistant <query>"
     )
     parser.add_argument("query", nargs="*", help="Query to send")
     parser.add_argument("-m", "--model", help="Model to use")
@@ -311,8 +353,8 @@ def main():
         # Interactive mode hint
         console = Console()
         console.print("[dim]Usage: @ <query>[/]")
-        console.print("[dim]       llm-shell <query>[/]")
-        console.print("[dim]       llm-shell /help[/]")
+        console.print("[dim]       llm-inlineassistant <query>[/]")
+        console.print("[dim]       llm-inlineassistant /help[/]")
         return
 
     prompt = ' '.join(args.query)

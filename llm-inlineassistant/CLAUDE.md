@@ -1,32 +1,40 @@
-# llm-shell - Shell-Native AI Assistant
+# llm-inlineassistant - Inline AI Assistant
 
 ## Overview
 
-llm-shell provides a shell-native AI assistant that works in any terminal. Unlike llm-assistant (which requires Terminator), llm-shell works in tmux, SSH sessions, Kitty, Alacritty, and any other terminal.
+llm-inlineassistant provides an inline AI assistant with daemon architecture that works in any terminal and espanso text expander. Unlike llm-assistant (which requires Terminator), llm-inlineassistant works in tmux, SSH sessions, Kitty, Alacritty, and espanso triggers in any application.
 
 ## Key Features
 
 - **`@ <query>` syntax**: Fast, natural way to interact with AI from command line
+- **`@llm`/`@llma` espanso triggers**: AI-powered text expansion in any application
 - **Daemon architecture**: <100ms response time after first call
 - **Per-terminal conversations**: Each terminal maintains its own conversation
-- **Asciinema context**: Automatically includes recent command history
+- **Asciinema context**: Automatically includes recent command history (shell mode)
 - **Block-level hashing**: Avoids resending unchanged context
 - **Streaming markdown**: Real-time Rich markdown rendering with `Live` context manager
-- **System prompt**: Simplified llm-assistant-style prompt optimized for shell workflows
-- **Tool support**: Auto-executes tools (execute_python, fetch_url, search_google)
+- **JSON/NDJSON protocol**: Clean, debuggable, extensible
+- **Concurrent handling**: Multiple terminals don't block each other
 
 ## Architecture
 
 ```
-┌─────────────────┐     Unix Socket      ┌──────────────────────┐
-│ @ query         │ ──────────────────▶  │ llm-shell-daemon     │
-│ (shell func)    │                      │ (warm Python process) │
-│                 │ ◀──────────────────  │ - llm loaded         │
-│                 │     Response stream  │ - conversations cached│
-└─────────────────┘                      └──────────────────────┘
+┌─────────────────┐     Unix Socket      ┌────────────────────────┐
+│ @ query         │ ──────────────────▶  │ llm-inlineassistant    │
+│ (shell func)    │     JSON request     │ daemon                 │
+│                 │ ◀──────────────────  │ - llm loaded           │
+│                 │     NDJSON stream    │ - conversations cached │
+└─────────────────┘                      │ - per-terminal queues  │
+                                         └────────────────────────┘
+┌─────────────────┐
+│ @llm query      │ ──────────────────▶  Same daemon
+│ (espanso)       │
+└─────────────────┘
 ```
 
 ## Usage
+
+### Shell (via @ function)
 
 ```bash
 # Simple query
@@ -45,28 +53,72 @@ llm-shell provides a shell-native AI assistant that works in any terminal. Unlik
 @ /help
 ```
 
+### Espanso (text expansion)
+
+- `@llm` - Quick query without tools (simple mode)
+- `@llmc` - Query with clipboard as context (simple mode)
+- `@llma` - Full assistant with tools enabled
+
 ## File Structure
 
 ```
-llm-shell/
-├── llm_shell/
-│   ├── __init__.py         # Package exports
-│   ├── __main__.py         # Entry: python -m llm_shell
-│   ├── cli.py              # CLI entry point
-│   ├── utils.py            # Config dir, database, terminal ID
-│   ├── context_capture.py  # Asciinema context with hashing
-│   ├── daemon.py           # Unix socket server with system prompt
-│   ├── client.py           # Shell-side socket client with streaming markdown
+llm-inlineassistant/
+├── llm_inlineassistant/
+│   ├── __init__.py           # Package exports
+│   ├── __main__.py           # Entry: python -m llm_inlineassistant
+│   ├── cli.py                # CLI entry point
+│   ├── utils.py              # Config dir, database, terminal ID
+│   ├── context_capture.py    # Asciinema context with hashing
+│   ├── daemon.py             # Unix socket server with NDJSON streaming
+│   ├── client.py             # Shell-side socket client
 │   └── templates/
 │       └── system_prompt.j2  # Jinja2 system prompt template
-└── pyproject.toml          # Depends on llm-assistant, jinja2
+└── pyproject.toml            # Depends on llm-assistant, jinja2
 ```
+
+## Protocol
+
+### Request (JSON)
+
+```json
+{"cmd": "query", "tid": "tmux:%1", "log": "/tmp/.../session.cast", "q": "what's 2+2?", "mode": "assistant", "sys": ""}
+```
+
+| Field | Required | Description |
+|-------|----------|-------------|
+| `cmd` | yes | Command: `query`, `new`, `status`, `shutdown` |
+| `tid` | yes | Terminal ID for conversation tracking |
+| `log` | no | Session log file for context capture |
+| `q` | for query | Query text |
+| `mode` | no | `"assistant"` (default, tools enabled) or `"simple"` (no tools) |
+| `sys` | no | Custom system prompt (for simple mode) |
+
+### Response (NDJSON)
+
+```json
+{"type": "text", "content": "Here's how to..."}
+{"type": "tool_start", "tool": "execute_python", "args": {"code": "..."}}
+{"type": "tool_done", "tool": "execute_python", "result": "42"}
+{"type": "text", "content": " The answer is 42."}
+{"type": "done"}
+```
+
+### Error Codes
+
+| Code | Description |
+|------|-------------|
+| `EMPTY_QUERY` | Query text is empty |
+| `MODEL_ERROR` | LLM API error |
+| `TOOL_ERROR` | Tool execution failed |
+| `TIMEOUT` | Request timed out |
+| `PARSE_ERROR` | Invalid JSON request |
+| `INTERNAL` | Unexpected server error |
 
 ## Database
 
-llm-shell shares config directory with llm-assistant but uses separate files:
-- Database: `~/.config/llm-assistant/logs-shell.db`
-- Session tracking: `~/.config/llm-assistant/shell-sessions/`
+llm-inlineassistant shares config directory with llm-assistant but uses separate files:
+- Database: `~/.config/llm-assistant/logs-inlineassistant.db`
+- Session tracking: `~/.config/llm-assistant/inlineassistant-sessions/`
 - Respects `llm logs off` global setting
 
 ## Context Capture
@@ -79,7 +131,7 @@ Context comes from asciinema recordings via direct import from `scripts/context`
 
 ## Tools
 
-llm-shell exposes these tools to the model:
+llm-inlineassistant exposes these tools to the model (in assistant mode):
 
 **Built-in:**
 - `suggest_command` - Place command on user's prompt (Ctrl+G to apply)
@@ -95,9 +147,6 @@ llm-shell exposes these tools to the model:
 
 Tools are auto-executed when the model calls them. Results are sent back
 to the model for multi-turn tool use (max 10 iterations).
-
-During tool execution, a spinner is displayed showing the action (e.g., "Running Python...").
-The spinner disappears automatically when execution completes.
 
 ## Keybindings
 
@@ -118,14 +167,14 @@ Has its own:
 
 Installed automatically by `install-llm-tools.sh`:
 - Package installed into llm's uv environment
-- Wrapper scripts: `~/.local/bin/llm-shell`, `~/.local/bin/llm-shell-daemon`
+- Wrapper scripts: `~/.local/bin/llm-inlineassistant`, `~/.local/bin/llm-inlineassistant-daemon`
 - Shell function `@()` defined in `integration/llm-common.sh`
 
 ## Daemon Management
 
-- Auto-starts on first `@` command
+- Auto-starts on first `@` command or espanso trigger
 - Auto-terminates after 30 minutes idle
-- Socket: `/tmp/llm-shell-{UID}.sock`
+- Socket: `/tmp/llm-inlineassistant-{UID}/daemon.sock`
 - Manual shutdown: `@ /quit`
 
 ## Streaming Markdown

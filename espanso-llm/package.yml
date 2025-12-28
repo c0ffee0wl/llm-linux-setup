@@ -1,0 +1,78 @@
+# espanso-llm - LLM Inline Assistant triggers
+#
+# Triggers:
+#   @llm  - Quick query without tools (simple mode)
+#   @llmc - Query with clipboard as context (simple mode)
+#   @llma - Full assistant with tools enabled
+#
+# All triggers use word boundary matching (word: true)
+# to avoid accidental expansion.
+
+matches:
+  # @llm - Simple mode (no tools, quick answers)
+  - trigger: "@llm"
+    word: true
+    replace: "{{output}}"
+    vars:
+      - name: form1
+        type: form
+        params:
+          layout: "LLM Query (simple mode):\n[[query]]"
+          fields:
+            query:
+              multiline: true
+      - name: output
+        type: script
+        params:
+          args:
+            - python3
+            - "%CONFIG%/match/packages/espanso-llm/llm-query.py"
+            - "--mode"
+            - "simple"
+            - "{{form1.query}}"
+
+  # @llmc - Simple mode with clipboard context
+  - trigger: "@llmc"
+    word: true
+    replace: "{{output}}"
+    vars:
+      - name: clip
+        type: clipboard
+      - name: form1
+        type: form
+        params:
+          layout: "Clipboard content will be included as context.\n\nLLM Query:\n[[query]]"
+          fields:
+            query:
+              multiline: true
+      - name: output
+        type: script
+        params:
+          args:
+            - python3
+            - "%CONFIG%/match/packages/espanso-llm/llm-query.py"
+            - "--mode"
+            - "simple"
+            - "Context from clipboard:\n{{clip}}\n\nUser request: {{form1.query}}"
+
+  # @llma - Assistant mode (with tools)
+  - trigger: "@llma"
+    word: true
+    replace: "{{output}}"
+    vars:
+      - name: form1
+        type: form
+        params:
+          layout: "LLM Query (assistant mode):\n[[query]]"
+          fields:
+            query:
+              multiline: true
+      - name: output
+        type: script
+        params:
+          args:
+            - python3
+            - "%CONFIG%/match/packages/espanso-llm/llm-query.py"
+            - "--mode"
+            - "assistant"
+            - "{{form1.query}}"

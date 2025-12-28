@@ -1,4 +1,4 @@
-"""Entry point for python -m llm_shell."""
+"""Entry point for python -m llm_inlineassistant."""
 
 from .cli import main
 

@@ -1,6 +1,6 @@
-"""Utility functions for llm-shell.
+"""Utility functions for llm-inlineassistant.
 
-Configuration, paths, and helper functions for the shell assistant.
+Configuration, paths, and helper functions for the inline assistant.
 """
 
 import os
@@ -13,7 +13,7 @@ def get_config_dir() -> Path:
 
     Returns: XDG_CONFIG_HOME/llm-assistant or ~/.config/llm-assistant
 
-    llm-shell shares the config directory with llm-assistant but uses
+    llm-inlineassistant shares the config directory with llm-assistant but uses
     separate database and session tracking files.
     """
     xdg_config = os.environ.get('XDG_CONFIG_HOME')
@@ -28,35 +28,35 @@ def get_config_dir() -> Path:
 
 
 def get_logs_db_path() -> Path:
-    """Get path to llm-shell's conversation database.
+    """Get path to llm-inlineassistant's conversation database.
 
-    Returns: XDG_CONFIG_HOME/llm-assistant/logs-shell.db
+    Returns: XDG_CONFIG_HOME/llm-assistant/logs-inlineassistant.db
 
-    Uses logs-shell.db (not logs.db) to keep shell assistant conversations
+    Uses logs-inlineassistant.db (not logs.db) to keep inline assistant conversations
     separate from llm-assistant's logs.db while sharing the config directory.
     """
-    return get_config_dir() / 'logs-shell.db'
+    return get_config_dir() / 'logs-inlineassistant.db'
 
 
 def logs_on() -> bool:
     """Check if logging is enabled (respects llm's global logs-off setting).
 
     Returns False if llm's logs-off file exists, True otherwise.
-    This ensures llm-shell respects `llm logs off` command.
+    This ensures llm-inlineassistant respects `llm logs off` command.
     """
     import llm
     return not (llm.user_dir() / "logs-off").exists()
 
 
 def get_tmp_dir() -> Path:
-    """Get llm-shell temp directory.
+    """Get llm-inlineassistant temp directory.
 
-    Returns: /tmp/llm-shell-{UID}/
+    Returns: /tmp/llm-inlineassistant-{UID}/
 
     All temp files (socket, suggestions) are stored here.
     """
     uid = os.getuid()
-    tmp_dir = Path(f"/tmp/llm-shell-{uid}")
+    tmp_dir = Path(f"/tmp/llm-inlineassistant-{uid}")
     tmp_dir.mkdir(parents=True, exist_ok=True)
     return tmp_dir
 
@@ -64,7 +64,7 @@ def get_tmp_dir() -> Path:
 def get_socket_path() -> Path:
     """Get Unix socket path for daemon communication.
 
-    Returns: /tmp/llm-shell-{UID}/daemon.sock
+    Returns: /tmp/llm-inlineassistant-{UID}/daemon.sock
     """
     return get_tmp_dir() / "daemon.sock"
 
@@ -72,7 +72,7 @@ def get_socket_path() -> Path:
 def get_suggest_path() -> Path:
     """Get path for suggested command file.
 
-    Returns: /tmp/llm-shell-{UID}/suggest
+    Returns: /tmp/llm-inlineassistant-{UID}/suggest
 
     Used by suggest_command tool to pass commands to the shell,
     which places them on the user's prompt for editing/execution.
@@ -156,10 +156,10 @@ def get_active_conversation_path(terminal_id: str) -> Path:
     Returns:
         Path to the active conversation tracking file
 
-    Files are stored in ~/.config/llm-assistant/shell-sessions/ to track
-    per-terminal conversation IDs for llm-shell.
+    Files are stored in ~/.config/llm-assistant/inlineassistant-sessions/ to track
+    per-terminal conversation IDs for llm-inlineassistant.
     """
-    sessions_dir = get_config_dir() / 'shell-sessions'
+    sessions_dir = get_config_dir() / 'inlineassistant-sessions'
     sessions_dir.mkdir(parents=True, exist_ok=True)
 
     # Sanitize terminal_id for filename
