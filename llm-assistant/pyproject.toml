@@ -19,7 +19,10 @@ voice = ["sounddevice", "numpy", "onnx-asr"]
 tts = ["google-cloud-texttospeech", "google-auth", "strip-markdown"]
 web = ["fastapi", "uvicorn"]
 clipboard = ["pyperclip"]
-workflow = ["burr_workflow", "ruamel.yaml>=0.18.0"]
+workflow = [
+    "burr_workflow @ git+https://github.com/c0ffee0wl/llm-linux-setup#subdirectory=burr_workflow",
+    "ruamel.yaml>=0.18.0",
+]
 all = ["llm-assistant[voice,tts,web,clipboard,workflow]"]
 
 [project.scripts]
@@ -28,6 +31,9 @@ llm-assistant = "llm_assistant.cli:main"
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_assistant"]

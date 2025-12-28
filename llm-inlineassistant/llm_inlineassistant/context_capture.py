@@ -3,64 +3,23 @@
 Captures terminal context from asciinema recordings and applies
 block-level hashing for deduplication.
 
-Uses direct import from the context module when available, with
-subprocess fallback for installed packages.
+Uses direct import from llm_tools_context when available, with
+subprocess fallback.
 """
 
-import importlib.machinery
-import importlib.util
-import os
 import subprocess
 from typing import List, Set, Tuple
 
 from llm_tools_core import filter_new_blocks
 
-# Try to import context module from various locations
+# Try to import from llm_tools_context package
 _get_command_blocks_func = None
 
-
-def _load_context_module(script_path: str):
-    """Load context module from a script file (handles files without .py extension)."""
-    # Use SourceFileLoader explicitly for files without .py extension
-    loader = importlib.machinery.SourceFileLoader("context", script_path)
-    spec = importlib.util.spec_from_loader("context", loader)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def _try_import_context():
-    """Try to import context module from various locations."""
-    global _get_command_blocks_func
-
-    # Try scripts directory (when running from source)
-    # Path: llm_inlineassistant/context_capture.py -> llm_inlineassistant -> llm-inlineassistant -> llm-linux-setup/scripts
-    scripts_dir = os.path.join(os.path.dirname(__file__), '..', '..', 'scripts')
-    context_script = os.path.join(scripts_dir, 'context')
-    if os.path.isfile(context_script):
-        try:
-            module = _load_context_module(os.path.abspath(context_script))
-            if module and hasattr(module, 'get_command_blocks'):
-                _get_command_blocks_func = module.get_command_blocks
-                return
-        except Exception:
-            pass
-
-    # Try ~/.local/bin/context (when installed)
-    local_bin_context = os.path.expanduser('~/.local/bin/context')
-    if os.path.isfile(local_bin_context):
-        try:
-            module = _load_context_module(local_bin_context)
-            if module and hasattr(module, 'get_command_blocks'):
-                _get_command_blocks_func = module.get_command_blocks
-                return
-        except Exception:
-            pass
-
-
-_try_import_context()
+try:
+    from llm_tools_context import get_command_blocks as _pkg_get_command_blocks
+    _get_command_blocks_func = _pkg_get_command_blocks
+except ImportError:
+    pass
 
 
 def _get_command_blocks_subprocess(n_commands: int = 3) -> List[str]:

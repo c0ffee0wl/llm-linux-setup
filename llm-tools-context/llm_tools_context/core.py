@@ -1,30 +1,15 @@
-#!/usr/bin/env python3
 """
-Context - Extract terminal history from asciinema session recordings
+Core context extraction functionality.
 
-Extracts prompt blocks (prompt + command + output) from your terminal session.
+Extracts prompt blocks (prompt + command + output) from asciinema session recordings.
 Each block contains everything from one prompt to the next, preserving the exact
 terminal formatting including multi-line commands.
-
-CLI Usage:
-    context          # Show last prompt block (default)
-    context 5        # Show last 5 prompt blocks
-    context all      # Show entire session
-    context -a       # Show entire session
-    context -e       # Output SESSION_LOG_FILE environment variable
-
-Library Usage:
-    from context import get_command_blocks, get_context
-
-    blocks = get_command_blocks(n_commands=3)  # Returns list of prompt blocks
-    context_str = get_context(n_commands=3)    # Returns formatted context string
 """
 
 import os
-import sys
+import re
 import subprocess
 import tempfile
-import re
 from typing import List, Optional
 
 # Import shared prompt detection module
@@ -34,21 +19,25 @@ except ImportError:
     try:
         from llm_tools.prompt_detection import PromptDetector  # legacy fallback
     except ImportError:
-        # Fallback for development - import from same directory
-        from prompt_detection import PromptDetector
-import argparse
+        # This shouldn't happen if installed correctly
+        raise ImportError(
+            "Could not import PromptDetector. "
+            "Please install llm-tools-core: pip install llm-tools-core"
+        )
 
-# Public API for library usage
+# Public API
 __all__ = ['get_command_blocks', 'get_context', 'get_session_log_file']
-
 
 # Compiled regex for filtering AI-related commands
 # Matches commands starting with: @, context, llm, llm-inlineassistant, aichat, llm-assistant, or wut
-FILTERED_COMMANDS = re.compile(r'^(@|context|llm|llm-inlineassistant|aichat|llm-assistant|wut)(\s|$)', re.IGNORECASE)
+FILTERED_COMMANDS = re.compile(
+    r'^(@|context|llm|llm-inlineassistant|aichat|llm-assistant|wut)(\s|$)',
+    re.IGNORECASE
+)
 
 
-def find_cast_file():
-    """Find the current session's cast file"""
+def find_cast_file() -> Optional[str]:
+    """Find the current session's cast file."""
     # First, check environment variable
     if "SESSION_LOG_FILE" in os.environ:
         cast_file = os.environ["SESSION_LOG_FILE"]
@@ -73,8 +62,8 @@ def find_cast_file():
     return max(cast_files, key=os.path.getmtime)
 
 
-def convert_cast_to_text(cast_file):
-    """Convert .cast file to readable text using asciinema"""
+def convert_cast_to_text(cast_file: str) -> str:
+    """Convert .cast file to readable text using asciinema."""
     with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as tmp:
         tmp_path = tmp.name
 
@@ -104,7 +93,7 @@ def detect_prompts(text_or_lines):
     return PromptDetector.find_all_prompts(text_or_lines)
 
 
-def should_exclude_block(block):
+def should_exclude_block(block: str) -> bool:
     """
     Check if a prompt block should be excluded from output.
 
@@ -173,7 +162,7 @@ def should_exclude_block(block):
     return bool(FILTERED_COMMANDS.match(command))
 
 
-def extract_prompt_blocks(text, count=1):
+def extract_prompt_blocks(text: str, count: Optional[int] = 1) -> List[str]:
     """
     Extract prompt blocks (prompt + command + output) from the converted text.
 
@@ -257,8 +246,8 @@ def extract_prompt_blocks(text, count=1):
         return blocks[-count:]
 
 
-def format_output(blocks):
-    """Format prompt blocks for display"""
+def format_output(blocks: List[str]) -> str:
+    """Format prompt blocks for display."""
     if not blocks:
         return "#c# No prompts found in session recording."
 
@@ -284,7 +273,7 @@ def get_session_log_file() -> Optional[str]:
         Path to the .cast file, or None if not found.
 
     Example:
-        >>> from context import get_session_log_file
+        >>> from llm_tools_context import get_session_log_file
         >>> log_file = get_session_log_file()
         >>> if log_file:
         ...     print(f"Recording: {log_file}")
@@ -312,7 +301,7 @@ def get_command_blocks(n_commands: int = 3) -> List[str]:
         subprocess.CalledProcessError: If cast file conversion fails.
 
     Example:
-        >>> from context import get_command_blocks
+        >>> from llm_tools_context import get_command_blocks
         >>> blocks = get_command_blocks(3)
         >>> for block in blocks:
         ...     print(block)
@@ -343,7 +332,7 @@ def get_context(n_commands: int = 3, raw: bool = False) -> str:
         Formatted context string. Returns empty string if no session found.
 
     Example:
-        >>> from context import get_context
+        >>> from llm_tools_context import get_context
         >>> context_str = get_context(3)
         >>> print(context_str)
 
@@ -359,96 +348,3 @@ def get_context(n_commands: int = 3, raw: bool = False) -> str:
         return '\n\n'.join(blocks)
     else:
         return format_output(blocks)
-
-
-def main():
-    # Parse arguments
-    parser = argparse.ArgumentParser(description='Extract prompt blocks from terminal session')
-    parser.add_argument('count', nargs='?', default=1,
-                       help='Number of recent prompt blocks to show or "all" for entire history (default: 1)')
-    parser.add_argument('-e', '--environment', action='store_true',
-                       help='Output SESSION_LOG_FILE environment variable')
-    parser.add_argument('-a', '--all', action='store_true',
-                       help='Show entire history')
-
-    args = parser.parse_args()
-
-    # Find cast file
-    cast_file = find_cast_file()
-
-    # Handle -e/--environment flag
-    if args.environment:
-        if cast_file:
-            export_cmd = f"export SESSION_LOG_FILE='{cast_file}'"
-            print(export_cmd)
-
-            # Try to copy to clipboard using xsel (both PRIMARY and CLIPBOARD)
-            try:
-                # Copy to PRIMARY selection (middle-click paste)
-                subprocess.run(
-                    ['xsel', '--primary', '--input'],
-                    input=export_cmd.encode(),
-                    check=True,
-                    capture_output=True
-                )
-                # Copy to CLIPBOARD selection (Ctrl+V paste)
-                subprocess.run(
-                    ['xsel', '--clipboard', '--input'],
-                    input=export_cmd.encode(),
-                    check=True,
-                    capture_output=True
-                )
-                print("# Command copied to clipboard", file=sys.stderr)
-            except (subprocess.CalledProcessError, FileNotFoundError):
-                # xsel not available or failed - silently continue
-                pass
-        else:
-            print("# No asciinema session recording found", file=sys.stderr)
-            sys.exit(1)
-        return
-
-    # Determine if we want all history
-    show_all = args.all or args.count == 'all'
-
-    if show_all:
-        count = None  # Signal to show all
-    else:
-        # Validate count is a number
-        try:
-            count = int(args.count)
-            # Convert negative to positive with a note
-            if count < 0:
-                count = abs(count)
-                print(f"#c# context usage note: Using {count} (converted from negative value)", file=sys.stderr)
-            # Still validate that it's not zero
-            if count < 1:
-                raise ValueError()
-        except (ValueError, TypeError):
-            print("Error: Please provide a positive number or 'all'", file=sys.stderr)
-            parser.print_help(sys.stderr)
-            sys.exit(1)
-
-    if not cast_file:
-        print("Error: No asciinema session recording found.", file=sys.stderr)
-        print("Make sure you're in a shell with asciinema recording enabled.", file=sys.stderr)
-        sys.exit(1)
-
-    # Convert to text
-    try:
-        text = convert_cast_to_text(cast_file)
-    except subprocess.CalledProcessError as e:
-        print(f"Error: Failed to convert cast file: {e}", file=sys.stderr)
-        sys.exit(1)
-    except FileNotFoundError:
-        print("Error: asciinema command not found. Is it installed?", file=sys.stderr)
-        sys.exit(1)
-
-    # Extract prompt blocks
-    blocks = extract_prompt_blocks(text, count)
-
-    # Display results
-    print(format_output(blocks))
-
-
-if __name__ == "__main__":
-    main()

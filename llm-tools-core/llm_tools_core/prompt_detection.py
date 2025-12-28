@@ -3,7 +3,7 @@
 This module provides shell prompt detection used by:
 - llm-assistant (terminal prompt detection)
 - llm-inlineassistant (daemon prompt detection)
-- scripts/context (asciinema recording parsing)
+- llm-tools-context (asciinema recording parsing)
 - terminator plugin (VTE terminal detection)
 
 It uses a hybrid detection approach:

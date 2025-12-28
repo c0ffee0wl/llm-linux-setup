@@ -19,7 +19,32 @@ Usage in YAML:
 
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
-from burr_workflow.actions.base import AbstractAction, ActionResult
+# Lazy import pattern - burr_workflow imports are deferred
+# to allow llm-assistant to work without burr_workflow installed
+try:
+    from burr_workflow.actions.base import AbstractAction, ActionResult
+except ImportError:
+    # Provide stub base class when burr_workflow not installed
+    # This allows the module to be imported without error
+    class AbstractAction:  # type: ignore[no-redef]
+        """Stub base class when burr_workflow is not installed."""
+        action_type: ClassVar[str] = ""
+
+        @property
+        def reads(self) -> list[str]:
+            return []
+
+        @property
+        def writes(self) -> list[str]:
+            return []
+
+    class ActionResult:  # type: ignore[no-redef]
+        """Stub ActionResult when burr_workflow is not installed."""
+        def __init__(self, outputs=None, outcome=None, error=None, error_type=None):
+            self.outputs = outputs or {}
+            self.outcome = outcome
+            self.error = error
+            self.error_type = error_type
 
 if TYPE_CHECKING:
     from burr_workflow.protocols import ExecutionContext

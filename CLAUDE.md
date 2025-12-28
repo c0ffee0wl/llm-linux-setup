@@ -35,13 +35,14 @@ The repository includes an **automatic session recording and context extraction 
    - Creates timestamp-based filenames
    - Exports `$SESSION_LOG_FILE` for the context tool to locate the current recording
 
-2. **Context Extraction** (`scripts/context`): Python script that parses asciinema recordings
+2. **Context Extraction** (`llm-tools-context/`): Python package that parses asciinema recordings
    - Finds current session's `.cast` file via `$SESSION_LOG_FILE` or most recent file in log directory
    - Converts binary `.cast` format to text using `asciinema convert`
    - Uses regex patterns to detect shell prompts (bash `$/#`, zsh `%/❯/→/➜`, etc.), handles Kali two-line prompts
    - Extracts **prompt blocks** (prompt + command + output from one prompt to the next)
    - Filters out previous `context` command outputs (lines starting with `#c#`) to avoid recursion
    - Excludes the last block if it's empty, prompt-only, or a self-referential `context` command with no output
+   - Provides both CLI (`context` command) and LLM tool (`llm --tool context`)
 
 3. **Prompt Detection Module** (`llm-assistant/llm_assistant/prompt_detection.py`): Shared Python module
    - PromptDetector class used by both context tool and llm-assistant
@@ -864,8 +865,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `integration/llm-zsh-plugin/completions/_llm` - Tab completion definitions (includes custom code/rag)
 - `llm-assistant/` - Assistant components: llm_assistant/ package, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `burr_workflow/` - YAML-based workflow engine built on Burr (see [`burr_workflow/CLAUDE.md`](burr_workflow/CLAUDE.md))
-- `scripts/context` - Python script for extracting terminal history from recordings
-- `llm-tools-context/` - LLM plugin exposing context as tool
+- `llm-tools-context/` - Context extraction package (CLI + LLM tool) for terminal history
 - `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-report}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md

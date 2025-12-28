@@ -24,6 +24,7 @@ run_and_update() and expects it to return appropriately based on is_async().
 """
 
 import asyncio
+import copy
 import random
 import time
 import traceback
@@ -160,7 +161,8 @@ class BurrActionAdapter(SingleStepAction):
         self, state: State, **run_kwargs
     ) -> tuple[dict, State]:
         """Execute async action with retry support and guardrails."""
-        ctx = dict(state.get_all())
+        # Deep copy to prevent action mutations from leaking to Burr state
+        ctx = copy.deepcopy(dict(state.get_all()))
 
         # Retry configuration
         max_attempts = 1
@@ -325,7 +327,8 @@ class BurrActionAdapter(SingleStepAction):
         self, state: State, **run_kwargs
     ) -> tuple[dict, State]:
         """Execute sync action with retry support (timeout not supported for sync)."""
-        ctx = dict(state.get_all())
+        # Deep copy to prevent action mutations from leaking to Burr state
+        ctx = copy.deepcopy(dict(state.get_all()))
 
         # Retry configuration
         max_attempts = 1

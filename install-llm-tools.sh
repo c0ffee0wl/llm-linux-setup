@@ -976,7 +976,7 @@ remove_plugin_from_tracking "llm-assistant"
 remove_plugin_from_tracking "llm-inlineassistant"
 
 # Install llm-tools-core to user site-packages BEFORE llm upgrade
-# This is needed by: terminator plugin (system Python), scripts/context (system Python)
+# This is needed by: terminator plugin (system Python)
 log "Installing llm-tools-core to user site-packages..."
 if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" --quiet 2>/dev/null; then
     pip install --user --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" 2>/dev/null || \
@@ -1455,14 +1455,17 @@ prompt_for_session_log_silent() {
 update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
 update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
 
-# Install context script
-log "Installing context script..."
+# Create context wrapper script (CLI is now part of llm-tools-context package)
+log "Installing context wrapper..."
 mkdir -p "$HOME/.local/bin"
-cp "$SCRIPT_DIR/scripts/context" "$HOME/.local/bin/context"
+cat > "$HOME/.local/bin/context" << 'EOF'
+#!/bin/sh
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_tools_context.cli "$@"
+EOF
 chmod +x "$HOME/.local/bin/context"
 
 # Install llm-tools-core as llm plugin (for llm-assistant dependency resolution)
-# Note: Already installed to user site-packages in Phase 2 for terminator plugin + scripts/context
+# Note: Already installed to user site-packages in Phase 2 for terminator plugin
 log "Installing llm-tools-core as llm plugin..."
 install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-tools-core"
 

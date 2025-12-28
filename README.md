@@ -351,7 +351,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[yek](https://github.com/bodo-run/yek)** - Fast repository to LLM-friendly text converter (230x faster than alternatives, written in Rust)
 - **[files-to-prompt](https://github.com/c0ffee0wl/files-to-prompt)** - File content formatter for LLM prompts
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
-- **[context](scripts/context)** - Python script for extracting terminal history from asciinema recordings
+- **[context](llm-tools-context/)** - Terminal history extraction from asciinema recordings (CLI + LLM tool)
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
 - **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
 - **[onnx-asr](https://github.com/istupakov/onnx-asr)** - Speech-to-text transcription using NVIDIA Parakeet TDT (25 European languages, auto-punctuation)
@@ -2658,8 +2658,7 @@ To modify or extend this installation, see [CLAUDE.md](CLAUDE.md) for detailed a
 
 - [`install-llm-tools.sh`](install-llm-tools.sh) - Main installation script (7 phases, self-updating)
 - [`integration/llm-common.sh`](integration/llm-common.sh) - Shell wrapper function, auto-recording
-- [`scripts/context`](scripts/context) - Terminal history extraction script
-- [`llm-tools-context/`](llm-tools-context/) - LLM plugin for context tool
+- [`llm-tools-context/`](llm-tools-context/) - Terminal history extraction (CLI + LLM tool)
 - [`llm-templates/`](llm-templates/) - Custom template sources
 
 **Development workflow:**

@@ -25,6 +25,8 @@ from jinja2 import Environment
 from jinja2 import nodes
 from jinja2.exceptions import TemplateSyntaxError
 
+from burr_workflow.evaluator.filters import SAFE_FILTERS
+
 
 class ValidationLevel(Enum):
     """Severity level for validation messages."""
@@ -143,19 +145,26 @@ class Jinja2ExpressionValidator:
     Jinja2 filters, not function calls. This validator checks filter usage.
     """
 
-    # Filters actually registered in evaluator/context.py
-    # Note: filters.py defines SAFE_FILTERS but they are NOT registered at runtime
+    # Filters allowed in workflow expressions
+    # Combines built-in Jinja2 filters with SAFE_FILTERS from evaluator/filters.py
+    # This ensures validation matches runtime behavior exactly
     ALLOWED_FILTERS = frozenset([
-        # Collection filters
+        # Collection filters (built-in Jinja2)
         "length", "keys", "values", "first", "last", "join", "sort", "unique",
-        # String filters
+        # String filters (built-in Jinja2)
         "lower", "upper", "trim", "split",
-        # Type conversion filters
+        # Type conversion filters (built-in Jinja2)
         "int", "float", "string",
-        # Safety filters
+        # Safety filters (custom)
         "default", "shell_quote", "safe_path",
         # GitHub Actions compatible functions (implemented as filters)
         "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
+        # All filters from SAFE_FILTERS (evaluator/filters.py)
+        # This includes: shell_quote, safe_filename, regex_replace, regex_match,
+        # truncate, lines, indent, json_encode, json_decode, base64_encode,
+        # base64_decode, url_encode, url_decode, format_bytes, extract_domain,
+        # extract_ip, is_valid_ip, is_private_ip, in_cidr, file_exists, in_list
+        *SAFE_FILTERS.keys(),
     ])
 
     def __init__(self) -> None:

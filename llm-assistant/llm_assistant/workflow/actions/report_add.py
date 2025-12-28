@@ -15,9 +15,34 @@ Usage in YAML:
     # Access result via ${{ steps.add_sqli_finding.outputs.finding_id }}
 """
 
-from typing import Any, ClassVar, Optional, Tuple, TYPE_CHECKING
+from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
-from burr_workflow.actions.base import AbstractAction, ActionResult
+# Lazy import pattern - burr_workflow imports are deferred
+# to allow llm-assistant to work without burr_workflow installed
+try:
+    from burr_workflow.actions.base import AbstractAction, ActionResult
+except ImportError:
+    # Provide stub base class when burr_workflow not installed
+    # This allows the module to be imported without error
+    class AbstractAction:  # type: ignore[no-redef]
+        """Stub base class when burr_workflow is not installed."""
+        action_type: ClassVar[str] = ""
+
+        @property
+        def reads(self) -> list[str]:
+            return []
+
+        @property
+        def writes(self) -> list[str]:
+            return []
+
+    class ActionResult:  # type: ignore[no-redef]
+        """Stub ActionResult when burr_workflow is not installed."""
+        def __init__(self, outputs=None, outcome=None, error=None, error_type=None):
+            self.outputs = outputs or {}
+            self.outcome = outcome
+            self.error = error
+            self.error_type = error_type
 
 if TYPE_CHECKING:
     from burr_workflow.protocols import ExecutionContext
@@ -176,31 +201,30 @@ class ReportAddAction(AbstractAction):
             )
 
         try:
-            # Call the report add method
-            # Note: _report_add is synchronous and handles LLM analysis internally
-            import asyncio
-            loop = asyncio.get_event_loop()
+            # Get optional severity override from config
+            severity_override = with_config.get("severity")
+            if severity_override is not None:
+                try:
+                    severity_override = int(severity_override)
+                    if not 1 <= severity_override <= 9:
+                        severity_override = None
+                except (ValueError, TypeError):
+                    severity_override = None
 
-            # Store original console output to capture finding ID
-            # The method returns bool, but we can access session state after
-            success = await loop.run_in_executor(
-                None,
-                lambda: session._report_add(note)
+            # Call the async add_finding method which returns full finding details
+            # This is the proper async method that returns finding_id, title, severity
+            result = await session.add_finding(
+                note=note,
+                severity_override=severity_override,
             )
 
-            if success:
-                # Try to get the latest finding info from session
-                # This is a best-effort extraction
-                finding_id = getattr(session, "_last_finding_id", "unknown")
-                finding_title = getattr(session, "_last_finding_title", note[:60])
-                finding_severity = getattr(session, "_last_finding_severity", 5)
-
+            if result.get("success"):
                 return ActionResult(
                     outputs={
                         "success": True,
-                        "finding_id": finding_id,
-                        "title": finding_title,
-                        "severity": finding_severity,
+                        "finding_id": result.get("finding_id", "unknown"),
+                        "title": result.get("title", note[:60]),
+                        "severity": result.get("severity", 5),
                         "note": note,
                     },
                     outcome="success",
@@ -209,7 +233,7 @@ class ReportAddAction(AbstractAction):
                 return ActionResult(
                     outputs={"success": False},
                     outcome="failure",
-                    error="Failed to add finding (check project status)",
+                    error=result.get("error", "Failed to add finding"),
                     error_type="add_failed",
                 )
 

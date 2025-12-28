@@ -1,23 +1,37 @@
 [project]
 name = "llm-tools-context"
-version = "0.1.0"
+version = "0.2.0"
 description = "Extract recent shell commands and outputs from asciinema recordings for LLM"
 readme = "README.md"
 authors = [{name = "c0ffee0wl"}]
 license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
 classifiers = [
-    "License :: OSI Approved :: Apache Software License"
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 dependencies = [
-    "llm"
+    "llm",
+    "llm-tools-core",
 ]
 
 [project.urls]
 Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
 
+[project.scripts]
+context = "llm_tools_context.cli:main"
+
 [project.entry-points.llm]
-context = "llm_tools_context"
+context = "llm_tools_context.llm_plugin"
 
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["llm_tools_context*"]

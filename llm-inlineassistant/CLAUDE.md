@@ -123,8 +123,8 @@ llm-inlineassistant shares config directory with llm-assistant but uses separate
 
 ## Context Capture
 
-Context comes from asciinema recordings via direct import from `scripts/context`:
-1. Imports `get_command_blocks()` from context module (no subprocess)
+Context comes from asciinema recordings via direct import from `llm_tools_context`:
+1. Imports `get_command_blocks()` from llm_tools_context package (no subprocess)
 2. Gets last 3 command blocks from asciinema recording
 3. Applies SHA256 hashing for deduplication (shared with llm-assistant)
 4. Uses `[Content unchanged]` placeholder when context hasn't changed
