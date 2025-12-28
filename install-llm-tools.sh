@@ -1440,12 +1440,22 @@ mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/scripts/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
-# Install shared Python module for prompt detection (PEP 420 namespace package)
-# Source: llm-assistant package (canonical location for this module)
-log "Installing shared prompt detection module..."
+# Install llm-tools-core to user site-packages (needed by terminator plugin + scripts/context)
+# Must be installed BEFORE llm-assistant (which depends on it)
+log "Installing llm-tools-core package..."
+# Use uv for faster installation, fallback to pip if uv fails
+# --system ensures we use system Python (not any venv), --break-system-packages allows editable install
+if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" --quiet 2>/dev/null; then
+    pip install --user --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" 2>/dev/null || \
+    pip install --user -e "$SCRIPT_DIR/llm-tools-core"
+fi
+
+# Clean up legacy llm_tools directory (replaced by llm-tools-core)
 PYTHON_USER_SITE=$(python3 -m site --user-site)
-mkdir -p "$PYTHON_USER_SITE/llm_tools"
-cp "$SCRIPT_DIR/llm-assistant/llm_assistant/prompt_detection.py" "$PYTHON_USER_SITE/llm_tools/"
+if [ -d "$PYTHON_USER_SITE/llm_tools" ]; then
+    log "Cleaning up legacy llm_tools directory..."
+    rm -rf "$PYTHON_USER_SITE/llm_tools"
+fi
 
 # Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
 log "Installing llm-assistant package..."

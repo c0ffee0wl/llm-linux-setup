@@ -60,7 +60,7 @@ from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.styles import Style as PTStyle
 
 # Local module imports
-from .prompt_detection import PromptDetector
+from llm_tools_core import PromptDetector
 from .system_info import detect_os, detect_shell, detect_environment
 from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
 from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
@@ -87,7 +87,8 @@ from .skills import SkillsMixin
 from .report import ReportMixin
 from .web import WebMixin
 from .terminal import TerminalMixin
-from .context import ContextMixin, filter_new_blocks
+from .context import ContextMixin
+from llm_tools_core import filter_new_blocks
 from .watch import WatchMixin
 from .workflow import WorkflowMixin
 from .mcp import (

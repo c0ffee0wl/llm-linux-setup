@@ -20,8 +20,8 @@ def __getattr__(name):
     """Lazy import heavy modules to avoid unnecessary audio initialization.
 
     This prevents importing session.py (which imports voice.py, which
-    initializes sounddevice/PortAudio) when only utility functions like
-    filter_new_blocks from context.py are needed.
+    initializes sounddevice/PortAudio) when only the main classes are needed.
+    Note: filter_new_blocks has moved to llm_tools_core.
     """
     if name == "TerminatorAssistantSession":
         from .session import TerminatorAssistantSession

@@ -29,10 +29,13 @@ from typing import List, Optional
 
 # Import shared prompt detection module
 try:
-    from llm_tools.prompt_detection import PromptDetector
+    from llm_tools_core import PromptDetector
 except ImportError:
-    # Fallback for development - import from same directory
-    from prompt_detection import PromptDetector
+    try:
+        from llm_tools.prompt_detection import PromptDetector  # legacy fallback
+    except ImportError:
+        # Fallback for development - import from same directory
+        from prompt_detection import PromptDetector
 import argparse
 
 # Public API for library usage

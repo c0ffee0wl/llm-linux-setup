@@ -1,8 +1,14 @@
-"""Unified prompt detection for llm-tools
+"""Unified prompt detection for llm-tools.
 
-This module provides shell prompt detection used by both the context tool
-and llm-assistant. It's installed to Python user site-packages (llm_tools/)
-and can be imported as: from llm_tools.prompt_detection import PromptDetector
+This module provides shell prompt detection used by:
+- llm-assistant (terminal prompt detection)
+- llm-inlineassistant (daemon prompt detection)
+- scripts/context (asciinema recording parsing)
+- terminator plugin (VTE terminal detection)
+
+It uses a hybrid detection approach:
+1. Unicode markers (100% reliable for VTE terminals)
+2. Regex fallback (SSH sessions, non-VTE terminals)
 """
 import re
 from typing import List, Tuple, Union

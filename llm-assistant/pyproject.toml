@@ -5,6 +5,7 @@ description = "Terminal AI Assistant for Terminator"
 requires-python = ">=3.10"
 dependencies = [
     "llm>=0.27",
+    "llm-tools-core>=1.0.0",
     "rich>=13.0",
     "prompt-toolkit>=3.0",
     "pydantic>=2.0",

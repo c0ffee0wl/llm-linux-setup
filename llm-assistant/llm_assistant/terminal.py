@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING, Optional, List, Dict, Tuple
 
 import dbus
 
-from .prompt_detection import PromptDetector
+from llm_tools_core import PromptDetector
 from .ui import Confirm
 
 if TYPE_CHECKING:

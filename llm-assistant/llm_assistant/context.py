@@ -5,13 +5,11 @@ This module provides context window management:
 - Context squashing (compression of old messages)
 - Context stripping (removing ephemeral terminal content)
 - Squash chain tracking for conversation continuity
-- Block-level hashing for context deduplication (shared with llm-inlineassistant)
 """
 
-import hashlib
 import json
 import re
-from typing import TYPE_CHECKING, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Optional
 
 import llm
 
@@ -21,78 +19,8 @@ from .templates import render
 if TYPE_CHECKING:
     from rich.console import Console
 
-
-# =============================================================================
-# Standalone Hash Functions (used by both llm-assistant and llm-inlineassistant)
-# =============================================================================
-
-def hash_blocks(blocks: List[str]) -> Set[str]:
-    """
-    Compute SHA256 hashes for a list of content blocks.
-
-    Used for deduplication - comparing previous capture vs current capture
-    to avoid resending unchanged content.
-
-    Args:
-        blocks: List of content blocks (e.g., command + output blocks)
-
-    Returns:
-        Set of SHA256 hex digests for all blocks
-
-    Example:
-        >>> blocks = ["$ ls\nfile1.txt\nfile2.txt", "$ pwd\n/home/user"]
-        >>> hashes = hash_blocks(blocks)
-        >>> len(hashes)
-        2
-    """
-    return {
-        hashlib.sha256(block.strip().encode()).hexdigest()
-        for block in blocks
-        if block.strip()
-    }
-
-
-def filter_new_blocks(
-    blocks: List[str],
-    prev_hashes: Set[str]
-) -> Tuple[List[str], Set[str]]:
-    """
-    Filter blocks to only return those not seen in previous capture.
-
-    This enables incremental context - only sending new command outputs
-    instead of re-sending everything on each prompt.
-
-    Args:
-        blocks: List of current content blocks
-        prev_hashes: Set of hashes from previous capture (or empty set)
-
-    Returns:
-        Tuple of (new_blocks, current_hashes):
-        - new_blocks: Blocks that weren't in prev_hashes
-        - current_hashes: All current block hashes (for next comparison)
-
-    Example:
-        >>> prev = hash_blocks(["$ ls\nfile1.txt"])
-        >>> current = ["$ ls\nfile1.txt", "$ pwd\n/home/user"]
-        >>> new, hashes = filter_new_blocks(current, prev)
-        >>> len(new)  # Only pwd block is new
-        1
-    """
-    current_hashes = set()
-    new_blocks = []
-
-    for block in blocks:
-        stripped = block.strip()
-        if not stripped:
-            continue
-
-        block_hash = hashlib.sha256(stripped.encode()).hexdigest()
-        current_hashes.add(block_hash)
-
-        if block_hash not in prev_hashes:
-            new_blocks.append(block)
-
-    return new_blocks, current_hashes
+# Note: hash_blocks and filter_new_blocks have been moved to llm_tools_core.hashing
+# Consumers should import directly: from llm_tools_core import hash_blocks, filter_new_blocks
 
 
 class ContextMixin:

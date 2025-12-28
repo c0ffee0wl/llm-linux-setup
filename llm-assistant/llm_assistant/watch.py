@@ -16,7 +16,7 @@ import llm
 from rich.markdown import Markdown
 from rich.panel import Panel
 
-from .prompt_detection import PromptDetector
+from llm_tools_core import PromptDetector
 from .templates import render
 from .utils import ConsoleHelper
 from .utils import is_watch_response_dismissive

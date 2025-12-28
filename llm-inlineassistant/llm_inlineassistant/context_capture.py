@@ -13,7 +13,7 @@ import os
 import subprocess
 from typing import List, Set, Tuple
 
-from llm_assistant.context import filter_new_blocks
+from llm_tools_core import filter_new_blocks
 
 # Try to import context module from various locations
 _get_command_blocks_func = None

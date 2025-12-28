@@ -7,28 +7,31 @@ This module contains utility functions for:
 - Model context limit resolution
 """
 
-import os
 import re
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
+
+# Import shared utilities from llm-tools-core
+from llm_tools_core import ConsoleHelper
+from llm_tools_core import get_config_dir as _core_get_config_dir
+from llm_tools_core import get_temp_dir as _core_get_temp_dir
+from llm_tools_core import get_logs_db_path as _core_get_logs_db_path
 
 
 # =============================================================================
 # Directory Configuration (XDG Base Directory Specification)
 # =============================================================================
 
+_APP_NAME = "llm-assistant"
+
+
 def get_config_dir() -> Path:
     """Get llm-assistant config directory using XDG spec.
 
     Returns: XDG_CONFIG_HOME/llm-assistant or ~/.config/llm-assistant
     """
-    xdg_config = os.environ.get('XDG_CONFIG_HOME')
-    if xdg_config:
-        base = Path(xdg_config)
-    else:
-        base = Path.home() / '.config'
-    return base / 'llm-assistant'
+    return _core_get_config_dir(_APP_NAME)
 
 
 def get_temp_dir() -> Path:
@@ -36,12 +39,7 @@ def get_temp_dir() -> Path:
 
     Returns: TMPDIR/llm-assistant/{uid} or /tmp/llm-assistant/{uid}
     """
-    tmpdir = os.environ.get('TMPDIR') or os.environ.get('TMP') or os.environ.get('TEMP')
-    if tmpdir:
-        base = Path(tmpdir)
-    else:
-        base = Path('/tmp')
-    return base / 'llm-assistant' / str(os.getuid())
+    return _core_get_temp_dir(_APP_NAME)
 
 
 def get_logs_db_path() -> Path:
@@ -52,7 +50,7 @@ def get_logs_db_path() -> Path:
     This is separate from llm CLI's logs.db to keep assistant conversations
     isolated from regular llm usage.
     """
-    return get_config_dir() / 'logs.db'
+    return _core_get_logs_db_path(_APP_NAME)
 
 
 def logs_on() -> bool:
@@ -121,58 +119,8 @@ def check_import(module_name: str) -> bool:
 # Console Output Helpers
 # =============================================================================
 
-
-class ConsoleHelper:
-    """Consistent console output formatting.
-
-    Provides static methods for common console output patterns.
-    Uses Rich markup for styling.
-    """
-
-    @staticmethod
-    def success(console, message: str) -> None:
-        """Print success message with green checkmark."""
-        console.print(f"[green]✓[/] {message}")
-
-    @staticmethod
-    def error(console, message: str) -> None:
-        """Print error message with red X."""
-        console.print(f"[red]✗[/] {message}")
-
-    @staticmethod
-    def warning(console, message: str) -> None:
-        """Print warning message in yellow."""
-        console.print(f"[yellow]{message}[/]")
-
-    @staticmethod
-    def warn_icon(console, message: str) -> None:
-        """Print warning with ⚠ icon."""
-        console.print(f"[yellow]⚠[/] {message}")
-
-    @staticmethod
-    def info(console, message: str) -> None:
-        """Print info message in cyan."""
-        console.print(f"[cyan]{message}[/]")
-
-    @staticmethod
-    def dim(console, message: str) -> None:
-        """Print dim/muted message."""
-        console.print(f"[dim]{message}[/]")
-
-    @staticmethod
-    def enabled(console, message: str) -> None:
-        """Print enabled/activated message in bold green."""
-        console.print(f"[bold green]{message}[/bold green]")
-
-    @staticmethod
-    def disabled(console, message: str) -> None:
-        """Print disabled/deactivated message in bold yellow."""
-        console.print(f"[bold yellow]{message}[/bold yellow]")
-
-    @staticmethod
-    def bold(console, message: str) -> None:
-        """Print bold message."""
-        console.print(f"[bold]{message}[/bold]")
+# ConsoleHelper is imported from llm_tools_core above and re-exported for
+# backward compatibility with existing imports: from .utils import ConsoleHelper
 
 
 def render_grouped_list(

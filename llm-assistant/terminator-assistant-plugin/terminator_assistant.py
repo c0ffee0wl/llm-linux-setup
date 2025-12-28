@@ -35,10 +35,14 @@ from dbus.exceptions import DBusException
 
 # Import prompt detection for TUI heuristic (shell prompt = not TUI)
 try:
-    from llm_tools.prompt_detection import PromptDetector
+    from llm_tools_core import PromptDetector
     PROMPT_DETECTOR_AVAILABLE = True
 except ImportError:
-    PROMPT_DETECTOR_AVAILABLE = False
+    try:
+        from llm_tools.prompt_detection import PromptDetector  # legacy fallback
+        PROMPT_DETECTOR_AVAILABLE = True
+    except ImportError:
+        PROMPT_DETECTOR_AVAILABLE = False
 
 # D-Bus service constants
 PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Assistant'
