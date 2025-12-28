@@ -969,9 +969,11 @@ remove_plugin_from_tracking "llm-tools-sidechat"
 # Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
 remove_plugin_from_tracking "llm-azure"
 
-# Remove llm-assistant and llm-inlineassistant from tracking before llm upgrade
-# They depend on llm-tools-core which must be installed first
-# They will be reinstalled after llm-tools-core is available
+# Remove local packages that depend on llm-tools-core from tracking before llm upgrade
+# llm-tools-core is a local package not on PyPI, so dependencies can't be resolved during upgrade
+# These will be reinstalled after llm-tools-core is available
+remove_plugin_from_tracking "llm-tools-core"
+remove_plugin_from_tracking "llm-tools-context"
 remove_plugin_from_tracking "llm-assistant"
 remove_plugin_from_tracking "llm-inlineassistant"
 
@@ -1056,6 +1058,7 @@ PLUGINS=(
     "llm-sort"
     "llm-classify"
     "llm-consortium"
+    "$SCRIPT_DIR/llm-tools-core"        # Must be before llm-tools-context (dependency)
     "$SCRIPT_DIR/llm-tools-context"
     "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
     "git+https://github.com/c0ffee0wl/llm-tools-google-search"
@@ -1464,10 +1467,8 @@ exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_tools_context.cli "$@"
 EOF
 chmod +x "$HOME/.local/bin/context"
 
-# Install llm-tools-core as llm plugin (for llm-assistant dependency resolution)
-# Note: Already installed to user site-packages in Phase 2 for terminator plugin
-log "Installing llm-tools-core as llm plugin..."
-install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-tools-core"
+# Note: llm-tools-core is already installed in the PLUGINS array (before llm-tools-context)
+# and also to user site-packages in Phase 2 for terminator plugin
 
 # Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
 log "Installing llm-assistant package..."

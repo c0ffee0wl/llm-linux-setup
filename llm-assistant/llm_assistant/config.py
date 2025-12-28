@@ -88,6 +88,15 @@ EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabri
 # Tools available only in agent mode (schema sent to model only in /agent)
 AGENT_MODE_TOOLS = ()
 
+# Tools that require Terminator/D-Bus exec terminal (disabled in --no-exec mode)
+EXEC_DEPENDENT_TOOLS = {
+    'execute_in_terminal',
+    'send_keypress',
+    'capture_terminal',
+    'refresh_context',
+    'search_terminal',
+}
+
 # Optional tools that can be loaded/unloaded via slash command (/imagemage)
 OPTIONAL_TOOL_PLUGINS = ('imagemage',)
 

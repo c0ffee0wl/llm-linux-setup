@@ -125,11 +125,15 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: Optional[int] = None,
                  continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False,
-                 agent_mode: bool = False):
+                 agent_mode: bool = False, no_exec: bool = False):
         self.console = Console()
 
         # Debug mode flag
         self.debug = debug
+
+        # No-exec mode: run without Terminator/D-Bus, use asciinema context
+        self.no_exec_mode = no_exec
+        self._asciinema_prev_hashes: set = set()  # Hash tracking for asciinema context dedup
 
         # Conversation persistence settings
         # Respect both --no-log flag and llm's global logs-off setting
@@ -150,16 +154,20 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         self._last_interrupt_time = 0.0  # For double-press exit protection
         self.lock_file = None
 
-        # Early D-Bus detection - require Terminator
-        self.early_terminal_uuid = self._get_current_terminal_uuid_early()
+        # Early D-Bus detection - require Terminator (unless --no-exec mode)
+        if not self.no_exec_mode:
+            self.early_terminal_uuid = self._get_current_terminal_uuid_early()
 
-        if not self.early_terminal_uuid:
-            ConsoleHelper.error(self.console, "llm-assistant requires Terminator terminal")
-            ConsoleHelper.warning(self.console, "Please run this from inside a Terminator terminal.")
-            sys.exit(1)
+            if not self.early_terminal_uuid:
+                ConsoleHelper.error(self.console, "llm-assistant requires Terminator terminal (use --no-exec for other terminals)")
+                ConsoleHelper.warning(self.console, "Please run this from inside a Terminator terminal, or use --no-exec flag.")
+                sys.exit(1)
 
-        # Acquire per-tab lock (held for entire session, prevents duplicates)
-        self._acquire_instance_lock()
+            # Acquire per-tab lock (held for entire session, prevents duplicates)
+            self._acquire_instance_lock()
+        else:
+            self.early_terminal_uuid = None
+            # No instance lock in no-exec mode - can run multiple instances
 
         # Register shutdown handlers EARLY (before creating resources)
         self._register_shutdown_handlers()
@@ -831,6 +839,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             rag_active=bool(self.active_rag_collection),
             skills_active=bool(self.loaded_skills),
             skills_xml=self._get_skills_xml() if self.loaded_skills else "",
+            exec_active=not self.no_exec_mode,
         )
 
     def _build_system_prompt(self) -> str:
@@ -1151,6 +1160,50 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         return blocks if blocks else [content]
 
+    def _capture_context_asciinema(self, dedupe: bool = True) -> Tuple[str, List[llm.Attachment]]:
+        """
+        Intelligent context capture from asciinema recordings.
+
+        Uses block-level hashing (same as llm-inlineassistant) to:
+        - Only include NEW command blocks not seen before
+        - Return [Content unchanged] when no new activity
+        - Reuse filter_new_blocks() from llm-tools-core
+
+        Args:
+            dedupe: Whether to apply block-level deduplication
+
+        Returns:
+            Tuple of (context_string, attachments_list):
+            - context_string: Formatted terminal context
+            - attachments_list: Always empty (no TUI screenshots in this mode)
+        """
+        from llm_tools_context import get_command_blocks
+        from llm_tools_core import filter_new_blocks
+
+        # Get recent command blocks (more than we need, filtering handles dedup)
+        blocks = get_command_blocks(n_commands=10)
+
+        if not blocks:
+            return "## Terminal Context\n\nNo session recording available.", []
+
+        if dedupe:
+            # Apply block-level hash filtering (shared with llm-inlineassistant)
+            new_blocks, current_hashes = filter_new_blocks(blocks, self._asciinema_prev_hashes)
+            self._asciinema_prev_hashes = current_hashes
+
+            if not new_blocks:
+                return "## Terminal Context\n\n[Content unchanged]", []
+            blocks_to_show = new_blocks
+        else:
+            # No deduplication - show all recent blocks (reset hashes too)
+            self._asciinema_prev_hashes = set()
+            blocks_to_show = blocks
+
+        # Format blocks for context
+        context = '\n\n'.join(blocks_to_show)
+        formatted = f"## Terminal Context (from session recording)\n\n```\n{context}\n```"
+        return formatted, []
+
     def capture_context(self, include_exec_output=False, dedupe_unchanged=False) -> Tuple[str, List[llm.Attachment]]:
         """
         Capture visible content from all terminals (like tmuxai).
@@ -1172,6 +1225,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             - context_string: XML-wrapped text content for non-TUI terminals
             - attachments_list: Screenshot attachments for TUI terminals
         """
+        # Early return for no-exec mode - use asciinema-based capture
+        if self.no_exec_mode:
+            return self._capture_context_asciinema(dedupe_unchanged)
+
         import base64
 
         try:
@@ -2224,6 +2281,8 @@ Screenshot size: {file_size} bytes"""
             self.terminal_content_hashes.clear()
             self.toolresult_hash_updated.clear()
             self.previous_capture_block_hashes.clear()
+            # Also clear asciinema hashes for no-exec mode
+            self._asciinema_prev_hashes.clear()
 
             # Simple snapshot capture (includes exec terminal)
             # Returns (context_text, tui_attachments) tuple for TUI screenshot support
@@ -2352,6 +2411,11 @@ Screenshot size: {file_size} bytes"""
                 tools_info += " [+agent-mode tools]"
             if self._is_gemini_model():
                 tools_info += " [+gemini-only tools]"
+            # Terminal info (only in normal mode, not no-exec)
+            if self.no_exec_mode:
+                terminal_info = "Mode: --no-exec (asciinema context)"
+            else:
+                terminal_info = f"Chat terminal: {self.chat_terminal_uuid}\nExec terminal: {self.exec_terminal_uuid}"
             self.console.print(Panel(f"""Model: {self.model_name}
 {system_status}
 Mode: {mode_display}
@@ -2361,11 +2425,14 @@ Context size: ~{tokens:,} tokens / {self.max_context_size:,} ({percentage}%) [{t
 Exchanges: {len(self.conversation.responses)}
 Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
 
-Chat terminal: {self.chat_terminal_uuid}
-Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style="cyan"))
+{terminal_info}""", title="Session Info", border_style="cyan"))
             return True
 
         elif cmd == "/watch":
+            # Watch mode is not available in --no-exec mode (requires Terminator D-Bus)
+            if self.no_exec_mode:
+                ConsoleHelper.warning(self.console, "Watch mode is not available in --no-exec mode (requires Terminator D-Bus)")
+                return True
             if not args:
                 # No args: show status with usage hint
                 if self.watch_mode:
@@ -3276,11 +3343,10 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
 
     def run(self):
         """Main REPL loop with health checks"""
-        # Connect to Terminator
-        self._connect_to_terminator()
-
-        # Setup terminals
-        self.setup_terminals()
+        # Connect to Terminator and setup terminals (skip in no-exec mode)
+        if not self.no_exec_mode:
+            self._connect_to_terminator()
+            self.setup_terminals()
 
         # Build external tools list for display (mode-aware)
         external_tools_list = ""
@@ -3318,9 +3384,9 @@ Type !fragment <name> [...] to insert fragments""",
 
         try:
             while True:
-                # Periodic health check every 10 iterations
+                # Periodic health check every 10 iterations (skip in no-exec mode)
                 check_counter += 1
-                if check_counter >= 10:
+                if check_counter >= 10 and not self.no_exec_mode:
                     # Check plugin availability
                     if not self._check_plugin_available():
                         ConsoleHelper.warning(self.console, "Plugin unavailable, attempting reconnect...")

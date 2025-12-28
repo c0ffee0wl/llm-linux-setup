@@ -18,6 +18,7 @@ from .config import (
     AGENT_MODE_TOOLS,
     OPTIONAL_TOOL_PLUGINS,
     GEMINI_ONLY_TOOL_NAMES,
+    EXEC_DEPENDENT_TOOLS,
 )
 from .utils import ConsoleHelper
 
@@ -148,6 +149,7 @@ class MCPMixin:
     - console: Rich Console for output
     - active_mcp_servers: set of active MCP server names
     - mode: str ("agent" or "assistant")
+    - no_exec_mode: bool (True if running without Terminator/D-Bus)
     - loaded_optional_tools: set of loaded optional tool plugins
     - _skill_invoke_tool: Optional[Tool]
     - _skill_load_file_tool: Optional[Tool]
@@ -160,6 +162,7 @@ class MCPMixin:
     console: 'Console'
     active_mcp_servers: Set[str]
     mode: str
+    no_exec_mode: bool
     loaded_optional_tools: Set[str]
 
     def _get_default_mcp_servers(self) -> set:
@@ -217,6 +220,10 @@ class MCPMixin:
             getattr(t, 'server_name', None) in self.active_mcp_servers  # MCP server is active
         )]
 
+        # Filter out exec-dependent tools in no-exec mode
+        if self.no_exec_mode:
+            tools = [t for t in tools if t.name not in EXEC_DEPENDENT_TOOLS]
+
         # Add agent-mode tools if in agent mode
         if self.mode == "agent":
             for plugin_name in AGENT_MODE_TOOLS:
@@ -267,6 +274,10 @@ class MCPMixin:
             return server is None or server in self.active_mcp_servers
 
         tools = {name: impl for name, impl in tools.items() if is_active_tool(name)}
+
+        # Filter out exec-dependent tools in no-exec mode
+        if self.no_exec_mode:
+            tools = {name: impl for name, impl in tools.items() if name not in EXEC_DEPENDENT_TOOLS}
 
         # Add agent-mode tools if in agent mode
         if self.mode == "agent":

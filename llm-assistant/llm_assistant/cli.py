@@ -77,6 +77,11 @@ def main():
         action='store_true',
         help='Start in agent mode (agentic, 100 tool iterations)'
     )
+    parser.add_argument(
+        '--no-exec',
+        action='store_true',
+        help='Run without exec terminal (works in any terminal, uses asciinema context)'
+    )
     args = parser.parse_args()
 
     # Resolve model: -m flag > query > default
@@ -94,6 +99,7 @@ def main():
         continue_=args.continue_,
         conversation_id=args.conversation_id,
         no_log=args.no_log,
-        agent_mode=args.agent
+        agent_mode=args.agent,
+        no_exec=args.no_exec
     )
     session.run()
