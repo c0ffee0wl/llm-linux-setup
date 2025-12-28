@@ -1646,17 +1646,25 @@ install_or_upgrade_uv_tool gitingest
 install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
 
 # Install/update llm-server (OpenAI-compatible HTTP wrapper for llm library)
-install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-server"
+# Requires systemd for socket activation - skip on systems without systemd
+if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
+    # Ensure libsystemd-dev is installed (required to build pystemd dependency)
+    install_apt_package libsystemd-dev
 
-# Register llm-server as systemd socket-activated user service
-# Socket activation enables on-demand startup when port 11435 is accessed
-if command -v llm-server &>/dev/null; then
-    if ! systemctl --user is-active llm-server.socket &>/dev/null; then
-        log "Registering llm-server systemd service..."
-        llm-server --service || warn "Failed to register llm-server service, continuing..."
-    else
-        log "llm-server service is already running"
+    install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-server"
+
+    # Register llm-server as systemd socket-activated user service
+    # Socket activation enables on-demand startup when port 11435 is accessed
+    if command -v llm-server &>/dev/null; then
+        if ! systemctl --user is-active llm-server.socket &>/dev/null; then
+            log "Registering llm-server systemd service..."
+            llm-server --service || warn "Failed to register llm-server service, continuing..."
+        else
+            log "llm-server service is already running"
+        fi
     fi
+else
+    log "Skipping llm-server (requires systemd)"
 fi
 
 # Configure VS Code for local LLM mode (if any VS Code variant is installed)
@@ -1846,7 +1854,7 @@ log "    - gitingest        Git repository to LLM-friendly text"
 log "    - yek              Fast repository to LLM-friendly text"
 log "    - files-to-prompt  File content formatter for LLMs"
 log "    - llm-observability  Log viewer for llm conversations"
-log "    - llm-server       OpenAI-compatible HTTP wrapper for llm"
+log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
 log "    - toko             LLM token counter with cost estimation"
 log "    - tldr             Community-driven man pages"
 log "    - argc             Bash CLI framework"
