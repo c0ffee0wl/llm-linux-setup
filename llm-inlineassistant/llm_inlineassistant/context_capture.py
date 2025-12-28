@@ -102,7 +102,7 @@ def capture_shell_context(prev_hashes: Set[str]) -> Tuple[str, Set[str]]:
 
     Returns:
         Tuple of (context_string, new_hashes):
-        - context_string: Formatted context for injection, or "[Content unchanged]"
+        - context_string: New blocks only, or "[Content unchanged]" if no new blocks
         - new_hashes: Updated hash set for next comparison
     """
     blocks = get_command_blocks(n_commands=3)

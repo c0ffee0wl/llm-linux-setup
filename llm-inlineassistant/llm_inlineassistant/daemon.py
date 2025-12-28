@@ -365,8 +365,14 @@ class ShellDaemon:
         context, state.context_hashes = capture_shell_context(state.context_hashes)
 
         # Build prompt with context
+        # - New context: send full terminal_context block
+        # - Unchanged: send marker reminding LLM to use previous context
+        # - Empty: no context block
         if context and context != "[Content unchanged]":
             full_prompt = f"{format_context_for_prompt(context)}\n\n{query}"
+        elif context == "[Content unchanged]":
+            # Context unchanged - send marker so LLM knows to reference previous context
+            full_prompt = f"<terminal_context>[Terminal context unchanged from previous message]</terminal_context>\n\n{query}"
         else:
             full_prompt = query
 
