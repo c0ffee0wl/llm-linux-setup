@@ -171,6 +171,16 @@ class TerminalMixin:
             self.console.print("  3. Terminator has been restarted after enabling")
             sys.exit(1)
 
+        # Initialize content change receiver for signal-based monitoring
+        self.content_change_receiver = ContentChangeReceiver(
+            debug_callback=self._debug if hasattr(self, '_debug') else None
+        )
+        if self.content_change_receiver.start():
+            self._debug("Content change receiver started")
+        else:
+            self._debug("Content change receiver not started (polling fallback)")
+            self.content_change_receiver = None
+
     def _connect_to_plugin_dbus(self) -> bool:
         """Connect to plugin's D-Bus service"""
         try:
@@ -369,21 +379,43 @@ class TerminalMixin:
             # Wait for shell prompt to render (prevents false TUI detection)
             # New terminals have minimal scrollback which triggers TUI heuristic
             max_wait = 2.0
-            poll_interval = 0.1
+            signal_timeout = 0.1  # Used for both signal wait and polling fallback
             start_time = time.time()
-            while time.time() - start_time < max_wait:
-                try:
-                    content = self.plugin_dbus.capture_terminal_content(
-                        self.exec_terminal_uuid, -1
-                    )
-                    if content and PromptDetector.detect_prompt_at_end(content):
-                        self._debug(f"Shell prompt detected after {time.time() - start_time:.2f}s")
-                        break
-                except Exception:
-                    pass
-                time.sleep(poll_interval)
-            else:
-                self._debug("Shell prompt wait timed out (continuing anyway)")
+
+            # Use signal-based waiting if content change receiver is available
+            use_signals = (hasattr(self, 'content_change_receiver') and
+                          self.content_change_receiver and
+                          self.content_change_receiver.is_running())
+            if use_signals:
+                self.plugin_dbus.subscribe_content_changes(self.exec_terminal_uuid)
+                # Drain any pending signals from before subscription
+                self.content_change_receiver.get_all_changes()
+                self._debug("Using signal-based shell ready detection")
+
+            try:
+                while time.time() - start_time < max_wait:
+                    try:
+                        content = self.plugin_dbus.capture_terminal_content(
+                            self.exec_terminal_uuid, -1
+                        )
+                        if content and PromptDetector.detect_prompt_at_end(content):
+                            self._debug(f"Shell prompt detected after {time.time() - start_time:.2f}s")
+                            break
+                    except Exception:
+                        pass
+
+                    # Wait for content change signal or use polling fallback
+                    if use_signals:
+                        changed_uuid = self.content_change_receiver.get_change(timeout=signal_timeout)
+                        if changed_uuid and changed_uuid != self.exec_terminal_uuid:
+                            continue  # Signal for different terminal, keep waiting
+                    else:
+                        time.sleep(signal_timeout)
+                else:
+                    self._debug("Shell prompt wait timed out (continuing anyway)")
+            finally:
+                if use_signals:
+                    self.plugin_dbus.unsubscribe_content_changes(self.exec_terminal_uuid)
 
             self.console.print(f"[green]✓[/] Exec terminal restored: {exec_uuid[:8]}...")
             return True
@@ -445,41 +477,71 @@ class TerminalMixin:
             True if content stabilized, False if timed out
         """
         start_time = time.time()
-        poll_interval = 0.15
+        signal_timeout = 0.15  # Used for both signal wait and polling fallback
         previous_content = None
         stable_count = 0
         content_changed = initial_content is None  # Skip change detection if no initial
 
-        while time.time() - start_time < max_wait:
-            try:
-                current_content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+        # Use signal-based waiting if content change receiver is available
+        use_signals = (hasattr(self, 'content_change_receiver') and
+                      self.content_change_receiver and
+                      self.content_change_receiver.is_running())
+        if use_signals:
+            self.plugin_dbus.subscribe_content_changes(terminal_uuid)
+            # Drain any pending signals from before subscription
+            self.content_change_receiver.get_all_changes()
+            self._debug("Using signal-based TUI render detection")
 
-                # First, wait for content to change from initial state
-                if not content_changed:
-                    if current_content != initial_content:
-                        content_changed = True
-                        self._debug(f"TUI content changed after {time.time() - start_time:.2f}s")
+        try:
+            while time.time() - start_time < max_wait:
+                try:
+                    current_content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+                    # First, wait for content to change from initial state
+                    if not content_changed:
+                        if current_content != initial_content:
+                            content_changed = True
+                            self._debug(f"TUI content changed after {time.time() - start_time:.2f}s")
+                            previous_content = current_content
+
+                        # Wait for content change signal or use polling fallback
+                        if use_signals:
+                            changed_uuid = self.content_change_receiver.get_change(timeout=signal_timeout)
+                            if changed_uuid and changed_uuid != terminal_uuid:
+                                continue  # Signal for different terminal
+                        else:
+                            time.sleep(signal_timeout)
+                        continue
+
+                    # Then check for stability
+                    if current_content == previous_content:
+                        stable_count += 1
+                        if stable_count >= 2:  # Stable for 2 consecutive polls
+                            self._debug(f"TUI render stabilized after {time.time() - start_time:.2f}s")
+                            return True
+                    else:
+                        stable_count = 0
                         previous_content = current_content
-                    time.sleep(poll_interval)
-                    continue
 
-                # Then check for stability
-                if current_content == previous_content:
-                    stable_count += 1
-                    if stable_count >= 2:  # Stable for 2 consecutive polls
-                        self._debug(f"TUI render stabilized after {time.time() - start_time:.2f}s")
-                        return True
-                else:
-                    stable_count = 0
-                    previous_content = current_content
+                    # Wait for content change signal or use polling fallback
+                    if use_signals:
+                        changed_uuid = self.content_change_receiver.get_change(timeout=signal_timeout)
+                        if changed_uuid and changed_uuid != terminal_uuid:
+                            continue  # Signal for different terminal
+                    else:
+                        time.sleep(signal_timeout)
+                except Exception as e:
+                    self._debug(f"TUI render wait error: {e}")
+                    if use_signals:
+                        self.content_change_receiver.get_change(timeout=signal_timeout)
+                    else:
+                        time.sleep(signal_timeout)
 
-                time.sleep(poll_interval)
-            except Exception as e:
-                self._debug(f"TUI render wait error: {e}")
-                time.sleep(poll_interval)
-
-        self._debug(f"TUI render wait timed out after {max_wait}s")
-        return False  # Timeout - proceed anyway
+            self._debug(f"TUI render wait timed out after {max_wait}s")
+            return False  # Timeout - proceed anyway
+        finally:
+            if use_signals:
+                self.plugin_dbus.unsubscribe_content_changes(terminal_uuid)
 
     def _ensure_exec_terminal(self) -> bool:
         """Verify exec terminal exists, recreate if needed.

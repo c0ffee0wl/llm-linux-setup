@@ -120,6 +120,40 @@ def refresh_context() -> str:
     })
 
 
+def search_terminal(pattern: str, scope: str = "exec", case_sensitive: bool = False) -> str:
+    """
+    Search for a regex pattern in terminal scrollback.
+
+    Searches the terminal history for lines matching the given pattern. Useful for
+    finding specific errors, locating output, or searching for patterns without
+    capturing the entire scrollback. Returns matching lines with line numbers.
+
+    Args:
+        pattern: Regex pattern to search for. Examples:
+                 - "error|exception" - find errors
+                 - "failed.*build" - find build failures
+                 - "warning:" - find warnings
+                 - "^\\$" - find shell prompts
+        scope: Which terminal(s) to search:
+               - "exec": Only the Exec terminal (default)
+               - "all": All terminals except Chat
+        case_sensitive: If True, search is case-sensitive (default: False)
+
+    Returns:
+        JSON indicating search has been queued.
+        Results will show matching lines with line numbers.
+    """
+    if scope not in ("exec", "all"):
+        return json.dumps({"error": f"Invalid scope: {scope}. Use 'exec' or 'all'."})
+    return json.dumps({
+        "action": "search_terminal",
+        "pattern": pattern,
+        "scope": scope,
+        "case_sensitive": case_sensitive,
+        "status": "queued"
+    })
+
+
 def view_attachment(path_or_url: str) -> str:
     """
     Queue an image, PDF, audio, or video file for viewing in the next turn.
@@ -213,6 +247,7 @@ def register_tools(register):
     register(send_keypress)
     register(capture_terminal)
     register(refresh_context)
+    register(search_terminal)
     # Multi-modal viewing tools
     register(view_attachment)
     register(view_pdf)

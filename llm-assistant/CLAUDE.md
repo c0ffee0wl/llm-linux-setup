@@ -202,7 +202,7 @@ The assistant supports TmuxAI-style knowledge bases for persistent context:
 # Create a KB file
 mkdir -p ~/.config/llm-assistant/kb
 echo "## Project Conventions
-- Use Python 3.10+
+- Use Python 3.9+
 - Follow PEP8" > ~/.config/llm-assistant/kb/project.md
 
 # In assistant:
@@ -418,7 +418,7 @@ The `/web` command opens a real-time web interface that mirrors the conversation
 
 - Terminator terminal emulator
 - llm library (already installed)
-- Python 3.8+
+- Python 3.9+
 - PyGObject (for GTK/VTE bindings)
 - D-Bus (for terminal management)
 - prompt_toolkit (for keybindings)
@@ -561,5 +561,5 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - **Import errors**: Ensure running inside Terminator terminal: `echo $TERMINATOR_UUID`
 - **D-Bus errors**: Ensure D-Bus enabled in Terminator config
 - **No terminals captured**: Enable plugin in Terminator Preferences → Plugins
-- **Watch mode not working**: Check asyncio compatibility, ensure Python 3.8+
+- **Watch mode not working**: Check asyncio compatibility, ensure Python 3.9+
 - **Template loading fails**: The code uses explicit `template_dir() / "llm-assistant.yaml"` to avoid conflicts with directories named `llm-assistant` in cwd. If template not found, run `./install-llm-tools.sh` to install templates. Never use bare `load_template("llm-assistant")` as it conflicts with the repo's `llm-assistant/` directory.

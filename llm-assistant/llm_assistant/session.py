@@ -610,6 +610,14 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 except Exception:
                     pass
 
+            # STEP 3.25: Stop content change receiver (signal-based monitoring)
+            if hasattr(self, 'content_change_receiver') and self.content_change_receiver:
+                try:
+                    self.content_change_receiver.stop()
+                    self.content_change_receiver = None
+                except Exception:
+                    pass
+
             # STEP 3.5: Stop web companion server (if running)
             if hasattr(self, 'web_server') and self.web_server:
                 try:
@@ -875,9 +883,13 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         """
         Capture terminal content using prompt detection instead of stability checks.
 
-        Polls terminal and stops when content has changed from initial state AND
-        a shell prompt is detected at the end. This prevents false positives from
-        the old prompt that was visible before the command started.
+        Uses signal-based monitoring when available: subscribes to terminal content
+        changes and reacts immediately when content changes, instead of fixed polling.
+        Falls back to polling if signal receiver is not available.
+
+        Stops when content has changed from initial state AND a shell prompt is
+        detected at the end. This prevents false positives from the old prompt
+        that was visible before the command started.
 
         Falls back to timeout for long-running commands or TUI applications.
 
@@ -897,49 +909,75 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         """
         # Configuration
         initial_delay = 0.3
-        poll_interval = 0.5
-        max_attempts = int(max_wait / poll_interval)
+        signal_timeout = 0.5  # Timeout for signal wait (also serves as poll fallback)
 
         # Initial delay for command to start
         time.sleep(initial_delay)
 
         content_changed = initial_content is None  # If no initial content, skip change detection
         content = ""  # Initialize to avoid NameError if loop doesn't execute
+        start_time = time.time()
 
-        # Use Rich Status for visual feedback during polling
-        with Status("[cyan]Waiting for output (0.3s)[/]", console=self.console, spinner="dots", spinner_style="cyan") as status:
-            for attempt in range(max_attempts):
-                try:
-                    content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+        # Subscribe to content changes if receiver is available
+        use_signals = (hasattr(self, 'content_change_receiver') and
+                      self.content_change_receiver and
+                      self.content_change_receiver.is_running())
+        if use_signals:
+            self.subscribe_content_changes(terminal_uuid)
+            # Drain any pending signals from before subscription
+            self.content_change_receiver.get_all_changes()
+            self._debug("Using signal-based prompt detection")
 
-                    # First, check if content has changed from initial state
-                    if not content_changed:
-                        if content != initial_content:
-                            content_changed = True
-                            self._debug("Content changed from initial state")
+        try:
+            # Use Rich Status for visual feedback
+            with Status("[cyan]Waiting for output (0.3s)[/]", console=self.console, spinner="dots", spinner_style="cyan") as status:
+                while time.time() - start_time < max_wait:
+                    try:
+                        # Wait for content change signal or timeout
+                        if use_signals:
+                            # Block until signal or timeout
+                            changed_uuid = self.content_change_receiver.get_change(timeout=signal_timeout)
+                            # Only process if it's our terminal (or timeout)
+                            if changed_uuid and changed_uuid != terminal_uuid:
+                                continue  # Signal for different terminal, keep waiting
+                        else:
+                            # Fallback to polling
+                            time.sleep(signal_timeout)
 
-                    # Only check for prompt after content has changed
-                    if content_changed and content:
-                        detected, method = PromptDetector.detect_prompt_at_end_with_method(content)
-                        if detected:
-                            return (True, content, method)
+                        # Capture current content
+                        content = self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
-                    # Visual feedback with dynamic status
-                    elapsed = initial_delay + (attempt * poll_interval)
-                    status_msg = "Waiting for output" if not content_changed else "Waiting for prompt"
-                    status.update(f"[cyan]{status_msg} ({elapsed:.1f}s)[/]")
+                        # First, check if content has changed from initial state
+                        if not content_changed:
+                            if content != initial_content:
+                                content_changed = True
+                                self._debug("Content changed from initial state")
 
-                    time.sleep(poll_interval)
+                        # Only check for prompt after content has changed
+                        if content_changed and content:
+                            detected, method = PromptDetector.detect_prompt_at_end_with_method(content)
+                            if detected:
+                                return (True, content, method)
 
-                except dbus.exceptions.DBusException as e:
-                    ConsoleHelper.error(self.console, f"Plugin D-Bus error during capture: {e}")
-                    return (False, "", "")
-                except Exception as e:
-                    ConsoleHelper.error(self.console, f"Prompt-based capture error ({type(e).__name__}): {e}")
-                    return (False, "", "")
+                        # Visual feedback with dynamic status
+                        elapsed = time.time() - start_time + initial_delay
+                        status_msg = "Waiting for output" if not content_changed else "Waiting for prompt"
+                        status.update(f"[cyan]{status_msg} ({elapsed:.1f}s)[/]")
 
-        # Timeout - return last content
-        return (False, content if content else "", "")
+                    except dbus.exceptions.DBusException as e:
+                        ConsoleHelper.error(self.console, f"Plugin D-Bus error during capture: {e}")
+                        return (False, "", "")
+                    except Exception as e:
+                        ConsoleHelper.error(self.console, f"Prompt-based capture error ({type(e).__name__}): {e}")
+                        return (False, "", "")
+
+            # Timeout - return last content
+            return (False, content if content else "", "")
+
+        finally:
+            # Always unsubscribe to prevent resource leaks
+            if use_signals:
+                self.unsubscribe_content_changes(terminal_uuid)
 
     def _capture_last_command_output(self, terminal_uuid: str) -> str:
         """
@@ -958,9 +996,12 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         Returns:
             String containing recent commands' prompts + outputs
         """
-        INITIAL_LINES = 50      # Start with viewport-ish size
         MAX_LINES = 5000        # Hard limit on capture range
         MAX_RECENT_COMMANDS = 3 # Number of recent commands to capture
+
+        # Get actual viewport size instead of hardcoded value
+        scrollback_info = self.get_scrollback_info(terminal_uuid)
+        initial_lines = scrollback_info.get('visible_lines', 50) if scrollback_info else 50
 
         try:
             _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
@@ -968,7 +1009,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             # Fallback to viewport capture
             return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
-        lines_to_capture = INITIAL_LINES
+        lines_to_capture = initial_lines
 
         while lines_to_capture <= MAX_LINES:
             start_row = max(0, cursor_row - lines_to_capture)
@@ -1591,7 +1632,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         Uses hybrid detection approach:
         1. Command-based detection (known TUI commands)
-        2. Terminal state detection (alternate screen buffer heuristic)
+        2. Foreground process detection (actual running process name)
+        3. Terminal state detection (alternate screen buffer heuristic)
 
         This provides better accuracy than command-based detection alone,
         catching cases where a TUI is launched via script or alias.
@@ -1607,7 +1649,19 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             self._debug(f"TUI detected via command name: {command.split()[0] if command else ''}")
             return True
 
-        # Second check: terminal state suggests TUI is active
+        # Second check: actual foreground process
+        # More reliable than command parsing for aliases, scripts, wrappers
+        try:
+            process_info = self.get_foreground_process(self.exec_terminal_uuid)
+            if process_info and process_info.get('name'):
+                process_name = process_info['name'].lower()
+                if process_name in TUI_COMMANDS:
+                    self._debug(f"TUI detected via foreground process: {process_name}")
+                    return True
+        except Exception as e:
+            self._debug(f"Foreground process detection error: {e}")
+
+        # Third check: terminal state suggests TUI is active
         # This catches TUIs launched via scripts, aliases, or complex pipelines
         try:
             is_tui_active = self.plugin_dbus.is_likely_tui_active(self.exec_terminal_uuid)
@@ -2907,6 +2961,73 @@ Exec terminal: {self.exec_terminal_uuid}""", title="Session Info", border_style=
                 return ToolResult(
                     name=tool_call.name,
                     output=f"Context refresh error: {e}",
+                    tool_call_id=tool_call_id
+                )
+
+        elif tool_name == "search_terminal":
+            pattern = get_str("pattern")
+            if not pattern:
+                return ToolResult(
+                    name=tool_call.name,
+                    output="Error: No pattern provided",
+                    tool_call_id=tool_call_id
+                )
+
+            scope = get_str("scope", "exec")
+            if scope not in ("exec", "all"):
+                scope = "exec"  # Default to exec for invalid scope
+            case_sensitive = tool_args.get("case_sensitive", False)
+
+            self.console.print()
+            ConsoleHelper.info(self.console, f"Searching for: {pattern}")
+
+            results = []
+            try:
+                if scope == "exec":
+                    # Search only exec terminal
+                    matches = self.search_in_scrollback(self.exec_terminal_uuid, pattern, case_sensitive)
+                    if matches:
+                        results.append(("Exec", matches))
+                else:
+                    # Search all terminals except chat
+                    terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
+                    for term in terminals:
+                        term_uuid = term.get('uuid')
+                        if term_uuid and term_uuid != self.chat_terminal_uuid:
+                            matches = self.search_in_scrollback(term_uuid, pattern, case_sensitive)
+                            if matches:
+                                results.append((term.get('title', 'Unknown'), matches))
+
+                # Format results
+                if not results:
+                    output = f"No matches found for pattern: {pattern}"
+                    ConsoleHelper.warning(self.console, output)
+                else:
+                    total_matches = sum(len(m) for _, m in results)
+                    ConsoleHelper.success(self.console, f"Found {total_matches} matches")
+
+                    lines = []
+                    for terminal_name, matches in results:
+                        lines.append(f"## {terminal_name} ({len(matches)} matches)")
+                        for m in matches[:20]:  # Limit to first 20 matches per terminal
+                            line_num = m.get('line_number', '?')
+                            text = m.get('text', '').strip()
+                            lines.append(f"  Line {line_num}: {text}")
+                        if len(matches) > 20:
+                            lines.append(f"  ... and {len(matches) - 20} more matches")
+                    output = "\n".join(lines)
+
+                return ToolResult(
+                    name=tool_call.name,
+                    output=output,
+                    tool_call_id=tool_call_id
+                )
+
+            except Exception as e:
+                ConsoleHelper.error(self.console, f"Search error: {e}")
+                return ToolResult(
+                    name=tool_call.name,
+                    output=f"Search error: {e}",
                     tool_call_id=tool_call_id
                 )
 

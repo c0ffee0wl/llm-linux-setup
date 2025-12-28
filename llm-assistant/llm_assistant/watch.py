@@ -41,11 +41,16 @@ class WatchMixin:
     - previous_watch_iteration_count: int for tracking iterations
     - plugin_dbus: D-Bus plugin service object
     - exec_terminal_uuid: str UUID of exec terminal
+    - chat_terminal_uuid: str UUID of chat terminal (for exclusion)
+    - content_change_receiver: Optional ContentChangeReceiver for signal-based monitoring
     - capture_context: method to capture terminal context
     - _prompt: method to prompt the model
     - _build_system_prompt: method to build system prompt
     - _log_response: method to log responses
     - _debug: method for debug output
+    - get_foreground_process: method to get terminal's foreground process info
+    - subscribe_content_changes: method to subscribe to content change signals
+    - unsubscribe_content_changes: method to unsubscribe from content change signals
     """
 
     # Type hints for attributes provided by main class
@@ -91,6 +96,30 @@ class WatchMixin:
         self.watch_thread = threading.Thread(target=watch_thread_target, daemon=True)
         self.watch_thread.start()
 
+    def _get_watched_terminal_uuids(self) -> List[str]:
+        """Get list of terminal UUIDs to watch (all except chat terminal)."""
+        try:
+            terminals = self.plugin_dbus.enumerate_terminals()
+            chat_uuid = getattr(self, 'chat_terminal_uuid', None)
+            return [t['uuid'] for t in terminals if t.get('uuid') != chat_uuid]
+        except Exception:
+            return []
+
+    def _update_watch_subscriptions(self, current_uuids: set, subscribed_uuids: set) -> set:
+        """Update content change subscriptions for watch mode.
+
+        Returns the new set of subscribed UUIDs.
+        """
+        # Unsubscribe from terminals that no longer exist
+        for uuid in subscribed_uuids - current_uuids:
+            self.unsubscribe_content_changes(uuid)
+
+        # Subscribe to new terminals
+        for uuid in current_uuids - subscribed_uuids:
+            self.subscribe_content_changes(uuid)
+
+        return current_uuids.copy()
+
     async def watch_loop(self):
         """
         Background monitoring of all terminals (like tmuxai watch mode).
@@ -98,94 +127,143 @@ class WatchMixin:
         Implements intelligent change detection:
         1. Hash-based skip: Don't send unchanged context to AI
         2. History-aware prompt: Tell AI to focus on NEW content when changes detected
+        3. Signal-based wakeup: Wake immediately on terminal content changes
         """
-        while self.watch_mode:
-            try:
-                # Thread-safe capture and prompt - hold lock during D-Bus calls and conversation
-                # This prevents race conditions with main thread's D-Bus operations
-                context = None
-                tui_attachments = []
-                response_text = None
-                exec_status = ""
-                should_skip = False
+        # Check if signal-based watching is available
+        use_signals = (hasattr(self, 'content_change_receiver') and
+                      self.content_change_receiver and
+                      self.content_change_receiver.is_running())
+        subscribed_uuids: set = set()
 
-                with self.watch_lock:
-                    # Capture all terminal content (including exec output for watch)
-                    # Returns (context_text, tui_attachments) tuple for TUI screenshot support
-                    # Enable per-terminal deduplication after first watch iteration
-                    context, tui_attachments = self.capture_context(
-                        include_exec_output=True,
-                        dedupe_unchanged=self.previous_watch_iteration_count > 0
-                    )
+        if use_signals:
+            # Initial subscription to all watched terminals
+            current_uuids = set(self._get_watched_terminal_uuids())
+            subscribed_uuids = self._update_watch_subscriptions(current_uuids, subscribed_uuids)
+            # Drain any pending signals
+            self.content_change_receiver.get_all_changes()
+            self._debug(f"Watch mode: signal-based monitoring ({len(subscribed_uuids)} terminals)")
 
-                    # Check exec terminal idle state using PromptDetector
-                    try:
-                        exec_content = self.plugin_dbus.capture_terminal_content(
-                            self.exec_terminal_uuid, -1
+        try:
+            while self.watch_mode:
+                try:
+                    # Update subscriptions if terminals changed (new tabs, closed tabs)
+                    if use_signals:
+                        current_uuids = set(self._get_watched_terminal_uuids())
+                        if current_uuids != subscribed_uuids:
+                            subscribed_uuids = self._update_watch_subscriptions(current_uuids, subscribed_uuids)
+                            self._debug(f"Watch mode: updated subscriptions ({len(subscribed_uuids)} terminals)")
+
+                    # Thread-safe capture and prompt - hold lock during D-Bus calls and conversation
+                    # This prevents race conditions with main thread's D-Bus operations
+                    context = None
+                    tui_attachments = []
+                    response_text = None
+                    exec_status = ""
+                    should_skip = False
+
+                    with self.watch_lock:
+                        # Capture all terminal content (including exec output for watch)
+                        # Returns (context_text, tui_attachments) tuple for TUI screenshot support
+                        # Enable per-terminal deduplication after first watch iteration
+                        context, tui_attachments = self.capture_context(
+                            include_exec_output=True,
+                            dedupe_unchanged=self.previous_watch_iteration_count > 0
                         )
-                        if exec_content:
-                            is_idle = PromptDetector.detect_prompt_at_end(exec_content)
-                            exec_status = "[Exec: idle]" if is_idle else "[Exec: command running]"
-                    except Exception:
-                        exec_status = "[Exec: unknown]"
 
-                    if not context.strip():
-                        # No context to analyze
-                        should_skip = True
-                    else:
-                        # CHANGE DETECTION: Compute hash and compare with previous
-                        current_hash = self._compute_context_hash(context, tui_attachments)
+                        # Check exec terminal idle state using PromptDetector and foreground process
+                        try:
+                            exec_content = self.plugin_dbus.capture_terminal_content(
+                                self.exec_terminal_uuid, -1
+                            )
+                            if exec_content:
+                                is_idle = PromptDetector.detect_prompt_at_end(exec_content)
+                                if is_idle:
+                                    exec_status = "[Exec: idle]"
+                                else:
+                                    # Try to get actual process name
+                                    try:
+                                        process_info = self.get_foreground_process(self.exec_terminal_uuid)
+                                        if process_info and process_info.get('name'):
+                                            exec_status = f"[Exec: running {process_info['name']}]"
+                                        else:
+                                            exec_status = "[Exec: command running]"
+                                    except Exception:
+                                        exec_status = "[Exec: command running]"
+                        except Exception:
+                            exec_status = "[Exec: unknown]"
 
-                        if current_hash == self.previous_watch_context_hash:
-                            # Context unchanged - skip AI call entirely
+                        if not context.strip():
+                            # No context to analyze
                             should_skip = True
                         else:
-                            # Context changed - update hash and proceed
-                            self.previous_watch_context_hash = current_hash
-                            self.previous_watch_iteration_count += 1
+                            # CHANGE DETECTION: Compute hash and compare with previous
+                            current_hash = self._compute_context_hash(context, tui_attachments)
 
-                            # HISTORY-AWARE PROMPT: Tell AI to focus on new content
-                            prompt = render('prompts/watch_prompt.j2',
-                                iteration_count=self.previous_watch_iteration_count,
-                                goal=self.watch_goal,
-                                exec_status=exec_status,
-                                context=context,
-                            )
+                            if current_hash == self.previous_watch_context_hash:
+                                # Context unchanged - skip AI call entirely
+                                should_skip = True
+                            else:
+                                # Context changed - update hash and proceed
+                                self.previous_watch_context_hash = current_hash
+                                self.previous_watch_iteration_count += 1
 
-                            try:
-                                # Include TUI screenshots if any were captured
-                                # Always pass system prompt on every call (required for Gemini/Vertex
-                                # which is stateless - systemInstruction must be sent on every request)
-                                #
-                                # IMPORTANT: stream=False minimizes lock hold time by getting the
-                                # complete response in one call. Lock is necessary because the
-                                # conversation object is not thread-safe and is shared with main thread.
-                                response = self._prompt(
-                                    prompt,
-                                    system=self._build_system_prompt(),
-                                    attachments=tui_attachments if tui_attachments else None,
-                                    stream=False  # Reduce lock hold time
+                                # HISTORY-AWARE PROMPT: Tell AI to focus on new content
+                                prompt = render('prompts/watch_prompt.j2',
+                                    iteration_count=self.previous_watch_iteration_count,
+                                    goal=self.watch_goal,
+                                    exec_status=exec_status,
+                                    context=context,
                                 )
-                                response_text = response.text()
-                                # Log watch mode response to database
-                                self._log_response(response)
-                            except Exception as response_error:
-                                # Don't update hash on error - will retry next iteration
-                                self.previous_watch_context_hash = None
-                                ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
 
-                # Only show if AI has actionable feedback - outside lock
-                if not should_skip and response_text and response_text.strip():
-                    if not is_watch_response_dismissive(response_text):
-                        self.console.print()
-                        self.console.print(Panel(
-                            Markdown(response_text),
-                            title="[bold yellow]Watch Mode Alert[/]",
-                            border_style="yellow"
-                        ))
-                        self.console.print()
+                                try:
+                                    # Include TUI screenshots if any were captured
+                                    # Always pass system prompt on every call (required for Gemini/Vertex
+                                    # which is stateless - systemInstruction must be sent on every request)
+                                    #
+                                    # IMPORTANT: stream=False minimizes lock hold time by getting the
+                                    # complete response in one call. Lock is necessary because the
+                                    # conversation object is not thread-safe and is shared with main thread.
+                                    response = self._prompt(
+                                        prompt,
+                                        system=self._build_system_prompt(),
+                                        attachments=tui_attachments if tui_attachments else None,
+                                        stream=False  # Reduce lock hold time
+                                    )
+                                    response_text = response.text()
+                                    # Log watch mode response to database
+                                    self._log_response(response)
+                                except Exception as response_error:
+                                    # Don't update hash on error - will retry next iteration
+                                    self.previous_watch_context_hash = None
+                                    ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
 
-            except Exception as e:
-                ConsoleHelper.error(self.console, f"Watch mode error: {e}")
+                    # Only show if AI has actionable feedback - outside lock
+                    if not should_skip and response_text and response_text.strip():
+                        if not is_watch_response_dismissive(response_text):
+                            self.console.print()
+                            self.console.print(Panel(
+                                Markdown(response_text),
+                                title="[bold yellow]Watch Mode Alert[/]",
+                                border_style="yellow"
+                            ))
+                            self.console.print()
 
-            await asyncio.sleep(self.watch_interval)
+                except Exception as e:
+                    ConsoleHelper.error(self.console, f"Watch mode error: {e}")
+
+                # Wait for content change signal or timeout
+                if use_signals:
+                    # Use asyncio.to_thread to call blocking get_change from async context
+                    # This wakes immediately on content change or waits full interval
+                    await asyncio.to_thread(
+                        self.content_change_receiver.get_change,
+                        timeout=self.watch_interval
+                    )
+                else:
+                    await asyncio.sleep(self.watch_interval)
+        finally:
+            # Cleanup: unsubscribe from all terminals
+            if use_signals and subscribed_uuids:
+                for uuid in subscribed_uuids:
+                    self.unsubscribe_content_changes(uuid)
+                self._debug("Watch mode: unsubscribed from all terminals")
