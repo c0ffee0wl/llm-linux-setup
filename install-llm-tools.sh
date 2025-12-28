@@ -969,6 +969,27 @@ remove_plugin_from_tracking "llm-tools-sidechat"
 # Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
 remove_plugin_from_tracking "llm-azure"
 
+# Remove llm-assistant and llm-inlineassistant from tracking before llm upgrade
+# They depend on llm-tools-core which must be installed first
+# They will be reinstalled after llm-tools-core is available
+remove_plugin_from_tracking "llm-assistant"
+remove_plugin_from_tracking "llm-inlineassistant"
+
+# Install llm-tools-core to user site-packages BEFORE llm upgrade
+# This is needed by: terminator plugin (system Python), scripts/context (system Python)
+log "Installing llm-tools-core to user site-packages..."
+if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" --quiet 2>/dev/null; then
+    pip install --user --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" 2>/dev/null || \
+    pip install --user -e "$SCRIPT_DIR/llm-tools-core"
+fi
+
+# Clean up legacy llm_tools directory (replaced by llm-tools-core)
+PYTHON_USER_SITE=$(python3 -m site --user-site)
+if [ -d "$PYTHON_USER_SITE/llm_tools" ]; then
+    log "Cleaning up legacy llm_tools directory..."
+    rm -rf "$PYTHON_USER_SITE/llm_tools"
+fi
+
 # Check if llm is already installed
 if uv tool list 2>/dev/null | grep -q "^llm "; then
     log "Upgrading llm (with llm-uv-tool)..."
@@ -1440,22 +1461,10 @@ mkdir -p "$HOME/.local/bin"
 cp "$SCRIPT_DIR/scripts/context" "$HOME/.local/bin/context"
 chmod +x "$HOME/.local/bin/context"
 
-# Install llm-tools-core to user site-packages (needed by terminator plugin + scripts/context)
-# Must be installed BEFORE llm-assistant (which depends on it)
-log "Installing llm-tools-core package..."
-# Use uv for faster installation, fallback to pip if uv fails
-# --system ensures we use system Python (not any venv), --break-system-packages allows editable install
-if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" --quiet 2>/dev/null; then
-    pip install --user --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" 2>/dev/null || \
-    pip install --user -e "$SCRIPT_DIR/llm-tools-core"
-fi
-
-# Clean up legacy llm_tools directory (replaced by llm-tools-core)
-PYTHON_USER_SITE=$(python3 -m site --user-site)
-if [ -d "$PYTHON_USER_SITE/llm_tools" ]; then
-    log "Cleaning up legacy llm_tools directory..."
-    rm -rf "$PYTHON_USER_SITE/llm_tools"
-fi
+# Install llm-tools-core as llm plugin (for llm-assistant dependency resolution)
+# Note: Already installed to user site-packages in Phase 2 for terminator plugin + scripts/context
+log "Installing llm-tools-core as llm plugin..."
+install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-tools-core"
 
 # Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
 log "Installing llm-assistant package..."
