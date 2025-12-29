@@ -144,7 +144,7 @@ class WorkflowState(TypedDict, total=False):
     __loop_break_item: Any
     __loop_break_index: int
     __loop_results_file: str
-    __loop_results_truncated: bool
+    __loop_results_limited: bool  # True when results hit max_results limit
 
     # Internal: Routing
     __next: str
@@ -160,16 +160,11 @@ class WorkflowState(TypedDict, total=False):
     __workflow_exit: bool
     __workflow_failed: bool
 
-    # Internal: Guardrail control (legacy)
-    __guardrail_next: str
-    __guardrail_warning: str
-    __guardrail_retry_count: int
-    __guardrail_error: str
-
-    # Internal: Guard state (new LLM Guard integration)
+    # Internal: Guard state (LLM Guard integration)
     __guard_vault: dict[str, Any]           # Vault state for anonymize/deanonymize
     __guard_input_content: str              # Input content for output relevance
     __guard_scan_results: dict[str, Any]    # Last scan results for debugging
+    __guard_warning: str                    # Warning message when on_fail=continue
 
 
 # Reserved state keys that user actions cannot override
@@ -188,7 +183,11 @@ RESERVED_STATE_KEYS = frozenset([
     "__loop_break_item",
     "__loop_break_index",
     "__loop_results_file",
-    "__loop_results_truncated",
+    "__loop_results_limited",
+    "__loop_config",              # Loop configuration (used by loop_nodes.py)
+    "__loop_items",               # Loop items list (used by loop_nodes.py)
+    "__step_outcome",             # Step outcome for routing (used by adapters.py)
+    "__step_error",               # Step error flag for routing (used by adapters.py)
     "__cleanup_complete",
     "__cleanup_warnings",
     "__cleanup_errors",
@@ -205,15 +204,14 @@ RESERVED_STATE_KEYS = frozenset([
     "__suspend_default",
     "__suspend_feedback_type",
     "__resume_data",
-    # Guardrail control (legacy)
-    "__guardrail_next",
-    "__guardrail_warning",
-    "__guardrail_retry_count",
-    "__guardrail_error",
-    # Guard state keys (new LLM Guard integration)
+    # Guard state keys (LLM Guard integration)
     "__guard_vault",           # Vault state for anonymize/deanonymize flow
     "__guard_input_content",   # Input content for output relevance checks
     "__guard_scan_results",    # Last scan results for debugging
+    "__guard_warning",         # Warning message when on_fail=continue
+    # Lifecycle handler state keys
+    "__on_complete_done",      # Tracks if on_complete has run
+    "__on_failure_done",       # Tracks if on_failure has run
 ])
 
 

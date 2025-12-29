@@ -8,15 +8,18 @@ These nodes bypass the adapter pattern for optimal Burr integration:
 - RESERVED_STATE_KEYS protection at the Burr level
 - Scalable result storage (memory, file, or none)
 
-WARNING: SingleStepAction is an Internal Burr API
--------------------------------------------------
+NOTE: SingleStepAction is an Internal Burr API
+----------------------------------------------
 The Burr source code header for SingleStepAction states:
   "Note this is not user-facing, as the internal API is meant to change."
 
-This is acceptable for a specialized engine, but you MUST:
-1. Pin the burr version strictly in requirements.txt
-2. Be prepared to refactor if Burr changes this internal class
-3. Test thoroughly after any Burr version upgrade
+However, the API has been stable from 0.20.x through 0.40.x (20 versions).
+The run_and_update() signature and is_async() behavior are unchanged.
+
+Best practices for maintaining compatibility:
+1. Pin the burr version strictly in pyproject.toml
+2. Test thoroughly after any Burr version upgrade
+3. Monitor Burr release notes for SingleStepAction changes
 
 Result Storage Modes:
 --------------------
@@ -45,14 +48,18 @@ Usage:
 """
 
 import json
+import logging
 import os
 import tempfile
+from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 from burr.core.action import SingleStepAction
 from burr.core.state import State
 
 from ..core.types import RESERVED_STATE_KEYS
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from ..evaluator import ContextEvaluator
@@ -207,11 +214,42 @@ class IteratorInitNode(SingleStepAction):
         if self.result_storage == "file" and self.aggregate_results:
             # Create JSONL file for streaming results
             file_dir = self.result_file_dir or tempfile.gettempdir()
+
+            # Security: Validate file_dir to prevent path traversal attacks
+            # Resolve to absolute path and validate it doesn't escape allowed directories
+            try:
+                resolved_dir = Path(file_dir).resolve()
+                allowed_dirs = {
+                    Path(tempfile.gettempdir()).resolve(),
+                    Path.home().resolve(),
+                    Path.cwd().resolve(),
+                }
+                is_allowed = any(
+                    resolved_dir == allowed or
+                    any(p == allowed for p in resolved_dir.parents)
+                    for allowed in allowed_dirs
+                )
+                if not is_allowed:
+                    raise ValueError(
+                        f"result_file_dir must be within temp dir, home, or cwd. "
+                        f"Got: {file_dir}"
+                    )
+            except (OSError, ValueError) as e:
+                logger.error(f"Invalid result_file_dir '{file_dir}': {e}")
+                raise ValueError(f"Invalid result_file_dir: {e}")
+
             os.makedirs(file_dir, exist_ok=True)
-            results_file = os.path.join(
-                file_dir,
-                f"loop_results_{self.step_id}_{os.getpid()}.jsonl"
-            )
+
+            # Build filename and validate final path stays within intended directory
+            filename = f"loop_results_{self.step_id}_{os.getpid()}.jsonl"
+            results_file = os.path.realpath(os.path.join(file_dir, filename))
+
+            # Ensure the resolved path is still within the intended directory
+            if not results_file.startswith(os.path.realpath(file_dir) + os.sep):
+                raise ValueError(
+                    f"Path traversal detected: result file would escape directory"
+                )
+
             # Create empty file (will be appended to during iteration)
             with open(results_file, "w") as f:
                 pass  # Empty file

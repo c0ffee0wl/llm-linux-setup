@@ -3,6 +3,8 @@ LLM actions for AI-powered workflow steps.
 
 These actions use the LLMClient protocol, allowing any LLM
 backend to be used (OpenAI, Anthropic, local models, etc.).
+
+Supports chunking for large content via the chunking module.
 """
 
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
@@ -11,6 +13,7 @@ from .base import AbstractAction, ActionResult
 
 if TYPE_CHECKING:
     from ..protocols import LLMClient, ExecutionContext
+    from ..chunking import TextSplitter, Aggregator
 
 
 class LLMExtractAction(AbstractAction):
@@ -57,6 +60,8 @@ class LLMExtractAction(AbstractAction):
     ) -> ActionResult:
         """Extract structured data from input.
 
+        Supports chunking for large content via the chunking config.
+
         Args:
             step_config: Step configuration
             context: Workflow context
@@ -71,7 +76,7 @@ class LLMExtractAction(AbstractAction):
         evaluator = ContextEvaluator(context)
 
         # Get input and resolve expressions
-        input_text = with_config.get("input", with_config.get("content", ""))
+        input_text = with_config.get("input", "")
         input_text = evaluator.resolve(input_text)
 
         schema = with_config.get("schema", {})
@@ -84,7 +89,37 @@ class LLMExtractAction(AbstractAction):
                 error="No input provided for extraction",
             )
 
-        # Build extraction prompt
+        # Check for chunking configuration
+        chunking_config = with_config.get("chunking")
+        aggregation_config = with_config.get("aggregation", {})
+
+        # Build optional kwargs - only include if explicitly set
+        kwargs: dict[str, Any] = {}
+        if "model" in with_config:
+            kwargs["model"] = with_config["model"]
+        if "temperature" in with_config:
+            kwargs["temperature"] = with_config["temperature"]
+
+        system_prompt = """You are a precise data extraction assistant.
+Extract exactly what is requested, in valid JSON format.
+If information is not present, use null or empty arrays as appropriate."""
+
+        # Check if chunking is needed
+        if chunking_config:
+            max_chars = chunking_config.get("max_chars", 40000)
+            if len(input_text) > max_chars:
+                return await self._execute_chunked(
+                    input_text=input_text,
+                    schema=schema,
+                    user_prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    chunking_config=chunking_config,
+                    aggregation_config=aggregation_config,
+                    kwargs=kwargs,
+                    exec_context=exec_context,
+                )
+
+        # Non-chunked execution
         full_prompt = f"""Analyze the following text and extract information according to the schema.
 
 TEXT:
@@ -94,17 +129,6 @@ INSTRUCTIONS:
 {user_prompt}
 
 Respond with valid JSON matching the schema. No additional text."""
-
-        system_prompt = """You are a precise data extraction assistant.
-Extract exactly what is requested, in valid JSON format.
-If information is not present, use null or empty arrays as appropriate."""
-
-        # Build optional kwargs - only include if explicitly set
-        kwargs: dict[str, Any] = {}
-        if "model" in with_config:
-            kwargs["model"] = with_config["model"]
-        if "temperature" in with_config:
-            kwargs["temperature"] = with_config["temperature"]
 
         try:
             result = await self.llm_client.complete_json(
@@ -121,6 +145,81 @@ If information is not present, use null or empty arrays as appropriate."""
                 error=f"LLM extraction failed: {e}",
                 error_type="LLMError",
             )
+
+    async def _execute_chunked(
+        self,
+        input_text: str,
+        schema: dict,
+        user_prompt: str,
+        system_prompt: str,
+        chunking_config: dict,
+        aggregation_config: dict,
+        kwargs: dict,
+        exec_context: Optional["ExecutionContext"] = None,
+    ) -> ActionResult:
+        """Execute extraction on chunked content."""
+        from ..chunking import get_splitter, get_aggregator
+
+        # Get splitter
+        strategy = chunking_config.get("strategy", "sliding_window")
+        max_chars = chunking_config.get("max_chars", 40000)
+        overlap = chunking_config.get("overlap", 500)
+        splitter = get_splitter(strategy, max_chars=max_chars, overlap=overlap)
+
+        # Split content
+        chunks = splitter.split(input_text)
+        total_chunks = len(chunks)
+
+        if exec_context:
+            exec_context.log("info", f"Processing {total_chunks} chunks for extraction")
+
+        # Process each chunk
+        partial_results: list[Any] = []
+        for i, chunk in enumerate(chunks):
+            chunk_prompt = f"""Analyze the following text (chunk {i+1}/{total_chunks}) and extract information according to the schema.
+
+TEXT:
+{chunk}
+
+INSTRUCTIONS:
+{user_prompt}
+
+Respond with valid JSON matching the schema. No additional text."""
+
+            try:
+                result = await self.llm_client.complete_json(
+                    prompt=chunk_prompt,
+                    schema=schema,
+                    system=system_prompt,
+                    **kwargs,
+                )
+                partial_results.append(result)
+            except Exception as e:
+                if exec_context:
+                    exec_context.log("warning", f"Chunk {i+1} extraction failed: {e}")
+                # Continue with other chunks
+
+        if not partial_results:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error="All chunk extractions failed",
+                error_type="LLMError",
+            )
+
+        # Aggregate results
+        agg_strategy = aggregation_config.get("strategy", "merge_structured")
+        aggregator = get_aggregator(
+            agg_strategy,
+            deduplicate_arrays=aggregation_config.get("deduplicate_arrays", True),
+        )
+
+        merged = await aggregator.aggregate(partial_results, self.llm_client)
+
+        return ActionResult(
+            outputs=merged if isinstance(merged, dict) else {"result": merged},
+            outcome="success",
+        )
 
 
 class LLMDecideAction(AbstractAction):
@@ -179,7 +278,7 @@ class LLMDecideAction(AbstractAction):
         evaluator = ContextEvaluator(context)
 
         # Get inputs
-        input_context = with_config.get("context", "")
+        input_context = with_config.get("input", "")
         input_context = evaluator.resolve_all(input_context)
 
         choices = with_config.get("choices", [])
@@ -315,16 +414,20 @@ class LLMGenerateAction(AbstractAction):
         with_config = self._get_with_config(step_config)
         evaluator = ContextEvaluator(context)
 
-        # Get inputs (support both 'input' and 'context' for backwards compat)
+        # Get inputs
         prompt = with_config.get("prompt", "")
         prompt = evaluator.resolve(prompt)
 
-        input_content = with_config.get("input", with_config.get("context", ""))
+        input_content = with_config.get("input", "")
         if input_content:
             input_content = evaluator.resolve_all(input_content)
             if isinstance(input_content, dict):
                 import json
                 input_content = json.dumps(input_content, indent=2)
+
+        # Check for chunking configuration
+        chunking_config = with_config.get("chunking")
+        aggregation_config = with_config.get("aggregation", {})
 
         system_prompt = with_config.get("system", None)
         output_format = with_config.get("format", "prose")
@@ -372,6 +475,22 @@ CONTENT:
         if "max_tokens" in with_config:
             kwargs["max_tokens"] = with_config["max_tokens"]
 
+        # Check if chunking is needed for input content
+        if chunking_config and input_content:
+            max_chars = chunking_config.get("max_chars", 40000)
+            if len(input_content) > max_chars:
+                return await self._execute_chunked(
+                    prompt=prompt,
+                    input_content=input_content,
+                    system_prompt=system_prompt,
+                    output_format=output_format,
+                    format_instructions=format_instructions,
+                    chunking_config=chunking_config,
+                    aggregation_config=aggregation_config,
+                    kwargs=kwargs,
+                    exec_context=exec_context,
+                )
+
         try:
             response = await self.llm_client.complete(
                 prompt=full_prompt,
@@ -401,6 +520,88 @@ CONTENT:
                 error=f"LLM generation failed: {e}",
                 error_type="LLMError",
             )
+
+    async def _execute_chunked(
+        self,
+        prompt: str,
+        input_content: str,
+        system_prompt: Optional[str],
+        output_format: str,
+        format_instructions: dict[str, str],
+        chunking_config: dict,
+        aggregation_config: dict,
+        kwargs: dict,
+        exec_context: Optional["ExecutionContext"] = None,
+    ) -> ActionResult:
+        """Execute generation on chunked content."""
+        from ..chunking import get_splitter, get_aggregator
+
+        # Get splitter
+        strategy = chunking_config.get("strategy", "sliding_window")
+        max_chars = chunking_config.get("max_chars", 40000)
+        overlap = chunking_config.get("overlap", 500)
+        splitter = get_splitter(strategy, max_chars=max_chars, overlap=overlap)
+
+        # Split content
+        chunks = splitter.split(input_content)
+        total_chunks = len(chunks)
+
+        if exec_context:
+            exec_context.log("info", f"Processing {total_chunks} chunks for generation")
+
+        # Process each chunk
+        partial_results: list[str] = []
+        for i, chunk in enumerate(chunks):
+            chunk_prompt = f"""{prompt}
+
+CONTENT (part {i+1}/{total_chunks}):
+{chunk}{format_instructions.get(output_format, "")}"""
+
+            try:
+                response = await self.llm_client.complete(
+                    prompt=chunk_prompt,
+                    system=system_prompt,
+                    **kwargs,
+                )
+                partial_results.append(response)
+            except Exception as e:
+                if exec_context:
+                    exec_context.log("warning", f"Chunk {i+1} generation failed: {e}")
+                # Continue with other chunks
+
+        if not partial_results:
+            return ActionResult(
+                outputs={},
+                outcome="failure",
+                error="All chunk generations failed",
+                error_type="LLMError",
+            )
+
+        # Aggregate results using concatenate strategy (default for generation)
+        agg_strategy = aggregation_config.get("strategy", "concatenate")
+        aggregator = get_aggregator(
+            agg_strategy,
+            separator=aggregation_config.get("separator", "\n\n"),
+            strip_chunks=aggregation_config.get("strip_chunks", True),
+        )
+
+        merged = await aggregator.aggregate(partial_results, self.llm_client)
+
+        outputs: dict[str, Any] = {"text": merged, "response": merged}
+
+        # Parse JSON if format requested
+        if output_format == "json":
+            try:
+                import json
+                outputs["parsed"] = json.loads(merged)
+            except json.JSONDecodeError:
+                # Keep raw response, don't fail
+                pass
+
+        return ActionResult(
+            outputs=outputs,
+            outcome="success",
+        )
 
 
 class LLMInstructAction(AbstractAction):

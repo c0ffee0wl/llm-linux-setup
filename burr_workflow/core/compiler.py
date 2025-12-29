@@ -38,7 +38,6 @@ from .types import RESERVED_STATE_KEYS
 from .parser import WorkflowParser, SourceLocation
 from .validator import validate_workflow
 from .adapters import BurrActionAdapter
-from .guardrails import GuardrailRouter
 from ..evaluator.security import validate_step_id, SecurityError
 
 # Import new guard system (with graceful degradation)
@@ -53,7 +52,68 @@ if TYPE_CHECKING:
     from typing import Literal
     from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
-    from ..schemas.models import GuardrailsConfig
+    from ..schemas.models import GuardrailsConfig, LLMDefaultsConfig
+
+
+import logging
+
+_logger = logging.getLogger(__name__)
+
+
+def _run_coro_safely(coro):
+    """Run a coroutine safely, handling nested event loop scenarios.
+
+    This function handles the case where we might already be inside an
+    async context (nested event loops) by using different strategies:
+
+    1. If no event loop is running, use asyncio.run() (clean lifecycle)
+    2. If an event loop IS running, use nest_asyncio if available,
+       otherwise fall back to new_event_loop() with proper cleanup
+
+    WARNING: nest_asyncio.apply() patches the GLOBAL asyncio event loop.
+    This may conflict with other async frameworks (e.g., Tornado, Twisted).
+    If you experience issues with other async code after using burr_workflow,
+    this global patching may be the cause. Consider:
+    - Running workflow execution in a separate process
+    - Ensuring workflow execution completes before other async operations
+
+    Args:
+        coro: The coroutine to execute
+
+    Returns:
+        The result of the coroutine
+    """
+    try:
+        # Check if we're already in an async context
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            loop = None
+
+        if loop is None:
+            # No running loop - use asyncio.run() for clean lifecycle
+            return asyncio.run(coro)
+        else:
+            # Already in async context - try nest_asyncio for proper nesting
+            try:
+                import nest_asyncio
+                nest_asyncio.apply()
+                return loop.run_until_complete(coro)
+            except ImportError:
+                # Fall back to new event loop (works but not ideal)
+                new_loop = asyncio.new_event_loop()
+                try:
+                    return new_loop.run_until_complete(coro)
+                finally:
+                    new_loop.close()
+    except Exception:
+        # If all else fails, try synchronous fallback
+        # This handles truly edge cases
+        new_loop = asyncio.new_event_loop()
+        try:
+            return new_loop.run_until_complete(coro)
+        finally:
+            new_loop.close()
 
 
 @dataclass
@@ -90,6 +150,124 @@ class NoOpAction(SingleStepAction):
 
     def run_and_update(self, state: State, **run_kwargs) -> tuple[dict, State]:
         return {"outcome": "complete"}, state
+
+
+class OnCompleteAction(SingleStepAction):
+    """Executes on_complete steps only on successful workflow completion."""
+
+    def __init__(
+        self,
+        steps: list[dict],
+        action_registry: "ActionRegistry",
+        exec_context: Optional["ExecutionContext"] = None,
+    ):
+        super().__init__()
+        self.steps_to_run = steps
+        self.action_registry = action_registry
+        self.exec_context = exec_context
+
+    @property
+    def reads(self) -> list[str]:
+        return ["inputs", "env", "steps", "__workflow_failed", "__workflow_exit"]
+
+    @property
+    def writes(self) -> list[str]:
+        return ["__on_complete_done"]
+
+    def run_and_update(self, state: State, **run_kwargs) -> tuple[dict, State]:
+        """Execute on_complete steps only if workflow succeeded."""
+        # Skip if workflow failed
+        if state.get("__workflow_failed"):
+            return {"skipped": True, "reason": "workflow_failed"}, state.update(__on_complete_done=True)
+
+        # Execute all on_complete steps
+        ctx = dict(state.get_all())
+        for step in self.steps_to_run:
+            try:
+                action = self._get_action_for_step(step)
+                if action:
+                    coro = action.execute(step, ctx, self.exec_context)
+                    self._run_coro_safely(coro)
+            except Exception as e:
+                # Log but don't fail - on_complete errors are warnings
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"on_complete step {step.get('id', 'unknown')} failed: {e}"
+                )
+
+        return {"completed": True}, state.update(__on_complete_done=True)
+
+    def _run_coro_safely(self, coro):
+        """Run a coroutine safely. See module-level _run_coro_safely for details."""
+        return _run_coro_safely(coro)
+
+    def _get_action_for_step(self, step: dict) -> Optional["BaseAction"]:
+        """Get the appropriate action for a step."""
+        if "run" in step:
+            return self.action_registry.get("shell")
+        elif "uses" in step:
+            action_type = step["uses"]
+            return self.action_registry.get(action_type)
+        return None
+
+
+class OnFailureAction(SingleStepAction):
+    """Executes on_failure steps only on workflow failure."""
+
+    def __init__(
+        self,
+        steps: list[dict],
+        action_registry: "ActionRegistry",
+        exec_context: Optional["ExecutionContext"] = None,
+    ):
+        super().__init__()
+        self.steps_to_run = steps
+        self.action_registry = action_registry
+        self.exec_context = exec_context
+
+    @property
+    def reads(self) -> list[str]:
+        return ["inputs", "env", "steps", "__workflow_failed", "__workflow_exit"]
+
+    @property
+    def writes(self) -> list[str]:
+        return ["__on_failure_done"]
+
+    def run_and_update(self, state: State, **run_kwargs) -> tuple[dict, State]:
+        """Execute on_failure steps only if workflow failed."""
+        # Skip if workflow succeeded
+        if not state.get("__workflow_failed"):
+            return {"skipped": True, "reason": "workflow_succeeded"}, state.update(__on_failure_done=True)
+
+        # Execute all on_failure steps
+        ctx = dict(state.get_all())
+        for step in self.steps_to_run:
+            try:
+                action = self._get_action_for_step(step)
+                if action:
+                    coro = action.execute(step, ctx, self.exec_context)
+                    self._run_coro_safely(coro)
+            except Exception as e:
+                # Log but don't fail - on_failure errors are warnings
+                import logging
+                logging.getLogger(__name__).warning(
+                    f"on_failure step {step.get('id', 'unknown')} failed: {e}"
+                )
+
+        return {"completed": True}, state.update(__on_failure_done=True)
+
+    def _run_coro_safely(self, coro):
+        """Run a coroutine safely. See module-level _run_coro_safely for details."""
+        return _run_coro_safely(coro)
+
+    def _get_action_for_step(self, step: dict) -> Optional["BaseAction"]:
+        """Get the appropriate action for a step."""
+        if "run" in step:
+            return self.action_registry.get("shell")
+        elif "uses" in step:
+            action_type = step["uses"]
+            return self.action_registry.get(action_type)
+        return None
 
 
 class CleanupAction(SingleStepAction):
@@ -149,51 +327,8 @@ class CleanupAction(SingleStepAction):
         return {"cleanup_complete": True}, new_state
 
     def _run_coro_safely(self, coro):
-        """Run a coroutine safely, handling nested event loop scenarios.
-
-        This method handles the case where we might already be inside an
-        async context (nested event loops) by using different strategies:
-        1. If no event loop is running, use asyncio.run() (clean lifecycle)
-        2. If an event loop IS running, use nest_asyncio if available,
-           otherwise fall back to new_event_loop() with proper cleanup
-
-        Args:
-            coro: The coroutine to execute
-
-        Returns:
-            The result of the coroutine
-        """
-        try:
-            # Check if we're already in an async context
-            try:
-                loop = asyncio.get_running_loop()
-            except RuntimeError:
-                loop = None
-
-            if loop is None:
-                # No running loop - use asyncio.run() for clean lifecycle
-                return asyncio.run(coro)
-            else:
-                # Already in async context - try nest_asyncio for proper nesting
-                try:
-                    import nest_asyncio
-                    nest_asyncio.apply()
-                    return loop.run_until_complete(coro)
-                except ImportError:
-                    # Fall back to new event loop (works but not ideal)
-                    new_loop = asyncio.new_event_loop()
-                    try:
-                        return new_loop.run_until_complete(coro)
-                    finally:
-                        new_loop.close()
-        except Exception:
-            # If all else fails, try synchronous fallback
-            # This handles truly edge cases
-            new_loop = asyncio.new_event_loop()
-            try:
-                return new_loop.run_until_complete(coro)
-            finally:
-                new_loop.close()
+        """Run a coroutine safely. See module-level _run_coro_safely for details."""
+        return _run_coro_safely(coro)
 
     def _get_action_for_step(self, step: dict) -> Optional["BaseAction"]:
         """Get the appropriate action for a step."""
@@ -256,11 +391,11 @@ class WorkflowCompiler:
         self._compiled_steps: list[CompiledStep] = []
         self._step_ids: list[str] = []
         self._step_counter = 0
+        # Track lifecycle handlers for routing
+        self._has_on_complete = False
+        self._has_on_failure = False
 
-        # Create a shared GuardrailRouter for all steps (legacy)
-        self.guardrail_router = GuardrailRouter(llm_client=llm_client)
-
-        # Create LLM Guard components (new)
+        # Create LLM Guard components
         self.vault_manager: Optional["VaultManager"] = None
         self.guard_scanner: Optional["GuardScanner"] = None
         if LLM_GUARD_AVAILABLE and VaultManager is not None and GuardScanner is not None:
@@ -269,6 +404,35 @@ class WorkflowCompiler:
 
         # Workflow-level guardrails (set during compile)
         self.workflow_guardrails: Optional["GuardrailsConfig"] = None
+
+        # Workflow-level LLM configuration (set during compile)
+        self.workflow_llm_config: Optional["LLMDefaultsConfig"] = None
+
+    @staticmethod
+    def _parse_retry_config(retry_dict: Optional[dict]) -> Optional[dict]:
+        """Parse retry configuration from step/loop configuration.
+
+        Args:
+            retry_dict: The 'retry' section from step configuration
+
+        Returns:
+            Parsed retry config dict with internal field names, or None if not configured.
+
+        Schema field → Internal field mapping:
+            - delay → backoff_base
+            - backoff → backoff_multiplier
+            - max_delay → backoff_max
+        """
+        if retry_dict is None:
+            return None
+        return {
+            "max_attempts": retry_dict.get("max_attempts", 3),
+            "backoff_base": retry_dict.get("delay", 1.0),  # Schema: delay
+            "backoff_multiplier": retry_dict.get("backoff", 2.0),  # Schema: backoff
+            "backoff_max": retry_dict.get("max_delay", 60.0),  # Schema: max_delay
+            "retry_on": retry_dict.get("retry_on"),  # Error types to retry
+            "jitter": retry_dict.get("jitter", True),
+        }
 
     def compile(
         self,
@@ -299,6 +463,8 @@ class WorkflowCompiler:
         """
         self._compiled_steps = []
         self._step_counter = 0
+        self._has_on_complete = False
+        self._has_on_failure = False
 
         # Run full static validation before compilation
         validation_result = validate_workflow(workflow)
@@ -315,6 +481,18 @@ class WorkflowCompiler:
         # Store workflow-level guardrails for merge with step guardrails
         self.workflow_guardrails = workflow.get("guardrails")
 
+        # Store workflow-level LLM config for action configuration
+        llm_config_dict = workflow.get("llm")
+        if llm_config_dict:
+            from ..schemas.models import LLMDefaultsConfig
+            try:
+                self.workflow_llm_config = LLMDefaultsConfig.model_validate(llm_config_dict)
+            except Exception:
+                # Fall back to None if validation fails (shouldn't happen after schema validation)
+                self.workflow_llm_config = None
+        else:
+            self.workflow_llm_config = None
+
         # Extract main job steps
         main_job = workflow.get("jobs", {}).get("main", {})
         steps = main_job.get("steps", [])
@@ -329,11 +507,25 @@ class WorkflowCompiler:
         for idx, step in enumerate(steps):
             self._compile_step(step, idx, len(steps))
 
-        # Phase 2: Add cleanup node for finally blocks
+        # Phase 2: Add lifecycle handler nodes
         finally_steps = (
             main_job.get("finally", []) +
             workflow.get("finally", [])
         )
+        on_complete_steps = workflow.get("on_complete", [])
+        on_failure_steps = workflow.get("on_failure", [])
+
+        # Track which handlers exist for routing decisions
+        self._has_on_complete = bool(on_complete_steps)
+        self._has_on_failure = bool(on_failure_steps)
+
+        # Add lifecycle nodes in order: on_complete, on_failure, cleanup
+        # The routing is: last_step → on_complete → on_failure → cleanup → end
+        # Each handler checks state and skips if not applicable
+        if self._has_on_complete:
+            self._add_on_complete_node(on_complete_steps)
+        if self._has_on_failure:
+            self._add_on_failure_node(on_failure_steps)
         self._add_cleanup_node(finally_steps)
 
         # Phase 3: Build Burr Application
@@ -511,25 +703,10 @@ class WorkflowCompiler:
         base_action = self._get_base_action_for_step(body_step, f"{loop_id}_body")
 
         # Extract retry configuration for loop body if present
-        body_retry_config = None
-        if "retry" in body_step:
-            retry = body_step["retry"]
-            body_retry_config = {
-                "max_attempts": retry.get("max_attempts", 3),
-                "backoff_base": retry.get("delay", 1.0),  # Schema: delay
-                "backoff_multiplier": retry.get("backoff", 2.0),  # Schema: backoff
-                "backoff_max": retry.get("max_delay", 60.0),  # Schema: max_delay
-                "retry_on": retry.get("retry_on"),  # Error types to retry
-                "jitter": retry.get("jitter", True),
-            }
+        body_retry_config = self._parse_retry_config(body_step.get("retry"))
 
-        # Extract legacy guardrails (regex-based) for loop body if present
+        # Merge workflow-level and step-level guardrails (LLM Guard)
         body_guardrails_raw = body_step.get("guardrails")
-        body_legacy_guardrails = None
-        if isinstance(body_guardrails_raw, list):
-            body_legacy_guardrails = body_guardrails_raw
-
-        # Merge workflow-level and step-level guardrails (new LLM Guard system)
         body_merged_guardrails = self._merge_guardrails(
             self.workflow_guardrails,
             body_guardrails_raw if not isinstance(body_guardrails_raw, list) else None,
@@ -543,12 +720,9 @@ class WorkflowCompiler:
             continue_on_error=continue_on_error,
             retry_config=body_retry_config,
             timeout=body_step.get("timeout"),
-            # Legacy guardrails (regex-based)
-            guardrails=body_legacy_guardrails,
-            guardrail_router=self.guardrail_router if body_legacy_guardrails else None,
-            # New LLM Guard guardrails
             guardrails_config=body_merged_guardrails,
             guard_scanner=self.guard_scanner if body_merged_guardrails else None,
+            workflow_llm_config=self.workflow_llm_config,
         )
         self._compiled_steps.append(CompiledStep(
             name=f"{loop_id}_body",
@@ -721,29 +895,13 @@ class WorkflowCompiler:
         action = self._get_base_action_for_step(step, step_id)
 
         # Extract retry configuration if present
-        retry_config = None
-        if "retry" in step:
-            retry = step["retry"]
-            retry_config = {
-                "max_attempts": retry.get("max_attempts", 3),
-                "backoff_base": retry.get("delay", 1.0),  # Schema: delay
-                "backoff_multiplier": retry.get("backoff", 2.0),  # Schema: backoff
-                "backoff_max": retry.get("max_delay", 60.0),  # Schema: max_delay
-                "retry_on": retry.get("retry_on"),  # Error types to retry
-                "jitter": retry.get("jitter", True),
-            }
+        retry_config = self._parse_retry_config(step.get("retry"))
 
         # Extract timeout if present
         timeout = step.get("timeout")
 
-        # Extract legacy guardrails (regex-based) if present
+        # Merge workflow-level and step-level guardrails (LLM Guard)
         step_guardrails_raw = step.get("guardrails")
-        legacy_guardrails = None
-        if isinstance(step_guardrails_raw, list):
-            # Legacy format: list of guardrail configs
-            legacy_guardrails = step_guardrails_raw
-
-        # Merge workflow-level and step-level guardrails (new LLM Guard system)
         merged_guardrails = self._merge_guardrails(
             self.workflow_guardrails,
             step_guardrails_raw if not isinstance(step_guardrails_raw, list) else None,
@@ -756,21 +914,61 @@ class WorkflowCompiler:
             exec_context=self.exec_context,
             retry_config=retry_config,
             timeout=timeout,
-            # Legacy guardrails (regex-based)
-            guardrails=legacy_guardrails,
-            guardrail_router=self.guardrail_router if legacy_guardrails else None,
-            # New LLM Guard guardrails
             guardrails_config=merged_guardrails,
             guard_scanner=self.guard_scanner if merged_guardrails else None,
+            workflow_llm_config=self.workflow_llm_config,
         )
 
     def _get_next_step_name(self, current_index: int, total: int) -> str:
-        """Get the name of the next step in sequence."""
+        """Get the name of the next step in sequence.
+
+        For the last step, routes through lifecycle handlers:
+        - If on_complete exists: last_step → __on_complete__ → ...
+        - Else if on_failure exists: last_step → __on_failure__ → ...
+        - Else: last_step → __cleanup__
+        """
         if current_index + 1 >= total:
-            return "__cleanup__"
+            # Last step - route through lifecycle handlers
+            if self._has_on_complete:
+                return "__on_complete__"
+            elif self._has_on_failure:
+                return "__on_failure__"
+            else:
+                return "__cleanup__"
 
         # Use pre-computed step IDs for correct transition resolution
         return self._step_ids[current_index + 1]
+
+    def _add_on_complete_node(self, on_complete_steps: list[dict]) -> None:
+        """Add the on_complete node for success handlers."""
+        on_complete_action = OnCompleteAction(
+            steps=on_complete_steps,
+            action_registry=self.action_registry,
+            exec_context=self.exec_context,
+        )
+
+        # Chain to on_failure if it exists, otherwise to cleanup
+        next_node = "__on_failure__" if self._has_on_failure else "__cleanup__"
+
+        self._compiled_steps.append(CompiledStep(
+            name="__on_complete__",
+            action=on_complete_action,
+            transitions=[(next_node, None)],
+        ))
+
+    def _add_on_failure_node(self, on_failure_steps: list[dict]) -> None:
+        """Add the on_failure node for failure handlers."""
+        on_failure_action = OnFailureAction(
+            steps=on_failure_steps,
+            action_registry=self.action_registry,
+            exec_context=self.exec_context,
+        )
+
+        self._compiled_steps.append(CompiledStep(
+            name="__on_failure__",
+            action=on_failure_action,
+            transitions=[("__cleanup__", None)],
+        ))
 
     def _add_cleanup_node(self, finally_steps: list[dict]) -> None:
         """Add the cleanup node for finally blocks."""
@@ -814,17 +1012,13 @@ class WorkflowCompiler:
 
         These transitions are added FIRST for each step, so they take
         priority over default transitions in Burr's first-match evaluation.
-        """
-        def check_cleanup_needed(state: State) -> bool:
-            return (
-                state.get("__workflow_exit", False) or
-                state.get("__workflow_failed", False)
-            )
 
-        return Condition(
-            keys=["__workflow_exit", "__workflow_failed"],
-            resolver=check_cleanup_needed,
-            name="cleanup_priority",
+        Uses Burr's Condition.when() with OR operator for cleaner,
+        more explicit condition definition.
+        """
+        return (
+            Condition.when(__workflow_exit=True) |
+            Condition.when(__workflow_failed=True)
         )
 
     def _build_application(

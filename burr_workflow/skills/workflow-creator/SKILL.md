@@ -134,7 +134,62 @@ inputs:
 
 **Loop variables:** `loop.item`, `loop.index` (1-based), `loop.index0` (0-based), `loop.first`, `loop.last`, `loop.total`, `loop.output`
 
+**Nested loops:** Access outer loop with `loop.parent`:
+```yaml
+- loop: ${{ steps.networks.outputs.subnets }}
+  id: scan_subnets
+  steps:
+    - loop: ${{ steps.hosts.outputs.ips }}
+      run: ping -c1 ${{ loop.parent.item.gateway | shell_quote }}
+```
+Available: `loop.parent.item`, `loop.parent.index`, `loop.parent.output`
+
 **After loop:** `steps.scans.outputs.results` (list), `steps.scans.outputs.iterations`, `steps.scans.outputs.succeeded`
+
+**Result limits:**
+- `max_results: 100` (default) - Sliding window keeps latest N results
+- `max_errors: 50` (default) - Stop loop after N errors (when `continue_on_error: true`)
+- `result_storage: memory` - Where to store: `memory` (default), `file` (JSONL), `none`
+
+When results exceed `max_results`, older results are discarded (sliding window keeps latest N).
+
+## Chunking Large Content
+
+For large inputs that exceed LLM context limits, configure chunking:
+
+```yaml
+- uses: llm/extract
+  with:
+    input: ${{ steps.scan.outputs.stdout }}
+    prompt: "Extract all hosts"
+    schema:
+      type: object
+      properties:
+        hosts: { type: array, items: { type: string } }
+    chunking:
+      strategy: sliding_window   # sliding_window (default) | line_aware
+      max_chars: 40000           # Characters per chunk (default: 40000)
+      overlap: 500               # Overlap for context continuity (default: 500)
+    aggregation:
+      strategy: merge_structured # merge_structured | concatenate
+      deduplicate_arrays: true   # Remove duplicates when merging (default: true)
+```
+
+**Chunking strategies:**
+- `sliding_window` - Split by character count with overlap (default)
+- `line_aware` - Split on line boundaries to preserve structure
+
+**Aggregation strategies:**
+- `merge_structured` - Deep merge JSON objects/arrays (for llm/extract)
+- `concatenate` - Join text with separator (for llm/generate)
+
+**Default values:**
+| Setting | Default | Range |
+|---------|---------|-------|
+| `max_chars` | 40000 | 1000-500000 |
+| `overlap` | 500 | 0-5000 |
+| `deduplicate_arrays` | true | - |
+| `separator` | `\n\n` | any string |
 
 ## Shell Commands
 
@@ -234,7 +289,7 @@ See `references/actions.md` for complete reference.
 # Make decisions
 - uses: llm/decide
   with:
-    context: ${{ steps.analysis.outputs }}
+    input: ${{ steps.analysis.outputs }}
     prompt: "Should we proceed to exploitation?"
     choices: ["proceed", "skip", "manual_review"]
 
@@ -251,6 +306,64 @@ See `references/actions.md` for complete reference.
     instruction: "Summarize in 3 bullet points"
     input: ${{ steps.fetch.outputs.content }}
 ```
+
+## LLM Configuration
+
+Configure default LLM settings at the workflow level to avoid repetition:
+
+```yaml
+name: my-workflow
+schema_version: "1.0"
+
+# Workflow-level LLM defaults
+llm:
+  model: gpt-4
+  temperature: 0.7
+  max_tokens: 2000
+
+  # Per-action-type overrides
+  extract:
+    temperature: 0.3    # Lower for structured output
+  decide:
+    temperature: 0.0    # Deterministic decisions
+
+jobs:
+  main:
+    steps:
+      # Uses workflow defaults (gpt-4, temp=0.7)
+      - uses: llm/generate
+        with:
+          prompt: "Summarize findings"
+
+      # Uses extract defaults (gpt-4, temp=0.3)
+      - uses: llm/extract
+        with:
+          input: ${{ steps.scan.outputs.stdout }}
+          schema:
+            type: object
+            properties:
+              hosts: { type: array }
+
+      # Step override takes precedence
+      - uses: llm/generate
+        with:
+          prompt: "Creative story"
+          temperature: 0.9  # Override workflow default
+```
+
+**Configuration Precedence** (highest to lowest):
+1. Step-level `with:` config
+2. Action-type defaults (`llm.extract`, `llm.decide`, etc.)
+3. Global workflow defaults (`llm.model`, `llm.temperature`)
+4. Protocol defaults (varies by action type)
+
+**Default Temperatures by Action Type:**
+| Action | Default | Reason |
+|--------|---------|--------|
+| `llm/extract` | 0.3 | Structured output needs consistency |
+| `llm/decide` | 0.0 | Deterministic choice selection |
+| `llm/generate` | 0.7 | Balanced creativity |
+| `llm/instruct` | 0.7 | Balanced creativity |
 
 ### Human Input
 ```yaml
@@ -442,6 +555,23 @@ jobs:
 **Input scanners (12):** anonymize, prompt_injection, secrets, invisible_text, token_limit, ban_topics, ban_substrings, ban_code, code, gibberish, language, regex
 
 **Output scanners (17):** deanonymize, sensitive, no_refusal, factual_consistency, relevance, json, malicious_urls, url_reachability, language_same, language, reading_time, gibberish, ban_topics, ban_substrings, ban_code, code, regex
+
+**Scanner defaults:**
+| Scanner | Key Parameter | Default |
+|---------|---------------|---------|
+| `prompt_injection` | `threshold` | 0.9 |
+| `secrets` | `redact` | false |
+| `anonymize` | `entities` | [PERSON, EMAIL, PHONE] |
+| `token_limit` | `limit` | 4096 |
+| `sensitive` | `redact` | false |
+| `factual_consistency` | `threshold` | 0.7 |
+
+**ML model scanners** (require download, ~1.5GB total):
+- `prompt_injection` - DeBERTa v2 (~500MB)
+- `anonymize`/`sensitive` - Presidio + spaCy (~200MB)
+- `factual_consistency` - NLI model (~400MB)
+
+Pre-download for offline use: `workflow guard-init`
 
 See `references/actions.md` for full scanner reference.
 

@@ -69,7 +69,7 @@ jobs:
         id: analysis
         uses: llm/analyze
         with:
-          content: ${{ steps.scans.outputs.results }}
+          input: ${{ steps.scans.outputs.results }}
           prompt: |
             Analyze the scan results across all subdomains.
             Identify:
@@ -145,7 +145,7 @@ jobs:
         if: ${{ steps.parse.outputs.ports | length > 0 }}
         uses: llm/decide
         with:
-          context: |
+          input: |
             Open ports found: ${{ steps.parse.outputs.ports }}
             Target: ${{ inputs.target }}
           prompt: "What is the recommended next action?"
@@ -181,7 +181,7 @@ on_complete:
   - name: "Summary"
     uses: llm/analyze
     with:
-      content: |
+      input: |
         Quick scan: ${{ steps.quick.outputs }}
         Parsed ports: ${{ steps.parse.outputs }}
         Assessment: ${{ steps.assess.outputs }}
@@ -403,7 +403,7 @@ jobs:
         id: risk
         uses: llm/decide
         with:
-          context: |
+          input: |
             File: ${{ inputs.file_path }}
             Hash: ${{ steps.hash.outputs.stdout }}
             VT Results: ${{ steps.analyze.outputs }}

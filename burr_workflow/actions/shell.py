@@ -77,6 +77,7 @@ class ShellAction(AbstractAction):
         timeout = step_config.get("timeout", 300)
         interactive = step_config.get("interactive", False)
         capture_mode = step_config.get("capture_mode", "memory")
+        capture_stderr = step_config.get("capture_stderr", "separate")
         env_overrides = step_config.get("env", {})
 
         # Evaluate expressions in command
@@ -113,14 +114,14 @@ class ShellAction(AbstractAction):
                 # Array form - resolve each argument, no shell (SAFE)
                 resolved_args = [str(evaluator.resolve(arg)) for arg in cmd]
                 success, stdout, stderr = await self._execute_array(
-                    resolved_args, timeout, env
+                    resolved_args, timeout, env, capture_stderr
                 )
             else:
                 # String form - resolve embedded expressions, use shell
                 resolved_cmd = evaluator.resolve(cmd)
                 self._warn_unquoted_vars(step_config, str(cmd), exec_context)
                 success, stdout, stderr = await self._execute_shell(
-                    str(resolved_cmd), timeout, env
+                    str(resolved_cmd), timeout, env, capture_stderr
                 )
 
             # Handle capture mode
@@ -161,6 +162,7 @@ class ShellAction(AbstractAction):
         cmd: str,
         timeout: int,
         env: dict[str, str],
+        capture_stderr: str = "separate",
     ) -> tuple[bool, str, str]:
         """Execute command via shell.
 
@@ -168,14 +170,23 @@ class ShellAction(AbstractAction):
             cmd: Shell command string
             timeout: Timeout in seconds
             env: Environment variables
+            capture_stderr: How to handle stderr ("merge", "separate", "discard")
 
         Returns:
             Tuple of (success, stdout, stderr)
         """
+        # Configure stderr based on capture_stderr mode
+        if capture_stderr == "merge":
+            stderr_arg = asyncio.subprocess.STDOUT
+        elif capture_stderr == "discard":
+            stderr_arg = asyncio.subprocess.DEVNULL
+        else:  # "separate" (default)
+            stderr_arg = asyncio.subprocess.PIPE
+
         process = await asyncio.create_subprocess_shell(
             cmd,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=stderr_arg,
             env=env,
             start_new_session=True,  # Create new process group
         )
@@ -186,7 +197,8 @@ class ShellAction(AbstractAction):
                 timeout=timeout,
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace")
-            stderr = stderr_bytes.decode("utf-8", errors="replace")
+            # stderr_bytes is None when merged or discarded
+            stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
             return (process.returncode == 0, stdout, stderr)
 
         except asyncio.TimeoutError:
@@ -202,23 +214,33 @@ class ShellAction(AbstractAction):
         args: list[str],
         timeout: int,
         env: dict[str, str],
+        capture_stderr: str = "separate",
     ) -> tuple[bool, str, str]:
-        """Execute command without shell (array form).
-        
-        This is the SAFE execution method - no shell interpretation.
+        """Run command without shell (array form).
+
+        This is the SAFE method - no shell interpretation.
 
         Args:
             args: Command arguments
             timeout: Timeout in seconds
             env: Environment variables
+            capture_stderr: How to handle stderr ("merge", "separate", "discard")
 
         Returns:
             Tuple of (success, stdout, stderr)
         """
+        # Configure stderr based on capture_stderr mode
+        if capture_stderr == "merge":
+            stderr_arg = asyncio.subprocess.STDOUT
+        elif capture_stderr == "discard":
+            stderr_arg = asyncio.subprocess.DEVNULL
+        else:  # "separate" (default)
+            stderr_arg = asyncio.subprocess.PIPE
+
         process = await asyncio.create_subprocess_exec(
             *args,
             stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+            stderr=stderr_arg,
             env=env,
             start_new_session=True,
         )
@@ -229,7 +251,8 @@ class ShellAction(AbstractAction):
                 timeout=timeout,
             )
             stdout = stdout_bytes.decode("utf-8", errors="replace")
-            stderr = stderr_bytes.decode("utf-8", errors="replace")
+            # stderr_bytes is None when merged or discarded
+            stderr = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
             return (process.returncode == 0, stdout, stderr)
 
         except asyncio.TimeoutError:

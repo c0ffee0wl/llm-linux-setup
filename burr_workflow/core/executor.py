@@ -98,6 +98,9 @@ class SuspensionRequest:
     options: Optional[list[str]] = None
     default: Optional[str] = None
     timeout: Optional[int] = None
+    # For resume: store state and app reference
+    suspended_state: Optional[dict[str, Any]] = None
+    app: Optional["Application"] = None
 
 
 @dataclass
@@ -165,7 +168,7 @@ class WorkflowExecutor:
         if result.suspended:
             # Handle human input request
             user_input = input(result.suspension.prompt)
-            result = await executor.resume(app, input_value=user_input)
+            result = await executor.resume(input_value=user_input)
     """
     
     def __init__(
@@ -376,7 +379,7 @@ class WorkflowExecutor:
             if isinstance(value, tuple):
                 return list(value)
             if isinstance(value, str):
-                # Try JSON parsing first
+                # Try JSON parsing first (preferred for explicit arrays)
                 import json
                 try:
                     parsed = json.loads(value)
@@ -394,8 +397,20 @@ class WorkflowExecutor:
                         return [parsed]
                 except json.JSONDecodeError:
                     pass
-                # Split by comma as fallback for plain strings
-                return [v.strip() for v in value.split(",")]
+
+                # Fallback: Split by comma for plain strings
+                # Note: This means "foo,bar" becomes ["foo", "bar"]
+                # For a single-element array with a comma, use JSON: '["foo,bar"]'
+                if "," in value:
+                    logger.debug(
+                        f"Array input contains comma but is not valid JSON. "
+                        f"Splitting by comma. For a literal comma in array elements, "
+                        f"use JSON format: '[\"element,with,commas\"]'"
+                    )
+                    return [v.strip() for v in value.split(",")]
+                else:
+                    # Single element without comma - wrap in array
+                    return [value.strip()]
             raise ValueError(f"Cannot convert {type(value).__name__} to array")
 
         elif target_type == "object":
@@ -524,34 +539,67 @@ class WorkflowExecutor:
     
     async def resume(
         self,
-        app: "Application",
         input_value: Any = None,
-        input_key: str = "__user_input",
     ) -> ExecutionResult:
         """Resume a suspended workflow with user input.
-        
+
+        Rebuilds the Burr Application with updated state containing the user's
+        input in __resume_data[step_id], then continues execution from the
+        suspended step.
+
         Args:
-            app: The suspended Burr Application
             input_value: The user-provided input value
-            input_key: State key to store the input
-            
+
         Returns:
             ExecutionResult after resuming execution
+
+        Raises:
+            WorkflowExecutionError: If no suspended workflow to resume
         """
+        from burr.core import ApplicationBuilder
+
         if self._suspension is None:
             raise WorkflowExecutionError("No suspended workflow to resume")
-        
-        # Update state with user input
-        current_state = app.state
-        new_state = current_state.update(**{input_key: input_value})
-        
-        # Clear suspension
+
+        step_id = self._suspension.step_id
+        suspended_state = self._suspension.suspended_state
+        original_app = self._suspension.app
+
+        if suspended_state is None or original_app is None:
+            raise WorkflowExecutionError(
+                "Suspension state not captured. Cannot resume."
+            )
+
+        # Build resume state with user input in __resume_data
+        resume_data = dict(suspended_state.get("__resume_data", {}) or {})
+        resume_data[step_id] = input_value
+
+        # Create new state with resume data and clear suspension flag
+        initial_state = {
+            **suspended_state,
+            "__resume_data": resume_data,
+            "__suspend_for_input": False,
+        }
+
+        # Rebuild application with graph from original app
+        # ApplicationGraph is a subclass of Graph, compatible with .with_graph()
+        resumed_app = (
+            ApplicationBuilder()
+            .with_graph(original_app.graph)
+            .with_state(State(initial_state))
+            .with_entrypoint(step_id)  # Resume at the suspended step
+            .with_identifiers(
+                app_id=original_app.uid,
+                partition_key=original_app.partition_key,
+            )
+            .build()
+        )
+
+        # Clear suspension tracking
         self._suspension = None
-        
-        # Resume execution with updated state
-        # Note: Burr's fork() or similar may be needed here
-        # For now, we use the app with updated inputs
-        return await self.run(app, inputs={input_key: input_value})
+
+        # Continue execution with rebuilt app
+        return await self._execute(resumed_app, inputs=None)
     
     async def step(self, app: "Application") -> Optional[StepProgress]:
         """Execute a single step of the workflow.
@@ -723,20 +771,29 @@ class WorkflowExecutor:
     ) -> ExecutionResult:
         """Handle workflow suspension for user input."""
         self._progress.status = ExecutionStatus.SUSPENDED
-        
+
+        # Capture the current state and app for resume
+        suspended_state = dict(state.get_all())
+
+        # Extract step_id from state (set by human action) or progress
+        step_id = state.get("__suspend_step_id") or self._progress.current_step or "unknown"
+
         # Extract suspension details from state
         self._suspension = SuspensionRequest(
-            step_id=self._progress.current_step or "unknown",
+            step_id=step_id,
             suspension_type=state.get("__suspend_input_type", "input"),
             prompt=state.get("__suspend_prompt", "User input required"),
             options=state.get("__suspend_choices"),
             default=state.get("__suspend_default"),
             timeout=state.get("__suspend_timeout"),
+            # Store for resume
+            suspended_state=suspended_state,
+            app=app,
         )
-        
+
         return ExecutionResult(
             status=ExecutionStatus.SUSPENDED,
-            final_state=self._get_current_state(app),
+            final_state=suspended_state,
             outputs={},
             progress=self._progress,
             suspension=self._suspension,
@@ -840,10 +897,13 @@ class WorkflowExecutor:
         try:
             original[signal.SIGINT] = signal.signal(signal.SIGINT, handle_interrupt)
             original[signal.SIGTERM] = signal.signal(signal.SIGTERM, handle_interrupt)
-        except (ValueError, OSError):
+        except (ValueError, OSError) as e:
             # Signal handling not available (e.g., not main thread)
-            pass
-        
+            logger.warning(
+                f"Could not set up signal handlers (not main thread?): {e}. "
+                "Ctrl+C interruption may not work."
+            )
+
         return original
     
     def _restore_signal_handlers(self, original: dict) -> None:

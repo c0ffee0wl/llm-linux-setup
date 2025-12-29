@@ -35,7 +35,6 @@ from burr.core.state import State
 
 from .types import RESERVED_STATE_KEYS
 from ..actions.base import ActionResult
-from .guardrails import GuardrailRouter, GuardrailAbort, GuardrailRetryExhausted
 
 # Import new guard system (with graceful degradation)
 try:
@@ -48,7 +47,7 @@ except ImportError:
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
-    from ..schemas.models import GuardrailsConfig
+    from ..schemas.models import GuardrailsConfig, LLMDefaultsConfig
 
 # Default values when neither workflow nor step specifies
 DEFAULT_ON_FAIL = "abort"
@@ -80,10 +79,9 @@ class BurrActionAdapter(SingleStepAction):
         exec_context: Optional["ExecutionContext"] = None,
         retry_config: Optional[dict] = None,
         timeout: Optional[float] = None,
-        guardrails: Optional[list[dict]] = None,
-        guardrail_router: Optional[GuardrailRouter] = None,
         guardrails_config: Optional["GuardrailsConfig"] = None,
         guard_scanner: Optional["GuardScanner"] = None,
+        workflow_llm_config: Optional["LLMDefaultsConfig"] = None,
     ):
         """Initialize the Burr action adapter.
 
@@ -98,10 +96,9 @@ class BurrActionAdapter(SingleStepAction):
                 - backoff_max: Maximum delay (default 60.0)
                 - jitter: Add randomness to backoff (default True)
             timeout: Optional per-step timeout in seconds
-            guardrails: Optional list of guardrail configurations for this step (legacy)
-            guardrail_router: Optional shared GuardrailRouter instance (legacy)
-            guardrails_config: Optional GuardrailsConfig for llm-guard scanning (new)
-            guard_scanner: Optional GuardScanner instance for llm-guard (new)
+            guardrails_config: Optional GuardrailsConfig for LLM Guard scanning
+            guard_scanner: Optional GuardScanner instance for LLM Guard
+            workflow_llm_config: Optional workflow-level LLM configuration
         """
         super().__init__()
         self.base_action = base_action
@@ -110,12 +107,11 @@ class BurrActionAdapter(SingleStepAction):
         self.exec_context = exec_context
         self.retry_config = retry_config
         self.timeout = timeout
-        # Legacy guardrails (regex-based)
-        self.guardrails = guardrails or []
-        self.guardrail_router = guardrail_router
-        # New LLM Guard integration
+        # LLM Guard integration
         self.guardrails_config: Optional["GuardrailsConfig"] = guardrails_config
         self.guard_scanner: Optional["GuardScanner"] = guard_scanner
+        # Workflow-level LLM configuration
+        self.workflow_llm_config: Optional["LLMDefaultsConfig"] = workflow_llm_config
         # NOTE: Do NOT set self._name here! Burr's ApplicationBuilder calls
         # with_name() which raises ValueError if _name is already set.
         # The name property falls back to step_id when _name is None.
@@ -203,7 +199,6 @@ class BurrActionAdapter(SingleStepAction):
 
         last_error = None
         last_result = None
-        guardrail_retry_requested = False
 
         for attempt in range(max_attempts):
             try:
@@ -229,6 +224,13 @@ class BurrActionAdapter(SingleStepAction):
                             error_type="GuardError",
                         )
                         return self._apply_result_to_state(state, result)
+
+                # Merge workflow-level LLM config for llm/* actions
+                action_type = step_config_for_execution.get("uses", "")
+                if action_type.startswith("llm/") and self.workflow_llm_config:
+                    step_config_for_execution = self._apply_llm_config(
+                        step_config_for_execution, action_type
+                    )
 
                 # Track execution time
                 start_time = time.monotonic()
@@ -257,53 +259,14 @@ class BurrActionAdapter(SingleStepAction):
                             )
                             return self._apply_result_to_state(state, result)
 
+                        # Propagate guard state from context to result outputs
+                        # This ensures vault state persists across steps for anonymize→deanonymize flow
+                        guard_state_keys = ("__guard_vault", "__guard_input_content", "__guard_scan_results")
+                        for key in guard_state_keys:
+                            if key in ctx:
+                                result.outputs[key] = ctx[key]
+
                     output, new_state = self._apply_result_to_state(state, result)
-
-                    # Apply legacy guardrails if configured (regex-based)
-                    if self.guardrails and self.guardrail_router:
-                        try:
-                            next_step = await self.guardrail_router.validate_and_route(
-                                output=output,
-                                guardrails=self.guardrails,
-                                context=ctx,
-                                step_id=self.step_id,
-                            )
-
-                            if next_step == "__retry__":
-                                # Guardrail requested retry
-                                guardrail_retry_requested = True
-                                last_error = ctx.get("__guardrail_error", "Guardrail validation failed")
-                                if self.exec_context:
-                                    self.exec_context.log(
-                                        "warning",
-                                        f"Guardrail retry for '{self.step_id}' (attempt {attempt + 2}): {last_error}"
-                                    )
-                                # Continue to next iteration for retry
-                                continue
-                            elif next_step != "next":
-                                # Route to specific step
-                                new_state = new_state.update(__guardrail_next=next_step)
-
-                        except GuardrailAbort as e:
-                            # Guardrail requested abort
-                            result = ActionResult(
-                                outcome="failure",
-                                outputs={},
-                                error=str(e),
-                                error_type="GuardrailAbort",
-                            )
-                            return self._apply_result_to_state(state, result)
-
-                        except GuardrailRetryExhausted as e:
-                            # Guardrail retry limit exceeded
-                            result = ActionResult(
-                                outcome="failure",
-                                outputs={},
-                                error=str(e),
-                                error_type="GuardrailRetryExhausted",
-                            )
-                            return self._apply_result_to_state(state, result)
-
                     return output, new_state
 
                 # Failure but no retry config - return immediately
@@ -321,8 +284,8 @@ class BurrActionAdapter(SingleStepAction):
                 if attempt == max_attempts - 1:
                     raise
 
-            # Backoff before retry (if not last attempt and not guardrail retry)
-            if attempt < max_attempts - 1 and not guardrail_retry_requested:
+            # Backoff before retry (if not last attempt)
+            if attempt < max_attempts - 1:
                 delay = min(backoff_base * (backoff_multiplier ** attempt), backoff_max)
                 if jitter:
                     delay *= (0.5 + random.random())
@@ -333,9 +296,6 @@ class BurrActionAdapter(SingleStepAction):
                         "warning",
                         f"Retrying '{self.step_id}' (attempt {attempt + 2}/{max_attempts})"
                     )
-
-            # Reset guardrail retry flag for next iteration
-            guardrail_retry_requested = False
 
         # All retries exhausted - return last result or create failure
         if last_result:
@@ -548,9 +508,8 @@ class BurrActionAdapter(SingleStepAction):
             "__suspend_for_input", "__suspend_step_id", "__suspend_prompt",
             "__suspend_input_type", "__suspend_choices", "__suspend_timeout",
             "__suspend_default", "__suspend_feedback_type",
-            # Guardrail control
-            "__guardrail_next", "__guardrail_warning", "__guardrail_retry_count",
-            "__guardrail_error",
+            # Guard state (LLM Guard integration) - persisted for anonymize/deanonymize flow
+            "__guard_vault", "__guard_input_content", "__guard_scan_results", "__guard_warning",
         }
         for key in internal_control_keys:
             if key in result.outputs:
@@ -567,6 +526,43 @@ class BurrActionAdapter(SingleStepAction):
             new_state = new_state.update(__next=next_hint)
 
         return sanitized_outputs, new_state
+
+    # =========================================================================
+    # LLM Configuration Methods
+    # =========================================================================
+
+    def _apply_llm_config(self, step_config: dict, action_type: str) -> dict:
+        """Apply workflow-level LLM config to step config.
+
+        Merges workflow-level LLM defaults with step-level config,
+        where step-level takes precedence.
+
+        Args:
+            step_config: Original step configuration.
+            action_type: Action type string (e.g., "llm/extract").
+
+        Returns:
+            Modified step configuration with merged LLM settings.
+        """
+        from .llm_config import resolve_llm_config
+
+        with_config = step_config.get("with", {})
+        merged = resolve_llm_config(with_config, action_type, self.workflow_llm_config)
+
+        # Only modify if there are changes
+        if not merged:
+            return step_config
+
+        # Create new config with merged LLM settings
+        new_config = copy.deepcopy(step_config)
+        new_with = new_config.setdefault("with", {})
+
+        # Apply merged values (only if not already in step config)
+        for key in ("model", "temperature", "max_tokens"):
+            if key in merged and key not in with_config:
+                new_with[key] = merged[key]
+
+        return new_config
 
     # =========================================================================
     # LLM Guard Integration Methods
@@ -611,7 +607,7 @@ class BurrActionAdapter(SingleStepAction):
             if on_fail == "abort":
                 raise GuardError(f"Input guardrail failed: {scan_result.failed_scanners}")
             elif on_fail == "continue":
-                context["__guardrail_warning"] = scan_result.failed_scanners
+                context["__guard_warning"] = scan_result.failed_scanners
                 return step_config, True
             # retry handled at adapter level
 
@@ -657,7 +653,7 @@ class BurrActionAdapter(SingleStepAction):
             if on_fail == "abort":
                 raise GuardError(f"Output guardrail failed: {scan_result.failed_scanners}")
             elif on_fail == "continue":
-                context["__guardrail_warning"] = scan_result.failed_scanners
+                context["__guard_warning"] = scan_result.failed_scanners
                 return result
             # retry handled at adapter level
 
@@ -843,10 +839,9 @@ class LoopBodyAdapter(BurrActionAdapter):
         continue_on_error: bool = False,
         retry_config: Optional[dict] = None,
         timeout: Optional[float] = None,
-        guardrails: Optional[list[dict]] = None,
-        guardrail_router: Optional[GuardrailRouter] = None,
         guardrails_config: Optional["GuardrailsConfig"] = None,
         guard_scanner: Optional["GuardScanner"] = None,
+        workflow_llm_config: Optional["LLMDefaultsConfig"] = None,
     ):
         """Initialize the loop body adapter.
 
@@ -858,10 +853,9 @@ class LoopBodyAdapter(BurrActionAdapter):
             continue_on_error: Whether to catch exceptions and continue loop
             retry_config: Optional retry configuration (passed to parent)
             timeout: Optional per-step timeout (passed to parent)
-            guardrails: Optional list of guardrail configurations (passed to parent, legacy)
-            guardrail_router: Optional shared GuardrailRouter instance (passed to parent, legacy)
-            guardrails_config: Optional GuardrailsConfig for llm-guard (passed to parent, new)
-            guard_scanner: Optional GuardScanner instance (passed to parent, new)
+            guardrails_config: Optional GuardrailsConfig for LLM Guard (passed to parent)
+            guard_scanner: Optional GuardScanner instance (passed to parent)
+            workflow_llm_config: Optional workflow-level LLM config (passed to parent)
         """
         super().__init__(
             base_action=base_action,
@@ -870,10 +864,9 @@ class LoopBodyAdapter(BurrActionAdapter):
             exec_context=exec_context,
             retry_config=retry_config,
             timeout=timeout,
-            guardrails=guardrails,
-            guardrail_router=guardrail_router,
             guardrails_config=guardrails_config,
             guard_scanner=guard_scanner,
+            workflow_llm_config=workflow_llm_config,
         )
         self.continue_on_error = continue_on_error
 

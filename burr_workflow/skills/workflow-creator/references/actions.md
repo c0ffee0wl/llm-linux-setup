@@ -34,7 +34,7 @@ Execute a shell command with optional timeout and capture modes.
 |-----------|------|---------|-------------|
 | `run` | string/list | required | Command to execute |
 | `timeout` | integer | 300 | Timeout in seconds |
-| `capture_mode` | string | "memory" | Output capture: "memory", "file", "stream", "tty" |
+| `capture_mode` | string | "memory" | Output capture: "memory", "file", "none" |
 | `on_failure` | string | - | Step ID to jump to on failure |
 
 **Array syntax (safer):**
@@ -45,6 +45,7 @@ Execute a shell command with optional timeout and capture modes.
 **Capture modes:**
 - `memory` - Capture stdout/stderr in state (default)
 - `file` - Save to temp file, store path in outputs
+- `none` - Discard output (fire-and-forget)
 
 **Interactive mode:**
 Use `interactive: true` for TTY commands that require terminal control.
@@ -131,7 +132,7 @@ Use LLM to extract structured data matching a JSON schema.
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `input` | string | Content to analyze (alias: `content`) |
+| `input` | string | Content to analyze |
 | `prompt` | string | What to extract |
 | `schema` | dict | JSON Schema for output structure |
 
@@ -168,7 +169,7 @@ Use LLM to select from predefined choices.
   id: assess
   uses: llm/decide
   with:
-    context: |
+    input: |
       Scan results: ${{ steps.scan.outputs.stdout }}
       Known vulnerabilities: ${{ steps.cve.outputs }}
     prompt: "Based on the findings, what action should be taken?"
@@ -182,7 +183,7 @@ Use LLM to select from predefined choices.
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `context` | string | Context for decision |
+| `input` | string | Context for decision |
 | `prompt` | string | Question to answer |
 | `choices` | list | Valid choice strings |
 
@@ -201,15 +202,15 @@ Get LLM analysis with optional format control.
   id: summary
   uses: llm/analyze
   with:
-    content: ${{ steps.all_scans.outputs.results }}
+    input: ${{ steps.all_scans.outputs.results }}
     prompt: "Summarize the security findings and prioritize by risk"
-    output_format: bullet_points
+    format: bullets
 ```
 
 **Parameters:**
 | Parameter | Type | Description |
 |-----------|------|-------------|
-| `content` | any | Content to analyze (alias: `input`) |
+| `input` | any | Content to analyze |
 | `prompt` | string | Analysis prompt |
 | `output_format` | string | Format: "prose", "bullet_points", "numbered", "json" |
 

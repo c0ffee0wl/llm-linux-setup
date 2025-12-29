@@ -299,7 +299,7 @@ def register_llm_actions(
     registry.register(
         "llm/generate",
         lambda: LLMGenerateAction(llm_client),
-        aliases=["generate"],
+        aliases=["generate", "analyze", "llm/analyze"],
     )
     registry.register(
         "llm/instruct",

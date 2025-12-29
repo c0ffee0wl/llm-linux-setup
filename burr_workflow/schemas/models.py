@@ -38,6 +38,153 @@ class StepOutcomeEnum(str, Enum):
     SKIPPED = "skipped"
 
 
+class CaptureStderrMode(str, Enum):
+    """How to handle stderr for shell commands."""
+    MERGE = "merge"       # Merge stderr into stdout
+    SEPARATE = "separate"  # Keep stdout and stderr separate (default)
+    DISCARD = "discard"   # Discard stderr entirely
+
+
+class ChunkingStrategy(str, Enum):
+    """Text splitting strategy for large content."""
+    LINE_AWARE = "line_aware"      # Split on line boundaries
+    SLIDING_WINDOW = "sliding_window"  # Overlapping character windows
+
+
+class AggregationStrategy(str, Enum):
+    """Result aggregation strategy for chunked processing."""
+    MERGE_STRUCTURED = "merge_structured"  # Deep merge JSON objects/arrays
+    CONCATENATE = "concatenate"            # Join text with separator
+
+
+class ChunkingConfig(BaseModel):
+    """Configuration for chunking large content.
+
+    Example:
+        chunking:
+          strategy: line_aware
+          max_chars: 40000
+          overlap: 100
+    """
+    strategy: ChunkingStrategy = Field(
+        default=ChunkingStrategy.SLIDING_WINDOW,
+        description="Splitting strategy",
+    )
+    max_chars: int = Field(
+        default=40000,
+        ge=1000,
+        le=500000,
+        description="Maximum characters per chunk",
+    )
+    overlap: int = Field(
+        default=500,
+        ge=0,
+        le=5000,
+        description="Overlap amount (lines for line_aware, chars for sliding_window)",
+    )
+
+
+class AggregationConfig(BaseModel):
+    """Configuration for aggregating chunked results.
+
+    Example:
+        aggregation:
+          strategy: merge_structured
+          deduplicate_arrays: true
+    """
+    strategy: AggregationStrategy = Field(
+        default=AggregationStrategy.CONCATENATE,
+        description="Aggregation strategy",
+    )
+    separator: str = Field(
+        default="\n\n",
+        description="Separator for concatenate strategy",
+    )
+    deduplicate_arrays: bool = Field(
+        default=True,
+        description="Remove duplicates when merging arrays",
+    )
+
+
+# ==============================================================================
+# LLM Configuration
+# ==============================================================================
+
+class LLMActionDefaultsConfig(BaseModel):
+    """Per-action-type LLM defaults.
+
+    Used within LLMDefaultsConfig to specify defaults for specific
+    action types (extract, decide, generate, instruct).
+    """
+    model: Optional[str] = Field(
+        default=None,
+        description="Model override for this action type",
+    )
+    temperature: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=2,
+        description="Temperature override for this action type",
+    )
+    max_tokens: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Max tokens override for this action type",
+    )
+
+
+class LLMDefaultsConfig(BaseModel):
+    """Workflow-level LLM configuration.
+
+    Provides centralized defaults for all LLM actions. Step-level
+    configuration in `with:` always takes precedence.
+
+    Example:
+        llm:
+          model: gpt-4
+          temperature: 0.7
+          max_tokens: 2000
+          extract:
+            temperature: 0.3    # Lower for structured output
+          decide:
+            temperature: 0.0    # Deterministic
+    """
+    # Global defaults for all LLM actions
+    model: Optional[str] = Field(
+        default=None,
+        description="Default model for all LLM actions",
+    )
+    temperature: Optional[float] = Field(
+        default=None,
+        ge=0,
+        le=2,
+        description="Default temperature for all LLM actions",
+    )
+    max_tokens: Optional[int] = Field(
+        default=None,
+        ge=1,
+        description="Default max tokens for all LLM actions",
+    )
+
+    # Per-action-type overrides
+    extract: Optional[LLMActionDefaultsConfig] = Field(
+        default=None,
+        description="Defaults for llm/extract actions (default temp: 0.3)",
+    )
+    decide: Optional[LLMActionDefaultsConfig] = Field(
+        default=None,
+        description="Defaults for llm/decide actions (default temp: 0.0)",
+    )
+    generate: Optional[LLMActionDefaultsConfig] = Field(
+        default=None,
+        description="Defaults for llm/generate actions (default temp: 0.7)",
+    )
+    instruct: Optional[LLMActionDefaultsConfig] = Field(
+        default=None,
+        description="Defaults for llm/instruct actions (default temp: 0.7)",
+    )
+
+
 # ==============================================================================
 # Input Definitions
 # ==============================================================================
@@ -189,6 +336,7 @@ class LLMActionConfig(BaseModel):
     """Configuration for llm/* actions."""
     content: Optional[str] = Field(
         default=None,
+        validation_alias="input",
         description="Content to analyze/extract from",
     )
     prompt: Optional[str] = Field(
@@ -215,13 +363,13 @@ class LLMActionConfig(BaseModel):
         description="Sampling temperature (default varies by action type)",
     )
     max_tokens: Optional[int] = Field(default=None, ge=1)
-    chunk_size: Optional[int] = Field(
+    chunking: Optional[ChunkingConfig] = Field(
         default=None,
-        description="Chunk size for large content processing",
+        description="Chunking configuration for large content",
     )
-    chunk_overlap: int = Field(
-        default=100,
-        description="Token overlap between chunks",
+    aggregation: Optional[AggregationConfig] = Field(
+        default=None,
+        description="Aggregation configuration for chunked results",
     )
 
 
@@ -361,6 +509,10 @@ class StepDefinition(BaseModel):
         default=CaptureMode.MEMORY,
         description="How to capture command output",
     )
+    capture_stderr: CaptureStderrMode = Field(
+        default=CaptureStderrMode.SEPARATE,
+        description="How to handle stderr: merge into stdout, keep separate, or discard",
+    )
 
     # Timeout and error handling
     timeout: int = Field(
@@ -491,6 +643,12 @@ class WorkflowDefinition(BaseModel):
     guardrails: Optional[GuardrailsConfig] = Field(
         default=None,
         description="Default guardrails applied to all steps",
+    )
+
+    # LLM configuration
+    llm: Optional[LLMDefaultsConfig] = Field(
+        default=None,
+        description="Default LLM configuration for all actions",
     )
 
     # Security settings

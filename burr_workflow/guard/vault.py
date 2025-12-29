@@ -44,13 +44,23 @@ class VaultManager:
         """
         if not self._vault:
             return {}
-        # Access vault's internal mappings for serialization
-        # Note: This accesses internal state - may need adjustment
-        # if llm-guard's Vault API changes
+
+        # Try public API first (future-proof)
+        if hasattr(self._vault, 'get_entries'):
+            return {"entries": list(self._vault.get_entries().items())}
+
+        # Fall back to internal API with warning
         try:
-            return {"entries": list(self._vault._entries.items())}
-        except AttributeError:
-            # Fallback if internal structure differs
+            entries = list(self._vault._entries.items())
+            return {"entries": entries, "_api_version": "internal"}
+        except AttributeError as e:
+            import warnings
+            warnings.warn(
+                f"llm-guard Vault API changed. Vault serialization unavailable. "
+                f"Consider pinning llm-guard version. Error: {e}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
             return {}
 
     def restore(self, data: dict[str, Any]) -> None:
@@ -61,12 +71,28 @@ class VaultManager:
         """
         if not self._vault or not data:
             return
+
+        entries = data.get("entries", [])
+        if not entries:
+            return
+
+        # Try public API first (future-proof)
+        if hasattr(self._vault, 'set_entries'):
+            self._vault.set_entries(dict(entries))
+            return
+
+        # Fall back to internal API
         try:
-            for key, value in data.get("entries", []):
+            for key, value in entries:
                 self._vault._entries[key] = value
-        except AttributeError:
-            # Fallback if internal structure differs
-            pass
+        except AttributeError as e:
+            import warnings
+            warnings.warn(
+                f"llm-guard Vault API changed. Vault restore unavailable. "
+                f"Consider pinning llm-guard version. Error: {e}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def clear(self) -> None:
         """Clear all vault entries."""

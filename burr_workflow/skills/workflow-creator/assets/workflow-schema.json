@@ -10,6 +10,16 @@
       "title": "CaptureMode",
       "type": "string"
     },
+    "CaptureStderrMode": {
+      "description": "How to handle stderr for shell commands.",
+      "enum": [
+        "merge",
+        "separate",
+        "discard"
+      ],
+      "title": "CaptureStderrMode",
+      "type": "string"
+    },
     "GuardrailsConfig": {
       "description": "LLM Guard-based guardrails configuration.\n\nSupports 12 input scanners and 17 output scanners from llm-guard.\nCan be specified at workflow level (defaults for all steps) or\nstep level (overrides workflow defaults).\n\nInput Scanners: anonymize, prompt_injection, secrets, invisible_text,\n    token_limit, ban_topics, ban_substrings, ban_code, code, gibberish,\n    language, regex\n\nOutput Scanners: deanonymize, sensitive, no_refusal, factual_consistency,\n    relevance, json, malicious_urls, url_reachability, language_same,\n    language, reading_time, gibberish, ban_topics, ban_substrings,\n    ban_code, code, regex\n\nExample:\n    guardrails:\n      input:\n        prompt_injection: { threshold: 0.92 }\n        secrets: { redact: true }\n      output:\n        sensitive: { redact: true }\n      on_fail: abort",
       "properties": {
@@ -225,6 +235,152 @@
         "steps"
       ],
       "title": "JobDefinition",
+      "type": "object"
+    },
+    "LLMActionDefaultsConfig": {
+      "description": "Per-action-type LLM defaults.\n\nUsed within LLMDefaultsConfig to specify defaults for specific\naction types (extract, decide, generate, instruct).",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Model override for this action type",
+          "title": "Model"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Temperature override for this action type",
+          "title": "Temperature"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max tokens override for this action type",
+          "title": "Max Tokens"
+        }
+      },
+      "title": "LLMActionDefaultsConfig",
+      "type": "object"
+    },
+    "LLMDefaultsConfig": {
+      "description": "Workflow-level LLM configuration.\n\nProvides centralized defaults for all LLM actions. Step-level\nconfiguration in `with:` always takes precedence.\n\nExample:\n    llm:\n      model: gpt-4\n      temperature: 0.7\n      max_tokens: 2000\n      extract:\n        temperature: 0.3    # Lower for structured output\n      decide:\n        temperature: 0.0    # Deterministic",
+      "properties": {
+        "model": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default model for all LLM actions",
+          "title": "Model"
+        },
+        "temperature": {
+          "anyOf": [
+            {
+              "maximum": 2,
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default temperature for all LLM actions",
+          "title": "Temperature"
+        },
+        "max_tokens": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Default max tokens for all LLM actions",
+          "title": "Max Tokens"
+        },
+        "extract": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMActionDefaultsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Defaults for llm/extract actions (default temp: 0.3)"
+        },
+        "decide": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMActionDefaultsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Defaults for llm/decide actions (default temp: 0.0)"
+        },
+        "generate": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMActionDefaultsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Defaults for llm/generate actions (default temp: 0.7)"
+        },
+        "instruct": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LLMActionDefaultsConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Defaults for llm/instruct actions (default temp: 0.7)"
+        }
+      },
+      "title": "LLMDefaultsConfig",
       "type": "object"
     },
     "ResultStorageMode": {
@@ -466,6 +622,11 @@
           "default": "memory",
           "description": "How to capture command output"
         },
+        "capture_stderr": {
+          "$ref": "#/$defs/CaptureStderrMode",
+          "default": "separate",
+          "description": "How to handle stderr: merge into stdout, keep separate, or discard"
+        },
         "timeout": {
           "default": 300,
           "description": "Timeout in seconds (default: 5 minutes)",
@@ -694,6 +855,18 @@
       ],
       "default": null,
       "description": "Default guardrails applied to all steps"
+    },
+    "llm": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/LLMDefaultsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default LLM configuration for all actions"
     },
     "shell_safety": {
       "$ref": "#/$defs/ShellSafetyMode",

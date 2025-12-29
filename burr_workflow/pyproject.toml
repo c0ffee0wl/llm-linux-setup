@@ -25,7 +25,8 @@ classifiers = [
 ]
 
 dependencies = [
-    "burr[all]>=0.20.0",
+    # SingleStepAction API verified stable through 0.40.x (internal API, unchanged since 0.20)
+    "burr[all]>=0.40.0,<0.41.0",
     "ruamel.yaml>=0.18.0",
     "jinja2>=3.1.0",
     "pydantic>=2.0.0",
@@ -48,11 +49,12 @@ viz = [
     "graphviz>=0.20",
 ]
 guard = [
-    "llm-guard>=0.3.14",
+    # Pin for vault._entries internal API compatibility
+    "llm-guard>=0.3.14,<0.4.0",
 ]
 all = [
     "graphviz>=0.20",
-    "llm-guard>=0.3.14",
+    "llm-guard>=0.3.14,<0.4.0",
 ]
 
 [project.scripts]

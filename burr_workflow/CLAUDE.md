@@ -379,6 +379,15 @@ for step_id, timing in hook.timings.items():
 
 **Why hooks?**: Burr's `aiterate()` yields AFTER action execution completes, making timing calculations inaccurate. The `StepTimingHook` captures precise pre/post timestamps using `PreRunStepHookAsync` and `PostRunStepHookAsync`.
 
+#### Nested Event Loop Warning
+
+When running workflows in an existing async context (e.g., Jupyter, async web frameworks), burr_workflow uses `nest_asyncio.apply()` which patches **global** asyncio state. This may conflict with:
+- Tornado-based applications
+- Twisted-based applications
+- Other async frameworks that manage their own event loops
+
+If you experience async-related issues, consider running workflows in a separate process or subprocess.
+
 #### Graph Visualization
 
 Generate workflow diagrams via CLI with dual engine support:
