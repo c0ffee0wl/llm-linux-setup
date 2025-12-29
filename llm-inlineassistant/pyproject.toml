@@ -12,7 +12,6 @@ dependencies = [
 
 [project.scripts]
 llm-inlineassistant = "llm_inlineassistant.cli:main"
-llm-inlineassistant-daemon = "llm_inlineassistant.daemon:main"
 
 [build-system]
 requires = ["hatchling"]

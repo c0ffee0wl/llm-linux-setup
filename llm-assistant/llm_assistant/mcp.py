@@ -147,23 +147,47 @@ class MCPMixin:
 
     Expects these attributes on self:
     - console: Rich Console for output
-    - active_mcp_servers: set of active MCP server names
+    - model_name: str (current model ID)
     - mode: str ("agent" or "assistant")
+
+    Provides (via _mcp_init):
+    - active_mcp_servers: set of active MCP server names
     - no_exec_mode: bool (True if running without Terminator/D-Bus)
     - loaded_optional_tools: set of loaded optional tool plugins
     - _skill_invoke_tool: Optional[Tool]
     - _skill_load_file_tool: Optional[Tool]
-    - _skill_invoke_impl: method for skill_invoke tool
-    - _skill_load_file_impl: method for skill_load_file tool
-    - _is_gemini_model: method to check if using Gemini model
+    - _skill_invoke_impl: callable or None
+    - _skill_load_file_impl: callable or None
     """
 
     # Type hints for attributes provided by main class
     console: 'Console'
-    active_mcp_servers: Set[str]
+    model_name: str
     mode: str
+
+    # Type hints for attributes initialized by _mcp_init
+    active_mcp_servers: Set[str]
     no_exec_mode: bool
     loaded_optional_tools: Set[str]
+
+    def _mcp_init(self, no_exec_mode: bool = False):
+        """Initialize MCP-related attributes.
+
+        Args:
+            no_exec_mode: True if running without Terminator/D-Bus (headless mode)
+        """
+        self.active_mcp_servers = self._get_default_mcp_servers()
+        self.no_exec_mode = no_exec_mode
+        self.loaded_optional_tools = set()
+        # Skill tools - will be set by SkillsMixin if skills are loaded
+        self._skill_invoke_tool = None
+        self._skill_load_file_tool = None
+        self._skill_invoke_impl = None
+        self._skill_load_file_impl = None
+
+    def _is_gemini_model(self) -> bool:
+        """Check if current model is a Gemini model (vertex/* or gemini-*)."""
+        return self.model_name.startswith("vertex/") or self.model_name.startswith("gemini-")
 
     def _get_default_mcp_servers(self) -> set:
         """Get non-optional MCP servers (loaded by default)."""

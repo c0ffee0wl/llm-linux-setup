@@ -42,6 +42,26 @@ def get_temp_dir() -> Path:
     return _core_get_temp_dir(_APP_NAME)
 
 
+def get_suggest_path() -> Path:
+    """Get path for suggested command file.
+
+    Returns: TMPDIR/llm-assistant/{uid}/suggest
+
+    Used by suggest_command tool to pass commands to the shell,
+    which places them on the user's prompt for editing/execution.
+    """
+    return get_temp_dir() / "suggest"
+
+
+def write_suggested_command(command: str) -> None:
+    """Write a suggested command for the shell to pick up.
+
+    Args:
+        command: The command to suggest (placed on user's prompt)
+    """
+    get_suggest_path().write_text(command)
+
+
 def get_logs_db_path() -> Path:
     """Get path to llm-assistant's conversation database.
 

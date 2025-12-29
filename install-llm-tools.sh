@@ -1508,23 +1508,26 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 fi
 
-# Install llm-inlineassistant (inline AI assistant with daemon architecture)
+# Install llm-inlineassistant (thin client for llm-assistant daemon)
 # Works in any terminal (not just Terminator) and espanso text expander
 log "Installing llm-inlineassistant package..."
 install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-inlineassistant"
 
-# Create wrapper scripts for llm-inlineassistant
+# Create wrapper script for llm-inlineassistant
 cat > "$HOME/.local/bin/llm-inlineassistant" << 'EOF'
 #!/bin/sh
 exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_inlineassistant "$@"
 EOF
 chmod +x "$HOME/.local/bin/llm-inlineassistant"
 
-cat > "$HOME/.local/bin/llm-inlineassistant-daemon" << 'EOF'
-#!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_inlineassistant.daemon "$@"
-EOF
-chmod +x "$HOME/.local/bin/llm-inlineassistant-daemon"
+# Clean up old daemon wrapper (now uses llm-assistant --daemon instead)
+if [ -f "$HOME/.local/bin/llm-inlineassistant-daemon" ]; then
+    rm -f "$HOME/.local/bin/llm-inlineassistant-daemon"
+    log "Removed obsolete llm-inlineassistant-daemon wrapper"
+fi
+
+# Create daemon socket directory for llm-assistant
+mkdir -p "/tmp/llm-assistant-$(id -u)"
 
 if has_desktop_environment; then
     # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)

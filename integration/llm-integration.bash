@@ -2,7 +2,7 @@
 #
 # LLM Shell Integration for Bash
 # - Ctrl+N: AI-powered command completion
-# - Ctrl+G: Apply suggested command from llm-inlineassistant
+# - Ctrl+G: Apply suggested command from llm-assistant
 #
 
 # Source common configuration
@@ -14,7 +14,7 @@ HISTIGNORE="${HISTIGNORE:+$HISTIGNORE:}@ *:llm-inlineassistant *"
 # Bind Ctrl+N to the LLM command completion
 bind -x '"\C-n": __llm_cmdcomp'
 
-# Bind Ctrl+G to apply suggested command from llm-inlineassistant
+# Bind Ctrl+G to apply suggested command from llm-assistant
 bind -x '"\C-g": __llm_apply_suggest'
 
 __llm_cmdcomp() {
@@ -42,8 +42,8 @@ __llm_cmdcomp() {
 }
 
 __llm_apply_suggest() {
-    # Apply suggested command from llm-inlineassistant's suggest_command tool
-    local suggest_file="/tmp/llm-inlineassistant-$(id -u)/suggest"
+    # Apply suggested command from llm-assistant's suggest_command tool
+    local suggest_file="/tmp/llm-assistant-$(id -u)/suggest"
 
     if [[ -f "$suggest_file" ]]; then
         local cmd

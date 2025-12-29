@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Query llm-inlineassistant daemon via Unix socket.
+"""Query llm-assistant daemon via Unix socket.
 
 Used by espanso triggers to get AI responses for text expansion.
 Communicates directly with the daemon - no dependency on llm-server.
@@ -40,10 +40,10 @@ def build_simple_system_prompt() -> str:
     )
 
 
-# Socket path
+# Socket path - uses llm-assistant daemon
 def get_socket_path() -> Path:
     uid = os.getuid()
-    return Path(f"/tmp/llm-inlineassistant-{uid}/daemon.sock")
+    return Path(f"/tmp/llm-assistant-{uid}/daemon.sock")
 
 
 # Daemon startup timeout
@@ -76,16 +76,16 @@ def ensure_daemon_running() -> bool:
         return True
 
     # Use absolute path (espanso's PATH may not include ~/.local/bin)
-    daemon_path = Path.home() / ".local" / "bin" / "llm-inlineassistant-daemon"
+    daemon_path = Path.home() / ".local" / "bin" / "llm-assistant"
     if not daemon_path.exists():
         # Fallback to PATH lookup
-        daemon_path = "llm-inlineassistant-daemon"
+        daemon_cmd = ["llm-assistant", "--daemon"]
     else:
-        daemon_path = str(daemon_path)
+        daemon_cmd = [str(daemon_path), "--daemon"]
 
     try:
         subprocess.Popen(
-            [daemon_path],
+            daemon_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             start_new_session=True
@@ -114,7 +114,7 @@ def query_daemon(prompt: str, mode: str = "assistant") -> str:
         Response text from the LLM
     """
     if not ensure_daemon_running():
-        return "Error: Could not start llm-inlineassistant daemon"
+        return "Error: Could not start llm-assistant daemon"
 
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -184,7 +184,7 @@ def query_daemon(prompt: str, mode: str = "assistant") -> str:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Query llm-inlineassistant daemon")
+    parser = argparse.ArgumentParser(description="Query llm-assistant daemon")
     parser.add_argument("query", nargs="+", help="Query text")
     parser.add_argument(
         "--mode",

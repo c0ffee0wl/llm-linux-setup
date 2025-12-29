@@ -3,6 +3,9 @@
 This module provides:
 - resolve_model_query: Fuzzy model name matching
 - main: Entry point with argument parsing
+
+Note: session.py is imported lazily to avoid loading audio dependencies
+(voice.py, sounddevice) when running in daemon mode.
 """
 
 import argparse
@@ -10,8 +13,6 @@ import sys
 from typing import List, Optional
 
 import llm
-
-from .session import TerminatorAssistantSession
 
 
 def resolve_model_query(queries: List[str]) -> Optional[str]:
@@ -82,6 +83,11 @@ def main():
         action='store_true',
         help='Run without exec terminal (works in any terminal, uses asciinema context)'
     )
+    parser.add_argument(
+        '--daemon',
+        action='store_true',
+        help='Run as daemon server for headless clients (Unix socket)'
+    )
     args = parser.parse_args()
 
     # Resolve model: -m flag > query > default
@@ -91,6 +97,15 @@ def main():
         if not model_name:
             print(f"Error: No model found matching queries {' '.join(args.query)}", file=sys.stderr)
             sys.exit(1)
+
+    # Daemon mode: start the socket server instead of interactive session
+    if args.daemon:
+        from .daemon import main as daemon_main
+        daemon_main(model_id=model_name, debug=args.debug)
+        return
+
+    # Import session here to avoid loading audio dependencies in daemon mode
+    from .session import TerminatorAssistantSession
 
     session = TerminatorAssistantSession(
         model_name=model_name,

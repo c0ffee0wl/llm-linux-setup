@@ -16,9 +16,11 @@ import os
 SLASH_COMMANDS = {
     "/help": {"subcommands": [], "dynamic": None, "description": "Show help"},
     "/clear": {"subcommands": [], "dynamic": None, "description": "Clear conversation"},
+    "/new": {"subcommands": [], "dynamic": None, "description": "Start new conversation"},
     "/reset": {"subcommands": [], "dynamic": None, "description": "Full reset"},
     "/refresh": {"subcommands": [], "dynamic": None, "description": "Refresh context"},
     "/info": {"subcommands": [], "dynamic": None, "description": "Session info"},
+    "/status": {"subcommands": [], "dynamic": None, "description": "Session info"},
     "/quit": {"subcommands": [], "dynamic": None, "description": "Exit"},
     "/exit": {"subcommands": [], "dynamic": None, "description": "Exit"},
     "/model": {"subcommands": ["-q"], "dynamic": "models", "description": "Switch or list models"},
@@ -40,6 +42,31 @@ SLASH_COMMANDS = {
     "/report": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
     "/mcp": {"subcommands": ["load", "unload", "status"], "dynamic": "mcp_servers", "description": "Load/unload MCP servers"},
     "/skill": {"subcommands": ["load", "unload", "reload", "list"], "dynamic": "skills", "description": "Skill management"},
+}
+
+
+# Slash commands available in headless/daemon mode (allowlist)
+# Only these commands work via thin client (@ command)
+HEADLESS_AVAILABLE_COMMANDS = {
+    '/help',        # Show available commands
+    '/clear',       # Clear conversation
+    '/reset',       # Full reset
+    '/new',         # Alias for clear
+    '/info',        # Session info
+    '/status',      # Alias for info
+    '/quit',        # Exit
+    '/exit',        # Alias for quit
+    '/model',       # Switch or list models
+    '/squash',      # Compress context
+    '/kb',          # Knowledge base control
+    '/memory',      # AGENTS.md memory
+    '/rag',         # RAG search
+    '/skill',       # Skill management
+    '/mcp',         # MCP servers
+    '/report',      # Pentest findings
+    '/assistant',   # Switch to assistant mode
+    '/imagemage',   # Image generation tool
+    '/copy',        # Copy responses to clipboard
 }
 
 

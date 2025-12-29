@@ -48,36 +48,27 @@ def logs_on() -> bool:
     return not (llm.user_dir() / "logs-off").exists()
 
 
-def get_tmp_dir() -> Path:
-    """Get llm-inlineassistant temp directory.
-
-    Returns: /tmp/llm-inlineassistant-{UID}/
-
-    All temp files (socket, suggestions) are stored here.
-    """
-    uid = os.getuid()
-    tmp_dir = Path(f"/tmp/llm-inlineassistant-{uid}")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    return tmp_dir
-
-
 def get_socket_path() -> Path:
     """Get Unix socket path for daemon communication.
 
-    Returns: /tmp/llm-inlineassistant-{UID}/daemon.sock
+    Returns: /tmp/llm-assistant-{UID}/daemon.sock
+
+    Uses llm-assistant's daemon socket for unified backend.
     """
-    return get_tmp_dir() / "daemon.sock"
+    uid = os.getuid()
+    return Path(f"/tmp/llm-assistant-{uid}/daemon.sock")
 
 
 def get_suggest_path() -> Path:
     """Get path for suggested command file.
 
-    Returns: /tmp/llm-inlineassistant-{UID}/suggest
+    Returns: /tmp/llm-assistant-{UID}/suggest
 
-    Used by suggest_command tool to pass commands to the shell,
-    which places them on the user's prompt for editing/execution.
+    Uses llm-assistant's temp directory since the daemon writes here.
+    Shell reads this via Ctrl+G to apply the command.
     """
-    return get_tmp_dir() / "suggest"
+    uid = os.getuid()
+    return Path(f"/tmp/llm-assistant-{uid}/suggest")
 
 
 def write_suggested_command(command: str) -> None:

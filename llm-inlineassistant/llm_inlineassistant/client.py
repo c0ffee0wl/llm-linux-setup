@@ -62,16 +62,16 @@ def is_daemon_running() -> bool:
 
 
 def start_daemon(model: Optional[str] = None) -> bool:
-    """Start the daemon in background.
+    """Start the llm-assistant daemon in background.
 
     Returns True if daemon started successfully.
     """
     # Try absolute path first (for espanso and GUI apps)
-    daemon_path = Path.home() / ".local" / "bin" / "llm-inlineassistant-daemon"
+    daemon_path = Path.home() / ".local" / "bin" / "llm-assistant"
     if daemon_path.exists():
-        cmd = [str(daemon_path)]
+        cmd = [str(daemon_path), "--daemon"]
     else:
-        cmd = ["llm-inlineassistant-daemon"]
+        cmd = ["llm-assistant", "--daemon"]
 
     if model:
         cmd.extend(["-m", model])
@@ -220,7 +220,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
         "tid": terminal_id,
     }
 
-    if command in ('/new', '/reset'):
+    if command in ('/new', '/reset', '/clear'):
         request = {**request_base, "cmd": "new"}
         for event in send_json_request(request):
             if event.get("type") == "text":
@@ -234,12 +234,13 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
                 content = event.get('content', '')
                 try:
                     status = json.loads(content)
-                    console.print("[bold]llm-inlineassistant status:[/]")
+                    console.print("[bold]llm-assistant daemon status:[/]")
                     console.print(f"  Model: {status.get('model', 'unknown')}")
                     console.print(f"  Conversation: {status.get('conversation_id', 'none')}")
                     console.print(f"  Messages: {status.get('messages', 0)}")
                     console.print(f"  Tools: {len(status.get('tools', []))}")
                     console.print(f"  Active workers: {status.get('active_workers', 0)}")
+                    console.print(f"  Active sessions: {status.get('active_sessions', 0)}")
                 except json.JSONDecodeError:
                     console.print(content)
         return True
@@ -252,11 +253,78 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
         return True
 
     elif command == '/help':
-        console.print("[bold]llm-inlineassistant commands:[/]")
-        console.print("  /new, /reset  - Start new conversation")
-        console.print("  /status       - Show session info")
-        console.print("  /quit         - Shutdown daemon")
-        console.print("  /help         - Show this help")
+        request = {**request_base, "cmd": "help"}
+        for event in send_json_request(request):
+            if event.get("type") == "text":
+                console.print(event.get('content', ''))
+        return True
+
+    elif command.startswith('/copy'):
+        # Parse /copy [raw] [all] [N]
+        parts = command.split()
+        raw_mode = 'raw' in command.lower()
+        copy_all = 'all' in command.lower()
+        count = 1
+        for p in parts[1:]:
+            if p.isdigit():
+                count = int(p)
+                break
+
+        request = {
+            **request_base,
+            "cmd": "get_responses",
+            "count": count,
+            "all": copy_all,
+        }
+
+        items = []
+        for event in send_json_request(request):
+            if event.get("type") == "responses":
+                items = event.get("items", [])
+
+        if not items:
+            console.print("[yellow]No responses to copy[/]")
+            return True
+
+        # Format text
+        if copy_all:
+            texts = []
+            for item in items:
+                prompt = item.get("prompt", "")
+                response = item.get("response", "")
+                if prompt:
+                    texts.append(f"User: {prompt}\n\nAssistant: {response}")
+                else:
+                    texts.append(response)
+            combined = "\n\n---\n\n".join(texts)
+        else:
+            combined = "\n\n---\n\n".join(item.get("response", "") for item in items)
+
+        # Strip markdown unless raw mode
+        if not raw_mode:
+            try:
+                import re
+                # Simple markdown stripping
+                combined = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).split('\n', 1)[-1].rsplit('\n', 1)[0] if '\n' in m.group(0) else '', combined)
+                combined = re.sub(r'`([^`]+)`', r'\1', combined)
+                combined = re.sub(r'\*\*([^*]+)\*\*', r'\1', combined)
+                combined = re.sub(r'\*([^*]+)\*', r'\1', combined)
+                combined = re.sub(r'^#+\s*', '', combined, flags=re.MULTILINE)
+            except Exception:
+                pass
+
+        # Copy to clipboard
+        try:
+            import pyperclip
+            pyperclip.copy(combined)
+            what = "conversation" if copy_all else f"{len(items)} response(s)"
+            mode = "raw markdown" if raw_mode else "plain text"
+            console.print(f"[green]Copied {what} to clipboard ({mode})[/]")
+        except ImportError:
+            console.print("[red]pyperclip not installed. Install with: pip install pyperclip[/]")
+        except Exception as e:
+            console.print(f"[red]Clipboard error: {e}[/]")
+
         return True
 
     return False
@@ -278,7 +346,7 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
 
     # Ensure daemon is running
     if not ensure_daemon(model):
-        console.print("[red]ERROR: Could not start llm-inlineassistant daemon[/]")
+        console.print("[red]ERROR: Could not start llm-assistant daemon[/]")
         return ""
 
     # Check for slash commands
@@ -311,6 +379,7 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
                         Markdown(accumulated_text),
                         Spinner("dots", text=spinner_text, style="cyan")
                     ))
+                    live.refresh()  # Force immediate display for fast tools
                 else:
                     live.update(Markdown(accumulated_text))
 
@@ -335,6 +404,35 @@ def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
         return accumulated_text
 
 
+def get_completions(prefix: str, model: Optional[str] = None) -> list:
+    """Get completions for a prefix from the daemon.
+
+    Args:
+        prefix: Prefix to complete (e.g., '/', '@', 'model:')
+        model: Model to use (starts daemon if needed)
+
+    Returns:
+        List of completion dicts with 'text' and 'description' keys
+    """
+    # Ensure daemon is running
+    if not ensure_daemon(model):
+        return []
+
+    request = {
+        "cmd": "complete",
+        "prefix": prefix,
+    }
+
+    completions = []
+    for event in send_json_request(request):
+        if event.get("type") == "completions":
+            completions = event.get("items", [])
+        elif event.get("type") == "done":
+            break
+
+    return completions
+
+
 def main():
     """CLI entry point for llm-inlineassistant client."""
     import argparse
@@ -346,8 +444,30 @@ def main():
     parser.add_argument("query", nargs="*", help="Query to send")
     parser.add_argument("-m", "--model", help="Model to use")
     parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
+    parser.add_argument("--complete", action="store_true",
+                        help="Get completions for prefix (outputs tab-separated list)")
+    parser.add_argument("--complete-json", action="store_true",
+                        help="Get completions as JSON")
 
     args = parser.parse_args()
+
+    # Handle completion mode
+    if args.complete or args.complete_json:
+        prefix = ' '.join(args.query) if args.query else ''
+        completions = get_completions(prefix, model=args.model)
+
+        if args.complete_json:
+            print(json.dumps(completions))
+        else:
+            # Tab-separated output for shell completion
+            for item in completions:
+                text = item.get('text', '')
+                desc = item.get('description', '')
+                if desc:
+                    print(f"{text}\t{desc}")
+                else:
+                    print(text)
+        return
 
     if not args.query:
         # Interactive mode hint
