@@ -80,32 +80,6 @@ def regex_match(value: str, pattern: str) -> bool:
     return bool(re.search(pattern, str(value)))
 
 
-def json_encode(value: Any) -> str:
-    """Encode a value as JSON string.
-
-    Args:
-        value: Value to encode
-
-    Returns:
-        JSON string
-    """
-    import json
-    return json.dumps(value)
-
-
-def json_decode(value: str) -> Any:
-    """Decode a JSON string.
-
-    Args:
-        value: JSON string
-
-    Returns:
-        Decoded value
-    """
-    import json
-    return json.loads(str(value))
-
-
 def base64_encode(value: str) -> str:
     """Base64 encode a string.
 
@@ -158,23 +132,6 @@ def url_decode(value: str) -> str:
     return unquote(str(value))
 
 
-def truncate(value: str, length: int = 80, suffix: str = "...") -> str:
-    """Truncate a string to a maximum length.
-
-    Args:
-        value: Input string
-        length: Maximum length
-        suffix: Suffix to add if truncated
-
-    Returns:
-        Truncated string
-    """
-    value = str(value)
-    if len(value) <= length:
-        return value
-    return value[:length - len(suffix)] + suffix
-
-
 def lines(value: str) -> list[str]:
     """Split a string into lines.
 
@@ -185,44 +142,6 @@ def lines(value: str) -> list[str]:
         List of lines
     """
     return str(value).splitlines()
-
-
-def indent(value: str, width: int = 4, first: bool = False) -> str:
-    """Indent all lines of a string.
-
-    Args:
-        value: Input string
-        width: Number of spaces to indent
-        first: Whether to indent the first line
-
-    Returns:
-        Indented string
-    """
-    lines_list = str(value).splitlines()
-    prefix = ' ' * width
-
-    if not first and lines_list:
-        return lines_list[0] + '\n' + '\n'.join(
-            prefix + line for line in lines_list[1:]
-        )
-    return '\n'.join(prefix + line for line in lines_list)
-
-
-def format_bytes(value: int) -> str:
-    """Format a byte count as human-readable size.
-
-    Args:
-        value: Number of bytes
-
-    Returns:
-        Human-readable size string (e.g., "1.5 MB")
-    """
-    value = int(value)
-    for unit in ['B', 'KB', 'MB', 'GB', 'TB']:
-        if abs(value) < 1024.0:
-            return f"{value:.1f} {unit}"
-        value /= 1024.0
-    return f"{value:.1f} PB"
 
 
 def extract_domain(url: str) -> str:
@@ -337,20 +256,15 @@ SAFE_FILTERS: dict[str, Callable[..., Any]] = {
     "safe_filename": safe_filename,
     "regex_replace": regex_replace,
     "regex_match": regex_match,
-    "truncate": truncate,
     "lines": lines,
-    "indent": indent,
 
-    # Encoding/decoding
-    "json_encode": json_encode,
-    "json_decode": json_decode,
+    # Encoding/decoding (use toJSON/fromJSON for JSON - GHA compatible)
     "base64_encode": base64_encode,
     "base64_decode": base64_decode,
     "url_encode": url_encode,
     "url_decode": url_decode,
 
     # Data extraction
-    "format_bytes": format_bytes,
     "extract_domain": extract_domain,
     "extract_ip": extract_ip,
 

@@ -161,9 +161,9 @@ class Jinja2ExpressionValidator:
         "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
         # All filters from SAFE_FILTERS (evaluator/filters.py)
         # This includes: shell_quote, safe_filename, regex_replace, regex_match,
-        # truncate, lines, indent, json_encode, json_decode, base64_encode,
-        # base64_decode, url_encode, url_decode, format_bytes, extract_domain,
-        # extract_ip, is_valid_ip, is_private_ip, in_cidr, file_exists, in_list
+        # lines, base64_encode, base64_decode, url_encode, url_decode,
+        # extract_domain, extract_ip, is_valid_ip, is_private_ip, in_cidr,
+        # file_exists, in_list
         *SAFE_FILTERS.keys(),
     ])
 

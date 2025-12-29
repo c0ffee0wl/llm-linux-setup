@@ -56,13 +56,13 @@ YAML → Parser → Validator → Compiler → Burr Application → Executor →
 ```
 
 1. **Parser** (`core/parser.py`): Uses ruamel.yaml with source location tracking for error messages
-2. **Validator** (`core/validator.py`): Static analysis with 7 validation phases (structure, step IDs, references, expressions, shell safety, unused steps)
+2. **Validator** (`core/validator.py`): Static analysis with 7 validation phases (structure, step IDs, step config, references, expressions, shell safety, unused steps)
 3. **Compiler** (`core/compiler.py`): Transforms YAML into Burr graph with explicit transitions
 4. **Executor** (`core/executor.py`): High-level execution with suspension/resume, progress tracking, Ctrl+C handling
 
 ### Protocol-Based Integration
 
-The package is designed for standalone use OR integration with llm-assistant. Five protocols in `protocols.py` define integration points:
+The package is designed for standalone use OR integration with llm-assistant. Six protocols in `protocols.py` define integration points:
 
 | Protocol | Purpose |
 |----------|---------|
@@ -84,8 +84,8 @@ Actions in `actions/` implement `BaseAction` protocol with `execute()` async met
 - **LLM**: `uses: llm/extract|decide|generate|instruct` via `LLMClient` protocol (generate supports format parameter: prose/bullets/numbered/json)
 - **Human**: `uses: human/input` (free-form: text/multiline/file/editor) or `human/decide` (constrained: confirm/choices)
 - **Script**: `uses: script/python|bash` for subprocess script execution with optional `sandbox: true` (bwrap isolation)
-- **State**: `uses: state/set` for variable manipulation
-- **Control**: `uses: control/exit|fail|wait` for flow control (wait supports duration or polling until condition)
+- **State**: `uses: state/set|append` for variable manipulation (set overwrites, append adds to list)
+- **Control**: `uses: control/exit|fail|break|continue|wait` for flow control (break/continue for loops, wait supports duration or polling until condition)
 - **File**: `uses: file/read|write` for file I/O (read supports text/binary/auto, write supports create/overwrite/append)
 - **Parse**: `uses: parse/json|regex` for structured data extraction (json uses jmespath, regex supports named groups)
 - **Notify**: `uses: notify/desktop|webhook` for notifications (desktop auto-detects notify-send/terminal-notifier)

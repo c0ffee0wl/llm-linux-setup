@@ -100,9 +100,9 @@ class ContextEvaluator:
         # GitHub Actions compatible functions
         "contains", "startsWith", "endsWith", "format", "toJSON", "fromJSON",
         # Filters from SAFE_FILTERS (filters.py)
-        "safe_filename", "regex_replace", "regex_match", "truncate", "lines", "indent",
-        "json_encode", "json_decode", "base64_encode", "base64_decode",
-        "url_encode", "url_decode", "format_bytes", "extract_domain", "extract_ip",
+        "safe_filename", "regex_replace", "regex_match", "lines",
+        "base64_encode", "base64_decode", "url_encode", "url_decode",
+        "extract_domain", "extract_ip",
         # Network validation filters
         "is_valid_ip", "is_private_ip", "in_cidr",
         # Filesystem filters
