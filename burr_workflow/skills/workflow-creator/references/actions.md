@@ -456,6 +456,66 @@ Trigger workflow failure with error message.
 
 ---
 
+### `control/wait` - Delay or Poll
+
+Wait for a duration or until a condition is met.
+
+```yaml
+# Wait for duration
+- uses: control/wait
+  with:
+    duration: 30  # seconds
+
+# Poll until condition
+- uses: control/wait
+  with:
+    until: ${{ steps.check.outputs.ready == true }}
+    interval: 5    # poll every 5s
+    timeout: 300   # fail after 5min
+```
+
+**Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `duration` | integer | Wait duration in seconds |
+| `until` | string | Condition expression to poll |
+| `interval` | integer | Polling interval in seconds (default: 5) |
+| `timeout` | integer | Max wait time before failure (default: 300) |
+
+---
+
+### `control/break` - Break Loop (Advanced)
+
+Explicitly break out of the current loop.
+
+> **Note:** The `break_if` step property is the preferred way to conditionally break loops. Use `control/break` only when you need to break from a different location than the loop body.
+
+```yaml
+- uses: control/break
+  if: ${{ steps.check.outputs.should_stop }}
+```
+
+**Outputs:**
+- `break_requested` - Always `true`
+
+---
+
+### `control/continue` - Skip Iteration (Advanced)
+
+Skip to the next loop iteration.
+
+> **Note:** The `continue_on_error: true` step property is preferred for skipping failed iterations. Use `control/continue` only when you need explicit skip logic.
+
+```yaml
+- uses: control/continue
+  if: ${{ loop.item.skip }}
+```
+
+**Outputs:**
+- `continue_requested` - Always `true`
+
+---
+
 ## Report Actions
 
 ### `report/add` - Add Pentest Finding

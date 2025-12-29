@@ -212,17 +212,43 @@ class InputDefinition(BaseModel):
     min_: Optional[Union[int, float]] = Field(
         default=None,
         alias="min",
-        description="Minimum value for numeric types",
+        description="Minimum value for numeric types, or minimum length for arrays",
     )
     max_: Optional[Union[int, float]] = Field(
         default=None,
         alias="max",
-        description="Maximum value for numeric types",
+        description="Maximum value for numeric types, or maximum length for arrays",
     )
     secret: bool = Field(
         default=False,
         description="Whether this input contains sensitive data",
     )
+
+    @model_validator(mode="after")
+    def validate_type_constraints(self) -> "InputDefinition":
+        """Validate that min/max are only used with appropriate types."""
+        import warnings
+
+        # min/max only meaningful for number and array types
+        if self.min_ is not None or self.max_ is not None:
+            if self.type not in ("number", "array"):
+                warnings.warn(
+                    f"min/max constraints are only meaningful for 'number' or 'array' types, "
+                    f"not '{self.type}'. These constraints will be ignored.",
+                    UserWarning,
+                    stacklevel=2,
+                )
+
+        # pattern only meaningful for string type
+        if self.pattern is not None and self.type != "string":
+            warnings.warn(
+                f"pattern constraint is only meaningful for 'string' type, "
+                f"not '{self.type}'. This constraint will be ignored.",
+                UserWarning,
+                stacklevel=2,
+            )
+
+        return self
 
 
 # ==============================================================================

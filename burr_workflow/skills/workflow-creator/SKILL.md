@@ -230,6 +230,26 @@ For large inputs that exceed LLM context limits, configure chunking:
 | `first` / `last` | `${{ list \| first }}` | First/last element |
 | `join` | `${{ list \| join(',') }}` | Join list elements |
 
+### String and Type Conversion Filters
+
+| Filter | Usage | Purpose |
+|--------|-------|---------|
+| `lower` | `${{ text \| lower }}` | Convert to lowercase |
+| `upper` | `${{ text \| upper }}` | Convert to uppercase |
+| `trim` | `${{ text \| trim }}` | Strip leading/trailing whitespace |
+| `split` | `${{ text \| split(',') }}` | Split string into list |
+| `int` | `${{ value \| int }}` | Convert to integer |
+| `float` | `${{ value \| float }}` | Convert to float |
+| `string` | `${{ value \| string }}` | Convert to string |
+
+### Collection Filters
+
+| Filter | Usage | Purpose |
+|--------|-------|---------|
+| `values` | `${{ dict \| values }}` | Extract dictionary values as list |
+| `sort` | `${{ list \| sort }}` | Sort list elements |
+| `unique` | `${{ list \| unique }}` | Remove duplicate elements |
+
 ### Network and Validation Filters
 
 | Filter | Usage | Purpose |
@@ -519,6 +539,49 @@ jobs:
 finally:  # Workflow-level cleanup
   - run: rm -rf ${{ env.SCAN_DIR }}/tmp
 ```
+
+## Lifecycle Hooks
+
+Workflow-level hooks for success/failure handling:
+
+```yaml
+name: my-workflow
+version: "1.0"
+
+jobs:
+  main:
+    steps: [...]
+
+# Runs ONLY on successful completion (all steps passed)
+on_complete:
+  - run: echo "Workflow completed successfully"
+  - uses: notify/webhook
+    with:
+      url: ${{ env.SLACK_WEBHOOK }}
+      body: { status: "success" }
+
+# Runs ONLY on workflow failure (any step failed)
+on_failure:
+  - run: echo "Workflow failed" >> error.log
+  - uses: notify/desktop
+    with:
+      title: "Workflow Failed"
+      urgency: critical
+
+# Runs ALWAYS (both success and failure) - cleanup
+finally:
+  - run: rm -rf /tmp/workspace
+```
+
+**Execution Order:**
+1. Workflow steps execute
+2. `on_complete` OR `on_failure` (mutually exclusive based on outcome)
+3. `finally` (always runs)
+
+**Use Cases:**
+- `on_complete` - Success notifications, result reporting, cleanup on success only
+- `on_failure` - Error notifications, debugging data collection, rollback actions
+- `finally` - Resource cleanup that must happen regardless of outcome
 
 ## Complete Examples
 
