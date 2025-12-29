@@ -29,6 +29,10 @@ workflow schema --pretty -o workflow-schema.json
 workflow create my-workflow
 workflow create --list-templates
 
+# Pre-download LLM Guard models for guardrails
+workflow guard-init                    # All common models
+workflow guard-init -s prompt_injection  # Specific scanner
+
 # Run tests
 pytest tests/
 pytest tests/test_validator.py -v         # single test file
@@ -144,6 +148,184 @@ The validator includes shell injection detection (`W_SHELL_INJECTION` warning):
 - run: ["echo", "${{ inputs.user_data }}"]
 ```
 
+### Guardrails (LLM Guard Integration)
+
+The workflow engine supports input/output validation using [llm-guard](https://llm-guard.com/). Guardrails can be defined at the workflow level (applied to all steps) or overridden per step.
+
+#### Installation
+
+```bash
+pip install burr_workflow[guard]
+# or
+uv pip install burr_workflow[guard]
+```
+
+#### Workflow-Level Defaults
+
+```yaml
+name: secure-workflow
+version: "1.0"
+
+# Applied to ALL steps by default
+guardrails:
+  input:
+    prompt_injection: { threshold: 0.92 }
+    secrets: { redact: true }
+  output:
+    sensitive: { redact: true }
+  on_fail: abort  # abort | retry | continue | step_id
+  max_retries: 2
+
+jobs:
+  main:
+    steps:
+      # Inherits workflow guardrails automatically
+      - id: analyze
+        uses: llm/generate
+        with:
+          prompt: ${{ inputs.query }}
+```
+
+#### Step-Level Overrides
+
+```yaml
+steps:
+  # Override: adds anonymize, keeps other workflow defaults
+  - id: pii_sensitive
+    uses: llm/generate
+    with:
+      prompt: ${{ inputs.user_data }}
+    guardrails:
+      input:
+        anonymize:
+          entities: [PERSON, EMAIL, PHONE]
+      output:
+        deanonymize: {}
+
+  # Override: disable ALL guardrails for this step
+  - id: trusted_internal
+    run: internal_tool.sh
+    guardrails: false
+```
+
+#### Merge Behavior
+
+| Step guardrails | Behavior |
+|-----------------|----------|
+| Not specified | Inherit workflow defaults |
+| `guardrails: {...}` | Merge with workflow (step scanners ADD to defaults) |
+| `guardrails: false` | Disable all guardrails for this step |
+| Same scanner in both | Step config overrides workflow config for that scanner |
+
+#### Supported Scanners
+
+**Input Scanners (12)**:
+
+| Scanner | Purpose |
+|---------|---------|
+| `anonymize` | Replace PII with placeholders (uses Vault) |
+| `prompt_injection` | Detect jailbreak attempts (DeBERTa) |
+| `secrets` | Detect API keys, passwords, tokens |
+| `invisible_text` | Strip zero-width/invisible chars |
+| `token_limit` | Prevent context overflow |
+| `ban_topics` | Block specific subjects |
+| `ban_substrings` | Block specific text patterns |
+| `ban_code` | Block prompts containing code |
+| `code` | Detect/allow specific languages |
+| `gibberish` | Detect nonsense input |
+| `language` | Restrict to specific languages |
+| `regex` | Custom regex validation |
+
+**Output Scanners (17)**:
+
+| Scanner | Purpose |
+|---------|---------|
+| `deanonymize` | Restore anonymized entities (uses Vault) |
+| `sensitive` | Detect/redact sensitive data |
+| `no_refusal` | Detect model refusals |
+| `factual_consistency` | Detect hallucinations (NLI model) |
+| `relevance` | Check output relevance to prompt |
+| `json` | Validate JSON structure |
+| `malicious_urls` | Detect dangerous URLs |
+| `url_reachability` | Verify URLs are accessible |
+| `language_same` | Ensure same language as input |
+| `language` | Restrict output language |
+| `reading_time` | Limit response length |
+| `gibberish` | Detect nonsense output |
+| `ban_topics` | Block specific subjects |
+| `ban_substrings` | Block specific text |
+| `ban_code` | Block responses with code |
+| `code` | Detect/allow code languages |
+| `regex` | Custom regex validation |
+
+#### Vault Pattern (Anonymize → Deanonymize)
+
+The `anonymize` and `deanonymize` scanners work together across workflow steps:
+
+```yaml
+guardrails:
+  input:
+    anonymize:
+      entities: [PERSON, EMAIL, PHONE, CREDIT_CARD]
+  output:
+    deanonymize: {}
+
+steps:
+  - id: process_pii
+    uses: llm/generate
+    with:
+      prompt: "Summarize this: ${{ inputs.user_data }}"
+    # Input: "Contact John at john@example.com"
+    # → Anonymized: "Contact [PERSON_1] at [EMAIL_1]"
+    # → LLM processes anonymized text
+    # → Output restored: "Summary mentions John and john@example.com"
+```
+
+The vault state is persisted in `__guard_vault` and survives workflow suspension/resume.
+
+#### Pre-downloading ML Models
+
+Some scanners use ML models that are downloaded on first use. Pre-download them for offline use:
+
+```bash
+# Download all common models (~1.5GB)
+workflow guard-init
+
+# Download specific scanners only
+workflow guard-init -s prompt_injection -s anonymize
+
+# Quiet mode
+workflow guard-init -q
+```
+
+**Model-using scanners**:
+- `prompt_injection` - DeBERTa v2 (~500MB)
+- `anonymize`/`sensitive` - Presidio + spaCy (~200MB)
+- `factual_consistency` - NLI model (~400MB)
+
+#### Graceful Degradation
+
+When llm-guard is not installed:
+- Guardrails configuration is accepted and validated
+- At runtime, guardrails are skipped with a warning
+- Workflow execution continues normally
+
+```python
+# Check if guard is available
+from burr_workflow.guard import LLM_GUARD_AVAILABLE
+if not LLM_GUARD_AVAILABLE:
+    print("llm-guard not installed, guardrails disabled")
+```
+
+#### Step Type Support
+
+Guardrails work on all step types:
+- **Shell** (`run:`): Scans the command string
+- **HTTP** (`http/request`): Scans URL + body/json
+- **LLM** (`llm/*`): Scans prompt field
+- **Script** (`script/*`): Scans script content
+- **Outputs**: Scans stdout, response text, or JSON output
+
 ### Burr Integration Notes
 
 The compiler creates Burr `SingleStepAction` nodes via `BurrActionAdapter`:
@@ -248,7 +430,8 @@ visualize(app, output_path=Path("diagram.png"), engine="graphviz")
 | `schemas/models.py` | Pydantic v2 models (`WorkflowDefinition`, `StepDefinition`) |
 | `protocols.py` | Integration protocols for loose coupling |
 | `actions/registry.py` | Action type→class mapping, `get_default_registry()` |
-| `cli.py` | Unified `workflow` CLI with subcommands (validate, analyze, schema, create) |
+| `cli.py` | Unified `workflow` CLI with subcommands (validate, analyze, schema, create, guard-init) |
+| `guard/` | LLM Guard integration package (scanner.py, vault.py) |
 | `templates/` | Workflow scaffolding templates |
 
 ## Workflow YAML Structure

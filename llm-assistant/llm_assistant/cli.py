@@ -8,10 +8,10 @@ Note: session.py is imported lazily to avoid loading audio dependencies
 (voice.py, sounddevice) when running in daemon mode.
 """
 
-import argparse
 import sys
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
+import click
 import llm
 
 
@@ -29,79 +29,52 @@ def resolve_model_query(queries: List[str]) -> Optional[str]:
     return None
 
 
-def main():
-    """Entry point"""
-    parser = argparse.ArgumentParser(
-        description="Terminator AI Assistant - Terminal assistant for pair programming"
-    )
-    # llm-compatible model selection flags
-    parser.add_argument(
-        '-m', '--model',
-        help='LLM model to use (e.g., azure/gpt-4.1-mini, gemini-2.5-flash)'
-    )
-    parser.add_argument(
-        '-q', '--query',
-        action='append',
-        help='Select model by fuzzy matching (can be used multiple times)'
-    )
-    # Existing flags
-    parser.add_argument(
-        '--debug',
-        action='store_true',
-        help='Enable debug output for troubleshooting'
-    )
-    parser.add_argument(
-        '--max-context',
-        type=int,
-        default=None,
-        help='Max context tokens before auto-squash (default: auto-detected from model)'
-    )
-    # Conversation persistence flags (llm-compatible)
-    parser.add_argument(
-        '-c', '--continue',
-        dest='continue_',  # Underscore because 'continue' is a Python keyword
-        action='store_true',
-        help='Continue the most recent conversation'
-    )
-    parser.add_argument(
-        '--cid', '--conversation',
-        dest='conversation_id',
-        help='Continue conversation with given ID'
-    )
-    parser.add_argument(
-        '--no-log',
-        action='store_true',
-        help='Disable conversation logging to database'
-    )
-    parser.add_argument(
-        '--agent',
-        action='store_true',
-        help='Start in agent mode (agentic, 100 tool iterations)'
-    )
-    parser.add_argument(
-        '--no-exec',
-        action='store_true',
-        help='Run without exec terminal (works in any terminal, uses asciinema context)'
-    )
-    parser.add_argument(
-        '--daemon',
-        action='store_true',
-        help='Run as daemon server for headless clients (Unix socket)'
-    )
-    args = parser.parse_args()
-
+@click.command()
+@click.option('-m', '--model',
+              help='LLM model to use (e.g., azure/gpt-4.1-mini, gemini-2.5-flash)')
+@click.option('-q', '--query', multiple=True,
+              help='Select model by fuzzy matching (can be used multiple times)')
+@click.option('--debug', is_flag=True,
+              help='Enable debug output for troubleshooting')
+@click.option('--max-context', type=int, default=None,
+              help='Max context tokens before auto-squash (default: auto-detected from model)')
+@click.option('-c', '--continue', 'continue_', is_flag=True,
+              help='Continue the most recent conversation')
+@click.option('--cid', '--conversation', 'conversation_id',
+              help='Continue conversation with given ID')
+@click.option('--no-log', is_flag=True,
+              help='Disable conversation logging to database')
+@click.option('--agent', is_flag=True,
+              help='Start in agent mode (agentic, 100 tool iterations)')
+@click.option('--no-exec', is_flag=True,
+              help='Run without exec terminal (works in any terminal, uses asciinema context)')
+@click.option('--daemon', is_flag=True,
+              help='Run as daemon server for headless clients (Unix socket)')
+def main(
+    model: Optional[str],
+    query: Tuple[str, ...],
+    debug: bool,
+    max_context: Optional[int],
+    continue_: bool,
+    conversation_id: Optional[str],
+    no_log: bool,
+    agent: bool,
+    no_exec: bool,
+    daemon: bool,
+):
+    """Terminator LLM Assistant - Terminal assistant for pair programming."""
     # Resolve model: -m flag > query > default
-    model_name = args.model
-    if not model_name and args.query:
-        model_name = resolve_model_query(args.query)
+    model_name = model
+    if not model_name and query:
+        model_name = resolve_model_query(list(query))
         if not model_name:
-            print(f"Error: No model found matching queries {' '.join(args.query)}", file=sys.stderr)
-            sys.exit(1)
+            click.echo(f"Error: No model found matching queries {' '.join(query)}", err=True)
+            raise SystemExit(1)
 
     # Daemon mode: start the socket server instead of interactive session
-    if args.daemon:
+    if daemon:
         from .daemon import main as daemon_main
-        daemon_main(model_id=model_name, debug=args.debug)
+        daemon_main(model_id=model_name, debug=debug)
         return
 
     # Import session here to avoid loading audio dependencies in daemon mode
@@ -109,12 +82,12 @@ def main():
 
     session = TerminatorAssistantSession(
         model_name=model_name,
-        debug=args.debug,
-        max_context_size=args.max_context,
-        continue_=args.continue_,
-        conversation_id=args.conversation_id,
-        no_log=args.no_log,
-        agent_mode=args.agent,
-        no_exec=args.no_exec
+        debug=debug,
+        max_context_size=max_context,
+        continue_=continue_,
+        conversation_id=conversation_id,
+        no_log=no_log,
+        agent_mode=agent,
+        no_exec=no_exec
     )
     session.run()

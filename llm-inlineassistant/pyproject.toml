@@ -1,9 +1,10 @@
 [project]
 name = "llm-inlineassistant"
 version = "1.0.0"
-description = "Inline AI assistant with daemon architecture for shell and espanso"
+description = "Inline LLM assistant with daemon architecture for shell and espanso"
 requires-python = ">=3.10"
 dependencies = [
+    "click>=8.0",
     "llm>=0.27",
     "llm-tools-core>=1.0.0",
     "rich>=13.0",

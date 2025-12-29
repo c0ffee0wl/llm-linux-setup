@@ -10,6 +10,7 @@
 6. [Control Actions](#control-actions)
 7. [Report Actions](#report-actions)
 8. [Script Actions](#script-actions)
+9. [Guardrails](#guardrails-llm-guard-integration)
 
 ---
 
@@ -504,78 +505,155 @@ Execute Bash script in a subprocess.
 
 ---
 
-## Guardrails
+## Guardrails (LLM Guard Integration)
 
-Guardrails validate step outputs and can route to different steps based on validation results.
+Guardrails validate step inputs and outputs using [llm-guard](https://llm-guard.com/) scanners. Requires: `pip install burr_workflow[guard]`
 
-### Step-Level Guardrails
+### Workflow-Level Defaults
+
+Apply guardrails to all steps:
 
 ```yaml
-- name: "Analyze Findings"
-  id: analyze
-  uses: llm/analyze
-  with:
-    content: ${{ steps.scan.outputs.stdout }}
-    prompt: "Summarize security findings"
-  guardrails:
-    - type: secrets_present
-      on_fail: handle_secret_leak
-    - type: pii
-      on_fail: redact_step
-    - type: regex
-      pattern: "CRITICAL|HIGH"
-      on_match: escalate_critical
+name: secure-workflow
+version: "1.0"
+
+guardrails:
+  input:
+    prompt_injection: { threshold: 0.92 }
+    secrets: { redact: true }
+  output:
+    sensitive: { redact: true }
+  on_fail: abort  # abort | retry | continue | step_id
+  max_retries: 2
+
+jobs:
+  main:
+    steps:
+      - id: analyze
+        uses: llm/generate
+        with:
+          prompt: ${{ inputs.query }}
+        # Inherits workflow guardrails
 ```
 
-### Guardrail Types
+### Step-Level Overrides
 
-| Type | Description |
-|------|-------------|
-| `regex` | Match output against regex pattern |
-| `contains_string` | Check if output contains a string |
-| `json_schema` | Validate output against JSON schema |
-| `llm_judge` | Use LLM to evaluate output quality |
-| `secrets_present` | Detect potential secrets/credentials |
-| `pii` | Detect personally identifiable information |
+Override or extend workflow defaults per step:
 
-### Guardrail Actions
+```yaml
+steps:
+  # Adds anonymize scanner, keeps workflow defaults
+  - id: pii_sensitive
+    uses: llm/generate
+    with:
+      prompt: ${{ inputs.user_data }}
+    guardrails:
+      input:
+        anonymize:
+          entities: [PERSON, EMAIL, PHONE]
+      output:
+        deanonymize: {}
 
-| Action | Description |
-|--------|-------------|
-| `on_fail: step_id` | Route to step when validation fails |
-| `on_pass: step_id` | Route to step when validation passes |
-| `on_match: step_id` | For pattern guardrails, route when matched |
-| `on_fail: retry` | Re-run the step |
-| `on_fail: abort` | Abort workflow (default) |
-| `on_fail: continue` | Log warning and continue |
+  # Disable guardrails for trusted step
+  - id: trusted_internal
+    run: internal_tool.sh
+    guardrails: false
+```
 
-### Retry Configuration
+### Merge Behavior
+
+| Step guardrails | Behavior |
+|-----------------|----------|
+| Not specified | Inherit workflow defaults |
+| `guardrails: {...}` | Merge with workflow (step adds to/overrides defaults) |
+| `guardrails: false` | Disable all guardrails for this step |
+
+### Input Scanners (12)
+
+| Scanner | Parameters | Description |
+|---------|------------|-------------|
+| `anonymize` | `entities: [PERSON, EMAIL, ...]` | Replace PII with placeholders |
+| `prompt_injection` | `threshold: 0.9` | Detect jailbreak attempts |
+| `secrets` | `redact: true` | Detect API keys, passwords |
+| `invisible_text` | - | Strip zero-width chars |
+| `token_limit` | `limit: 4096` | Prevent context overflow |
+| `ban_topics` | `topics: [...]` | Block specific subjects |
+| `ban_substrings` | `substrings: [...]` | Block text patterns |
+| `ban_code` | - | Block code in prompts |
+| `code` | `languages: [...], blocked: true` | Detect/allow languages |
+| `gibberish` | `threshold: 0.7` | Detect nonsense |
+| `language` | `languages: [en]` | Restrict languages |
+| `regex` | `patterns: [...], blocked: true` | Custom regex validation |
+
+### Output Scanners (17)
+
+| Scanner | Parameters | Description |
+|---------|------------|-------------|
+| `deanonymize` | - | Restore anonymized entities |
+| `sensitive` | `redact: true, entities: [...]` | Detect/redact sensitive data |
+| `no_refusal` | - | Detect model refusals |
+| `factual_consistency` | `threshold: 0.7` | Detect hallucinations |
+| `relevance` | `threshold: 0.5` | Check output relevance |
+| `json` | `required_fields: [...]` | Validate JSON structure |
+| `malicious_urls` | - | Detect dangerous URLs |
+| `url_reachability` | `timeout: 5` | Verify URLs accessible |
+| `language_same` | - | Same language as input |
+| `language` | `languages: [en]` | Restrict output language |
+| `reading_time` | `max_time: 5` | Limit response length |
+| `gibberish` | `threshold: 0.7` | Detect nonsense |
+| `ban_topics` | `topics: [...]` | Block subjects |
+| `ban_substrings` | `substrings: [...]` | Block text |
+| `ban_code` | - | Block code in responses |
+| `code` | `languages: [...], blocked: true` | Detect/allow languages |
+| `regex` | `patterns: [...], blocked: true` | Custom regex |
+
+### Vault Pattern (PII Handling)
+
+Use `anonymize` + `deanonymize` together for PII-safe LLM processing:
 
 ```yaml
 guardrails:
-  - type: llm_judge
-    prompt: "Is this output safe and well-formatted?"
-    on_fail: retry
-    max_retries: 3
-    on_retry_exhausted: abort  # or "skip" or step_id
+  input:
+    anonymize:
+      entities: [PERSON, EMAIL, PHONE, CREDIT_CARD]
+  output:
+    deanonymize: {}
+
+steps:
+  - id: process
+    uses: llm/generate
+    with:
+      prompt: "Summarize: ${{ inputs.user_data }}"
+    # Input: "Contact John at john@example.com"
+    # → Anonymized: "Contact [PERSON_1] at [EMAIL_1]"
+    # → LLM processes anonymized text
+    # → Output restored with original values
 ```
 
-### LLM Judge Example
+### Failure Handling
+
+| `on_fail` value | Behavior |
+|-----------------|----------|
+| `abort` | Stop workflow with error (default) |
+| `retry` | Re-run step up to `max_retries` times |
+| `continue` | Log warning, continue execution |
+| `step_id` | Route to specified step |
 
 ```yaml
-- name: "Generate Summary"
-  id: summary
-  uses: llm/generate
-  with:
-    prompt: "Summarize the findings professionally"
-    context: ${{ steps.scan.outputs }}
-  guardrails:
-    - type: llm_judge
-      prompt: |
-        Check if the output:
-        1. Is professional in tone
-        2. Contains no sensitive data
-        3. Is factually accurate based on the context
-      on_fail: retry
-      max_retries: 2
+guardrails:
+  input:
+    prompt_injection: { threshold: 0.9 }
+  output:
+    sensitive: { redact: true }
+  on_fail: retry
+  max_retries: 3
+```
+
+### Pre-downloading Models
+
+Some scanners use ML models (~1.5GB total). Pre-download for offline use:
+
+```bash
+workflow guard-init                      # All common models
+workflow guard-init -s prompt_injection  # Specific scanner
 ```

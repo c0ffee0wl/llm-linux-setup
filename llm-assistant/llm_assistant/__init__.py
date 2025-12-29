@@ -1,6 +1,6 @@
-"""llm-assistant - Terminal AI Assistant for Terminator
+"""llm-assistant - Terminal LLM Assistant for Terminator
 
-A Terminator-integrated AI assistant that provides:
+A Terminator-integrated LLM assistant that provides:
 - Automatic Exec terminal creation
 - Terminal content capture and analysis
 - Command execution with approval

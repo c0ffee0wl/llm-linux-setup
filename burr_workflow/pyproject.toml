@@ -47,6 +47,13 @@ dev = [
 viz = [
     "graphviz>=0.20",
 ]
+guard = [
+    "llm-guard>=0.3.14",
+]
+all = [
+    "graphviz>=0.20",
+    "llm-guard>=0.3.14",
+]
 
 [project.scripts]
 workflow = "burr_workflow.cli:main"

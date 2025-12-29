@@ -138,10 +138,25 @@ class HTTPAction(AbstractAction):
                 # Determine outcome based on status code
                 success = 200 <= response.status_code < 400
 
+                if not success:
+                    # Determine retryable vs non-retryable HTTP errors
+                    if response.status_code in (429, 502, 503, 504):
+                        error_type = "HTTPRetryableError"
+                    elif response.status_code >= 500:
+                        error_type = "HTTPServerError"
+                    else:
+                        error_type = "HTTPClientError"
+
+                    return ActionResult(
+                        outputs=outputs,
+                        outcome="failure",
+                        error=f"HTTP {response.status_code}",
+                        error_type=error_type,
+                    )
+
                 return ActionResult(
                     outputs=outputs,
-                    outcome="success" if success else "failure",
-                    error=f"HTTP {response.status_code}" if not success else None,
+                    outcome="success",
                 )
 
         except httpx.TimeoutException as e:

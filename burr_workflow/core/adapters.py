@@ -37,9 +37,22 @@ from .types import RESERVED_STATE_KEYS
 from ..actions.base import ActionResult
 from .guardrails import GuardrailRouter, GuardrailAbort, GuardrailRetryExhausted
 
+# Import new guard system (with graceful degradation)
+try:
+    from ..guard import GuardScanner, GuardError, LLM_GUARD_AVAILABLE
+except ImportError:
+    LLM_GUARD_AVAILABLE = False
+    GuardScanner = None  # type: ignore[misc, assignment]
+    GuardError = Exception  # type: ignore[misc, assignment]
+
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
+    from ..schemas.models import GuardrailsConfig
+
+# Default values when neither workflow nor step specifies
+DEFAULT_ON_FAIL = "abort"
+DEFAULT_MAX_RETRIES = 2
 
 
 class BurrActionAdapter(SingleStepAction):
@@ -69,6 +82,8 @@ class BurrActionAdapter(SingleStepAction):
         timeout: Optional[float] = None,
         guardrails: Optional[list[dict]] = None,
         guardrail_router: Optional[GuardrailRouter] = None,
+        guardrails_config: Optional["GuardrailsConfig"] = None,
+        guard_scanner: Optional["GuardScanner"] = None,
     ):
         """Initialize the Burr action adapter.
 
@@ -83,8 +98,10 @@ class BurrActionAdapter(SingleStepAction):
                 - backoff_max: Maximum delay (default 60.0)
                 - jitter: Add randomness to backoff (default True)
             timeout: Optional per-step timeout in seconds
-            guardrails: Optional list of guardrail configurations for this step
-            guardrail_router: Optional shared GuardrailRouter instance
+            guardrails: Optional list of guardrail configurations for this step (legacy)
+            guardrail_router: Optional shared GuardrailRouter instance (legacy)
+            guardrails_config: Optional GuardrailsConfig for llm-guard scanning (new)
+            guard_scanner: Optional GuardScanner instance for llm-guard (new)
         """
         super().__init__()
         self.base_action = base_action
@@ -93,8 +110,12 @@ class BurrActionAdapter(SingleStepAction):
         self.exec_context = exec_context
         self.retry_config = retry_config
         self.timeout = timeout
+        # Legacy guardrails (regex-based)
         self.guardrails = guardrails or []
         self.guardrail_router = guardrail_router
+        # New LLM Guard integration
+        self.guardrails_config: Optional["GuardrailsConfig"] = guardrails_config
+        self.guard_scanner: Optional["GuardScanner"] = guard_scanner
         # NOTE: Do NOT set self._name here! Burr's ApplicationBuilder calls
         # with_name() which raises ValueError if _name is already set.
         # The name property falls back to step_id when _name is None.
@@ -186,10 +207,33 @@ class BurrActionAdapter(SingleStepAction):
 
         for attempt in range(max_attempts):
             try:
+                # NEW: Input guardrails (LLM Guard) - scan BEFORE execution
+                step_config_for_execution = self.step_config
+                if self.guardrails_config and self.guard_scanner:
+                    try:
+                        step_config_for_execution, should_continue = await self._scan_input_guardrails(
+                            self.step_config, ctx
+                        )
+                        if not should_continue:
+                            result = ActionResult(
+                                outputs={},
+                                outcome="skipped",
+                                error="Input guardrail blocked",
+                            )
+                            return self._apply_result_to_state(state, result)
+                    except GuardError as e:
+                        result = ActionResult(
+                            outputs={},
+                            outcome="failure",
+                            error=str(e),
+                            error_type="GuardError",
+                        )
+                        return self._apply_result_to_state(state, result)
+
                 # Track execution time
                 start_time = time.monotonic()
                 result = await self.base_action.execute(
-                    step_config=self.step_config,
+                    step_config=step_config_for_execution,
                     context=ctx,
                     exec_context=self.exec_context,
                 )
@@ -200,9 +244,22 @@ class BurrActionAdapter(SingleStepAction):
 
                 # Success or non-failure outcome - apply guardrails if configured
                 if result.outcome != "failure":
+                    # NEW: Output guardrails (LLM Guard) - scan AFTER execution
+                    if self.guardrails_config and self.guard_scanner:
+                        try:
+                            result = await self._scan_output_guardrails(result, ctx)
+                        except GuardError as e:
+                            result = ActionResult(
+                                outputs={},
+                                outcome="failure",
+                                error=str(e),
+                                error_type="GuardError",
+                            )
+                            return self._apply_result_to_state(state, result)
+
                     output, new_state = self._apply_result_to_state(state, result)
 
-                    # Apply guardrails if configured
+                    # Apply legacy guardrails if configured (regex-based)
                     if self.guardrails and self.guardrail_router:
                         try:
                             next_step = await self.guardrail_router.validate_and_route(
@@ -320,6 +377,9 @@ class BurrActionAdapter(SingleStepAction):
             "OSError",
             "timeout",  # Common string representation
             "connection_error",
+            # HTTP retryable errors (429 Too Many Requests, 5xx Server Errors)
+            "HTTPRetryableError",  # 429, 502, 503, 504
+            "HTTPServerError",     # 5xx
         }
         return result.error_type in default_retryable
 
@@ -508,6 +568,238 @@ class BurrActionAdapter(SingleStepAction):
 
         return sanitized_outputs, new_state
 
+    # =========================================================================
+    # LLM Guard Integration Methods
+    # =========================================================================
+
+    async def _scan_input_guardrails(
+        self,
+        step_config: dict,
+        context: dict,
+    ) -> tuple[dict, bool]:
+        """Scan input before step execution using LLM Guard.
+
+        Args:
+            step_config: Step configuration to scan.
+            context: Workflow context (for vault state).
+
+        Returns:
+            Tuple of (modified step_config with sanitized values, should_continue).
+
+        Raises:
+            GuardError: If guardrail fails with abort action.
+        """
+        if not self.guardrails_config or not self.guardrails_config.input:
+            return step_config, True
+
+        # Restore vault state from previous step (for anonymize→deanonymize flow)
+        if "__guard_vault" in context and hasattr(self.guard_scanner, '_vault_manager'):
+            self.guard_scanner._vault_manager.restore(context["__guard_vault"])
+
+        input_content = self._extract_scannable_input(step_config, context)
+        if not input_content:
+            return step_config, True
+
+        scan_result = self.guard_scanner.scan_input(input_content, self.guardrails_config.input)
+
+        # Store for output relevance check
+        context["__guard_input_content"] = input_content
+        context["__guard_scan_results"] = {"input": scan_result.details}
+
+        if not scan_result.passed:
+            on_fail = self.guardrails_config.on_fail or DEFAULT_ON_FAIL
+            if on_fail == "abort":
+                raise GuardError(f"Input guardrail failed: {scan_result.failed_scanners}")
+            elif on_fail == "continue":
+                context["__guardrail_warning"] = scan_result.failed_scanners
+                return step_config, True
+            # retry handled at adapter level
+
+        # Persist vault state after input scanning (anonymize populates the vault)
+        if hasattr(self.guard_scanner, '_vault_manager'):
+            context["__guard_vault"] = self.guard_scanner._vault_manager.serialize()
+
+        # Apply sanitized input back to step_config
+        return self._apply_sanitized_input(step_config, scan_result.sanitized), True
+
+    async def _scan_output_guardrails(
+        self,
+        result: ActionResult,
+        context: dict,
+    ) -> ActionResult:
+        """Scan output after step execution using LLM Guard.
+
+        Args:
+            result: Action result to scan.
+            context: Workflow context (for vault state).
+
+        Returns:
+            Modified ActionResult with sanitized output.
+
+        Raises:
+            GuardError: If guardrail fails with abort action.
+        """
+        config = self.guardrails_config
+        if not config or not config.output or result.outcome != "success":
+            return result
+
+        output_content = self._extract_scannable_output(result)
+        input_content = context.get("__guard_input_content", "")
+
+        scan_result = self.guard_scanner.scan_output(
+            input_content, output_content, config.output
+        )
+
+        context.setdefault("__guard_scan_results", {})["output"] = scan_result.details
+
+        if not scan_result.passed:
+            on_fail = config.on_fail or DEFAULT_ON_FAIL
+            if on_fail == "abort":
+                raise GuardError(f"Output guardrail failed: {scan_result.failed_scanners}")
+            elif on_fail == "continue":
+                context["__guardrail_warning"] = scan_result.failed_scanners
+                return result
+            # retry handled at adapter level
+
+        # Persist vault state after output scanning (for deanonymize flow)
+        if hasattr(self.guard_scanner, '_vault_manager'):
+            context["__guard_vault"] = self.guard_scanner._vault_manager.serialize()
+
+        # Apply sanitized output
+        return self._apply_sanitized_output(result, scan_result.sanitized)
+
+    def _extract_scannable_input(self, step_config: dict, context: dict) -> str:
+        """Extract input content for scanning based on step type.
+
+        Args:
+            step_config: Step configuration.
+            context: Workflow context.
+
+        Returns:
+            String content to scan.
+        """
+        import json
+
+        # LLM actions: use prompt/content field
+        if step_config.get("uses", "").startswith("llm/"):
+            with_config = step_config.get("with", {})
+            return with_config.get("prompt") or with_config.get("content") or ""
+
+        # Shell/script: use run command
+        if "run" in step_config:
+            run_val = step_config["run"]
+            if isinstance(run_val, list):
+                return " ".join(run_val)
+            return run_val
+
+        # HTTP: use URL + body
+        if step_config.get("uses") == "http/request":
+            with_config = step_config.get("with", {})
+            parts = [with_config.get("url", "")]
+            if with_config.get("body"):
+                parts.append(str(with_config["body"]))
+            if with_config.get("json"):
+                parts.append(json.dumps(with_config["json"]))
+            return "\n".join(parts)
+
+        return ""
+
+    def _extract_scannable_output(self, result: ActionResult) -> str:
+        """Extract output content for scanning based on result.
+
+        Args:
+            result: Action result.
+
+        Returns:
+            String content to scan.
+        """
+        import json
+
+        outputs = result.outputs
+
+        # LLM actions: response/result/text
+        for key in ("response", "result", "text", "content"):
+            if key in outputs and isinstance(outputs[key], str):
+                return outputs[key]
+
+        # Shell: stdout
+        if "stdout" in outputs:
+            return outputs["stdout"]
+
+        # HTTP: text or json
+        if "text" in outputs:
+            return outputs["text"]
+        if "json" in outputs:
+            return json.dumps(outputs["json"])
+
+        # Fallback: stringify all outputs
+        return json.dumps(outputs)
+
+    def _apply_sanitized_input(self, step_config: dict, sanitized: str) -> dict:
+        """Apply sanitized input back to step config.
+
+        Replaces the original input content with sanitized version.
+
+        Args:
+            step_config: Original step configuration.
+            sanitized: Sanitized input string.
+
+        Returns:
+            Modified step configuration.
+        """
+        config = copy.deepcopy(step_config)
+
+        # LLM actions: update prompt/content field
+        if config.get("uses", "").startswith("llm/"):
+            with_config = config.setdefault("with", {})
+            if "prompt" in with_config:
+                with_config["prompt"] = sanitized
+            elif "content" in with_config:
+                with_config["content"] = sanitized
+
+        # Shell/script: update run command (be careful with arrays)
+        elif "run" in config:
+            if isinstance(config["run"], str):
+                config["run"] = sanitized
+            # For array syntax, sanitization is tricky - skip to avoid breaking args
+
+        return config
+
+    def _apply_sanitized_output(self, result: ActionResult, sanitized: str) -> ActionResult:
+        """Apply sanitized output to result.
+
+        Replaces the original output content with sanitized version.
+
+        Args:
+            result: Original action result.
+            sanitized: Sanitized output string.
+
+        Returns:
+            Modified ActionResult.
+        """
+        outputs = dict(result.outputs)
+
+        # LLM actions: response/result/text
+        for key in ("response", "result", "text", "content"):
+            if key in outputs and isinstance(outputs[key], str):
+                outputs[key] = sanitized
+                break
+        else:
+            # Shell: stdout
+            if "stdout" in outputs:
+                outputs["stdout"] = sanitized
+            # HTTP: text
+            elif "text" in outputs:
+                outputs["text"] = sanitized
+
+        return ActionResult(
+            outputs=outputs,
+            outcome=result.outcome,
+            error=result.error,
+            error_type=result.error_type,
+            duration_ms=result.duration_ms,
+        )
+
     def is_async(self) -> bool:
         """Check if the wrapped action is async."""
         return asyncio.iscoroutinefunction(self.base_action.execute)
@@ -553,6 +845,8 @@ class LoopBodyAdapter(BurrActionAdapter):
         timeout: Optional[float] = None,
         guardrails: Optional[list[dict]] = None,
         guardrail_router: Optional[GuardrailRouter] = None,
+        guardrails_config: Optional["GuardrailsConfig"] = None,
+        guard_scanner: Optional["GuardScanner"] = None,
     ):
         """Initialize the loop body adapter.
 
@@ -564,8 +858,10 @@ class LoopBodyAdapter(BurrActionAdapter):
             continue_on_error: Whether to catch exceptions and continue loop
             retry_config: Optional retry configuration (passed to parent)
             timeout: Optional per-step timeout (passed to parent)
-            guardrails: Optional list of guardrail configurations (passed to parent)
-            guardrail_router: Optional shared GuardrailRouter instance (passed to parent)
+            guardrails: Optional list of guardrail configurations (passed to parent, legacy)
+            guardrail_router: Optional shared GuardrailRouter instance (passed to parent, legacy)
+            guardrails_config: Optional GuardrailsConfig for llm-guard (passed to parent, new)
+            guard_scanner: Optional GuardScanner instance (passed to parent, new)
         """
         super().__init__(
             base_action=base_action,
@@ -576,6 +872,8 @@ class LoopBodyAdapter(BurrActionAdapter):
             timeout=timeout,
             guardrails=guardrails,
             guardrail_router=guardrail_router,
+            guardrails_config=guardrails_config,
+            guard_scanner=guard_scanner,
         )
         self.continue_on_error = continue_on_error
 

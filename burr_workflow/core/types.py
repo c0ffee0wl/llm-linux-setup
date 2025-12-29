@@ -160,11 +160,16 @@ class WorkflowState(TypedDict, total=False):
     __workflow_exit: bool
     __workflow_failed: bool
 
-    # Internal: Guardrail control
+    # Internal: Guardrail control (legacy)
     __guardrail_next: str
     __guardrail_warning: str
     __guardrail_retry_count: int
     __guardrail_error: str
+
+    # Internal: Guard state (new LLM Guard integration)
+    __guard_vault: dict[str, Any]           # Vault state for anonymize/deanonymize
+    __guard_input_content: str              # Input content for output relevance
+    __guard_scan_results: dict[str, Any]    # Last scan results for debugging
 
 
 # Reserved state keys that user actions cannot override
@@ -200,11 +205,15 @@ RESERVED_STATE_KEYS = frozenset([
     "__suspend_default",
     "__suspend_feedback_type",
     "__resume_data",
-    # Guardrail control
+    # Guardrail control (legacy)
     "__guardrail_next",
     "__guardrail_warning",
     "__guardrail_retry_count",
     "__guardrail_error",
+    # Guard state keys (new LLM Guard integration)
+    "__guard_vault",           # Vault state for anonymize/deanonymize flow
+    "__guard_input_content",   # Input content for output relevance checks
+    "__guard_scan_results",    # Last scan results for debugging
 ])
 
 

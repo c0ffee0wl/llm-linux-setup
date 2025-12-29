@@ -10,35 +10,23 @@
       "title": "CaptureMode",
       "type": "string"
     },
-    "GuardrailConfig": {
-      "description": "Configuration for output validation and steering.",
+    "GuardrailsConfig": {
+      "description": "LLM Guard-based guardrails configuration.\n\nSupports 12 input scanners and 17 output scanners from llm-guard.\nCan be specified at workflow level (defaults for all steps) or\nstep level (overrides workflow defaults).\n\nInput Scanners: anonymize, prompt_injection, secrets, invisible_text,\n    token_limit, ban_topics, ban_substrings, ban_code, code, gibberish,\n    language, regex\n\nOutput Scanners: deanonymize, sensitive, no_refusal, factual_consistency,\n    relevance, json, malicious_urls, url_reachability, language_same,\n    language, reading_time, gibberish, ban_topics, ban_substrings,\n    ban_code, code, regex\n\nExample:\n    guardrails:\n      input:\n        prompt_injection: { threshold: 0.92 }\n        secrets: { redact: true }\n      output:\n        sensitive: { redact: true }\n      on_fail: abort",
       "properties": {
-        "type": {
-          "enum": [
-            "regex",
-            "json_schema",
-            "llm_judge"
-          ],
-          "title": "Type",
-          "type": "string"
-        },
-        "pattern": {
+        "input": {
           "anyOf": [
             {
-              "type": "string"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "description": "Regex pattern (for type=regex)",
-          "title": "Pattern"
-        },
-        "schema": {
-          "anyOf": [
-            {
-              "additionalProperties": true,
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
               "type": "object"
             },
             {
@@ -46,11 +34,43 @@
             }
           ],
           "default": null,
-          "description": "JSON Schema (for type=json_schema)",
-          "title": "Schema"
+          "description": "Input scanners applied before step execution",
+          "title": "Input"
         },
-        "prompt": {
+        "output": {
           "anyOf": [
+            {
+              "additionalProperties": {
+                "anyOf": [
+                  {
+                    "additionalProperties": true,
+                    "type": "object"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Output scanners applied after step execution",
+          "title": "Output"
+        },
+        "on_fail": {
+          "anyOf": [
+            {
+              "enum": [
+                "abort",
+                "retry",
+                "continue"
+              ],
+              "type": "string"
+            },
             {
               "type": "string"
             },
@@ -59,30 +79,26 @@
             }
           ],
           "default": null,
-          "description": "LLM judge prompt (for type=llm_judge)",
-          "title": "Prompt"
-        },
-        "on_fail": {
-          "default": "error",
-          "enum": [
-            "error",
-            "retry",
-            "continue"
-          ],
-          "title": "On Fail",
-          "type": "string"
+          "description": "Action on failure: abort, retry, continue, or step_id to route to",
+          "title": "On Fail"
         },
         "max_retries": {
-          "default": 3,
-          "minimum": 1,
-          "title": "Max Retries",
-          "type": "integer"
+          "anyOf": [
+            {
+              "maximum": 5,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Max retries when on_fail=retry (default: 2)",
+          "title": "Max Retries"
         }
       },
-      "required": [
-        "type"
-      ],
-      "title": "GuardrailConfig",
+      "title": "GuardrailsConfig",
       "type": "object"
     },
     "InputDefinition": {
@@ -498,16 +514,18 @@
         "guardrails": {
           "anyOf": [
             {
-              "items": {
-                "$ref": "#/$defs/GuardrailConfig"
-              },
-              "type": "array"
+              "$ref": "#/$defs/GuardrailsConfig"
+            },
+            {
+              "const": false,
+              "type": "boolean"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
+          "description": "Step guardrails (merges with workflow defaults, or False to disable)",
           "title": "Guardrails"
         },
         "idempotent": {
@@ -664,6 +682,18 @@
       "default": null,
       "description": "Steps to run on workflow failure",
       "title": "On Failure"
+    },
+    "guardrails": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/GuardrailsConfig"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Default guardrails applied to all steps"
     },
     "shell_safety": {
       "$ref": "#/$defs/ShellSafetyMode",

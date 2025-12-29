@@ -41,9 +41,19 @@ from .adapters import BurrActionAdapter
 from .guardrails import GuardrailRouter
 from ..evaluator.security import validate_step_id, SecurityError
 
+# Import new guard system (with graceful degradation)
+try:
+    from ..guard import GuardScanner, VaultManager, LLM_GUARD_AVAILABLE
+except ImportError:
+    LLM_GUARD_AVAILABLE = False
+    GuardScanner = None  # type: ignore[misc, assignment]
+    VaultManager = None  # type: ignore[misc, assignment]
+
 if TYPE_CHECKING:
+    from typing import Literal
     from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
+    from ..schemas.models import GuardrailsConfig
 
 
 @dataclass
@@ -247,8 +257,18 @@ class WorkflowCompiler:
         self._step_ids: list[str] = []
         self._step_counter = 0
 
-        # Create a shared GuardrailRouter for all steps
+        # Create a shared GuardrailRouter for all steps (legacy)
         self.guardrail_router = GuardrailRouter(llm_client=llm_client)
+
+        # Create LLM Guard components (new)
+        self.vault_manager: Optional["VaultManager"] = None
+        self.guard_scanner: Optional["GuardScanner"] = None
+        if LLM_GUARD_AVAILABLE and VaultManager is not None and GuardScanner is not None:
+            self.vault_manager = VaultManager()
+            self.guard_scanner = GuardScanner(self.vault_manager)
+
+        # Workflow-level guardrails (set during compile)
+        self.workflow_guardrails: Optional["GuardrailsConfig"] = None
 
     def compile(
         self,
@@ -291,6 +311,9 @@ class WorkflowCompiler:
             raise WorkflowValidationError(
                 f"Workflow validation failed:\n  " + "\n  ".join(error_msgs)
             )
+
+        # Store workflow-level guardrails for merge with step guardrails
+        self.workflow_guardrails = workflow.get("guardrails")
 
         # Extract main job steps
         main_job = workflow.get("jobs", {}).get("main", {})
@@ -500,8 +523,17 @@ class WorkflowCompiler:
                 "jitter": retry.get("jitter", True),
             }
 
-        # Extract guardrails for loop body if present
-        body_guardrails = body_step.get("guardrails")
+        # Extract legacy guardrails (regex-based) for loop body if present
+        body_guardrails_raw = body_step.get("guardrails")
+        body_legacy_guardrails = None
+        if isinstance(body_guardrails_raw, list):
+            body_legacy_guardrails = body_guardrails_raw
+
+        # Merge workflow-level and step-level guardrails (new LLM Guard system)
+        body_merged_guardrails = self._merge_guardrails(
+            self.workflow_guardrails,
+            body_guardrails_raw if not isinstance(body_guardrails_raw, list) else None,
+        )
 
         body_action = LoopBodyAdapter(
             base_action=base_action,
@@ -511,8 +543,12 @@ class WorkflowCompiler:
             continue_on_error=continue_on_error,
             retry_config=body_retry_config,
             timeout=body_step.get("timeout"),
-            guardrails=body_guardrails,
-            guardrail_router=self.guardrail_router if body_guardrails else None,
+            # Legacy guardrails (regex-based)
+            guardrails=body_legacy_guardrails,
+            guardrail_router=self.guardrail_router if body_legacy_guardrails else None,
+            # New LLM Guard guardrails
+            guardrails_config=body_merged_guardrails,
+            guard_scanner=self.guard_scanner if body_merged_guardrails else None,
         )
         self._compiled_steps.append(CompiledStep(
             name=f"{loop_id}_body",
@@ -635,6 +671,49 @@ class WorkflowCompiler:
 
         return action
 
+    def _merge_guardrails(
+        self,
+        workflow_config: Optional["GuardrailsConfig"],
+        step_config: Optional[Union["GuardrailsConfig", bool]],
+    ) -> Optional["GuardrailsConfig"]:
+        """Merge workflow defaults with step overrides.
+
+        Args:
+            workflow_config: Workflow-level guardrails (defaults).
+            step_config: Step-level guardrails (overrides), or False to disable.
+
+        Returns:
+            Merged GuardrailsConfig, or None if disabled.
+
+        Merge behavior:
+            - step_config=None → use workflow defaults
+            - step_config=False → disable guardrails
+            - step_config={...} → merge (step scanners override/add to workflow)
+        """
+        if step_config is False:
+            return None  # Explicitly disabled
+
+        if step_config is None:
+            return workflow_config  # Use defaults
+
+        if workflow_config is None:
+            return step_config  # type: ignore[return-value]
+
+        # Import here to avoid circular imports
+        from ..schemas.models import GuardrailsConfig
+
+        # Merge: step overrides workflow for same scanner, adds new ones
+        merged_input = {**(workflow_config.input or {}), **(step_config.input or {})}  # type: ignore[union-attr]
+        merged_output = {**(workflow_config.output or {}), **(step_config.output or {})}  # type: ignore[union-attr]
+
+        # Use step value if explicitly set (not None), otherwise fall back to workflow
+        return GuardrailsConfig(
+            input=merged_input or None,
+            output=merged_output or None,
+            on_fail=step_config.on_fail if step_config.on_fail is not None else workflow_config.on_fail,  # type: ignore[union-attr]
+            max_retries=step_config.max_retries if step_config.max_retries is not None else workflow_config.max_retries,  # type: ignore[union-attr]
+        )
+
     def _get_action_for_step(
         self, step: dict, step_id: str
     ) -> BurrActionAdapter:
@@ -657,8 +736,18 @@ class WorkflowCompiler:
         # Extract timeout if present
         timeout = step.get("timeout")
 
-        # Extract guardrails if present
-        guardrails = step.get("guardrails")
+        # Extract legacy guardrails (regex-based) if present
+        step_guardrails_raw = step.get("guardrails")
+        legacy_guardrails = None
+        if isinstance(step_guardrails_raw, list):
+            # Legacy format: list of guardrail configs
+            legacy_guardrails = step_guardrails_raw
+
+        # Merge workflow-level and step-level guardrails (new LLM Guard system)
+        merged_guardrails = self._merge_guardrails(
+            self.workflow_guardrails,
+            step_guardrails_raw if not isinstance(step_guardrails_raw, list) else None,
+        )
 
         return BurrActionAdapter(
             base_action=action,
@@ -667,8 +756,12 @@ class WorkflowCompiler:
             exec_context=self.exec_context,
             retry_config=retry_config,
             timeout=timeout,
-            guardrails=guardrails,
-            guardrail_router=self.guardrail_router if guardrails else None,
+            # Legacy guardrails (regex-based)
+            guardrails=legacy_guardrails,
+            guardrail_router=self.guardrail_router if legacy_guardrails else None,
+            # New LLM Guard guardrails
+            guardrails_config=merged_guardrails,
+            guard_scanner=self.guard_scanner if merged_guardrails else None,
         )
 
     def _get_next_step_name(self, current_index: int, total: int) -> str:

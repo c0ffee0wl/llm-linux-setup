@@ -411,6 +411,40 @@ finally:  # Workflow-level cleanup
 
 See `references/examples.md` for full workflow examples.
 
+## Guardrails (LLM Guard)
+
+Validate inputs/outputs with [llm-guard](https://llm-guard.com/) scanners. Requires: `pip install burr_workflow[guard]`
+
+```yaml
+# Workflow-level defaults (applied to all steps)
+guardrails:
+  input:
+    prompt_injection: { threshold: 0.92 }
+    secrets: { redact: true }
+  output:
+    sensitive: { redact: true }
+  on_fail: abort  # abort | retry | continue | step_id
+
+jobs:
+  main:
+    steps:
+      - id: analyze
+        uses: llm/generate
+        with:
+          prompt: ${{ inputs.query }}
+        # Step override: add anonymize, disable for trusted steps
+        guardrails:
+          input:
+            anonymize: { entities: [PERSON, EMAIL] }
+        # Or: guardrails: false
+```
+
+**Input scanners (12):** anonymize, prompt_injection, secrets, invisible_text, token_limit, ban_topics, ban_substrings, ban_code, code, gibberish, language, regex
+
+**Output scanners (17):** deanonymize, sensitive, no_refusal, factual_consistency, relevance, json, malicious_urls, url_reachability, language_same, language, reading_time, gibberish, ban_topics, ban_substrings, ban_code, code, regex
+
+See `references/actions.md` for full scanner reference.
+
 ## Best Practices
 
 1. **Always use `shell_quote`** for user inputs in shell commands
@@ -420,3 +454,4 @@ See `references/examples.md` for full workflow examples.
 5. **Add `on_failure` handlers** for critical steps
 6. **Use `capture_mode: file`** for large outputs
 7. **Validate inputs** with `type`, `pattern`, `min`/`max`
+8. **Use guardrails** for LLM input/output validation

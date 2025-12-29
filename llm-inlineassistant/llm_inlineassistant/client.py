@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
+import click
 from rich.console import Console, Group
 from rich.live import Live
 from rich.markdown import Markdown
@@ -330,7 +331,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
     return False
 
 
-def query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
+def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) -> str:
     """Send a query to llm-inlineassistant daemon.
 
     Args:
@@ -433,30 +434,32 @@ def get_completions(prefix: str, model: Optional[str] = None) -> list:
     return completions
 
 
-def main():
-    """CLI entry point for llm-inlineassistant client."""
-    import argparse
+@click.command()
+@click.argument('query_args', nargs=-1, metavar='QUERY')
+@click.option('-m', '--model', help='Model to use')
+@click.option('--no-stream', is_flag=True, help='Disable streaming')
+@click.option('--complete', is_flag=True,
+              help='Get completions for prefix (outputs tab-separated list)')
+@click.option('--complete-json', is_flag=True,
+              help='Get completions as JSON')
+def main(
+    query_args: Tuple[str, ...],
+    model: Optional[str],
+    no_stream: bool,
+    complete: bool,
+    complete_json: bool,
+):
+    """Inline LLM assistant.
 
-    parser = argparse.ArgumentParser(
-        description="Inline AI assistant",
-        usage="@ <query>  or  llm-inlineassistant <query>"
-    )
-    parser.add_argument("query", nargs="*", help="Query to send")
-    parser.add_argument("-m", "--model", help="Model to use")
-    parser.add_argument("--no-stream", action="store_true", help="Disable streaming")
-    parser.add_argument("--complete", action="store_true",
-                        help="Get completions for prefix (outputs tab-separated list)")
-    parser.add_argument("--complete-json", action="store_true",
-                        help="Get completions as JSON")
-
-    args = parser.parse_args()
-
+    \b
+    Usage: @ <query>  or  llm-inlineassistant <query>
+    """
     # Handle completion mode
-    if args.complete or args.complete_json:
-        prefix = ' '.join(args.query) if args.query else ''
-        completions = get_completions(prefix, model=args.model)
+    if complete or complete_json:
+        prefix = ' '.join(query_args) if query_args else ''
+        completions = get_completions(prefix, model=model)
 
-        if args.complete_json:
+        if complete_json:
             print(json.dumps(completions))
         else:
             # Tab-separated output for shell completion
@@ -469,7 +472,7 @@ def main():
                     print(text)
         return
 
-    if not args.query:
+    if not query_args:
         # Interactive mode hint
         console = Console()
         console.print("[dim]Usage: @ <query>[/]")
@@ -477,8 +480,8 @@ def main():
         console.print("[dim]       llm-inlineassistant /help[/]")
         return
 
-    prompt = ' '.join(args.query)
-    query(prompt, model=args.model, stream=not args.no_stream)
+    prompt = ' '.join(query_args)
+    send_query(prompt, model=model, stream=not no_stream)
 
 
 if __name__ == "__main__":

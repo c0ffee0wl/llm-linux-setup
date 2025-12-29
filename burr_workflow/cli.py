@@ -565,6 +565,83 @@ def create(
     sys.exit(0)
 
 
+@cli.command("guard-init")
+@click.option(
+    "-s", "--scanner",
+    "scanners",
+    multiple=True,
+    type=str,
+    help="Specific scanners to initialize (can be used multiple times)"
+)
+@click.option("-q", "--quiet", is_flag=True, help="Suppress status messages")
+def guard_init(scanners: tuple[str, ...], quiet: bool):
+    """Pre-download LLM Guard models for offline use.
+
+    Downloads ML models used by guardrails scanners. Run this before
+    first workflow execution to avoid download delays.
+
+    \b
+    Scanners requiring model downloads:
+      prompt_injection   - DeBERTa v2 model (~500MB)
+      anonymize          - Presidio + spaCy models (~200MB)
+      sensitive          - Same as anonymize
+      factual_consistency - NLI model (~400MB)
+      gibberish          - Language detection model
+      no_refusal         - Refusal detection model
+      relevance          - Semantic similarity model
+      ban_topics         - Zero-shot classification model
+
+    \b
+    Examples:
+      workflow guard-init                    # Download all common models
+      workflow guard-init -s prompt_injection -s anonymize
+    """
+    # Check if llm-guard is installed
+    try:
+        from .guard import LLM_GUARD_AVAILABLE
+        from .guard.scanner import initialize_models
+    except ImportError:
+        click.echo(
+            "Error: llm-guard not installed.\n"
+            "Run: pip install burr_workflow[guard]",
+            err=True,
+        )
+        sys.exit(1)
+
+    if not LLM_GUARD_AVAILABLE:
+        click.echo(
+            "Error: llm-guard not installed.\n"
+            "Run: pip install burr_workflow[guard]",
+            err=True,
+        )
+        sys.exit(1)
+
+    # Default scanners to initialize (ML-based ones)
+    default_scanners = [
+        "prompt_injection",  # DeBERTa v2 (~500MB)
+        "anonymize",         # Presidio + spaCy (~200MB)
+        "factual_consistency",  # NLI model (~400MB)
+    ]
+
+    scanners_to_init = list(scanners) if scanners else default_scanners
+
+    for scanner in scanners_to_init:
+        if not quiet:
+            click.echo(f"Initializing {scanner}...", nl=False)
+        try:
+            initialize_models(scanner)
+            if not quiet:
+                click.echo(click.style(" done", fg="green"))
+        except Exception as e:
+            if not quiet:
+                click.echo(click.style(f" failed: {e}", fg="red"))
+
+    if not quiet:
+        click.echo("\nModel initialization complete.")
+
+    sys.exit(0)
+
+
 def main():
     """Entry point for the CLI."""
     cli()

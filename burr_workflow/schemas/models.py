@@ -112,27 +112,53 @@ class RetryConfig(BaseModel):
 
 
 # ==============================================================================
-# Guardrail Configuration
+# Guardrail Configuration (LLM Guard Integration)
 # ==============================================================================
 
-class GuardrailConfig(BaseModel):
-    """Configuration for output validation and steering."""
-    type: Literal["regex", "json_schema", "llm_judge"]
-    pattern: Optional[str] = Field(
+class GuardrailsConfig(BaseModel):
+    """LLM Guard-based guardrails configuration.
+
+    Supports 12 input scanners and 17 output scanners from llm-guard.
+    Can be specified at workflow level (defaults for all steps) or
+    step level (overrides workflow defaults).
+
+    Input Scanners: anonymize, prompt_injection, secrets, invisible_text,
+        token_limit, ban_topics, ban_substrings, ban_code, code, gibberish,
+        language, regex
+
+    Output Scanners: deanonymize, sensitive, no_refusal, factual_consistency,
+        relevance, json, malicious_urls, url_reachability, language_same,
+        language, reading_time, gibberish, ban_topics, ban_substrings,
+        ban_code, code, regex
+
+    Example:
+        guardrails:
+          input:
+            prompt_injection: { threshold: 0.92 }
+            secrets: { redact: true }
+          output:
+            sensitive: { redact: true }
+          on_fail: abort
+    """
+
+    input: Optional[dict[str, dict | None]] = Field(
         default=None,
-        description="Regex pattern (for type=regex)",
+        description="Input scanners applied before step execution",
     )
-    schema_: Optional[dict[str, Any]] = Field(
+    output: Optional[dict[str, dict | None]] = Field(
         default=None,
-        alias="schema",
-        description="JSON Schema (for type=json_schema)",
+        description="Output scanners applied after step execution",
     )
-    prompt: Optional[str] = Field(
+    on_fail: Optional[Literal["abort", "retry", "continue"] | str] = Field(
         default=None,
-        description="LLM judge prompt (for type=llm_judge)",
+        description="Action on failure: abort, retry, continue, or step_id to route to",
     )
-    on_fail: Literal["error", "retry", "continue"] = "error"
-    max_retries: int = Field(default=3, ge=1)
+    max_retries: Optional[int] = Field(
+        default=None,
+        ge=1,
+        le=5,
+        description="Max retries when on_fail=retry (default: 2)",
+    )
 
 
 # ==============================================================================
@@ -355,8 +381,11 @@ class StepDefinition(BaseModel):
     # Retry configuration
     retry: Optional[RetryConfig] = None
 
-    # Output validation
-    guardrails: Optional[list[GuardrailConfig]] = None
+    # Output validation (LLM Guard integration)
+    guardrails: Optional[GuardrailsConfig | Literal[False]] = Field(
+        default=None,
+        description="Step guardrails (merges with workflow defaults, or False to disable)",
+    )
 
     # Idempotency marker
     idempotent: bool = Field(
@@ -456,6 +485,12 @@ class WorkflowDefinition(BaseModel):
     on_failure: Optional[list[StepDefinition]] = Field(
         default=None,
         description="Steps to run on workflow failure",
+    )
+
+    # Guardrails (LLM Guard integration)
+    guardrails: Optional[GuardrailsConfig] = Field(
+        default=None,
+        description="Default guardrails applied to all steps",
     )
 
     # Security settings

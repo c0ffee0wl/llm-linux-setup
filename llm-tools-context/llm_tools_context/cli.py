@@ -9,9 +9,10 @@ Usage:
     context -e       # Output SESSION_LOG_FILE environment variable
 """
 
-import argparse
 import subprocess
 import sys
+
+import click
 
 from .core import (
     find_cast_file,
@@ -21,32 +22,20 @@ from .core import (
 )
 
 
-def main():
-    """Main CLI entry point."""
-    # Parse arguments
-    parser = argparse.ArgumentParser(
-        description='Extract prompt blocks from terminal session'
-    )
-    parser.add_argument(
-        'count', nargs='?', default=1,
-        help='Number of recent prompt blocks to show or "all" for entire history (default: 1)'
-    )
-    parser.add_argument(
-        '-e', '--environment', action='store_true',
-        help='Output SESSION_LOG_FILE environment variable'
-    )
-    parser.add_argument(
-        '-a', '--all', action='store_true',
-        help='Show entire history'
-    )
-
-    args = parser.parse_args()
+@click.command()
+@click.argument('count', default='1', required=False)
+@click.option('-e', '--environment', is_flag=True,
+              help='Output SESSION_LOG_FILE environment variable')
+@click.option('-a', '--all', 'show_all', is_flag=True,
+              help='Show entire history')
+def main(count: str, environment: bool, show_all: bool):
+    """Extract prompt blocks from terminal session."""
 
     # Find cast file
     cast_file = find_cast_file()
 
     # Handle -e/--environment flag
-    if args.environment:
+    if environment:
         if cast_file:
             export_cmd = f"export SESSION_LOG_FILE='{cast_file}'"
             print(export_cmd)
@@ -77,28 +66,29 @@ def main():
         return
 
     # Determine if we want all history
-    show_all = args.all or args.count == 'all'
+    want_all = show_all or count == 'all'
 
-    if show_all:
-        count = None  # Signal to show all
+    if want_all:
+        count_int = None  # Signal to show all
     else:
         # Validate count is a number
         try:
-            count = int(args.count)
+            count_int = int(count)
             # Convert negative to positive with a note
-            if count < 0:
-                count = abs(count)
-                print(
-                    f"#c# context usage note: Using {count} (converted from negative value)",
-                    file=sys.stderr
+            if count_int < 0:
+                count_int = abs(count_int)
+                click.echo(
+                    f"#c# context usage note: Using {count_int} (converted from negative value)",
+                    err=True
                 )
             # Still validate that it's not zero
-            if count < 1:
+            if count_int < 1:
                 raise ValueError()
         except (ValueError, TypeError):
-            print("Error: Please provide a positive number or 'all'", file=sys.stderr)
-            parser.print_help(sys.stderr)
-            sys.exit(1)
+            raise click.BadParameter(
+                'Please provide a positive number or "all"',
+                param_hint="'COUNT'"
+            )
 
     if not cast_file:
         print("Error: No asciinema session recording found.", file=sys.stderr)
@@ -116,7 +106,7 @@ def main():
         sys.exit(1)
 
     # Extract prompt blocks
-    blocks = extract_prompt_blocks(text, count)
+    blocks = extract_prompt_blocks(text, count_int)
 
     # Display results
     print(format_output(blocks))

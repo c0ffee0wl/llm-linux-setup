@@ -20,6 +20,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import click
 import llm
 import sqlite_utils
 from llm import ToolResult
@@ -924,12 +925,13 @@ def main(model_id: Optional[str] = None, debug: bool = False):
         pass
 
 
+@click.command()
+@click.option('-m', '--model', 'model_id', help='Model to use')
+@click.option('--debug', is_flag=True, help='Enable debug output')
+def daemon_cli(model_id: Optional[str], debug: bool):
+    """llm-assistant daemon server."""
+    main(model_id=model_id, debug=debug)
+
+
 if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="llm-assistant daemon server")
-    parser.add_argument("-m", "--model", help="Model to use")
-    parser.add_argument("--debug", action="store_true", help="Enable debug output")
-    args = parser.parse_args()
-
-    main(model_id=args.model, debug=args.debug)
+    daemon_cli()
