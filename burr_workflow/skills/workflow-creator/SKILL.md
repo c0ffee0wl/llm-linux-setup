@@ -100,7 +100,7 @@ inputs:
     required: true
     pattern: "^[a-z0-9.-]+$"
   port:
-    type: integer
+    type: number
     default: 443
     min: 1
     max: 65535
@@ -213,10 +213,10 @@ For large inputs that exceed LLM context limits, configure chunking:
 
 - name: "Handle Error"
   id: handle_error
-  uses: human/input
+  uses: human/decide
   with:
     prompt: "Step failed. Retry?"
-    options: ["retry", "skip", "abort"]
+    choices: ["retry", "skip", "abort"]
 ```
 
 ## Filters

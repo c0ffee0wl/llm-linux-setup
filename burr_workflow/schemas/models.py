@@ -192,9 +192,9 @@ class LLMDefaultsConfig(BaseModel):
 class InputDefinition(BaseModel):
     """Definition for a workflow input parameter."""
     description: Optional[str] = None
-    type: Optional[str] = Field(
+    type: Optional[Literal["string", "number", "boolean", "array", "object", "file"]] = Field(
         default="string",
-        description="Input type: string, number, boolean, array, object",
+        description="Input type: string, number, boolean, array, object, file",
     )
     default: Optional[Any] = None
     required: bool = Field(
@@ -208,6 +208,16 @@ class InputDefinition(BaseModel):
     pattern: Optional[str] = Field(
         default=None,
         description="Regex pattern for validation (strings only)",
+    )
+    min_: Optional[Union[int, float]] = Field(
+        default=None,
+        alias="min",
+        description="Minimum value for numeric types",
+    )
+    max_: Optional[Union[int, float]] = Field(
+        default=None,
+        alias="max",
+        description="Maximum value for numeric types",
     )
     secret: bool = Field(
         default=False,
@@ -374,20 +384,45 @@ class LLMActionConfig(BaseModel):
 
 
 class HumanInputConfig(BaseModel):
-    """Configuration for human/input action."""
+    """Configuration for human/input action.
+
+    Note: For choice-based inputs, use human/decide with choices parameter.
+    This action is for free-form text input only.
+    """
     prompt: str
-    options: Optional[list[str]] = Field(
-        default=None,
-        description="Predefined choices (shows as buttons/menu)",
+    input_type: Optional[Literal["text", "multiline", "file", "editor"]] = Field(
+        default="text",
+        description="Input mode: text (single line), multiline, file (path), editor ($EDITOR)",
     )
     default: Optional[str] = None
     timeout: Optional[int] = Field(
         default=None,
         description="Timeout in seconds (None = wait indefinitely)",
     )
-    multiline: bool = Field(
+    initial_content: Optional[str] = Field(
+        default=None,
+        description="Initial content for editor mode",
+    )
+
+
+class HumanDecideConfig(BaseModel):
+    """Configuration for human/decide action.
+
+    Use for yes/no confirmation or selection from predefined choices.
+    """
+    prompt: str
+    choices: Optional[list[str]] = Field(
+        default=None,
+        description="Predefined choices (omit for yes/no confirmation)",
+    )
+    multi: bool = Field(
         default=False,
-        description="Allow multiline input",
+        description="Allow multiple selections",
+    )
+    default: Optional[str] = None
+    timeout: Optional[int] = Field(
+        default=None,
+        description="Timeout in seconds (None = wait indefinitely)",
     )
 
 

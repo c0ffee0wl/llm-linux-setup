@@ -195,6 +195,8 @@ Use LLM to select from predefined choices.
 
 ### `llm/analyze` - Free-Form Analysis
 
+> **Note:** `llm/analyze` is an alias for `llm/generate`. They are functionally identical.
+
 Get LLM analysis with optional format control.
 
 ```yaml
@@ -212,11 +214,11 @@ Get LLM analysis with optional format control.
 |-----------|------|-------------|
 | `input` | any | Content to analyze |
 | `prompt` | string | Analysis prompt |
-| `output_format` | string | Format: "prose", "bullet_points", "numbered", "json" |
+| `format` | string | Format: "prose", "bullets", "numbered", "json" |
 
 **Outputs:**
-- `analysis` - Analysis text
-- `parsed` - Parsed JSON (if output_format=json and valid JSON returned)
+- `analysis` - Analysis text (alias: `text`, `response`)
+- `parsed` - Parsed JSON (if format=json and valid JSON returned)
 
 ---
 
@@ -280,20 +282,17 @@ Two modes: simple instruction OR airgapped with feedback collection.
 
 ## Human Actions
 
-### `human/input` - User Prompt
+### `human/input` - Free-Form User Input
 
-Prompt user for input with optional choices.
+Prompt user for free-form text input.
 
 ```yaml
 - name: "Get Target"
   id: target_input
   uses: human/input
   with:
-    prompt: "Enter target IP or select preset"
-    options:
-      - "192.168.1.1"
-      - "10.0.0.1"
-      - "custom"
+    prompt: "Enter target IP address"
+    input_type: text
     default: "192.168.1.1"
 ```
 
@@ -301,12 +300,63 @@ Prompt user for input with optional choices.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `prompt` | string | Prompt message |
-| `options` | list | Optional list of choices |
+| `input_type` | string | Input mode: "text" (default), "multiline", "file", "editor" |
 | `default` | string | Default value |
+| `timeout` | integer | Optional timeout in seconds |
+| `initial_content` | string | Initial content for editor mode |
 
 **Outputs:**
 - `response` - User's response
 - `is_default` - True if user accepted default
+
+---
+
+### `human/decide` - Choice Selection
+
+Prompt user for confirmation or selection from predefined choices.
+
+```yaml
+# Binary confirmation (yes/no)
+- name: "Confirm Action"
+  id: confirm
+  uses: human/decide
+  with:
+    prompt: "Proceed with exploitation?"
+
+# Single choice selection
+- name: "Select Target"
+  id: select_target
+  uses: human/decide
+  with:
+    prompt: "Select target IP"
+    choices:
+      - "192.168.1.1"
+      - "10.0.0.1"
+      - "custom"
+    default: "192.168.1.1"
+
+# Multi-selection
+- name: "Select Targets"
+  id: multi_select
+  uses: human/decide
+  with:
+    prompt: "Select targets to scan"
+    choices: ["host1", "host2", "host3"]
+    multi: true
+```
+
+**Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `prompt` | string | Prompt message |
+| `choices` | list | Predefined choices (omit for yes/no confirmation) |
+| `multi` | boolean | Allow multiple selections (default: false) |
+| `default` | string | Default value |
+| `timeout` | integer | Optional timeout in seconds |
+
+**Outputs:**
+- `value` - Selected choice(s) (string or list if multi=true)
+- `confirmed` - True if user confirmed (yes/no mode)
 
 ---
 
@@ -330,6 +380,32 @@ Set or update workflow state variables.
 | Parameter | Type | Description |
 |-----------|------|-------------|
 | `variables` | dict | Key-value pairs to set |
+
+---
+
+### `state/append` - Append to List Variable
+
+Append a value to a list variable.
+
+```yaml
+- name: "Track Finding"
+  id: track_finding
+  uses: state/append
+  with:
+    target: findings
+    value:
+      host: ${{ loop.item }}
+      status: vulnerable
+```
+
+**Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `target` | string | Name of the list variable to append to |
+| `value` | any | Value to append to the list |
+
+**Outputs:**
+- `{target}` - The updated list with appended value
 
 ---
 

@@ -172,10 +172,10 @@ jobs:
 
       - name: "Handle Vuln Check Failure"
         id: vuln_failed
-        uses: human/input
+        uses: human/decide
         with:
           prompt: "Vulnerability scan failed. How to proceed?"
-          options: ["retry", "skip", "manual"]
+          choices: ["retry", "skip", "manual"]
 
 on_complete:
   - name: "Summary"
@@ -279,56 +279,56 @@ jobs:
     steps:
       - name: "Confirm Scope"
         id: confirm
-        uses: human/input
+        uses: human/decide
         with:
           prompt: |
             Confirm testing scope:
             ${{ inputs.scope }}
 
             Proceed with testing?
-          options:
+          choices:
             - "Yes, proceed"
             - "No, modify scope"
             - "Cancel"
           default: "Yes, proceed"
 
       - name: "Exit if cancelled"
-        if: ${{ steps.confirm.outputs.response == 'Cancel' }}
+        if: ${{ steps.confirm.outputs.value == 'Cancel' }}
         uses: control/exit
         with:
           message: "Testing cancelled by user"
 
       - name: "Reconnaissance"
         id: recon
-        if: ${{ steps.confirm.outputs.response == 'Yes, proceed' }}
+        if: ${{ steps.confirm.outputs.value == 'Yes, proceed' }}
         run: nmap -sn ${{ inputs.scope | shell_quote }}
 
       - name: "Review Findings"
         id: review
-        uses: human/input
+        uses: human/decide
         with:
           prompt: |
             Hosts discovered:
             ${{ steps.recon.outputs.stdout }}
 
             Select action:
-          options:
+          choices:
             - "Deep scan all"
             - "Select specific hosts"
             - "Skip to manual testing"
 
       - name: "Get Host Selection"
         id: selection
-        if: ${{ steps.review.outputs.response == 'Select specific hosts' }}
+        if: ${{ steps.review.outputs.value == 'Select specific hosts' }}
         uses: human/input
         with:
           prompt: "Enter comma-separated list of hosts to scan"
 
       - name: "Deep Scan"
         id: deep_scan
-        if: ${{ steps.review.outputs.response != 'Skip to manual testing' }}
+        if: ${{ steps.review.outputs.value != 'Skip to manual testing' }}
         run: |
-          targets="${{ steps.selection.outputs.response | default(steps.recon.outputs.stdout) }}"
+          targets="${{ steps.selection.outputs.value | default(steps.recon.outputs.stdout) }}"
           nmap -sC -sV $targets
         timeout: 600
 
@@ -339,10 +339,10 @@ jobs:
           prompt: "Enter finding description (or 'skip' to continue)"
 
       - name: "Add to Report"
-        if: ${{ steps.log_finding.outputs.response != 'skip' }}
+        if: ${{ steps.log_finding.outputs.value != 'skip' }}
         uses: report/add
         with:
-          note: ${{ steps.log_finding.outputs.response }}
+          note: ${{ steps.log_finding.outputs.value }}
           severity: 5
 ```
 
@@ -417,10 +417,10 @@ jobs:
 
       - name: "Handle VT Unavailable"
         id: vt_unavailable
-        uses: human/input
+        uses: human/decide
         with:
           prompt: "VirusTotal API unavailable. How to proceed?"
-          options:
+          choices:
             - "Retry"
             - "Skip VT check"
             - "Abort"

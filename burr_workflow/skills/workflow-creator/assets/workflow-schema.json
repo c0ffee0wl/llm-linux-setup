@@ -129,6 +129,14 @@
         "type": {
           "anyOf": [
             {
+              "enum": [
+                "string",
+                "number",
+                "boolean",
+                "array",
+                "object",
+                "file"
+              ],
               "type": "string"
             },
             {
@@ -136,7 +144,7 @@
             }
           ],
           "default": "string",
-          "description": "Input type: string, number, boolean, array, object",
+          "description": "Input type: string, number, boolean, array, object, file",
           "title": "Type"
         },
         "default": {
@@ -181,6 +189,38 @@
           "default": null,
           "description": "Regex pattern for validation (strings only)",
           "title": "Pattern"
+        },
+        "min": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Minimum value for numeric types",
+          "title": "Min"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Maximum value for numeric types",
+          "title": "Max"
         },
         "secret": {
           "default": false,
@@ -919,5 +959,6 @@
     "jobs"
   ],
   "title": "WorkflowDefinition",
-  "type": "object"
+  "type": "object",
+  "$schema": "http://json-schema.org/draft-07/schema#"
 }
