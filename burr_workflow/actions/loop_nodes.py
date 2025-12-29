@@ -640,6 +640,7 @@ class IteratorFinalizeNode(SingleStepAction):
             "__loop_iteration_count", "__loop_success_count",
             "__loop_failed", "__loop_reason",
             "__loop_results_file", "__loop_config",
+            "__loop_break_requested", "__loop_break_item", "__loop_break_index",
         ]
 
     @property
@@ -657,6 +658,11 @@ class IteratorFinalizeNode(SingleStepAction):
         results_file = state.get("__loop_results_file")
         config = state.get("__loop_config") or {}
         result_storage = config.get("result_storage", "memory")
+
+        # Get break state for outputs
+        break_requested = state.get("__loop_break_requested", False)
+        break_item = state.get("__loop_break_item")
+        break_index = state.get("__loop_break_index")
 
         # Restore parent loop context if nested
         parent_loop = loop.get("parent") if loop else None
@@ -680,9 +686,15 @@ class IteratorFinalizeNode(SingleStepAction):
         outputs = {
             "errors": errors,
             "count": iteration_count,
+            "iterations": iteration_count,  # Alias for documentation compatibility
             "success_count": success_count,
+            "succeeded": success_count,  # Alias for documentation compatibility
             "reason": reason,
             "result_storage": result_storage,
+            # Break information for early exit detection
+            "break_early": break_requested,
+            "break_item": break_item,
+            "break_index": break_index,
         }
 
         if result_storage == "file" and results_file:

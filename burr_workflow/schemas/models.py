@@ -372,7 +372,7 @@ class LLMActionConfig(BaseModel):
     """Configuration for llm/* actions."""
     content: Optional[str] = Field(
         default=None,
-        validation_alias="input",
+        alias="input",
         description="Content to analyze/extract from",
     )
     prompt: Optional[str] = Field(
@@ -481,6 +481,12 @@ class ScriptConfig(BaseModel):
 class StateSetConfig(BaseModel):
     """Configuration for state/set action."""
     variables: dict[str, Any]
+
+
+class StateAppendConfig(BaseModel):
+    """Configuration for state/append action."""
+    target: str = Field(description="List variable name to append to")
+    value: Any = Field(description="Value to append to the list")
 
 
 # ==============================================================================

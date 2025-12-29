@@ -93,9 +93,24 @@ class LoopContext:
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "LoopContext":
-        """Create LoopContext from dictionary."""
+    def from_dict(cls, data: dict[str, Any], _depth: int = 0) -> "LoopContext":
+        """Create LoopContext from dictionary.
+
+        Args:
+            data: Dictionary representation of LoopContext
+            _depth: Internal counter to prevent infinite recursion
+
+        Returns:
+            LoopContext instance
+
+        Raises:
+            ValueError: If nesting depth exceeds 100 (possible cycle)
+        """
+        if _depth > 100:
+            raise ValueError("Loop context nesting too deep (possible cycle)")
         parent_data = data.get("parent")
+        # Note: __loop_id and __ancestor_ids are name-mangled by Python
+        # We need to use the mangled names when passing to __init__
         return cls(
             items=data["items"],
             item=data["item"],
@@ -107,9 +122,9 @@ class LoopContext:
             revindex=data["revindex"],
             revindex0=data["revindex0"],
             output=data.get("output"),
-            parent=cls.from_dict(parent_data) if parent_data else None,
-            __loop_id=data.get("__loop_id"),
-            __ancestor_ids=data.get("__ancestor_ids", []),
+            parent=cls.from_dict(parent_data, _depth + 1) if parent_data else None,
+            _LoopContext__loop_id=data.get("__loop_id"),
+            _LoopContext__ancestor_ids=data.get("__ancestor_ids", []),
         )
 
 
