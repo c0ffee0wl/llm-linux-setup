@@ -68,8 +68,13 @@ class PromptDetector:
         re.compile(r'^[$]\s*$'),               # standalone $ at line start
         # Hash prompt (root): ends with # (path context required)
         re.compile(r'(?:/\w*|[~\])])[#]\s*$'),
-        # Zsh: ends with % ❯ → ➜
+        # Zsh: ends with % ❯ → ➜ (prompt char at end of line)
         re.compile(r'(?<!\d)[%❯→➜]\s*$'),
+        # oh-my-zsh style: ➜  dirname [git:(branch)] [status] (prompt char at START)
+        # Matches robbyrussell and similar themes where arrow comes first
+        # Pattern: ➜  <dirname> [git:(<branch>)] [status-indicators]<whitespace-only>
+        # Status indicators: ✗✔✘✓ (dirty/clean), *+? (changes), ⚡!↑↓ (ahead/behind), ●○◐ (stash)
+        re.compile(r'^[❯→➜]\s+[\w./-]+(?:\s+git:\([^)]+\))?(?:\s*[✗✔✘✓*+?⚡!↑↓●○◐])*\s*$'),
         # user@host: prompt char at END
         re.compile(r'^\S+@\S+\s*[$#%]\s*$'),
         # PowerShell: PS C:\path> or PS /path> or PS>
