@@ -910,7 +910,10 @@ install_github_deb_package() {
     curl -fL "$github_url" -o "$deb_file"
 
     if [ -f "$deb_file" ]; then
-        sudo dpkg -i "$deb_file" || sudo apt-get install -f -y
+        # dpkg -i may leave package unconfigured if dependencies are missing
+        # Always run apt-get install -f to resolve dependencies and configure
+        sudo dpkg -i "$deb_file" || true
+        sudo apt-get install -f -y
         rm -f "$deb_file"
         log "$package_name $version installed via deb package"
         return 0

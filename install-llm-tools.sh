@@ -1620,6 +1620,12 @@ if changed:
 else:
     print('Handy already configured, skipping')
 "
+        # Start Handy if not already running (first-run only)
+        if ! pgrep -x handy >/dev/null 2>&1; then
+            log "Starting Handy..."
+            nohup handy >/dev/null 2>&1 &
+            disown
+        fi
     fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
