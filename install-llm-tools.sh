@@ -1576,55 +1576,65 @@ if has_desktop_environment; then
         fi
     fi
 
-    # Pre-configure Handy settings BEFORE installation (so it starts with correct settings)
-    python3 -c "
-import json
-from pathlib import Path
-
-settings_file = Path.home() / '.local/share/com.pais.handy/settings_store.json'
-settings_file.parent.mkdir(parents=True, exist_ok=True)
-
-if settings_file.exists():
-    data = json.loads(settings_file.read_text())
-    settings = data.get('settings', {})
-else:
-    data = {'settings': {}}
-    settings = data['settings']
-
-changed = False
-if 'update_checks_enabled' not in settings:
-    settings['update_checks_enabled'] = False
-    changed = True
-    print('Disabled Handy update checks')
-if 'push_to_talk' not in settings:
-    settings['push_to_talk'] = False
-    changed = True
-    print('Disabled Handy push-to-talk mode')
-if 'start_hidden' not in settings:
-    settings['start_hidden'] = True
-    changed = True
-    print('Enabled Handy start hidden')
-if 'autostart_enabled' not in settings:
-    settings['autostart_enabled'] = True
-    changed = True
-    print('Enabled Handy autostart')
-if changed:
-    data['settings'] = settings
-    settings_file.write_text(json.dumps(data, indent=2))
-else:
-    print('Handy already configured, skipping')
-"
-
     # Install Handy (system-wide STT) via .deb package
     install_github_deb_package "handy" "0.6.8" \
         "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
         "handy" "x86_64"
 
-    # Start Handy if not already running
-    if command -v handy &>/dev/null && ! pgrep -x handy >/dev/null 2>&1; then
-        log "Starting Handy..."
-        nohup handy >/dev/null 2>&1 &
-        disown
+    # Configure Handy settings (Handy overwrites settings on first start, so we must let it create them first)
+    if command -v handy &>/dev/null; then
+        HANDY_SETTINGS="$HOME/.local/share/com.pais.handy/settings_store.json"
+        if [ ! -f "$HANDY_SETTINGS" ]; then
+            # First run: start Handy to create default settings, then modify them
+            log "Starting Handy to create default settings..."
+            nohup handy >/dev/null 2>&1 &
+            disown
+            sleep 5
+            pkill -x handy || true
+            sleep 1
+        fi
+
+        # Now modify the settings
+        python3 -c "
+import json
+from pathlib import Path
+
+settings_file = Path.home() / '.local/share/com.pais.handy/settings_store.json'
+
+if settings_file.exists():
+    data = json.loads(settings_file.read_text())
+    settings = data.get('settings', {})
+
+    changed = False
+    if settings.get('update_checks_enabled') != False:
+        settings['update_checks_enabled'] = False
+        changed = True
+        print('Disabled Handy update checks')
+    if settings.get('push_to_talk') != False:
+        settings['push_to_talk'] = False
+        changed = True
+        print('Disabled Handy push-to-talk mode')
+    if settings.get('start_hidden') != True:
+        settings['start_hidden'] = True
+        changed = True
+        print('Enabled Handy start hidden')
+    if settings.get('autostart_enabled') != True:
+        settings['autostart_enabled'] = True
+        changed = True
+        print('Enabled Handy autostart')
+    if changed:
+        data['settings'] = settings
+        settings_file.write_text(json.dumps(data, indent=2))
+    else:
+        print('Handy already configured, skipping')
+"
+
+        # Start Handy with configured settings
+        if ! pgrep -x handy >/dev/null 2>&1; then
+            log "Starting Handy..."
+            nohup handy >/dev/null 2>&1 &
+            disown
+        fi
     fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
