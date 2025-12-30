@@ -15,15 +15,10 @@ import llm
 
 from .utils import strip_markdown_for_tts, ConsoleHelper
 
-# Voice/audio dependencies (shared with voice.py)
-try:
-    import sounddevice as sd
-    import numpy as np
-    AUDIO_AVAILABLE = True
-except ImportError:
-    AUDIO_AVAILABLE = False
-    sd = None
-    np = None
+# Audio playback dependencies - lazily imported to avoid PortAudio initialization
+# at module load time (which probes audio devices including microphone)
+sd = None
+np = None
 
 # TTS output (optional - requires google-cloud-texttospeech and Vertex credentials)
 try:
@@ -144,6 +139,8 @@ class SpeechOutput:
 
     def _lazy_load_client(self) -> bool:
         """Initialize TTS client on first use."""
+        global sd, np
+
         if self.client is not None:
             return True
 
@@ -151,9 +148,16 @@ class SpeechOutput:
             ConsoleHelper.error(self.console, "google-cloud-texttospeech not installed. Re-run install-llm-tools.sh")
             return False
 
-        if not AUDIO_AVAILABLE:
-            ConsoleHelper.error(self.console, "sounddevice/numpy not installed. Re-run install-llm-tools.sh")
-            return False
+        # Lazy import sounddevice/numpy - avoids PortAudio init at module load
+        if sd is None:
+            try:
+                import sounddevice as _sd
+                import numpy as _np
+                sd = _sd
+                np = _np
+            except ImportError:
+                ConsoleHelper.error(self.console, "sounddevice/numpy not installed. Re-run install-llm-tools.sh")
+                return False
 
         try:
             from concurrent.futures import ThreadPoolExecutor

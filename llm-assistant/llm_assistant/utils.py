@@ -258,6 +258,24 @@ def validate_language_code(code: str) -> Optional[str]:
 # =============================================================================
 
 
+def is_handy_running() -> bool:
+    """Check if Handy STT application is running.
+
+    Handy provides OS-level speech-to-text input. When running, we should
+    skip importing sounddevice/PortAudio to avoid resource conflicts and
+    unnecessary microphone access.
+
+    Returns:
+        True if Handy is running, False otherwise
+    """
+    import subprocess
+    try:
+        result = subprocess.run(["pgrep", "-xi", "handy"], capture_output=True)
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
 def process_exists(pid: int) -> bool:
     """Check if a process with the given PID exists.
 

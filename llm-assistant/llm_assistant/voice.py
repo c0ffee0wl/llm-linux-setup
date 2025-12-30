@@ -10,23 +10,13 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Tuple
 
-from .utils import ConsoleHelper
+from .utils import ConsoleHelper, is_handy_running
 
 # Voice input (optional - graceful degradation if not installed)
 VOICE_AVAILABLE = False
 VOICE_UNAVAILABLE_REASON = None  # None = available, string = reason unavailable
 sd = None
 np = None
-
-# Check for Handy FIRST - skip sounddevice import entirely if Handy handles STT
-# (avoids PortAudio initialization errors during import)
-def _is_handy_running():
-    try:
-        import subprocess
-        result = subprocess.run(["pgrep", "-xi", "handy"], capture_output=True)
-        return result.returncode == 0
-    except Exception:
-        return False
 
 def _suppress_stderr():
     """Context manager to suppress stderr (for PortAudio messages)."""
@@ -53,7 +43,9 @@ def _restore_stderr(devnull_fd, old_stderr_fd):
     if devnull_fd is not None:
         os.close(devnull_fd)
 
-if _is_handy_running():
+# Check for Handy FIRST - skip sounddevice import entirely if Handy handles STT
+# (avoids PortAudio initialization errors during import)
+if is_handy_running():
     VOICE_UNAVAILABLE_REASON = "Handy running"
 else:
     try:
