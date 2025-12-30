@@ -1663,6 +1663,27 @@ if has_desktop_environment; then
             log "Installed ulauncher-llm extension (symlinked)"
         fi
 
+        # Configure Ulauncher hotkey to Super+Space (first-time only)
+        python3 -c "
+import json
+from pathlib import Path
+
+settings_file = Path.home() / '.config/ulauncher/settings.json'
+settings_file.parent.mkdir(parents=True, exist_ok=True)
+
+if settings_file.exists():
+    settings = json.loads(settings_file.read_text())
+else:
+    settings = {}
+
+if 'hotkey-show-app' not in settings:
+    settings['hotkey-show-app'] = '<Super>space'
+    settings_file.write_text(json.dumps(settings, indent=4))
+    print('Configured Ulauncher hotkey: Super+Space')
+else:
+    print('Ulauncher hotkey already configured, skipping')
+"
+
         # Enable and start Ulauncher service (user service)
         if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
             if ! systemctl --user is-active ulauncher.service &>/dev/null; then
