@@ -1577,7 +1577,7 @@ if has_desktop_environment; then
     fi
 
     # Install Handy (system-wide STT) via .deb package
-    install_github_deb_package "handy" "0.6.8" \
+    install_github_deb_package "handy" "0.6.9" \
         "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
         "handy" "x86_64"
 
