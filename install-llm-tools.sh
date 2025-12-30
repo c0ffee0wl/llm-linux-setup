@@ -1584,23 +1584,35 @@ if has_desktop_environment; then
     # Configure Handy settings (Handy overwrites settings on first start, so we must let it create them first)
     if command -v handy &>/dev/null; then
         HANDY_SETTINGS="$HOME/.local/share/com.pais.handy/settings_store.json"
+
+        # Ensure settings file exists (Handy creates it on first run)
         if [ ! -f "$HANDY_SETTINGS" ]; then
-            # First run: start Handy to create default settings, then modify them
+            # Start Handy to create default settings
             log "Starting Handy to create default settings..."
-            nohup handy >/dev/null 2>&1 &
-            disown
+            if ! pgrep -x handy >/dev/null 2>&1; then
+                nohup handy >/dev/null 2>&1 &
+                disown
+            fi
+
+            # Wait 5 seconds, then check for file (up to 10 more seconds)
             sleep 5
+            for i in {1..10}; do
+                [ -f "$HANDY_SETTINGS" ] && break
+                sleep 1
+            done
+
+            # Kill Handy so we can modify settings
             pkill -x handy || true
             sleep 1
         fi
 
-        # Now modify the settings
-        python3 -c "
+        # Modify settings if file exists
+        if [ -f "$HANDY_SETTINGS" ]; then
+            python3 -c "
 import json
 from pathlib import Path
 
 settings_file = Path.home() / '.local/share/com.pais.handy/settings_store.json'
-
 if settings_file.exists():
     data = json.loads(settings_file.read_text())
     settings = data.get('settings', {})
@@ -1628,6 +1640,9 @@ if settings_file.exists():
     else:
         print('Handy already configured, skipping')
 "
+        else
+            warn "Handy settings file not created - skipping configuration"
+        fi
 
         # Start Handy with configured settings
         if ! pgrep -x handy >/dev/null 2>&1; then
