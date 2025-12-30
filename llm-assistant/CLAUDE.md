@@ -128,6 +128,14 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/speech` - Enable TTS output (Vertex models only)
 - `/speech off` - Disable TTS output
 - `/speech status` - Show TTS status
+- `/voice` or `/voice auto` - Enable voice auto-submit (auto-sends transcribed text)
+- `/voice off` - Disable voice auto-submit
+- `/voice status` - Show voice input status
+- `/voice clean` - Show/re-enable AI transcript cleanup (auto-enabled for Gemini/Vertex)
+- `/voice clean off` - Disable transcript cleanup
+- `/voice loop` - Start continuous VAD listening (hands-free)
+- `/voice loop off` - Stop continuous listening
+- `/screenshot [mode] [delay|-] [prompt]` - Capture screenshot (window/region/full/rdp/annotate)
 - `/assistant` - Switch to assistant mode (conservative, 10 tool iterations)
 - `/agent` - Switch to agent mode (agentic, 100 tool iterations)
 - `/copy` - Copy last response to clipboard (markdown stripped)
@@ -328,7 +336,7 @@ MCP Servers:
 - `Ctrl+C` - Double-press within 2 seconds to exit
 
 **Voice Input:**
-- Press `Ctrl+Space` to start recording (shows 🎤 Recording...)
+- Press `Ctrl+Space` to start recording (shows Recording...)
 - Press `Ctrl+Space` again to stop and transcribe
 - Uses onnx-asr with Parakeet TDT INT8 quantized model (smaller, faster)
 - **Shared model location**: `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/`
@@ -337,6 +345,18 @@ MCP Servers:
 - `/voice` or `/voice auto` - auto-submit transcribed text
 - `/voice off` - disable auto-submit
 - `/voice status` - show voice input status
+- `/voice clean` - show/re-enable AI transcript cleanup (auto-enabled for Gemini/Vertex)
+- `/voice clean off` - disable transcript cleanup
+- `/voice loop` - hands-free continuous listening with VAD (Voice Activity Detection)
+- `/voice loop off` - stop continuous listening
+
+**Voice Loop Mode (VAD):**
+- Uses Silero VAD ONNX model for automatic speech detection
+- No button press needed - VAD detects when you start/stop speaking
+- 800ms silence triggers transcription
+- After transcription, text is auto-submitted to AI
+- Waits for AI response, then loops back to listening
+- **VAD model location**: `~/.cache/llm-assistant/models/silero_vad.onnx`
 
 **Speech Output (TTS):**
 - Available only when using Vertex models (`vertex/*`)

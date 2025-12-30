@@ -28,14 +28,14 @@ SLASH_COMMANDS = {
     "/kb": {"subcommands": ["load", "unload", "reload"], "dynamic": "kb", "description": "Knowledge base control"},
     "/memory": {"subcommands": ["list", "reload", "global", "local"], "dynamic": None, "description": "View/manage AGENTS.md memory"},
     "/auto": {"subcommands": ["full", "off", "status"], "dynamic": None, "description": "Auto mode control"},
-    "/voice": {"subcommands": ["auto", "off", "status"], "dynamic": None, "description": "Voice input control"},
+    "/voice": {"subcommands": ["auto", "off", "status", "clean", "clean on", "clean off", "loop", "loop off"], "dynamic": None, "description": "Voice input control"},
     "/speech": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "TTS output control"},
     "/rag": {"subcommands": ["add", "search", "rebuild", "delete", "off", "status", "top-k", "mode"], "dynamic": "rag_collections", "description": "RAG search integration"},
     "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
     "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
     "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
     "/web": {"subcommands": ["stop", "off"], "dynamic": None, "description": "Open web companion"},
-    "/capture": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
+    "/screenshot": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
     "/imagemage": {"subcommands": ["off", "status"], "dynamic": None, "description": "Load/unload image generation tool"},
     "/report": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
     "/mcp": {"subcommands": ["load", "unload", "status"], "dynamic": "mcp_servers", "description": "Load/unload MCP servers"},
@@ -62,8 +62,6 @@ HEADLESS_AVAILABLE_COMMANDS = {
     '/skill',       # Skill management
     '/mcp',         # MCP servers
     '/report',      # Pentest findings
-    '/assistant',   # Switch to assistant mode
-    '/imagemage',   # Image generation tool
     '/copy',        # Copy responses to clipboard
 }
 

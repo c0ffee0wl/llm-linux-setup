@@ -34,6 +34,7 @@ import hashlib
 import tempfile
 import asyncio
 import threading
+import queue
 from concurrent.futures import ThreadPoolExecutor
 import dbus
 import fcntl
@@ -338,7 +339,16 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         self.findings_base_dir: Path = get_config_dir() / "findings"
 
         # Voice input (STT) - lazy-loaded
-        self.voice_input = VoiceInput(self.console) if VOICE_AVAILABLE else None
+        self.voice_input = VoiceInput(self.console, debug=self.debug) if VOICE_AVAILABLE else None
+        self._voice_loop_queue = queue.Queue()  # Queue for voice loop transcripts
+
+        # Auto-enable voice post-processing for Gemini/Vertex models (opt-out via /voice clean off)
+        if self.voice_input and self._is_gemini_model():
+            self.voice_input.post_process_enabled = True
+            if self.model_name.startswith("vertex/"):
+                self.voice_input.post_process_model = "vertex/gemini-2.5-flash-lite"
+            else:
+                self.voice_input.post_process_model = "gemini-2.5-flash-lite"
 
         # Speech output (TTS) - lazy-loaded, only for Vertex models
         self.speech_output = SpeechOutput(self.console) if TTS_AVAILABLE else None
@@ -415,6 +425,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             'prompt': 'ansicyan bold',
             'prompt.recording': 'ansired',
             'prompt.transcribing': '#ff8800',  # orange
+            'prompt.listening': 'ansigreen',   # green for VAD listening
             'continuation': 'ansigray',
         })
 
@@ -2574,14 +2585,74 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 status = "[green]enabled[/]" if self.voice_auto_submit else "[yellow]disabled[/]"
                 if self.voice_input:
                     voice_avail = "[green]available[/]"
+                    clean_status = "[green]enabled[/]" if self.voice_input.post_process_enabled else "[yellow]disabled[/]"
+                    loop_status = "[green]enabled[/]" if getattr(self.voice_input, 'loop_mode', False) else "[yellow]disabled[/]"
                 elif VOICE_UNAVAILABLE_REASON:
                     voice_avail = f"[dim]{VOICE_UNAVAILABLE_REASON}[/]"
+                    clean_status = "[dim]n/a[/]"
+                    loop_status = "[dim]n/a[/]"
                 else:
                     voice_avail = "[dim]not installed[/]"
+                    clean_status = "[dim]n/a[/]"
+                    loop_status = "[dim]n/a[/]"
                 self.console.print(f"Voice auto-submit: {status}")
                 self.console.print(f"Voice input: {voice_avail}")
+                self.console.print(f"Voice clean: {clean_status}")
+                self.console.print(f"Voice loop: {loop_status}")
+            elif args.lower() in ("clean", "clean on"):
+                # Post-processing only for Gemini/Vertex models (auto-enabled, this re-enables after off)
+                if not self._is_gemini_model():
+                    ConsoleHelper.error(self.console, "Voice clean requires a Gemini or Vertex model")
+                    ConsoleHelper.dim(self.console, f"Current model: {self.model_name}")
+                    ConsoleHelper.dim(self.console, "Switch with: /model vertex/gemini-2.5-flash or /model gemini-2.5-flash")
+                elif not self.voice_input:
+                    ConsoleHelper.error(self.console, "Voice input not available")
+                elif self.voice_input.post_process_enabled:
+                    ConsoleHelper.dim(self.console, f"Voice clean already enabled (using {self.voice_input.post_process_model})")
+                    ConsoleHelper.dim(self.console, "/voice clean off to disable")
+                else:
+                    self.voice_input.post_process_enabled = True
+                    # Set model based on current provider (vertex or gemini)
+                    if self.model_name.startswith("vertex/"):
+                        self.voice_input.post_process_model = "vertex/gemini-2.5-flash-lite"
+                    else:
+                        self.voice_input.post_process_model = "gemini-2.5-flash-lite"
+                    ConsoleHelper.enabled(self.console, f"Voice clean enabled (using {self.voice_input.post_process_model})")
+                    ConsoleHelper.dim(self.console, "/voice clean off to disable")
+            elif args.lower() == "clean off":
+                if self.voice_input:
+                    self.voice_input.post_process_enabled = False
+                    ConsoleHelper.disabled(self.console, "Voice clean disabled")
+                else:
+                    ConsoleHelper.error(self.console, "Voice input not available")
+            elif args.lower() == "loop":
+                # Voice loop mode with VAD
+                if not self.voice_input:
+                    ConsoleHelper.error(self.console, "Voice input not available")
+                elif self.voice_input.loop_mode:
+                    ConsoleHelper.dim(self.console, "Voice loop already active")
+                    ConsoleHelper.dim(self.console, "/voice loop off to stop")
+                else:
+                    # Start loop with callback to queue transcribed text
+                    def on_transcript(text: str):
+                        # Queue the text for processing in main loop
+                        self._voice_loop_queue.put(text)
+
+                    if self.voice_input.start_loop(on_transcript):
+                        ConsoleHelper.enabled(self.console, "Voice loop enabled - hands-free continuous listening")
+                        ConsoleHelper.dim(self.console, "VAD will detect speech start/end automatically")
+                        ConsoleHelper.dim(self.console, "/voice loop off to stop")
+                    else:
+                        ConsoleHelper.error(self.console, "Failed to start voice loop")
+            elif args.lower() == "loop off":
+                # Stop voice loop mode
+                if self.voice_input and getattr(self.voice_input, 'loop_mode', False):
+                    self.voice_input.stop_loop()
+                    ConsoleHelper.disabled(self.console, "Voice loop disabled")
+                else:
+                    ConsoleHelper.dim(self.console, "Voice loop is not active")
             else:
-                ConsoleHelper.error(self.console, "Usage: /voice auto, /voice off, /voice status")
+                ConsoleHelper.error(self.console, "Usage: /voice auto, /voice off, /voice status, /voice clean, /voice loop")
             return True
 
         elif cmd == "/speech":
@@ -2647,8 +2718,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.dim(self.console, "/assistant for conservative mode (10 iterations)")
             return True
 
-        elif cmd == "/capture":
-            # Parse: /capture [mode] [delay] [prompt...]
+        elif cmd == "/screenshot":
+            # Parse: /screenshot [mode] [delay] [prompt...]
             # delay can be a number (0-30) or "-" for default
             parts = command.split(maxsplit=3)
             mode = "window"
@@ -3408,38 +3479,52 @@ Type !fragment <name> [...] to insert fragments""",
 
                     check_counter = 0
 
-                # Get user input (change prompt based on mode)
-                # Uses prompt_toolkit for Ctrl+Space voice toggle support
+                # Check voice loop queue for transcribed text (process before prompting)
+                voice_text = None
                 try:
-                    if in_multi:
-                        # Multi-line mode - dim continuation prompt
-                        user_input = self.prompt_session.prompt([('class:continuation', '... ')])
-                    else:
-                        # Dynamic prompt based on voice status
-                        def get_prompt():
-                            if self.voice_input and self.voice_input.status_message:
-                                msg = self.voice_input.status_message
-                                # Extract animated symbol (first char of status_message)
-                                symbol = msg[0] if msg else "●"
-                                if "Recording" in msg:
-                                    return [('class:prompt.recording', f'\n{symbol} ')]
-                                elif "Transcribing" in msg:
-                                    return [('class:prompt.transcribing', f'\n{symbol} ')]
-                            return [('class:prompt', '\n> ')]
-                        user_input = self.prompt_session.prompt(get_prompt).strip()
-                except (KeyboardInterrupt, EOFError):
-                    # Double-press protection
-                    now = time.time()
-                    if now - self._last_interrupt_time > 2.0:
-                        self._last_interrupt_time = now
-                        # Go up to overwrite the > prompt line, clear it, print message
-                        # Then prompt's \n> will show blank line + new >
-                        sys.stdout.write("\033[A\r\033[K")
-                        sys.stdout.write("\033[90m(press again within 2 seconds to exit)\033[0m\n")
-                        sys.stdout.flush()
-                        continue
-                    ConsoleHelper.warning(self.console, "\nExiting...")
-                    break
+                    voice_text = self._voice_loop_queue.get_nowait()
+                except queue.Empty:
+                    pass
+
+                # Get user input (from voice loop or keyboard)
+                if voice_text:
+                    # Voice loop input - show it and use directly
+                    user_input = voice_text
+                    self.console.print(f"\n[dim]Voice:[/] {user_input}")
+                else:
+                    # Uses prompt_toolkit for Ctrl+Space voice toggle support
+                    try:
+                        if in_multi:
+                            # Multi-line mode - dim continuation prompt
+                            user_input = self.prompt_session.prompt([('class:continuation', '... ')])
+                        else:
+                            # Dynamic prompt based on voice status
+                            def get_prompt():
+                                if self.voice_input and self.voice_input.status_message:
+                                    msg = self.voice_input.status_message
+                                    # Extract animated symbol (first char of status_message)
+                                    symbol = msg[0] if msg else "●"
+                                    if "Recording" in msg:
+                                        return [('class:prompt.recording', f'\n{symbol} ')]
+                                    elif "Transcribing" in msg:
+                                        return [('class:prompt.transcribing', f'\n{symbol} ')]
+                                    elif "Listening" in msg:
+                                        return [('class:prompt.listening', f'\n{symbol} ')]
+                                return [('class:prompt', '\n> ')]
+                            user_input = self.prompt_session.prompt(get_prompt).strip()
+                    except (KeyboardInterrupt, EOFError):
+                        # Double-press protection
+                        now = time.time()
+                        if now - self._last_interrupt_time > 2.0:
+                            self._last_interrupt_time = now
+                            # Go up to overwrite the > prompt line, clear it, print message
+                            # Then prompt's \n> will show blank line + new >
+                            sys.stdout.write("\033[A\r\033[K")
+                            sys.stdout.write("\033[90m(press again within 2 seconds to exit)\033[0m\n")
+                            sys.stdout.flush()
+                            continue
+                        ConsoleHelper.warning(self.console, "\nExiting...")
+                        break
 
                 # Reset terminal state after prompt_toolkit to ensure clean state for Rich output
                 # prompt_toolkit enables bracketed paste mode and application keypad mode
