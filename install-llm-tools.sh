@@ -1576,14 +1576,8 @@ if has_desktop_environment; then
         fi
     fi
 
-    # Install Handy (system-wide STT) via .deb package
-    install_github_deb_package "handy" "0.6.8" \
-        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
-        "handy" "x86_64"
-
-    # Configure Handy settings (first-time only)
-    if command -v handy &>/dev/null; then
-        python3 -c "
+    # Pre-configure Handy settings BEFORE installation (so it starts with correct settings)
+    python3 -c "
 import json
 from pathlib import Path
 
@@ -1620,12 +1614,17 @@ if changed:
 else:
     print('Handy already configured, skipping')
 "
-        # Start Handy if not already running (first-run only)
-        if ! pgrep -x handy >/dev/null 2>&1; then
-            log "Starting Handy..."
-            nohup handy >/dev/null 2>&1 &
-            disown
-        fi
+
+    # Install Handy (system-wide STT) via .deb package
+    install_github_deb_package "handy" "0.6.8" \
+        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
+        "handy" "x86_64"
+
+    # Start Handy if not already running
+    if command -v handy &>/dev/null && ! pgrep -x handy >/dev/null 2>&1; then
+        log "Starting Handy..."
+        nohup handy >/dev/null 2>&1 &
+        disown
     fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
