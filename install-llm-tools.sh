@@ -1500,11 +1500,16 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     rm -f "$HOME/.local/bin/llm-sidechat"
     rm -f "$HOME/.config/terminator/plugins/terminator_sidechat.py"
 
-    # Install Terminator assistant plugin
+    # Install Terminator assistant plugin (symlink to repository)
     mkdir -p "$HOME/.config/terminator/plugins"
-    cp "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
-       "$HOME/.config/terminator/plugins/terminator_assistant.py"
-    log "Terminator assistant plugin installed"
+    if [ -L "$HOME/.config/terminator/plugins/terminator_assistant.py" ]; then
+        log "Terminator assistant plugin already linked"
+    else
+        rm -f "$HOME/.config/terminator/plugins/terminator_assistant.py"
+        ln -sfn "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
+           "$HOME/.config/terminator/plugins/terminator_assistant.py"
+        log "Terminator assistant plugin installed (symlinked)"
+    fi
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 fi
 
@@ -1620,11 +1625,15 @@ if has_desktop_environment; then
             rm -rf "$OLD_LLM_ASK_AI_DIR"
         fi
 
-        # Copy espanso-llm package from repository
+        # Symlink espanso-llm package from repository
         ESPANSO_LLM_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm"
-        log "Installing espanso-llm package..."
-        rm -rf "$ESPANSO_LLM_DIR"
-        cp -r "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
+        if [ -L "$ESPANSO_LLM_DIR" ]; then
+            log "espanso-llm package already linked"
+        else
+            rm -rf "$ESPANSO_LLM_DIR"  # Remove if exists as directory
+            ln -sfn "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
+            log "Installed espanso-llm package (symlinked)"
+        fi
 
         # Register and start espanso service if newly installed
         if ! espanso status &>/dev/null; then
@@ -1633,6 +1642,34 @@ if has_desktop_environment; then
             espanso start || true
         fi
 
+    fi
+
+    # Install Ulauncher (application launcher)
+    install_github_deb_package "ulauncher" "5.15.15" \
+        "https://github.com/Ulauncher/Ulauncher/releases/download/{VERSION}/ulauncher_{VERSION}_all.deb" \
+        "" ""  # No process kill needed, architecture-independent
+
+    # Install ulauncher-llm extension (symlink to repository)
+    if command -v ulauncher &>/dev/null; then
+        ULAUNCHER_EXT_DIR="${HOME}/.local/share/ulauncher/extensions"
+        mkdir -p "$ULAUNCHER_EXT_DIR"
+
+        # Create symlink to repository extension
+        if [ -L "$ULAUNCHER_EXT_DIR/ulauncher-llm" ]; then
+            log "ulauncher-llm extension already linked"
+        else
+            rm -rf "$ULAUNCHER_EXT_DIR/ulauncher-llm"  # Remove if exists as directory
+            ln -sfn "$SCRIPT_DIR/ulauncher-llm" "$ULAUNCHER_EXT_DIR/ulauncher-llm"
+            log "Installed ulauncher-llm extension (symlinked)"
+        fi
+
+        # Enable and start Ulauncher service (user service)
+        if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
+            if ! systemctl --user is-active ulauncher.service &>/dev/null; then
+                log "Enabling Ulauncher service..."
+                systemctl --user enable --now ulauncher.service || warn "Failed to enable Ulauncher service"
+            fi
+        fi
     fi
 fi
 
@@ -1778,6 +1815,20 @@ else
     fi
 fi
 
+# Install/update claudo (Claude in Docker) if Docker is installed
+if command -v docker &> /dev/null; then
+    log "Installing/updating claudo (Claude Code in Docker)..."
+    mkdir -p "$HOME/.local/bin"
+    if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$HOME/.local/bin/claudo"; then
+        chmod +x "$HOME/.local/bin/claudo"
+        log "claudo installed to ~/.local/bin/claudo"
+    else
+        warn "Failed to download claudo"
+    fi
+else
+    log "Skipping claudo installation (Docker not installed)"
+fi
+
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
 if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
@@ -1841,6 +1892,7 @@ log "    - llm              Simon Willison's LLM CLI tool"
 log "    - llm-inlineassistant  Inline AI assistant (@ syntax, espanso triggers)"
 log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
 log "    - Claude Code      Anthropic's agentic coding CLI"
+log "    - claudo           Claude Code in Docker (if Docker installed)"
 log "    - Claude Code Router  Multi-provider proxy for Claude Code"
 log "    - Codex CLI        OpenAI's coding agent (if Azure configured)"
 log ""

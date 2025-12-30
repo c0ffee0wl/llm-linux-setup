@@ -1,0 +1,51 @@
+{
+    "required_api_version": "^2.0.0",
+    "name": "LLM Assistant",
+    "description": "AI assistant via llm-daemon. 'llm' for simple queries, '@' for full assistant with tools.",
+    "developer_name": "c0ffee0wl",
+    "icon": "images/icon.png",
+    "options": {
+        "query_debounce": 0.3
+    },
+    "preferences": [
+        {
+            "id": "kw_simple",
+            "type": "keyword",
+            "name": "Simple Query",
+            "description": "Quick AI query without tools",
+            "default_value": "llm"
+        },
+        {
+            "id": "kw_assistant",
+            "type": "keyword",
+            "name": "Assistant",
+            "description": "Full AI assistant with tools (execute code, search, etc.)",
+            "default_value": "@"
+        },
+        {
+            "id": "notify_mode",
+            "type": "select",
+            "name": "Long Query Behavior",
+            "description": "How to handle queries that take time",
+            "default_value": "stream",
+            "options": [
+                {"value": "stream", "text": "Stream in window"},
+                {"value": "notify", "text": "Close and notify when done"}
+            ]
+        },
+        {
+            "id": "wrap_width",
+            "type": "input",
+            "name": "Text Wrap Width",
+            "description": "Maximum characters per line (default: 43)",
+            "default_value": "43"
+        },
+        {
+            "id": "wide_script_factor",
+            "type": "input",
+            "name": "Wide Script Factor",
+            "description": "Width multiplier for CJK/Greek/Cyrillic (0.2-1.0, default: 0.5)",
+            "default_value": "0.5"
+        }
+    ]
+}

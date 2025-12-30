@@ -184,7 +184,7 @@ The script is organized into numbered phases:
 4. **LLM Templates**: Install/update custom templates from `llm-templates/` directory to `~/.config/io.datasette.llm/templates/`
 5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
 6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), argc (cargo), context script
-7. **Claude Code & Router**: Install Claude Code, Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
+7. **Claude Code & Router**: Install Claude Code, claudo (Claude in Docker, if Docker installed), Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
 
 ### Plugin Persistence with llm-uv-tool
 
@@ -451,6 +451,38 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 
 **When adding new models**: Follow the appropriate provider's format (Azure or Gemini).
 
+### Claudo: Claude Code in Docker
+
+**Claudo** is a lightweight wrapper that runs Claude Code inside a Docker container for isolation:
+
+**Purpose:**
+- Protects your system from potentially dangerous AI operations
+- Mounts your current directory for filesystem access
+- Maintains separate authentication via `~/.claudo` (isolated from host `~/.claude`)
+
+**Installation (Phase 7):**
+- Only installed when Docker is detected (`command -v docker`)
+- Downloaded from: `https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo`
+- Installed to: `~/.local/bin/claudo`
+
+**Usage:**
+```bash
+# Run Claude Code in container with current directory mounted
+claudo
+
+# With additional options
+claudo --no-sudo          # Run without sudo capabilities
+claudo --docker-socket    # Mount Docker socket for sibling containers
+```
+
+**Key Features:**
+- Uses pre-built Docker image: `ghcr.io/c0ffee0wl/claudo:latest`
+- Mounts current directory to `/workspaces/<dirname>`
+- Network restriction capability using httpjail
+- Named persistent containers support
+
+**Source:** https://github.com/c0ffee0wl/claudo
+
 ### Claude Code Router: Flexible Provider Support
 
 **Claude Code Router supports flexible provider configurations**:
@@ -625,6 +657,47 @@ The repository includes **espanso** text expander with LLM integration:
 - Check status: `espanso status`
 - View logs: `espanso log`
 - Reload config: `espanso restart`
+
+### Ulauncher LLM Extension
+
+The repository includes **ulauncher-llm**, a Ulauncher extension for accessing the llm-daemon:
+
+**Components**:
+- **Ulauncher**: Application launcher (installed via .deb)
+- **ulauncher-llm**: Extension connecting to llm-assistant daemon
+
+**Keywords**:
+| Keyword | Mode | Description |
+|---------|------|-------------|
+| `llm` | simple | Quick AI query without tools |
+| `@` | assistant | Full assistant with tools (execute code, search, etc.) |
+
+**Features**:
+- Streaming responses with live UI updates
+- Tool execution feedback (shows "[Executing Python...]", "[Searching Google...]")
+- Slash commands: `/new` (fresh conversation), `/status` (session info), `/help`
+- Persistent conversations within Ulauncher session
+- Copy options: Enter copies plain text, Alt+Enter copies markdown
+
+**Usage**:
+1. Launch Ulauncher (default: Ctrl+Space or Meta key)
+2. Type `llm what is 2+2?` for simple query
+3. Type `@ explain this error` for assistant mode with tools
+4. Press Enter to copy response to clipboard
+
+**Architecture**:
+- Connects to llm-assistant daemon via Unix socket
+- Uses GLib.idle_add for thread-safe UI updates
+- Session ID persists across queries for conversation continuity
+
+**Installation**:
+- Ulauncher deb package installed automatically when desktop environment detected
+- Extension symlinked to `~/.local/share/ulauncher/extensions/ulauncher-llm`
+
+**Troubleshooting**:
+- If extension doesn't appear: Restart Ulauncher
+- If daemon not running: Extension auto-starts it, or run `llm-assistant --daemon`
+- Check daemon status: `@ /status`
 
 ## Common Commands
 
@@ -856,6 +929,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/` - Shared INT8 Parakeet model (used by Handy and llm-assistant)
 - `~/.config/espanso/` - espanso text expander configuration directory
 - `~/.config/espanso/match/packages/espanso-llm/` - espanso LLM integration package
+- `~/.local/share/ulauncher/extensions/ulauncher-llm/` - Ulauncher LLM extension (symlinked to repository)
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure
@@ -867,6 +941,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `llm-assistant/` - Assistant components: llm_assistant/ package, terminator-assistant-plugin/, llm-tools-assistant/ (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `burr_workflow/` - YAML-based workflow engine built on Burr (see [`burr_workflow/CLAUDE.md`](burr_workflow/CLAUDE.md))
 - `llm-tools-context/` - Context extraction package (CLI + LLM tool) for terminal history
+- `ulauncher-llm/` - Ulauncher extension for llm-daemon access (simple + assistant modes)
 - `llm-templates/{llm,llm-code,llm-wut,llm-assistant,llm-assistant-report}.yaml` - Template sources installed to user config
 - `docs/MICROSOFT_MCP_SETUP.md` - Comprehensive guide for Codex CLI, Azure MCP, Lokka, and Microsoft Learn MCP
 - `.git/hooks/pre-commit` - Automatic TOC updater for README.md
