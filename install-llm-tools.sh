@@ -92,10 +92,15 @@ fi
 
 # Get llm config directory (cached for performance)
 # Usage: config_dir=$(get_llm_config_dir)
+# Note: Only caches successful results to avoid caching failures
 _LLM_CONFIG_DIR_CACHE=""
 get_llm_config_dir() {
     if [ -z "$_LLM_CONFIG_DIR_CACHE" ]; then
-        _LLM_CONFIG_DIR_CACHE="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+        local result
+        result="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+        if [ -n "$result" ]; then
+            _LLM_CONFIG_DIR_CACHE="$result"
+        fi
     fi
     echo "$_LLM_CONFIG_DIR_CACHE"
 }
@@ -545,8 +550,9 @@ EOF
         echo ""
         if ask_yes_no "Update Claude Code Router config.json? This will overwrite your version." N; then
             # Backup existing config
-            cp "$config_file" "$config_file.backup-$(date +%Y%m%d-%H%M%S)"
-            log "Backed up existing config to $config_file.backup-$(date +%Y%m%d-%H%M%S)"
+            local backup_timestamp=$(date +%Y%m%d-%H%M%S)
+            cp "$config_file" "$config_file.backup-$backup_timestamp"
+            log "Backed up existing config to $config_file.backup-$backup_timestamp"
             echo "$config_content" > "$config_file"
             store_checksum "ccr-config" "$config_file"
             log "Claude Code Router config.json updated"
@@ -669,19 +675,19 @@ install_or_upgrade_llm_plugin() {
 
     # Decision logic
     if [ "$is_installed" = "false" ]; then
-        # Not installed -> install
+        # Not installed -> install (use --upgrade to handle partial installs)
         log "Installing $plugin_name..."
-        command llm install "$plugin_source" 2>/dev/null || command llm install "$plugin_source"
+        command llm install "$plugin_source" --upgrade 2>/dev/null
 
     elif [[ "$plugin_source" =~ ^/ ]]; then
         # Local/editable package -> always reinstall with --upgrade to re-resolve dependencies
         log "Reinstalling local plugin $plugin_name..."
-        command llm install "$plugin_source" --upgrade 2>/dev/null || command llm install "$plugin_source"
+        command llm install "$plugin_source" --upgrade 2>/dev/null
 
     elif [[ "$plugin_source" =~ ^git[+] ]] && [ "$source_tracked" = "false" ]; then
         # Git source but URL not tracked -> migration needed
         log "Migrating $plugin_name to git source..."
-        command llm install "$plugin_source" --upgrade 2>/dev/null || command llm install "$plugin_source"
+        command llm install "$plugin_source" --upgrade 2>/dev/null
 
     else
         # Already installed with correct source -> skip
@@ -1758,7 +1764,7 @@ if 'show-indicator-icon' not in settings:
     print('Disabled Ulauncher indicator icon')
 if changed:
     settings_file.write_text(json.dumps(settings, indent=4))
-elif 'hotkey-show-app' in settings and 'show-indicator-icon' in settings:
+else:
     print('Ulauncher already configured, skipping')
 "
 
