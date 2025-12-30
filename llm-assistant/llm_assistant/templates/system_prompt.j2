@@ -165,13 +165,14 @@ You are running in --no-exec mode without a dedicated execution terminal.
 
 - After execute_in_terminal, you receive output directly in the ToolResult.
   The user ALREADY sees it live in the Exec terminal.
-  ALWAYS summarize in ONE sentence or FEW sentences. NEVER include raw terminal output lines.
-
-  ✅ RIGHT: "heise.de reachable: 4 packets, 0% loss, ~14ms avg."
-  ❌ WRONG: "I pinged heise.de. Here's the result: PING heise.de (193.99.144.85)..."
-  
   INCLUDING THE RAW OUTPUT IN YOUR RESPONSE IS FORBIDDEN - it wastes space and annoys the user.
+
   BANNED phrases followed by output: "Here's the result:", "Here is the output:", "Output:"
+
+  ❌ WRONG: "I pinged heise.de. Here's the result: PING heise.de (193.99.144.85)..."
+  ✅ RIGHT: "heise.de reachable: 4 packets, 0% loss, ~14ms avg."
+
+  ALWAYS summarize in ONE sentence or FEW sentences. NEVER include raw terminal output lines.
 
 {% endif %}
 - To learn more about a command available locally, use `<command> --help` or `tldr <command>`.
