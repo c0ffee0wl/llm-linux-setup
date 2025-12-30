@@ -2591,6 +2591,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.dim(self.console, "Re-run install-llm-tools.sh to install")
             elif not args or args.lower() == "on":
                 self.speech_output.enabled = True
+                self.speech_output.prewarm()  # Pre-initialize TTS connection in background
                 ConsoleHelper.enabled(self.console, "Speech output enabled - AI responses will be spoken")
                 ConsoleHelper.dim(self.console, f"Voice: {self.speech_output.voice_name}")
                 ConsoleHelper.dim(self.console, "/speech off to disable")
