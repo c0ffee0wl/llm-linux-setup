@@ -170,16 +170,19 @@ class SpeechOutput:
 
     Architecture for low-latency streaming:
     - Progressive chunks: Audio chunks queued as they arrive from API (not accumulated)
-    - Buffer threshold: Playback starts after ~200ms buffered (prevents underruns)
+    - Buffer threshold: Playback starts after ~100ms buffered (prevents underruns)
     - Single worker: Sequential synthesis maintains sentence order naturally
     - Continuous stream: sd.OutputStream with callback for gapless playback
     - Pre-warm: Connection can be established before first speech
     """
 
-    # Buffer threshold before starting playback (in samples at 24kHz)
-    # 200ms = 4800 samples - balances latency vs underrun risk
-    BUFFER_THRESHOLD_MS = 200
-    BUFFER_THRESHOLD_SAMPLES = int(24000 * BUFFER_THRESHOLD_MS / 1000)
+    # Audio configuration
+    SAMPLE_RATE = 24000  # Chirp3-HD native sample rate
+
+    # Buffer threshold before starting playback (in samples)
+    # 100ms = 2400 samples - lower latency while still preventing underruns
+    BUFFER_THRESHOLD_MS = 100
+    BUFFER_THRESHOLD_SAMPLES = int(SAMPLE_RATE * BUFFER_THRESHOLD_MS / 1000)
 
     def __init__(self, console):
         self.console = console
@@ -287,13 +290,17 @@ class SpeechOutput:
             if not clean_text:
                 return  # Nothing to synthesize
 
-            # Streaming synthesis config
+            # Streaming synthesis config with explicit audio parameters
             # Note: StreamingAudioConfig doesn't support speaking_rate - only
             # the non-streaming AudioConfig does. This is a Google API limitation.
             streaming_config = texttospeech.StreamingSynthesizeConfig(
                 voice=texttospeech.VoiceSelectionParams(
                     name=self.voice_name,
                     language_code=self.language_code,
+                ),
+                streaming_audio_config=texttospeech.StreamingAudioConfig(
+                    audio_encoding=texttospeech.AudioEncoding.PCM,  # PCM for streaming (not LINEAR16)
+                    sample_rate_hertz=self.SAMPLE_RATE,
                 )
             )
 
@@ -326,8 +333,10 @@ class SpeechOutput:
             if samples_queued > 0:
                 self._force_start_stream()
 
-        except Exception:
-            pass  # Silently skip on error - don't block subsequent sentences
+        except Exception as e:
+            # Log error but don't block subsequent sentences
+            import logging
+            logging.debug(f"TTS synthesis failed: {e}")
 
     def _maybe_start_stream(self, samples_queued: int):
         """Start the output stream once buffer threshold is reached."""
@@ -339,7 +348,7 @@ class SpeechOutput:
         with self._stream_lock:
             if self._stream is None and not self._stopped:
                 self._stream = sd.OutputStream(
-                    samplerate=24000,
+                    samplerate=self.SAMPLE_RATE,
                     channels=1,
                     dtype='float32',
                     callback=self._audio_callback,

@@ -1676,12 +1676,19 @@ if settings_file.exists():
 else:
     settings = {}
 
+changed = False
 if 'hotkey-show-app' not in settings:
     settings['hotkey-show-app'] = '<Super>space'
-    settings_file.write_text(json.dumps(settings, indent=4))
+    changed = True
     print('Configured Ulauncher hotkey: Super+Space')
-else:
-    print('Ulauncher hotkey already configured, skipping')
+if 'show-indicator-icon' not in settings:
+    settings['show-indicator-icon'] = False
+    changed = True
+    print('Disabled Ulauncher indicator icon')
+if changed:
+    settings_file.write_text(json.dumps(settings, indent=4))
+elif 'hotkey-show-app' in settings and 'show-indicator-icon' in settings:
+    print('Ulauncher already configured, skipping')
 "
 
         # Enable and start Ulauncher service (user service)
