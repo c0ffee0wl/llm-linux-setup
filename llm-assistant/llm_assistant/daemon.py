@@ -179,7 +179,7 @@ class AssistantDaemon:
             self.worker_last_activity[tid] = datetime.now()
 
         # Put request in queue and wait for completion
-        response_future: asyncio.Future = asyncio.get_event_loop().create_future()
+        response_future: asyncio.Future = asyncio.get_running_loop().create_future()
         await self.request_queues[tid].put((request, writer, response_future))
 
         # Wait for the worker to complete processing
@@ -872,14 +872,16 @@ class AssistantDaemon:
         # Ensure socket directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Start server
-        self.server = await asyncio.start_unix_server(
-            self.handle_client,
-            path=str(self.socket_path)
-        )
-
-        # Set socket permissions (user only)
-        os.chmod(self.socket_path, 0o600)
+        # Start server with secure permissions from the start
+        # Use umask to ensure socket is created with 0o600 permissions (no race condition)
+        old_umask = os.umask(0o177)  # 0o777 - 0o177 = 0o600
+        try:
+            self.server = await asyncio.start_unix_server(
+                self.handle_client,
+                path=str(self.socket_path)
+            )
+        finally:
+            os.umask(old_umask)  # Restore original umask
 
         if self.foreground:
             self.console.print(
