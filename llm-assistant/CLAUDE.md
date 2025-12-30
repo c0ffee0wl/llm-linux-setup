@@ -89,7 +89,7 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - **User-defined goals**: `/watch detect security issues`
 - **Proactive suggestions**: AI only responds when actionable
 - **Background asyncio**: Non-blocking monitoring loop
-- **Fixed 5-second interval**: Polls every 5 seconds
+- **Event-driven monitoring**: Wakes immediately on terminal content changes via D-Bus signals; 5-second timeout as fallback
 - **Exec terminal state**: Reports if Exec terminal is idle or running a command
 
 **Intelligent Change Detection** (TmuxAI-inspired):
