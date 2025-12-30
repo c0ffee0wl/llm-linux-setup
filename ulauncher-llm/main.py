@@ -19,7 +19,7 @@ from ulauncher.api.shared.action.HideWindowAction import HideWindowAction
 from ulauncher.api.shared.action.SetUserQueryAction import SetUserQueryAction
 
 from streaming import query_daemon_sync, execute_slash_command_sync
-from helpers import strip_markdown_for_copy, truncate_query, format_display_text, extract_code_blocks, format_for_display
+from helpers import strip_markdown_for_copy, truncate_query, extract_code_blocks, format_for_display, get_clipboard_text
 
 
 class LLMExtension(Extension):
@@ -54,9 +54,15 @@ class KeywordQueryListener(EventListener):
         keyword = event.get_keyword()
         query = event.get_argument()
 
-        # Determine mode from keyword
+        # Get all keyword preferences
         simple_kw = extension.preferences.get('kw_simple', 'llm')
-        mode = "simple" if keyword == simple_kw else "assistant"
+        assistant_kw = extension.preferences.get('kw_assistant', '@')
+        simple_clip_kw = extension.preferences.get('kw_simple_clip', 'llmc')
+        assistant_clip_kw = extension.preferences.get('kw_assistant_clip', '@c')
+
+        # Determine mode and clipboard inclusion from keyword
+        include_clipboard = keyword in (simple_clip_kw, assistant_clip_kw)
+        mode = "simple" if keyword in (simple_kw, simple_clip_kw) else "assistant"
 
         # Empty query: show help
         if not query or not query.strip():
@@ -72,16 +78,25 @@ class KeywordQueryListener(EventListener):
             # Unknown slash command - fall through to treat as query
 
         # Show query preview - actual query sent on Enter
+        if include_clipboard:
+            clipboard_text = get_clipboard_text()
+            clipboard_preview = f" (+{len(clipboard_text)} chars)" if clipboard_text else " (empty)"
+            description = f"Press Enter to send with clipboard{clipboard_preview}"
+        else:
+            clipboard_text = ""
+            description = "Press Enter to send"
+
         return RenderResultListAction([
             ExtensionResultItem(
                 icon='images/icon.png',
                 name=f"Ask: {truncate_query(query, 70)}",
-                description="Press Enter to send",
+                description=description,
                 highlightable=False,
                 on_enter=ExtensionCustomAction({
                     'action': 'query',
                     'query': query,
-                    'mode': mode
+                    'mode': mode,
+                    'clipboard': clipboard_text
                 }, keep_app_open=True)
             )
         ])
@@ -304,6 +319,11 @@ class ItemEnterListener(EventListener):
             # Execute the actual query synchronously (blocking)
             query = data.get('query', '')
             mode = data.get('mode', 'assistant')
+            clipboard = data.get('clipboard', '')
+
+            # Prepend clipboard content if provided
+            if clipboard:
+                query = f"[Clipboard content]\n{clipboard}\n\n[Question]\n{query}"
 
             # Use synchronous query - blocks until response is complete
             text, error = query_daemon_sync(
@@ -374,7 +394,7 @@ class ItemEnterListener(EventListener):
                 on_enter=ExtensionCustomAction({
                     'action': 'continue',
                     'mode': mode
-                })
+                }, keep_app_open=True)
             ))
 
             return RenderResultListAction(items)

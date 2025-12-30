@@ -5,57 +5,9 @@ Provides text formatting, tool display names, and utility functions.
 
 import re
 
-
-# Tool display names: tool_name -> friendly action verb
-TOOL_DISPLAY = {
-    'execute_python': 'Executing Python',
-    'fetch_url': 'Fetching URL',
-    'search_google': 'Searching Google',
-    'load_github': 'Loading GitHub repo',
-    'load_pdf': 'Extracting PDF',
-    'load_yt': 'Loading YouTube transcript',
-    'prompt_fabric': 'Running Fabric pattern',
-    'suggest_command': 'Preparing command',
-    'context': 'Reading terminal',
-    'sandboxed_shell': 'Running shell',
-    # MCP tools
-    'microsoft_docs_search': 'Searching Microsoft docs',
-    'microsoft_docs_fetch': 'Fetching Microsoft doc',
-    'microsoft_code_sample_search': 'Searching code samples',
-    'search_papers': 'Searching papers',
-    'download_paper': 'Downloading paper',
-    'read_paper': 'Reading paper',
-}
-
-
-def format_display_text(text: str, max_len: int = 80) -> str:
-    """Extract first meaningful line for display title.
-
-    Args:
-        text: The full response text
-        max_len: Maximum length for display title
-
-    Returns:
-        First meaningful line, truncated if needed
-    """
-    if not text:
-        return "Response"
-
-    # Strip markdown code fences
-    text = re.sub(r'```\w*\n?', '', text)
-
-    # Get first non-empty line
-    for line in text.split('\n'):
-        line = line.strip()
-        # Remove heading markers
-        line = line.lstrip('#').strip()
-        if line and not line.startswith('```'):
-            if len(line) > max_len:
-                return line[:max_len - 3] + '...'
-            return line
-
-    # Fallback to truncated raw text
-    return text[:max_len] if text else "Response"
+import gi
+gi.require_version('Gtk', '3.0')
+from gi.repository import Gtk, Gdk
 
 
 def strip_markdown_for_copy(text: str) -> str:
@@ -104,18 +56,6 @@ def truncate_query(query: str, max_len: int = 60) -> str:
     if len(query) > max_len:
         return query[:max_len - 3] + '...'
     return query
-
-
-def get_tool_action(tool_name: str) -> str:
-    """Get friendly action verb for a tool.
-
-    Args:
-        tool_name: Internal tool name
-
-    Returns:
-        Human-readable action verb
-    """
-    return TOOL_DISPLAY.get(tool_name, f'Running {tool_name}')
 
 
 def extract_code_blocks(text: str) -> list:
@@ -247,3 +187,17 @@ def format_for_display(text: str, max_width: int = 43, wide_script_factor: float
         return _wrap_by_words(text, adjusted_width)
     else:
         return _wrap_by_chars(text, adjusted_width)
+
+
+def get_clipboard_text() -> str:
+    """Get current clipboard text content.
+
+    Returns:
+        Clipboard text, or empty string if unavailable
+    """
+    try:
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        text = clipboard.wait_for_text()
+        return text if text else ""
+    except Exception:
+        return ""

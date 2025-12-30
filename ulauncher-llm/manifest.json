@@ -23,15 +23,18 @@
             "default_value": "@"
         },
         {
-            "id": "notify_mode",
-            "type": "select",
-            "name": "Long Query Behavior",
-            "description": "How to handle queries that take time",
-            "default_value": "stream",
-            "options": [
-                {"value": "stream", "text": "Stream in window"},
-                {"value": "notify", "text": "Close and notify when done"}
-            ]
+            "id": "kw_simple_clip",
+            "type": "keyword",
+            "name": "Simple + Clipboard",
+            "description": "Quick AI query with clipboard content as context",
+            "default_value": "llmc"
+        },
+        {
+            "id": "kw_assistant_clip",
+            "type": "keyword",
+            "name": "Assistant + Clipboard",
+            "description": "Full assistant with clipboard content as context",
+            "default_value": "@c"
         },
         {
             "id": "wrap_width",

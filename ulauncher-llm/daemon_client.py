@@ -107,29 +107,3 @@ def ensure_daemon(model: str = None) -> bool:
     if is_daemon_running():
         return True
     return start_daemon(model)
-
-
-def connect_to_daemon(timeout: float = REQUEST_TIMEOUT) -> socket.socket:
-    """Connect to the daemon socket.
-
-    Args:
-        timeout: Socket timeout in seconds
-
-    Returns:
-        Connected socket object
-
-    Raises:
-        ConnectionError: If daemon is not running or connection fails
-    """
-    socket_path = get_socket_path()
-
-    if not socket_path.exists():
-        raise ConnectionError("Daemon socket does not exist")
-
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(timeout)
-        sock.connect(str(socket_path))
-        return sock
-    except (socket.error, OSError) as e:
-        raise ConnectionError(f"Failed to connect to daemon: {e}")
