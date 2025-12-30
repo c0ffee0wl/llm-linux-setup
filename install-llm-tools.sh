@@ -1581,6 +1581,47 @@ if has_desktop_environment; then
         "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
         "handy" "x86_64"
 
+    # Configure Handy settings (first-time only)
+    if command -v handy &>/dev/null; then
+        python3 -c "
+import json
+from pathlib import Path
+
+settings_file = Path.home() / '.local/share/com.pais.handy/settings_store.json'
+settings_file.parent.mkdir(parents=True, exist_ok=True)
+
+if settings_file.exists():
+    data = json.loads(settings_file.read_text())
+    settings = data.get('settings', {})
+else:
+    data = {'settings': {}}
+    settings = data['settings']
+
+changed = False
+if 'update_checks_enabled' not in settings:
+    settings['update_checks_enabled'] = False
+    changed = True
+    print('Disabled Handy update checks')
+if 'push_to_talk' not in settings:
+    settings['push_to_talk'] = False
+    changed = True
+    print('Disabled Handy push-to-talk mode')
+if 'start_hidden' not in settings:
+    settings['start_hidden'] = True
+    changed = True
+    print('Enabled Handy start hidden')
+if 'autostart_enabled' not in settings:
+    settings['autostart_enabled'] = True
+    changed = True
+    print('Enabled Handy autostart')
+if changed:
+    data['settings'] = settings
+    settings_file.write_text(json.dumps(data, indent=2))
+else:
+    print('Handy already configured, skipping')
+"
+    fi
+
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if command llm keys get gemini &>/dev/null; then
         if command -v imagemage &>/dev/null; then
