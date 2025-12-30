@@ -16,6 +16,7 @@ import asyncio
 import json
 import os
 import signal
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -69,13 +70,15 @@ class SessionState:
 class AssistantDaemon:
     """Unix socket server for llm-assistant daemon mode."""
 
-    def __init__(self, model_id: Optional[str] = None, debug: bool = False):
+    def __init__(self, model_id: Optional[str] = None, debug: bool = False, foreground: bool = False):
         self.socket_path = get_socket_path()
         self.model_id = model_id
         self.debug = debug
+        self.foreground = foreground
         self.sessions: Dict[str, SessionState] = {}
         self.server: Optional[asyncio.AbstractServer] = None
         self.last_activity = datetime.now()
+        self.start_time = datetime.now()
         self.running = True
         self.console = Console(stderr=True)
 
@@ -86,6 +89,20 @@ class AssistantDaemon:
 
         # Logging enabled check
         self.logging_enabled = logs_on()
+
+        # Request counter for foreground logging
+        self.request_count = 0
+
+    def _log_request(self, tid: str, direction: str, info: str, duration: float = None):
+        """Log request activity in foreground mode."""
+        if not self.foreground:
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        arrow = "→" if direction == "in" else "←"
+        if duration is not None:
+            self.console.print(f"[dim]{timestamp}[/] {tid} {arrow} {info} [dim]({duration:.1f}s)[/]")
+        else:
+            self.console.print(f"[dim]{timestamp}[/] {tid} {arrow} {info}")
 
     def get_session_state(self, terminal_id: str, session_log: Optional[str] = None) -> SessionState:
         """Get or create session state for terminal."""
@@ -118,6 +135,14 @@ class AssistantDaemon:
 
             cmd = request.get('cmd', '')
             tid = request.get('tid', 'unknown')
+
+            # Log incoming request in foreground mode
+            if cmd == 'query':
+                mode = request.get('mode', 'assistant')
+                query = request.get('q', '')[:50]
+                self._log_request(tid, "in", f"query ({mode}) \"{query}{'...' if len(request.get('q', '')) > 50 else ''}\"")
+            elif cmd != 'complete':  # Don't log tab completions (too noisy)
+                self._log_request(tid, "in", cmd)
 
             # Handle commands
             if cmd == 'query':
@@ -199,6 +224,8 @@ class AssistantDaemon:
 
     async def _process_query(self, tid: str, request: dict, writer: asyncio.StreamWriter):
         """Process a query request with NDJSON streaming."""
+        start_time = time.time()
+
         query = request.get('q', '').strip()
         session_log = request.get('log', '')
         mode = request.get('mode', 'assistant')
@@ -322,9 +349,13 @@ class AssistantDaemon:
                     followup_response.log_to_db(db)
 
             # Signal completion
+            duration = time.time() - start_time
+            self._log_request(tid, "out", "done", duration)
             await self._emit(writer, {"type": "done"})
 
         except Exception as e:
+            duration = time.time() - start_time
+            self._log_request(tid, "out", f"error: {str(e)[:50]}", duration)
             await self._emit_error(writer, ErrorCode.MODEL_ERROR, str(e))
 
     async def _handle_slash_command(
@@ -812,7 +843,14 @@ class AssistantDaemon:
         await self._emit(writer, {"type": "done"})
 
     async def idle_checker(self):
-        """Check for idle timeout and shutdown if exceeded."""
+        """Check for idle timeout and shutdown if exceeded.
+
+        Disabled in foreground mode (user is watching, Ctrl+C to stop).
+        """
+        if self.foreground:
+            # No idle timeout in foreground mode
+            return
+
         while self.running:
             await asyncio.sleep(60)  # Check every minute
 
@@ -843,10 +881,18 @@ class AssistantDaemon:
         # Set socket permissions (user only)
         os.chmod(self.socket_path, 0o600)
 
-        self.console.print(
-            f"[dim]llm-assistant daemon started (socket: {self.socket_path})[/]",
-            highlight=False
-        )
+        if self.foreground:
+            self.console.print(
+                f"llm-assistant daemon started [dim](socket: {self.socket_path})[/]",
+                highlight=False
+            )
+            self.console.print("[dim]Press Ctrl+C to stop[/]", highlight=False)
+            self.console.print()
+        else:
+            self.console.print(
+                f"[dim]llm-assistant daemon started (socket: {self.socket_path})[/]",
+                highlight=False
+            )
 
         # Start idle checker
         idle_task = asyncio.create_task(self.idle_checker())
@@ -871,9 +917,15 @@ class AssistantDaemon:
             self.console.print("[dim]llm-assistant daemon stopped[/]", highlight=False)
 
 
-def main(model_id: Optional[str] = None, debug: bool = False):
-    """Entry point for llm-assistant --daemon."""
-    daemon = AssistantDaemon(model_id=model_id, debug=debug)
+def main(model_id: Optional[str] = None, debug: bool = False, foreground: bool = False):
+    """Entry point for llm-assistant --daemon.
+
+    Args:
+        model_id: LLM model to use
+        debug: Enable debug output
+        foreground: Run in foreground with request logging (no idle timeout)
+    """
+    daemon = AssistantDaemon(model_id=model_id, debug=debug, foreground=foreground)
 
     # Handle signals
     def signal_handler(sig, frame):
@@ -891,9 +943,10 @@ def main(model_id: Optional[str] = None, debug: bool = False):
 @click.command()
 @click.option('-m', '--model', 'model_id', help='Model to use')
 @click.option('--debug', is_flag=True, help='Enable debug output')
-def daemon_cli(model_id: Optional[str], debug: bool):
+@click.option('--foreground', is_flag=True, help='Run in foreground with request logging')
+def daemon_cli(model_id: Optional[str], debug: bool, foreground: bool):
     """llm-assistant daemon server."""
-    main(model_id=model_id, debug=debug)
+    main(model_id=model_id, debug=debug, foreground=foreground)
 
 
 if __name__ == "__main__":

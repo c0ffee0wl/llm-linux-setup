@@ -50,6 +50,8 @@ def resolve_model_query(queries: List[str]) -> Optional[str]:
               help='Run without exec terminal (works in any terminal, uses asciinema context)')
 @click.option('--daemon', is_flag=True,
               help='Run as daemon server for headless clients (Unix socket)')
+@click.option('--foreground', is_flag=True,
+              help='Run daemon in foreground with request logging (for debugging)')
 def main(
     model: Optional[str],
     query: Tuple[str, ...],
@@ -61,6 +63,7 @@ def main(
     agent: bool,
     no_exec: bool,
     daemon: bool,
+    foreground: bool,
 ):
     """Terminator LLM Assistant - Terminal assistant for pair programming."""
     # Resolve model: -m flag > query > default
@@ -72,9 +75,9 @@ def main(
             raise SystemExit(1)
 
     # Daemon mode: start the socket server instead of interactive session
-    if daemon:
+    if daemon or foreground:
         from .daemon import main as daemon_main
-        daemon_main(model_id=model_name, debug=debug)
+        daemon_main(model_id=model_name, debug=debug, foreground=foreground)
         return
 
     # Import session here to avoid loading audio dependencies in daemon mode
