@@ -9,6 +9,7 @@ Markdown stripping functions (strip_markdown, strip_markdown_for_tts)
 are imported from llm_tools_core and re-exported here for backward compatibility.
 """
 
+import os
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
