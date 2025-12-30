@@ -716,6 +716,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         accumulated_text = ""
         sentence_buffer = SentenceBuffer() if tts_enabled else None
 
+        # Clear any pending audio from previous response before starting new one
+        if tts_enabled and self.speech_output:
+            self.speech_output.stop()
+
         # Use transient=True initially, switch to False only if we have content
         with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=True) as live:
             for chunk in response:

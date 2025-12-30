@@ -248,6 +248,8 @@ class SpeechOutput:
                 return  # Nothing to synthesize
 
             # Streaming synthesis config
+            # Note: StreamingAudioConfig doesn't support speaking_rate - only
+            # the non-streaming AudioConfig does. This is a Google API limitation.
             streaming_config = texttospeech.StreamingSynthesizeConfig(
                 voice=texttospeech.VoiceSelectionParams(
                     name=self.voice_name,
