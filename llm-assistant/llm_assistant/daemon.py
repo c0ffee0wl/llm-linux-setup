@@ -14,7 +14,6 @@ Architecture:
 
 import asyncio
 import json
-import os
 import signal
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -27,6 +26,17 @@ from llm import ToolResult
 from llm.migrations import migrate
 from rich.console import Console
 
+# Import shared utilities from llm_tools_core
+from llm_tools_core import (
+    get_socket_path,
+    ensure_socket_dir,
+    build_simple_system_prompt,
+    ErrorCode,
+    IDLE_TIMEOUT_MINUTES,
+    WORKER_IDLE_MINUTES,
+    MAX_TOOL_ITERATIONS,
+)
+
 from .headless_session import (
     HeadlessSession,
     get_headless_tools,
@@ -37,57 +47,9 @@ from .headless_session import (
 from .utils import get_config_dir, logs_on
 
 
-def get_socket_path() -> Path:
-    """Get the daemon socket path."""
-    uid = os.getuid()
-    return Path(f"/tmp/llm-assistant-{uid}/daemon.sock")
-
-
 def get_logs_db_path() -> Path:
     """Get the database path for conversation logs."""
     return get_config_dir() / "logs-daemon.db"
-
-
-def build_simple_system_prompt() -> str:
-    """Build the system prompt for simple mode with current date/time.
-
-    This matches the prompt used by espanso-llm for consistency.
-    """
-    now = datetime.now()
-    context = (
-        f"Current date: {now.strftime('%Y-%m-%d')}\n"
-        f"Current time: {now.strftime('%H:%M')}"
-    )
-
-    return (
-        "You are operating in a non-interactive mode.\n"
-        "Do NOT use introductory phrases, greetings, or opening messages.\n"
-        "You CANNOT ask the user for clarification, additional details, or preferences.\n"
-        "When given a request, make reasonable assumptions based on the context and provide a complete, helpful response immediately.\n"
-        "If a request is ambiguous, choose the most common or logical interpretation and proceed accordingly.\n"
-        "Always deliver a substantive response rather than asking questions.\n"
-        "NEVER ask the user for follow-up questions or clarifications.\n\n"
-        f"Context:\n{context}"
-    )
-
-
-# Error codes for structured error responses
-class ErrorCode:
-    EMPTY_QUERY = "EMPTY_QUERY"
-    MODEL_ERROR = "MODEL_ERROR"
-    TOOL_ERROR = "TOOL_ERROR"
-    TIMEOUT = "TIMEOUT"
-    PARSE_ERROR = "PARSE_ERROR"
-    INTERNAL = "INTERNAL"
-    INVALID_MODE = "INVALID_MODE"
-
-
-# Idle timeout before daemon auto-terminates
-IDLE_TIMEOUT_MINUTES = 30
-# Worker idle timeout before cleanup (separate from daemon)
-WORKER_IDLE_MINUTES = 5
-# Maximum tool call iterations
-MAX_TOOL_ITERATIONS = 10
 
 
 class SessionState:

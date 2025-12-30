@@ -596,28 +596,29 @@ The repository includes **espanso** text expander with LLM integration:
 
 **Components**:
 - **espanso**: Cross-platform text expander (installed via .deb, x86_64 only)
-- **espanso-llm-ask-ai**: LLM integration package for AI-powered text expansion
+- **espanso-llm**: LLM integration package using llm-assistant daemon
 
 **Installation**:
 - Only installed when a desktop environment is detected (`has_desktop_environment`)
 - Automatically selects X11 or Wayland variant based on `$XDG_SESSION_TYPE`
 - Service registered and started automatically after installation
 
+**Triggers**:
+| Trigger | Mode | Clipboard | Description |
+|---------|------|-----------|-------------|
+| `:llm:` | simple | no | Quick query without tools |
+| `:llmc:` | simple | yes | Simple mode with clipboard context |
+| `:@:` | assistant | no | Full inline-assistant with tools |
+| `:@c:` | assistant | yes | Inline-assistant with clipboard context |
+
 **Usage**:
-- Type `:ask:ai` in any text field to trigger the LLM prompt
+- Type a trigger (e.g., `:@:`) in any text field
 - Enter your question in the popup dialog
 - The AI response replaces the trigger text
 
-**Configuration** (`~/.config/espanso/match/packages/espanso-llm-ask-ai/.env`):
-```
-API_KEY=sk-placeholder
-BASE_URL=http://localhost:11435/v1
-MODEL=gpt-4.1-mini
-```
-
 **Requirements**:
-- llm-server running on port 11435 (`llm-server --port 11435`)
-- Python packages: `python3-openai`, `python3-dotenv`, `python-is-python3` (installed via apt)
+- llm-assistant daemon running (auto-started on first use)
+- Uses Unix socket communication (no HTTP server needed)
 
 **Troubleshooting**:
 - If espanso doesn't start: `espanso service register && espanso start`
@@ -854,7 +855,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `$SESSION_LOG_DIR/*.cast` - Session recordings (default: `/tmp/session_logs/asciinema/`)
 - `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/` - Shared INT8 Parakeet model (used by Handy and llm-assistant)
 - `~/.config/espanso/` - espanso text expander configuration directory
-- `~/.config/espanso/match/packages/espanso-llm-ask-ai/.env` - espanso LLM integration config (API endpoint, model)
+- `~/.config/espanso/match/packages/espanso-llm/` - espanso LLM integration package
 - `~/.config/wireplumber/wireplumber.conf.d/50-alsa-config.conf` - PipeWire VM audio fix (auto-generated in VMs)
 
 ### Repository Structure

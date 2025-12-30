@@ -1,11 +1,15 @@
-"""
-System detection utilities for LLM command-line tools.
+"""System detection utilities for LLM command-line tools.
 
 Provides cross-platform detection of:
 - Shell type and version (bash, zsh, fish, PowerShell, cmd)
 - Operating system with Linux distribution name
 - Hybrid environments (WSL, Git Bash, Cygwin)
 - Available package managers
+
+Used by:
+- llm-assistant (system prompt context)
+- llm-inlineassistant (system prompt context)
+- Any tool that needs system-aware prompts
 
 Functions:
     detect_shell() - Returns (shell_name, version) tuple
@@ -15,15 +19,24 @@ Functions:
     get_system_context() - Returns dict with all detection results
 """
 
-__version__ = "1.0"
-
 import os
 import platform
 import shutil
+from typing import Dict, List, Tuple
 
 
-def detect_shell():
-    """Detect current shell cross-platform (using env vars only)"""
+def detect_shell() -> Tuple[str, str]:
+    """Detect current shell cross-platform (using env vars only).
+
+    Returns:
+        Tuple of (shell_name, version). Version may be empty string if unknown.
+
+    Examples:
+        >>> detect_shell()  # On Linux with bash
+        ('bash', '')
+        >>> detect_shell()  # On Windows with PowerShell 7
+        ('pwsh', '7')
+    """
     system = platform.system()
 
     # Check for PowerShell first (cross-platform)
@@ -67,8 +80,18 @@ def detect_shell():
     return shell_name, ""
 
 
-def detect_os():
-    """Detect OS - simplified version info"""
+def detect_os() -> str:
+    """Detect OS - simplified version info.
+
+    Returns:
+        OS string like "Linux (Ubuntu)", "macOS", or "Windows".
+
+    Examples:
+        >>> detect_os()  # On Ubuntu
+        'Linux (Ubuntu)'
+        >>> detect_os()  # On macOS
+        'macOS'
+    """
     os_type = platform.system()
 
     if os_type == "Linux":
@@ -79,7 +102,7 @@ def detect_os():
                     if line.startswith('NAME='):
                         distro = line.split('=')[1].strip().strip('"')
                         return f"Linux ({distro})"
-        except:
+        except Exception:
             pass
         return "Linux"
 
@@ -95,8 +118,18 @@ def detect_os():
         return os_type
 
 
-def detect_environment():
-    """Detect hybrid environments (WSL, Git Bash, etc.)"""
+def detect_environment() -> str:
+    """Detect hybrid environments (WSL, Git Bash, etc.).
+
+    Returns:
+        One of: "native", "wsl", "gitbash", "cygwin"
+
+    Examples:
+        >>> detect_environment()  # On native Linux
+        'native'
+        >>> detect_environment()  # On WSL
+        'wsl'
+    """
     os_name = platform.system()
 
     # WSL detection
@@ -107,7 +140,7 @@ def detect_environment():
             with open('/proc/version', 'r') as f:
                 if 'microsoft' in f.read().lower():
                     return "wsl"
-        except:
+        except Exception:
             pass
 
     # Git Bash / MSYS
@@ -121,28 +154,53 @@ def detect_environment():
     return "native"
 
 
-def detect_package_managers():
-    """Detect available package managers"""
+def detect_package_managers() -> List[str]:
+    """Detect available package managers.
+
+    Checks for common package managers across different systems:
+    - Language: uv, pipx, pip, npm, cargo, gem
+    - Linux: apt, dnf, yum, pacman, zypper, apk, snap, flatpak
+    - macOS: brew, port
+    - Windows: choco, scoop, winget
+    - Alternative: nix, guix
+
+    Returns:
+        List of available package manager names.
+
+    Examples:
+        >>> detect_package_managers()  # On Ubuntu with Python tools
+        ['uv', 'pipx', 'pip', 'npm', 'apt', 'snap']
+    """
     managers = []
 
     # Check common package managers
     for pm in ['uv', 'pipx', 'pip', 'npm', 'cargo', 'gem',  # Language
-                'apt', 'dnf', 'yum', 'pacman', 'zypper', 'apk',  # Linux
-                'snap', 'flatpak',  # Universal Linux
-                'brew', 'port',  # macOS
-                'choco', 'scoop', 'winget',  # Windows
-                'nix', 'guix']:  # Alternative
+               'apt', 'dnf', 'yum', 'pacman', 'zypper', 'apk',  # Linux
+               'snap', 'flatpak',  # Universal Linux
+               'brew', 'port',  # macOS
+               'choco', 'scoop', 'winget',  # Windows
+               'nix', 'guix']:  # Alternative
         if shutil.which(pm):
             managers.append(pm)
 
     return managers
 
 
-def get_system_context():
+def get_system_context() -> Dict[str, any]:
     """Get all system detection results as a dictionary.
 
+    Combines all detection functions into a single dict for easy
+    inclusion in system prompts.
+
     Returns:
-        dict with keys: shell, shell_version, os, environment, package_managers
+        Dict with keys: shell, shell_version, os, environment, package_managers
+
+    Examples:
+        >>> ctx = get_system_context()
+        >>> ctx['os']
+        'Linux (Ubuntu)'
+        >>> ctx['shell']
+        'bash'
     """
     shell_name, shell_version = detect_shell()
     return {

@@ -80,7 +80,7 @@ __llm_smart_at() {
     # @ at line start - enter LLM mode
     BUFFER="@ "
     CURSOR=2
-    zle -M "LLM mode: Tab for completions, Enter to send"
+    zle -M "LLM inline-assistant: Tab for completions, Enter to send"
   else
     # @ elsewhere - insert literal @
     BUFFER="${before}@${BUFFER:$CURSOR}"

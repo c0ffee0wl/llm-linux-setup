@@ -2,13 +2,11 @@
 
 This module contains all static configuration data including:
 - Slash command definitions
-- Model context limits
-- TUI command detection
+- Model context limits (imported from llm_tools_core)
+- TUI command detection (imported from llm_tools_core)
 - Tool plugin configuration
 - Display configuration for external tools
 """
-
-import os
 
 
 # Slash command definitions for tab completion
@@ -70,43 +68,8 @@ HEADLESS_AVAILABLE_COMMANDS = {
 }
 
 
-# TUI commands that require screenshot capture instead of text capture
-TUI_COMMANDS = {
-    # System monitors
-    'htop', 'top', 'btop', 'gtop', 'glances', 'atop', 'nmon',
-    'iotop', 'iftop', 'nethogs', 'bmon', 'vnstat', 'procs',
-    # Editors
-    'vim', 'vi', 'nvim', 'nano', 'emacs', 'helix', 'micro',
-    'joe', 'pico', 'jed', 'ne', 'mg', 'kakoune', 'kak',
-    # Pagers
-    'less', 'more', 'most', 'bat',
-    # File managers
-    'mc', 'ranger', 'nnn', 'lf', 'vifm', 'fff', 'broot',
-    'ncdu', 'duf', 'dust',
-    # Terminal multiplexers
-    'tmux', 'screen', 'byobu', 'zellij',
-    # Git TUIs
-    'tig', 'lazygit', 'gitui',
-    # Container/K8s TUIs
-    'k9s', 'lazydocker', 'dive', 'ctop',
-    # Fuzzy finders (when run standalone)
-    'fzf', 'sk', 'peco',
-    # Periodic execution
-    'watch',
-    # Audio
-    'alsamixer', 'pulsemixer',
-    # Email/IRC
-    'mutt', 'neomutt', 'aerc',
-    'weechat', 'irssi',
-    # Music players
-    'cmus', 'ncmpcpp', 'moc', 'mocp',
-    # Web browsers
-    'lynx', 'w3m', 'links', 'elinks',
-    # Task management
-    'taskwarrior-tui', 'taskell',
-    # Calendar
-    'calcurse', 'khal',
-}
+# TUI commands - imported from shared library
+from llm_tools_core import TUI_COMMANDS, is_tui_command
 
 
 # External tool plugins that are always available
@@ -180,84 +143,10 @@ EXTERNAL_TOOL_DISPLAY = {
 }
 
 
-# Model-specific context limits (input tokens)
-# Based on provider documentation as of 2025-12
-MODEL_CONTEXT_LIMITS = {
-    # Azure OpenAI / OpenAI - GPT-4.1 series (1M context)
-    "gpt-4.1": 1000000,
-    "gpt-4.1-mini": 1000000,
-    "gpt-4.1-nano": 1000000,
-
-    # Azure OpenAI / OpenAI - GPT-4o series (128k context)
-    "gpt-4o": 128000,
-    "gpt-4o-mini": 128000,
-
-    # Azure OpenAI / OpenAI - GPT-5 series (272k context)
-    "gpt-5": 270000,
-    "gpt-5-mini": 270000,
-    "gpt-5-nano": 270000,
-    "gpt-5-chat": 110000,
-    "gpt-5.1": 270000,
-    "gpt-5.1-chat": 110000,
-    "gpt-5.1-codex": 270000,
-    "gpt-5.1-codex-mini": 270000,
-    "gpt-5.1-codex-max": 270000,
-    "gpt-5.2": 270000,
-    "gpt-5.2-chat": 110000,
-
-    # Azure OpenAI / OpenAI - Reasoning models (o-series)
-    "o1": 200000,
-    "o1-preview": 128000,
-    "o1-mini": 128000,
-    "o3": 200000,
-    "o3-mini": 200000,
-    "o3-pro": 200000,
-    "o4-mini": 200000,
-    "codex-mini": 200000,
-}
-
-# Default limits by provider prefix (fallback when model not in explicit list)
-# Gemini/Vertex models have 1M, Claude models have 200k
-PROVIDER_DEFAULT_LIMITS = {
-    "azure/": 200000,       # Conservative default for unknown Azure models
-    "vertex/": 1000000,     # Vertex models have 1M
-    "gemini-": 1000000,     # Gemini models have 1M
-    "claude-": 200000,      # Claude models have 200k (1M beta requires special header)
-    "openai/": 128000,      # Conservative for unknown OpenAI models
-}
-
-# Absolute fallback
-DEFAULT_CONTEXT_LIMIT = 200000
-
-
-def is_tui_command(command: str) -> bool:
-    """
-    Detect if a command will launch a TUI application.
-
-    Handles piped commands by checking the rightmost command,
-    since that's what actually displays in the terminal.
-
-    Args:
-        command: Full command string (e.g., "htop -d 5" or "git log | less")
-
-    Returns:
-        True if command is a known TUI application
-    """
-    if not command.strip():
-        return False
-
-    # For piped commands, check the rightmost command (that's what displays)
-    # e.g., "cat file | less" -> check "less"
-    # e.g., "git log | head" -> check "head" (not TUI)
-    if '|' in command:
-        parts = command.split('|')
-        command = parts[-1].strip()
-
-    # Extract the base command (first word)
-    base_cmd = command.split()[0] if command.split() else ""
-
-    # Remove path if present (e.g., /usr/bin/htop -> htop)
-    # Use lowercase for case-insensitive matching
-    base_cmd = os.path.basename(base_cmd).lower()
-
-    return base_cmd in TUI_COMMANDS
+# Model context limits - imported from shared library
+from llm_tools_core import (
+    MODEL_CONTEXT_LIMITS,
+    PROVIDER_DEFAULT_LIMITS,
+    DEFAULT_CONTEXT_LIMIT,
+    get_model_context_limit,
+)

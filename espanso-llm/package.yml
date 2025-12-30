@@ -3,7 +3,8 @@
 # Triggers:
 #   :llm:  - Quick query without tools (simple mode)
 #   :llmc: - Query with clipboard as context (simple mode)
-#   :llma: - Full assistant with tools enabled
+#   :@:    - Full assistant with tools enabled
+#   :@c:   - Full assistant with clipboard as context
 #
 # Triggers use colon syntax without word boundary matching
 # for more reliable activation.
@@ -41,7 +42,7 @@ matches:
       - name: form1
         type: form
         params:
-          layout: "Clipboard content will be included as context.\n\nLLM Query:\n[[query]]"
+          layout: "Clipboard content will be included as context.\n\nLLM Query (simple mode):\n[[query]]"
           fields:
             query:
               multiline: true
@@ -55,15 +56,15 @@ matches:
             - "simple"
             - "Context from clipboard:\n{{clip}}\n\nUser request: {{form1.query}}"
 
-  # :llma: - Assistant mode (with tools)
-  - trigger: ":llma:"
+  # :@: - Assistant mode (with tools)
+  - trigger: ":@:"
     word: false
     replace: "{{output}}"
     vars:
       - name: form1
         type: form
         params:
-          layout: "LLM Query (assistant mode):\n[[query]]"
+          layout: "LLM Query (inline-assistant mode):\n[[query]]"
           fields:
             query:
               multiline: true
@@ -76,3 +77,27 @@ matches:
             - "--mode"
             - "assistant"
             - "{{form1.query}}"
+
+  # :@c: - Assistant mode with clipboard context
+  - trigger: ":@c:"
+    word: false
+    replace: "{{output}}"
+    vars:
+      - name: clip
+        type: clipboard
+      - name: form1
+        type: form
+        params:
+          layout: "Clipboard content will be included as context.\n\nLLM Query (inline-assistant mode):\n[[query]]"
+          fields:
+            query:
+              multiline: true
+      - name: output
+        type: script
+        params:
+          args:
+            - python3
+            - "%CONFIG%/match/packages/espanso-llm/llm-query.py"
+            - "--mode"
+            - "assistant"
+            - "Context from clipboard:\n{{clip}}\n\nUser request: {{form1.query}}"

@@ -1,13 +1,14 @@
 """Utility functions for llm-assistant.
 
 This module contains utility functions for:
-- Markdown stripping for TTS and clipboard
 - Language code validation
 - XDG-compliant directory management
 - Model context limit resolution
+
+Markdown stripping functions (strip_markdown, strip_markdown_for_tts)
+are imported from llm_tools_core and re-exported here for backward compatibility.
 """
 
-import re
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple
@@ -17,6 +18,10 @@ from llm_tools_core import ConsoleHelper
 from llm_tools_core import get_config_dir as _core_get_config_dir
 from llm_tools_core import get_temp_dir as _core_get_temp_dir
 from llm_tools_core import get_logs_db_path as _core_get_logs_db_path
+from llm_tools_core import (
+    strip_markdown,
+    strip_markdown_for_tts,
+)
 
 
 # =============================================================================
@@ -218,52 +223,10 @@ def safe_operation(error_prefix: str = "Operation failed", return_on_error: Any 
 
 
 # =============================================================================
-# Markdown Processing
+# Markdown Processing (imported from llm-tools-core)
 # =============================================================================
-
-
-# Regex to remove fenced code blocks (```...```) only, preserves inline code
-_CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```', re.MULTILINE)
-# Pattern to match complete code blocks (for preserving code during markdown stripping)
-_CODE_BLOCK_PATTERN = re.compile(r'```\w*\n(.*?)```', re.DOTALL)
-
-
-# Markdown stripping for TTS (removes formatting before speech synthesis)
-try:
-    from strip_markdown import strip_markdown as _strip_markdown
-
-    def strip_markdown_for_tts(text: str) -> str:
-        """Strip markdown formatting for TTS. Removes code blocks entirely."""
-        text = _CODE_BLOCK_RE.sub('', text)
-        return _strip_markdown(text)
-except ImportError:
-    def strip_markdown_for_tts(text: str) -> str:
-        """Fallback: just remove code blocks."""
-        return _CODE_BLOCK_RE.sub('', text)
-
-
-def strip_markdown_for_clipboard(text: str) -> str:
-    """Strip markdown but fully preserve code block content."""
-    # Extract code blocks and replace with null-byte placeholders
-    code_blocks = []
-
-    def save_code(match):
-        code_blocks.append(match.group(1))
-        return f'\x00CODE{len(code_blocks)-1}\x00'
-
-    text_with_placeholders = _CODE_BLOCK_PATTERN.sub(save_code, text)
-
-    # Strip markdown from non-code parts only
-    try:
-        stripped = _strip_markdown(text_with_placeholders)
-    except NameError:
-        stripped = text_with_placeholders
-
-    # Restore code blocks (content only, fences removed)
-    for i, code in enumerate(code_blocks):
-        stripped = stripped.replace(f'\x00CODE{i}\x00', code.rstrip('\n'))
-
-    return stripped
+# strip_markdown and strip_markdown_for_tts are imported above
+# from llm_tools_core and re-exported here for backward compatibility.
 
 
 def validate_language_code(code: str) -> Optional[str]:
@@ -360,40 +323,8 @@ def is_watch_response_dismissive(response_text: str) -> bool:
 
 
 # =============================================================================
-# Model Context Limits
+# Model Context Limits (imported from llm-tools-core)
 # =============================================================================
 
-
-def get_model_context_limit(model_name: str) -> int:
-    """Get the appropriate context limit for a model.
-
-    Resolution order:
-    1. Explicit model name in MODEL_CONTEXT_LIMITS (with azure/ prefix stripped)
-    2. Provider prefix default from PROVIDER_DEFAULT_LIMITS
-    3. DEFAULT_CONTEXT_LIMIT fallback
-
-    Args:
-        model_name: Full model name (e.g., "azure/gpt-4.1", "claude-3-opus")
-
-    Returns:
-        Context limit in tokens
-    """
-    # Import here to avoid circular imports
-    from .config import MODEL_CONTEXT_LIMITS, PROVIDER_DEFAULT_LIMITS, DEFAULT_CONTEXT_LIMIT
-
-    # Strip azure/ prefix for lookup (azure/gpt-4.1 -> gpt-4.1)
-    lookup_name = model_name
-    if model_name.startswith("azure/"):
-        lookup_name = model_name[6:]  # Remove "azure/"
-
-    # Check explicit model limit
-    if lookup_name in MODEL_CONTEXT_LIMITS:
-        return MODEL_CONTEXT_LIMITS[lookup_name]
-
-    # Check provider prefix defaults
-    for prefix, limit in PROVIDER_DEFAULT_LIMITS.items():
-        if model_name.startswith(prefix):
-            return limit
-
-    # Absolute fallback
-    return DEFAULT_CONTEXT_LIMIT
+# Re-export from llm_tools_core for backward compatibility
+from llm_tools_core import get_model_context_limit

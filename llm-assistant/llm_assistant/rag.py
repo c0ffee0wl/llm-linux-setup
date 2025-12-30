@@ -209,8 +209,8 @@ class RAGMixin:
         ConsoleHelper.info(self.console, f"{action} collection '{collection}'...")
 
         try:
-            with Spinner(f"Processing {path}...", self.console):
-                result = add_to_collection(collection, path)
+            # No spinner - llm-tools-rag shows its own "Embedding X/Y chunks..." progress
+            result = add_to_collection(collection, path)
 
             if result["status"] == "success":
                 ConsoleHelper.success(self.console, f"Added {result.get('chunks', '?')} chunks")

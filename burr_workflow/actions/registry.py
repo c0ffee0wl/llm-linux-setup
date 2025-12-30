@@ -214,7 +214,7 @@ def _register_builtin_actions(registry: ActionRegistry) -> None:
 
     # Human input (interactive workflows)
     registry.register("human/input", HumanInputAction, aliases=["input"])
-    registry.register("human/decide", HumanDecideAction, aliases=["decide", "human"])
+    registry.register("human/decide", HumanDecideAction, aliases=["human"])
 
     # File operations
     registry.register("file/read", FileReadAction, aliases=["read"])
@@ -294,7 +294,6 @@ def register_llm_actions(
     registry.register(
         "llm/decide",
         lambda: LLMDecideAction(llm_client),
-        aliases=["decide"],
     )
     registry.register(
         "llm/generate",

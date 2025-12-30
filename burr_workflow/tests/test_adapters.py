@@ -157,9 +157,179 @@ def test_loop_context_nested():
     assert data["parent"]["item"] == 1
 
     # Test that nested structure serializes correctly
-    # Note: full roundtrip with from_dict is complex due to internal fields
     assert data["item"] == "a"
     assert data["parent"]["item"] == 1
+
+
+def test_loop_context_roundtrip():
+    """LoopContext should roundtrip through to_dict/from_dict."""
+    types_module = _get_types_module()
+    LoopContext = types_module.LoopContext
+
+    original = LoopContext(
+        items=["a", "b", "c"],
+        item="b",
+        index=2,
+        index0=1,
+        total=3,
+        first=False,
+        last=False,
+        revindex=2,
+        revindex0=1,
+        output={"result": "test_output"},
+    )
+
+    # Roundtrip
+    data = original.to_dict()
+    restored = LoopContext.from_dict(data)
+
+    # Verify all fields match
+    assert restored.items == original.items
+    assert restored.item == original.item
+    assert restored.index == original.index
+    assert restored.index0 == original.index0
+    assert restored.total == original.total
+    assert restored.first == original.first
+    assert restored.last == original.last
+    assert restored.revindex == original.revindex
+    assert restored.revindex0 == original.revindex0
+    assert restored.output == original.output
+    assert restored.parent is None
+
+
+def test_loop_context_nested_roundtrip():
+    """Nested LoopContext should roundtrip correctly for workflow resumption."""
+    types_module = _get_types_module()
+    LoopContext = types_module.LoopContext
+
+    # Create nested loop structure (outer loop → inner loop)
+    outer = LoopContext(
+        items=[1, 2, 3],
+        item=2,
+        index=2,
+        index0=1,
+        total=3,
+        first=False,
+        last=False,
+        revindex=2,
+        revindex0=1,
+        output={"outer_result": "done"},
+    )
+
+    inner = LoopContext(
+        items=["x", "y"],
+        item="y",
+        index=2,
+        index0=1,
+        total=2,
+        first=False,
+        last=True,
+        revindex=1,
+        revindex0=0,
+        output={"inner_result": "processing"},
+        parent=outer,
+    )
+
+    # Roundtrip the nested structure
+    data = inner.to_dict()
+    restored = LoopContext.from_dict(data)
+
+    # Verify inner loop
+    assert restored.items == ["x", "y"]
+    assert restored.item == "y"
+    assert restored.index == 2
+    assert restored.last is True
+    assert restored.output == {"inner_result": "processing"}
+
+    # Verify parent (outer loop) was restored
+    assert restored.parent is not None
+    assert restored.parent.items == [1, 2, 3]
+    assert restored.parent.item == 2
+    assert restored.parent.index == 2
+    assert restored.parent.output == {"outer_result": "done"}
+    assert restored.parent.parent is None
+
+
+def test_loop_context_from_dict_with_internal_fields():
+    """LoopContext.from_dict should preserve internal tracking fields."""
+    types_module = _get_types_module()
+    LoopContext = types_module.LoopContext
+
+    # Create context with internal fields set
+    original = LoopContext(
+        items=["a", "b"],
+        item="a",
+        index=1,
+        index0=0,
+        total=2,
+        first=True,
+        last=False,
+        revindex=2,
+        revindex0=1,
+    )
+    # Set internal fields (name-mangled)
+    original._LoopContext__loop_id = "loop_scan_hosts"
+    original._LoopContext__ancestor_ids = ["loop_outer"]
+
+    # Roundtrip
+    data = original.to_dict()
+
+    # Verify internal fields are in serialized data
+    assert data["__loop_id"] == "loop_scan_hosts"
+    assert data["__ancestor_ids"] == ["loop_outer"]
+
+    # Restore and verify
+    restored = LoopContext.from_dict(data)
+    assert restored._LoopContext__loop_id == "loop_scan_hosts"
+    assert restored._LoopContext__ancestor_ids == ["loop_outer"]
+
+
+def test_loop_context_from_dict_deep_nesting_limit():
+    """LoopContext.from_dict should prevent infinite recursion."""
+    types_module = _get_types_module()
+    LoopContext = types_module.LoopContext
+
+    # Create artificially deep nesting in dict form
+    data = {
+        "items": [1],
+        "item": 1,
+        "index": 1,
+        "index0": 0,
+        "total": 1,
+        "first": True,
+        "last": True,
+        "revindex": 1,
+        "revindex0": 0,
+        "output": None,
+        "parent": None,
+        "__loop_id": None,
+        "__ancestor_ids": [],
+    }
+
+    # Build deeply nested structure
+    current = data
+    for i in range(110):  # Exceed the 100 limit
+        current["parent"] = {
+            "items": [i],
+            "item": i,
+            "index": 1,
+            "index0": 0,
+            "total": 1,
+            "first": True,
+            "last": True,
+            "revindex": 1,
+            "revindex0": 0,
+            "output": None,
+            "parent": None,
+            "__loop_id": None,
+            "__ancestor_ids": [],
+        }
+        current = current["parent"]
+
+    # Should raise ValueError for excessive nesting
+    import pytest
+    with pytest.raises(ValueError, match="nesting too deep"):
+        LoopContext.from_dict(data)
 
 
 def test_supported_schema_versions():
@@ -174,17 +344,25 @@ if __name__ == "__main__":
     # Run tests directly when executed as script
     print("Running adapter/types tests...")
     test_reserved_state_keys_exist()
-    print("  test_reserved_state_keys_exist")
+    print("  ✓ test_reserved_state_keys_exist")
     test_guard_state_keys_present()
-    print("  test_guard_state_keys_present")
+    print("  ✓ test_guard_state_keys_present")
     test_no_legacy_guardrail_keys()
-    print("  test_no_legacy_guardrail_keys")
+    print("  ✓ test_no_legacy_guardrail_keys")
     test_step_outcome_enum()
-    print("  test_step_outcome_enum")
+    print("  ✓ test_step_outcome_enum")
     test_loop_context_serialization()
-    print("  test_loop_context_serialization")
+    print("  ✓ test_loop_context_serialization")
     test_loop_context_nested()
-    print("  test_loop_context_nested")
+    print("  ✓ test_loop_context_nested")
+    test_loop_context_roundtrip()
+    print("  ✓ test_loop_context_roundtrip")
+    test_loop_context_nested_roundtrip()
+    print("  ✓ test_loop_context_nested_roundtrip")
+    test_loop_context_from_dict_with_internal_fields()
+    print("  ✓ test_loop_context_from_dict_with_internal_fields")
+    # Skip deep nesting test in direct run (requires pytest)
+    print("  ⊘ test_loop_context_from_dict_deep_nesting_limit (requires pytest)")
     test_supported_schema_versions()
-    print("  test_supported_schema_versions")
+    print("  ✓ test_supported_schema_versions")
     print("\nAll adapter/types tests passed!")

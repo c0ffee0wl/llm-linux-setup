@@ -9,10 +9,7 @@ Handles:
 import json
 import os
 import socket
-import subprocess
 import sys
-import time
-from pathlib import Path
 from typing import Iterator, Optional, Tuple
 
 import click
@@ -22,7 +19,17 @@ from rich.markdown import Markdown
 from rich.spinner import Spinner
 from rich.text import Text
 
-from .utils import get_socket_path, get_terminal_session_id
+# Import shared utilities from llm_tools_core
+from llm_tools_core import (
+    get_socket_path,
+    get_terminal_session_id,
+    is_daemon_running,
+    start_daemon,
+    ensure_daemon,
+    DAEMON_STARTUP_TIMEOUT,
+    RECV_BUFFER_SIZE,
+    REQUEST_TIMEOUT,
+)
 
 
 # Tool display configuration: tool_name -> action_verb (same as llm-assistant)
@@ -36,82 +43,6 @@ TOOL_DISPLAY = {
     'prompt_fabric': 'Executing Fabric pattern',
     'suggest_command': 'Preparing command',
 }
-
-
-# Maximum time to wait for daemon startup
-DAEMON_STARTUP_TIMEOUT = 5.0
-# Socket recv buffer size
-RECV_BUFFER_SIZE = 8192
-# Request timeout in seconds
-REQUEST_TIMEOUT = 120
-
-
-def is_daemon_running() -> bool:
-    """Check if daemon is running by testing socket."""
-    socket_path = get_socket_path()
-    if not socket_path.exists():
-        return False
-
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(0.5)
-        sock.connect(str(socket_path))
-        sock.close()
-        return True
-    except (socket.error, OSError):
-        return False
-
-
-def start_daemon(model: Optional[str] = None) -> bool:
-    """Start the llm-assistant daemon in background.
-
-    Returns True if daemon started successfully.
-    """
-    # Try absolute path first (for espanso and GUI apps)
-    daemon_path = Path.home() / ".local" / "bin" / "llm-assistant"
-    if daemon_path.exists():
-        cmd = [str(daemon_path), "--daemon"]
-    else:
-        cmd = ["llm-assistant", "--daemon"]
-
-    if model:
-        cmd.extend(["-m", model])
-
-    try:
-        # Start daemon in background
-        subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True
-        )
-
-        # Wait for socket to appear
-        socket_path = get_socket_path()
-        start_time = time.time()
-
-        while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
-            if socket_path.exists() and is_daemon_running():
-                return True
-            time.sleep(0.1)
-
-        return False
-
-    except FileNotFoundError:
-        return False
-    except Exception:
-        return False
-
-
-def ensure_daemon(model: Optional[str] = None) -> bool:
-    """Ensure daemon is running, starting it if needed.
-
-    Returns True if daemon is available.
-    """
-    if is_daemon_running():
-        return True
-
-    return start_daemon(model)
 
 
 def send_json_request(request: dict) -> Iterator[dict]:
@@ -304,15 +235,10 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
         # Strip markdown unless raw mode
         if not raw_mode:
             try:
-                import re
-                # Simple markdown stripping
-                combined = re.sub(r'```[\s\S]*?```', lambda m: m.group(0).split('\n', 1)[-1].rsplit('\n', 1)[0] if '\n' in m.group(0) else '', combined)
-                combined = re.sub(r'`([^`]+)`', r'\1', combined)
-                combined = re.sub(r'\*\*([^*]+)\*\*', r'\1', combined)
-                combined = re.sub(r'\*([^*]+)\*', r'\1', combined)
-                combined = re.sub(r'^#+\s*', '', combined, flags=re.MULTILINE)
-            except Exception:
-                pass
+                from llm_tools_core import strip_markdown
+                combined = strip_markdown(combined)
+            except ImportError:
+                pass  # Keep markdown if library unavailable
 
         # Copy to clipboard
         try:

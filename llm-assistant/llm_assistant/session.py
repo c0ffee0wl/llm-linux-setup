@@ -61,7 +61,7 @@ from prompt_toolkit.styles import Style as PTStyle
 
 # Local module imports
 from llm_tools_core import PromptDetector
-from .system_info import detect_os, detect_shell, detect_environment
+from llm_tools_core import detect_os, detect_shell, detect_environment
 from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
 from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
 from .ui import Spinner, Confirm
@@ -74,7 +74,7 @@ from .config import (
 )
 from .schemas import FindingSchema, SafetySchema
 from .utils import (
-    strip_markdown_for_tts, strip_markdown_for_clipboard, validate_language_code,
+    strip_markdown_for_tts, strip_markdown, validate_language_code,
     get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
     process_exists, md_table_escape, yaml_escape, is_watch_response_dismissive,
     get_model_context_limit, ConsoleHelper,
@@ -2222,7 +2222,7 @@ Screenshot size: {file_size} bytes"""
             combined = "\n\n---\n\n".join(texts)
 
             if not raw_mode:
-                combined = strip_markdown_for_clipboard(combined)
+                combined = strip_markdown(combined)
 
             try:
                 pyperclip.copy(combined)

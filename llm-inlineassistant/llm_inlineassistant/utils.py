@@ -1,11 +1,40 @@
 """Utility functions for llm-inlineassistant.
 
 Configuration, paths, and helper functions for the inline assistant.
+Re-exports shared utilities from llm_tools_core.
 """
 
-import os
 from pathlib import Path
 from typing import Optional
+
+# Import shared utilities from llm_tools_core
+from llm_tools_core import (
+    get_config_dir as _core_get_config_dir,
+    get_socket_path,
+    get_suggest_path,
+    write_suggested_command,
+    read_suggested_command,
+    get_terminal_session_id,
+)
+
+# Shared config directory name (llm-inlineassistant shares with llm-assistant)
+_APP_NAME = "llm-assistant"
+
+# Re-export for backward compatibility
+__all__ = [
+    "get_config_dir",
+    "get_logs_db_path",
+    "logs_on",
+    "get_socket_path",
+    "get_suggest_path",
+    "write_suggested_command",
+    "read_suggested_command",
+    "get_terminal_session_id",
+    "get_active_conversation_path",
+    "get_active_conversation",
+    "save_active_conversation",
+    "clear_active_conversation",
+]
 
 
 def get_config_dir() -> Path:
@@ -16,13 +45,7 @@ def get_config_dir() -> Path:
     llm-inlineassistant shares the config directory with llm-assistant but uses
     separate database and session tracking files.
     """
-    xdg_config = os.environ.get('XDG_CONFIG_HOME')
-    if xdg_config:
-        base = Path(xdg_config)
-    else:
-        base = Path.home() / '.config'
-
-    config_dir = base / 'llm-assistant'
+    config_dir = _core_get_config_dir(_APP_NAME)
     config_dir.mkdir(parents=True, exist_ok=True)
     return config_dir
 
@@ -46,96 +69,6 @@ def logs_on() -> bool:
     """
     import llm
     return not (llm.user_dir() / "logs-off").exists()
-
-
-def get_socket_path() -> Path:
-    """Get Unix socket path for daemon communication.
-
-    Returns: /tmp/llm-assistant-{UID}/daemon.sock
-
-    Uses llm-assistant's daemon socket for unified backend.
-    """
-    uid = os.getuid()
-    return Path(f"/tmp/llm-assistant-{uid}/daemon.sock")
-
-
-def get_suggest_path() -> Path:
-    """Get path for suggested command file.
-
-    Returns: /tmp/llm-assistant-{UID}/suggest
-
-    Uses llm-assistant's temp directory since the daemon writes here.
-    Shell reads this via Ctrl+G to apply the command.
-    """
-    uid = os.getuid()
-    return Path(f"/tmp/llm-assistant-{uid}/suggest")
-
-
-def write_suggested_command(command: str) -> None:
-    """Write a suggested command for the shell to pick up.
-
-    Args:
-        command: The command to suggest (placed on user's prompt)
-    """
-    get_suggest_path().write_text(command)
-
-
-def read_suggested_command() -> Optional[str]:
-    """Read and clear the suggested command file.
-
-    Returns:
-        The suggested command if present, None otherwise.
-        Clears the file after reading.
-    """
-    path = get_suggest_path()
-    if path.exists():
-        command = path.read_text().strip()
-        path.unlink()  # Clear after reading
-        return command if command else None
-    return None
-
-
-def get_terminal_session_id() -> str:
-    """Get a unique identifier for the current terminal session.
-
-    Checks these environment variables in priority order:
-    1. TERMINAL_SESSION_ID - set by @() shell function (preferred)
-    2. TMUX_PANE - tmux pane identifier
-    3. TERM_SESSION_ID - iTerm2
-    4. KONSOLE_DBUS_SESSION - Konsole
-    5. WINDOWID - X11 window ID
-    6. SESSION_LOG_FILE - asciinema recording path (fallback)
-    7. $(tty) - TTY device (last resort)
-
-    Returns:
-        String identifier for the current terminal session
-    """
-    # First check if shell function already set the ID
-    terminal_id = os.environ.get('TERMINAL_SESSION_ID')
-    if terminal_id:
-        return terminal_id
-
-    # Check terminal-specific environment variables
-    for var in ['TMUX_PANE', 'TERM_SESSION_ID', 'KONSOLE_DBUS_SESSION', 'WINDOWID']:
-        value = os.environ.get(var)
-        if value:
-            return f"{var}:{value}"
-
-    # Fallback to asciinema session log file
-    session_log = os.environ.get('SESSION_LOG_FILE')
-    if session_log:
-        return f"asciinema:{Path(session_log).stem}"
-
-    # Last resort: TTY device
-    try:
-        tty = os.ttyname(0)
-        return f"tty:{tty.replace('/', '_')}"
-    except (OSError, AttributeError):
-        pass
-
-    # Ultimate fallback: random ID (shouldn't happen)
-    import uuid
-    return f"fallback:{uuid.uuid4().hex[:8]}"
 
 
 def get_active_conversation_path(terminal_id: str) -> Path:
