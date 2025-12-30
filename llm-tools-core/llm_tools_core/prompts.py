@@ -36,7 +36,14 @@ def build_simple_system_prompt(include_datetime: bool = True) -> str:
         "When given a request, make reasonable assumptions based on the context and provide a complete, helpful response immediately.\n"
         "If a request is ambiguous, choose the most common or logical interpretation and proceed accordingly.\n"
         "Always deliver a substantive response rather than asking questions.\n"
-        "NEVER ask the user for follow-up questions or clarifications."
+        "NEVER ask the user for follow-up questions or clarifications.\n\n"
+        "Follow a clear writing style:\n"
+        "- Write in plain, clear, and understandable language.\n"
+        "- Use active voice, avoid passive constructions.\n"
+        "- Choose vivid, concrete words over abstract ones.\n"
+        "- Use adjectives only where necessary.\n"
+        "- Prefer strong, specific verbs over weak ones.\n"
+        "- AVOID: nominalizations, filler words (actually, basically, really, just), overly complex sentences."
     )
 
     if include_datetime:

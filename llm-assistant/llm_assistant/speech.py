@@ -49,26 +49,66 @@ class SentenceBuffer:
 
     Accumulates streaming tokens and returns complete sentences when
     sentence-ending punctuation is detected (.!?).
+
+    Code block handling:
+    - Tracks fenced code blocks (```) using count-based state
+    - Odd fence count = inside code block, even = outside
+    - Content inside code blocks is discarded (not spoken)
+    - When exiting a code block, buffer is trimmed to after closing fence
     """
 
     SENTENCE_END = re.compile(r'[.!?]\s*$')
 
     def __init__(self):
         self.buffer = ""
+        self._in_code_block = False
 
     def add(self, token: str) -> Optional[str]:
-        """Add token to buffer. Returns sentence if one is complete."""
+        """Add token to buffer. Returns sentence if one is complete.
+
+        Handles streaming code blocks by iteratively stripping complete blocks:
+        - Finds and removes complete ``` ... ``` blocks
+        - If incomplete block remains (open without close), suppresses output
+        - Works for both streaming (fences in separate adds) and batch scenarios
+        """
         self.buffer += token
+
+        # Strip complete code blocks iteratively
+        # Handles: (1) complete blocks in single add() (2) blocks completed by this token
+        while True:
+            first_open = self.buffer.find('```')
+            if first_open == -1:
+                break  # No fences, normal processing
+            # Look for closing fence after the opening
+            first_close = self.buffer.find('```', first_open + 3)
+            if first_close == -1:
+                # Incomplete block - we're inside it, wait for more tokens
+                self._in_code_block = True
+                return None
+            # Complete block found - remove it entirely
+            self.buffer = self.buffer[:first_open] + self.buffer[first_close + 3:].lstrip('\n')
+
+        # No incomplete blocks remain
+        self._in_code_block = False
 
         # Check for sentence boundary
         if self.SENTENCE_END.search(self.buffer):
             sentence = self.buffer.strip()
             self.buffer = ""
-            return sentence
+            return sentence if sentence else None
         return None
 
     def flush(self) -> Optional[str]:
-        """Flush remaining buffer content (end of response)."""
+        """Flush remaining buffer content (end of response).
+
+        If still inside a code block (malformed markdown), discards content.
+        """
+        # If stuck in code block at end of response, discard
+        if self._in_code_block:
+            self.buffer = ""
+            self._in_code_block = False
+            return None
+
         if self.buffer.strip():
             sentence = self.buffer.strip()
             self.buffer = ""
