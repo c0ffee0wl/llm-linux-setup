@@ -90,9 +90,22 @@ llm-guiassistant --debug
 
 | Key | Action |
 |-----|--------|
+| Ctrl+K | Open action panel (fuzzy-searchable) |
 | ↑/↓ | Navigate input history |
 | Enter | Send message |
 | Escape | Stop generation / Close popup |
+
+### Action Panel (Ctrl+K)
+
+Raycast-style keyboard-first action panel with fuzzy search:
+
+- **Copy response** (plain text or markdown)
+- **Copy code blocks** (individually, with language preview)
+- **Save to file** (file chooser dialog)
+- **New session** (clear conversation)
+- **Capture screenshot** (window or region)
+
+Type to filter actions, use ↑/↓ to navigate, Enter to execute.
 
 ### Features
 
@@ -101,6 +114,7 @@ llm-guiassistant --debug
 3. **Streaming Responses**: Real-time Markdown rendering during response streaming
 4. **Session Persistence**: Conversations persist within popup session (uses daemon's session management)
 5. **New Session Button**: Clear conversation and context (prevents target contamination in security work)
+6. **Action Panel (Ctrl+K)**: Keyboard-first quick actions with fuzzy search
 
 ## Protocol
 

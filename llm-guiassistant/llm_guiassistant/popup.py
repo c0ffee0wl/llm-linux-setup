@@ -10,16 +10,18 @@ This module provides the main GTK application and window:
 
 import json
 import os
+import re
+import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, List, Optional, Tuple
 
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.1')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, Gio, GLib, WebKit2
+from gi.repository import Gtk, Gdk, Gio, GLib, WebKit2, Pango
 
 from llm_tools_core import (
     ensure_daemon,
@@ -28,6 +30,7 @@ from llm_tools_core import (
     format_context_for_llm,
     get_session_type,
     capture_screenshot,
+    extract_code_blocks,
 )
 
 from .history import InputHistory
@@ -115,6 +118,272 @@ class StreamingQuery:
                 break
 
 
+class ActionPanel(Gtk.Popover):
+    """Keyboard-first action panel (Ctrl+K) with fuzzy search.
+
+    Provides Raycast-style quick actions for the current response:
+    - Copy response (plain text)
+    - Copy response (markdown)
+    - Copy individual code blocks
+    - Save to file
+    - New session
+    """
+
+    def __init__(self, parent_window):
+        super().__init__()
+        self.parent_window = parent_window
+        self.actions = []
+        self.filtered_actions = []
+        self.selected_index = 0
+
+        self.set_relative_to(parent_window)
+        self.set_position(Gtk.PositionType.TOP)
+        self.set_modal(True)
+
+        # Build UI
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        vbox.set_margin_start(8)
+        vbox.set_margin_end(8)
+        vbox.set_margin_top(8)
+        vbox.set_margin_bottom(8)
+
+        # Search entry
+        self.search_entry = Gtk.SearchEntry()
+        self.search_entry.set_placeholder_text("Type to filter actions...")
+        self.search_entry.connect("changed", self._on_search_changed)
+        self.search_entry.connect("key-press-event", self._on_key_press)
+        self.search_entry.set_width_chars(40)
+        vbox.pack_start(self.search_entry, False, False, 0)
+
+        # Scrolled list of actions
+        scrolled = Gtk.ScrolledWindow()
+        scrolled.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled.set_min_content_height(200)
+        scrolled.set_max_content_height(300)
+
+        self.listbox = Gtk.ListBox()
+        self.listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.listbox.connect("row-activated", self._on_row_activated)
+        scrolled.add(self.listbox)
+        vbox.pack_start(scrolled, True, True, 0)
+
+        # Hint label
+        hint = Gtk.Label()
+        hint.set_markup("<small>↑↓ Navigate • Enter Execute • Esc Close</small>")
+        hint.get_style_context().add_class("dim-label")
+        vbox.pack_start(hint, False, False, 0)
+
+        self.add(vbox)
+
+    def show_actions(self, last_response: str):
+        """Show the action panel with context-aware actions."""
+        self.actions = self._build_actions(last_response)
+        self.filtered_actions = self.actions.copy()
+        self.selected_index = 0
+        self.search_entry.set_text("")
+        self._populate_list()
+        self.show_all()
+        self.search_entry.grab_focus()
+
+    def _build_actions(self, response: str) -> List[Tuple[str, str, Callable]]:
+        """Build list of available actions based on response content.
+
+        Returns list of (icon, label, callback) tuples.
+        """
+        actions = []
+
+        # Always available actions
+        actions.append(("📋", "Copy response (plain text)", lambda: self._copy_text(response)))
+        actions.append(("📝", "Copy response (markdown)", lambda: self._copy_markdown(response)))
+
+        # Extract code blocks and add individual copy actions
+        code_blocks = extract_code_blocks(response) if response else []
+        for i, (lang, code) in enumerate(code_blocks[:5], 1):  # Limit to 5
+            lang_display = lang if lang else "code"
+            preview = code[:40].replace('\n', ' ') + "..." if len(code) > 40 else code.replace('\n', ' ')
+            actions.append((
+                "💻",
+                f"Copy code block {i} ({lang_display}): {preview}",
+                lambda c=code: self._copy_text(c)
+            ))
+
+        # File operations
+        actions.append(("💾", "Save response to file...", lambda: self._save_to_file(response)))
+
+        # Session actions
+        actions.append(("🔄", "New session", self._new_session))
+        actions.append(("📷", "Capture screenshot (window)", self._screenshot_window))
+        actions.append(("✂️", "Capture screenshot (region)", self._screenshot_region))
+
+        return actions
+
+    def _populate_list(self):
+        """Populate the listbox with filtered actions."""
+        # Clear existing rows
+        for child in self.listbox.get_children():
+            self.listbox.remove(child)
+
+        # Add filtered actions
+        for i, (icon, label, _) in enumerate(self.filtered_actions):
+            row = Gtk.ListBoxRow()
+            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+            hbox.set_margin_start(4)
+            hbox.set_margin_end(4)
+            hbox.set_margin_top(4)
+            hbox.set_margin_bottom(4)
+
+            icon_label = Gtk.Label(label=icon)
+            hbox.pack_start(icon_label, False, False, 0)
+
+            text_label = Gtk.Label(label=label)
+            text_label.set_xalign(0)
+            text_label.set_ellipsize(Pango.EllipsizeMode.END)
+            hbox.pack_start(text_label, True, True, 0)
+
+            row.add(hbox)
+            self.listbox.add(row)
+
+        self.listbox.show_all()
+
+        # Select first row
+        if self.filtered_actions:
+            first_row = self.listbox.get_row_at_index(0)
+            if first_row:
+                self.listbox.select_row(first_row)
+
+    def _on_search_changed(self, entry):
+        """Filter actions based on search text."""
+        query = entry.get_text().lower()
+        if not query:
+            self.filtered_actions = self.actions.copy()
+        else:
+            # Fuzzy match: all query chars must appear in order
+            self.filtered_actions = []
+            for action in self.actions:
+                label = action[1].lower()
+                if self._fuzzy_match(query, label):
+                    self.filtered_actions.append(action)
+
+        self.selected_index = 0
+        self._populate_list()
+
+    def _fuzzy_match(self, query: str, text: str) -> bool:
+        """Check if query fuzzy-matches text (chars appear in order)."""
+        query_idx = 0
+        for char in text:
+            if query_idx < len(query) and char == query[query_idx]:
+                query_idx += 1
+        return query_idx == len(query)
+
+    def _on_key_press(self, widget, event):
+        """Handle keyboard navigation."""
+        if event.keyval == Gdk.KEY_Escape:
+            self.popdown()
+            return True
+
+        elif event.keyval == Gdk.KEY_Return:
+            if self.filtered_actions and self.selected_index < len(self.filtered_actions):
+                _, _, callback = self.filtered_actions[self.selected_index]
+                self.popdown()
+                callback()
+            return True
+
+        elif event.keyval == Gdk.KEY_Up:
+            if self.selected_index > 0:
+                self.selected_index -= 1
+                row = self.listbox.get_row_at_index(self.selected_index)
+                if row:
+                    self.listbox.select_row(row)
+                    row.grab_focus()
+                    self.search_entry.grab_focus()  # Keep focus on search
+            return True
+
+        elif event.keyval == Gdk.KEY_Down:
+            if self.selected_index < len(self.filtered_actions) - 1:
+                self.selected_index += 1
+                row = self.listbox.get_row_at_index(self.selected_index)
+                if row:
+                    self.listbox.select_row(row)
+                    row.grab_focus()
+                    self.search_entry.grab_focus()  # Keep focus on search
+            return True
+
+        return False
+
+    def _on_row_activated(self, listbox, row):
+        """Execute action when row is clicked/activated."""
+        index = row.get_index()
+        if index < len(self.filtered_actions):
+            _, _, callback = self.filtered_actions[index]
+            self.popdown()
+            callback()
+
+    def _copy_text(self, text: str):
+        """Copy text to clipboard (plain text)."""
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(text, -1)
+        clipboard.store()
+
+    def _copy_markdown(self, text: str):
+        """Copy text to clipboard (as markdown)."""
+        self._copy_text(text)
+
+    def _save_to_file(self, text: str):
+        """Show save dialog and write response to file."""
+        dialog = Gtk.FileChooserDialog(
+            title="Save Response",
+            parent=self.parent_window,
+            action=Gtk.FileChooserAction.SAVE
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_SAVE, Gtk.ResponseType.OK
+        )
+        dialog.set_current_name("response.md")
+        dialog.set_do_overwrite_confirmation(True)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            try:
+                Path(filepath).write_text(text)
+            except Exception:
+                pass  # Silent fail for now
+        dialog.destroy()
+
+    def _new_session(self):
+        """Trigger new session in parent window."""
+        self.parent_window._on_new_session(None)
+
+    def _screenshot_window(self):
+        """Capture active window screenshot."""
+        try:
+            path = capture_screenshot(mode="window")
+            if path:
+                self.parent_window.attachments.append(Path(path))
+                self.parent_window._update_attachment_indicator()
+        except Exception:
+            pass
+
+    def _screenshot_region(self):
+        """Capture region screenshot."""
+        # Hide popup first so it's not in the screenshot
+        self.parent_window.hide()
+        GLib.timeout_add(200, self._do_region_screenshot)
+
+    def _do_region_screenshot(self):
+        """Delayed region screenshot capture."""
+        try:
+            path = capture_screenshot(mode="region")
+            if path:
+                self.parent_window.attachments.append(Path(path))
+                self.parent_window._update_attachment_indicator()
+        except Exception:
+            pass
+        self.parent_window.show()
+        return False  # Don't repeat
+
+
 class PopupWindow(Gtk.ApplicationWindow):
     """Main popup window with WebKit conversation view."""
 
@@ -127,6 +396,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.attachments = []
         self.streaming = False
         self.session_id = f"guiassistant:{os.getpid()}"
+        self.last_response = ""  # Track last response for action panel
 
         # Input history for shell-like navigation
         self.history = InputHistory()
@@ -144,6 +414,9 @@ class PopupWindow(Gtk.ApplicationWindow):
 
         # Build UI
         self._build_ui()
+
+        # Action panel (Ctrl+K)
+        self.action_panel = ActionPanel(self)
 
         # Gather initial context
         self._gather_context()
@@ -278,6 +551,12 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_key_press(self, widget, event):
         """Handle global key presses."""
+        # Ctrl+K: Show action panel
+        if event.keyval == Gdk.KEY_k and event.state & Gdk.ModifierType.CONTROL_MASK:
+            self.action_panel.show_actions(self.last_response)
+            return True
+
+        # Escape: Stop streaming or close window
         if event.keyval == Gdk.KEY_Escape:
             if self.streaming:
                 self.query.cancel()
@@ -285,6 +564,7 @@ class PopupWindow(Gtk.ApplicationWindow):
             else:
                 self.hide()
             return True
+
         return False
 
     def _on_entry_key_press(self, widget, event):
@@ -345,14 +625,15 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_new_session(self, widget):
         """Handle new session button click."""
-        # Clear attachments
+        # Clear state
         self.attachments.clear()
+        self.last_response = ""
 
         # Clear conversation in WebView
         self._run_js("clearConversation()")
 
-        # Send clear command to daemon
-        request = {"cmd": "clear", "tid": self.session_id}
+        # Send new session command to daemon (resets conversation)
+        request = {"cmd": "new", "tid": self.session_id}
         for _ in stream_events(request):
             pass  # Just consume the response
 
@@ -391,6 +672,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         if event_type == "text":
             content = event.get("content", "")
             message_id = event.get("message_id")
+            self.last_response = content  # Track for action panel (Ctrl+K)
             self._run_js(f"appendMessage('assistant', {json.dumps(content)}, {json.dumps(message_id)})")
 
         elif event_type == "tool_status":
