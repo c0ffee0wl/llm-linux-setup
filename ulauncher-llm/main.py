@@ -325,7 +325,7 @@ class ItemEnterListener(EventListener):
                 query = f"[Clipboard content]\n{clipboard}\n\n[Question]\n{query}"
 
             # Use synchronous query - blocks until response is complete
-            text, error = query_daemon_sync(
+            text, error, tools_used = query_daemon_sync(
                 query=query,
                 mode=mode,
                 session_id=extension.session_id
@@ -364,10 +364,16 @@ class ItemEnterListener(EventListener):
 
             # Main response item
             title = format_for_display(text, wrap_width, wide_script_factor)
+            # Build description with tools info
+            if tools_used:
+                tools_str = ", ".join(tools_used)
+                description = f"Used: {tools_str} | Enter: copy | Alt+Enter: markdown"
+            else:
+                description = "Enter: copy | Alt+Enter: copy markdown"
             items.append(ExtensionResultItem(
                 icon='images/icon.png',
                 name=title,
-                description="Enter: copy | Alt+Enter: copy markdown",
+                description=description,
                 highlightable=False,
                 on_enter=CopyToClipboardAction(plain_text),
                 on_alt_enter=CopyToClipboardAction(text)

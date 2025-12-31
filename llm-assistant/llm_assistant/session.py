@@ -62,7 +62,8 @@ from prompt_toolkit.styles import Style as PTStyle
 from llm_tools_core import PromptDetector
 from llm_tools_core import detect_os, detect_shell, detect_environment
 from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
-from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
+# Speech module lazy-loaded to avoid import errors when llm_tools_core not installed
+# Use _get_speech_module() to access SpeechOutput, SentenceBuffer, TTS_AVAILABLE
 from .ui import Spinner
 from .completer import SlashCommandCompleter
 from .config import (
@@ -106,6 +107,21 @@ WEB_AVAILABLE = (
     and importlib.util.find_spec("uvicorn") is not None
 )
 
+# Speech module lazy loading (TTS output)
+# Cached to avoid repeated imports
+_speech_module_cache = None
+
+def _get_speech_module():
+    """Lazy load speech module. Returns (SpeechOutput, SentenceBuffer, TTS_AVAILABLE) or (None, None, False)."""
+    global _speech_module_cache
+    if _speech_module_cache is not None:
+        return _speech_module_cache
+    try:
+        from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
+        _speech_module_cache = (SpeechOutput, SentenceBuffer, TTS_AVAILABLE)
+    except ImportError:
+        _speech_module_cache = (None, None, False)
+    return _speech_module_cache
 
 
 class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin, WorkflowMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
@@ -338,6 +354,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 self.voice_input.post_process_model = "gemini-2.5-flash-lite"
 
         # Speech output (TTS) - lazy-loaded, only for Vertex models
+        SpeechOutput, _, TTS_AVAILABLE = _get_speech_module()
         self.speech_output = SpeechOutput(self.console) if TTS_AVAILABLE else None
 
         # prompt_toolkit session with Ctrl+Space voice toggle
@@ -712,7 +729,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             Full accumulated response text
         """
         accumulated_text = ""
-        sentence_buffer = SentenceBuffer() if tts_enabled else None
+        _, SentenceBuffer, _ = _get_speech_module()
+        sentence_buffer = SentenceBuffer() if tts_enabled and SentenceBuffer else None
 
         # Clear any pending audio from previous response before starting new one
         if tts_enabled and self.speech_output:
@@ -2802,7 +2820,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.disabled(self.console, "Speech output disabled")
             elif args.lower() == "status":
                 status = "[green]enabled[/]" if self.speech_output.enabled else "[yellow]disabled[/]"
-                tts_avail = "[green]available[/]" if TTS_AVAILABLE else "[dim]not installed[/]"
+                _, _, tts_available = _get_speech_module()
+                tts_avail = "[green]available[/]" if tts_available else "[dim]not installed[/]"
                 vertex = "[green]yes[/]" if self._is_vertex_model() else "[yellow]no[/]"
                 cred_method = self.speech_output.cred_method or "[dim]not loaded[/]"
                 self.console.print(f"Speech output: {status}")

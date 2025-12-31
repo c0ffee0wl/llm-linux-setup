@@ -5,12 +5,27 @@ Uses blocking calls like ulauncher-gemini-direct for simplicity and reliability.
 No threading - all operations block until complete, then return the full response.
 """
 
-from typing import Tuple, Optional
+from typing import Tuple, Optional, List
 
 from llm_tools_core import (
     ensure_daemon,
     stream_events,
 )
+
+
+# Friendly names for tools (used in UI feedback)
+TOOL_DISPLAY_NAMES = {
+    "execute_python": "Python",
+    "suggest_command": "Command",
+    "sandboxed_shell": "Shell",
+    "search_google": "Google Search",
+    "context": "Context",
+    "read_file": "Read File",
+    "write_file": "Write File",
+    "edit_file": "Edit File",
+    "multi_edit_file": "Multi Edit",
+    "web_fetch": "Web Fetch",
+}
 
 
 def execute_slash_command_sync(
@@ -75,7 +90,9 @@ def execute_slash_command_sync(
     return "Done", response_text or ""
 
 
-def query_daemon_sync(query: str, mode: str, session_id: str) -> Tuple[str, Optional[str]]:
+def query_daemon_sync(
+    query: str, mode: str, session_id: str
+) -> Tuple[str, Optional[str], List[str]]:
     """Query daemon synchronously, blocking until response is complete.
 
     Like ulauncher-gemini-direct, this blocks the main thread.
@@ -87,13 +104,14 @@ def query_daemon_sync(query: str, mode: str, session_id: str) -> Tuple[str, Opti
         session_id: Session ID for conversation continuity
 
     Returns:
-        Tuple of (response_text, error_message).
+        Tuple of (response_text, error_message, tools_used).
         If successful, error_message is None.
         If failed, response_text is empty.
+        tools_used contains friendly names of tools that were executed.
     """
     # Ensure daemon is running
     if not ensure_daemon():
-        return "", "Could not start llm-assistant daemon"
+        return "", "Could not start llm-assistant daemon", []
 
     request = {
         "cmd": "query",
@@ -104,15 +122,22 @@ def query_daemon_sync(query: str, mode: str, session_id: str) -> Tuple[str, Opti
 
     accumulated_text = ""
     error_msg = None
+    tools_used = []
 
     for event in stream_events(request):
         event_type = event.get("type", "")
         if event_type == "text":
             accumulated_text += event.get("content", "")
+        elif event_type == "tool_start":
+            # Track tool execution
+            tool_name = event.get("tool", "")
+            friendly_name = TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
+            if friendly_name and friendly_name not in tools_used:
+                tools_used.append(friendly_name)
         elif event_type == "error":
             error_msg = event.get("message", "Unknown error")
 
     if error_msg:
-        return "", error_msg
+        return "", error_msg, tools_used
 
-    return accumulated_text, None
+    return accumulated_text, None, tools_used

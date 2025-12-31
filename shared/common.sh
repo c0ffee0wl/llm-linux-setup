@@ -456,15 +456,18 @@ install_or_upgrade_cargo_tool() {
 install_or_upgrade_cargo_git_tool() {
     local tool_name="$1"
     local git_url="$2"
+    local version_file="$LLM_TOOLS_CONFIG_DIR/${tool_name}-commit"
+
+    # Handle URLs with or without .git suffix
+    local git_url_for_ls="${git_url%.git}.git"
 
     if ! command -v "$tool_name" &> /dev/null; then
         log "Installing $tool_name from git..."
         cargo install --locked --git "$git_url"
 
         # Store the commit hash for future update checks
-        local version_file="$HOME/.config/llm-tools/${tool_name}-commit"
         mkdir -p "$(dirname "$version_file")"
-        local latest_commit=$(git ls-remote "${git_url}.git" HEAD 2>/dev/null | awk '{print $1}')
+        local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
         if [ -n "$latest_commit" ]; then
             echo "$latest_commit" > "$version_file"
         fi
@@ -472,10 +475,9 @@ install_or_upgrade_cargo_git_tool() {
         log "$tool_name is already installed, checking for updates..."
 
         # Get latest commit from GitHub
-        local latest_commit=$(git ls-remote "${git_url}.git" HEAD 2>/dev/null | awk '{print $1}')
+        local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
 
         # Check stored commit hash
-        local version_file="$HOME/.config/llm-tools/${tool_name}-commit"
         local installed_commit=$(cat "$version_file" 2>/dev/null || echo "")
 
         if [ -z "$latest_commit" ]; then
@@ -933,6 +935,106 @@ install_github_deb_package() {
         warn "Failed to download $package_name"
         return 1
     fi
+}
+
+#############################################################################
+# Make/Git-based Tool Management
+#############################################################################
+
+# Install or upgrade a tool from git that uses Make for building
+# Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
+# Usage: install_or_upgrade_make_git_tool tool_name git_url [build_deps] [make_args]
+# Parameters:
+#   tool_name   - Name of the tool (used for tracking and checking if installed)
+#   git_url     - Git repository URL
+#   build_deps  - Space-separated list of apt build dependencies (optional)
+#   make_args   - Additional arguments for make (optional, e.g., "NO_RFKILL_SW_SUPPORT=1")
+# Note: If the Makefile uses cargo internally (Rust projects), ensure Rust is installed first
+# Examples:
+#   install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc"
+#   install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc" "NO_RFKILL_SW_SUPPORT=1"
+install_or_upgrade_make_git_tool() {
+    local tool_name="$1"
+    local git_url="$2"
+    local build_deps="${3:-}"
+    local make_args="${4:-}"
+
+    # Install build dependencies if specified
+    if [ -n "$build_deps" ]; then
+        local missing_deps=()
+        for dep in $build_deps; do
+            if ! dpkg -l "$dep" 2>/dev/null | grep -q "^ii"; then
+                missing_deps+=("$dep")
+            fi
+        done
+        if [ ${#missing_deps[@]} -gt 0 ]; then
+            log "Installing build dependencies: ${missing_deps[*]}"
+            sudo apt-get install -y "${missing_deps[@]}"
+        fi
+    fi
+
+    # Clone directory in /tmp for building
+    local clone_dir="/tmp/${tool_name}-build"
+    local version_file="$LLM_TOOLS_CONFIG_DIR/${tool_name}-commit"
+
+    # Get latest commit from GitHub (handle URLs with or without .git suffix)
+    local git_url_for_ls="${git_url%.git}.git"
+    local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
+    if [ -z "$latest_commit" ]; then
+        warn "Could not fetch latest commit for $tool_name (network issue?)"
+        return 1
+    fi
+
+    # Check stored commit hash
+    local installed_commit=$(cat "$version_file" 2>/dev/null || echo "")
+
+    if ! command -v "$tool_name" &> /dev/null; then
+        log "Installing $tool_name from git..."
+    elif [ "$latest_commit" = "$installed_commit" ]; then
+        log "$tool_name is up to date (commit: ${latest_commit:0:7}), skipping rebuild"
+        return 0
+    else
+        log "New version available for $tool_name, rebuilding..."
+    fi
+
+    # Clone or update the repository (use subshell to preserve working directory on failure)
+    rm -rf "$clone_dir"
+    git clone --depth 1 "$git_url" "$clone_dir"
+
+    # Build in subshell to ensure cleanup on failure
+    # Use && ... || pattern to prevent set -e from exiting before cleanup
+    local build_status
+    (
+        cd "$clone_dir"
+
+        # Build with make
+        if [ ! -f "Makefile" ]; then
+            echo "No Makefile found in $tool_name repository" >&2
+            exit 1
+        fi
+
+        # Run setup if available (some projects like swhkd use this for rustup)
+        if make -n setup &>/dev/null; then
+            make setup
+        fi
+        make clean 2>/dev/null || true
+        make $make_args
+        sudo make install
+    ) && build_status=0 || build_status=$?
+
+    # Cleanup clone directory
+    rm -rf "$clone_dir"
+
+    if [ $build_status -ne 0 ]; then
+        warn "Failed to build $tool_name"
+        return 1
+    fi
+
+    # Store the commit hash for future update checks
+    mkdir -p "$(dirname "$version_file")"
+    echo "$latest_commit" > "$version_file"
+
+    log "$tool_name installed successfully (commit: ${latest_commit:0:7})"
 }
 
 #############################################################################

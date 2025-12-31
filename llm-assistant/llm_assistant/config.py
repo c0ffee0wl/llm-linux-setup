@@ -67,6 +67,7 @@ HEADLESS_AVAILABLE_COMMANDS = {
 
 
 # TUI commands - imported from shared library
+from llm_tools_core import TUI_COMMANDS, is_tui_command  # noqa: F401 (re-export)
 
 
 # External tool plugins that are always available

@@ -1823,10 +1823,8 @@ EOF
         echo "highlight.js@$HLJS_VERSION" >> "$GUIASSISTANT_JS_DIR/.versions"
 
         # Install swhkd (Simple Wayland HotKey Daemon - also works on X11)
-        if ! command -v swhkd &>/dev/null; then
-            log "Installing swhkd (hotkey daemon)..."
-            install_or_upgrade_cargo_tool swhkd
-        fi
+        # Built from source using make (not available as 'swhkd' on crates.io)
+        install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc"
 
         # Set up swhkd configuration (if swhkd is available)
         if command -v swhkd &>/dev/null; then

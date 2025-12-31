@@ -247,6 +247,20 @@
     </div>
 
     <script>
+        // Check if required libraries loaded
+        if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+            document.body.innerHTML = '<div style="padding: 20px; color: #c00;">' +
+                '<h3>JavaScript assets failed to load</h3>' +
+                '<p>Missing: ' +
+                (typeof marked === 'undefined' ? 'marked.js ' : '') +
+                (typeof hljs === 'undefined' ? 'highlight.js' : '') +
+                '</p>' +
+                '<p>Expected location: ~/.local/share/llm-guiassistant/js/</p>' +
+                '<p>Run: <code>./install-llm-tools.sh</code> to download assets.</p>' +
+                '</div>';
+            throw new Error('Required JavaScript libraries not loaded');
+        }
+
         // Configure marked for safe rendering
         marked.setOptions({
             highlight: function(code, lang) {

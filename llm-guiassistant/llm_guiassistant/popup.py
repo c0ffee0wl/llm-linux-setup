@@ -10,6 +10,7 @@ This module provides the main GTK application and window:
 
 import json
 import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -78,6 +79,50 @@ class StreamingQuery:
         """Cancel the current streaming query."""
         self.cancelled = True
 
+    def _format_tool_status(self, tool_name: str, args: dict) -> str:
+        """Format tool status message with optional args preview.
+
+        Args:
+            tool_name: Name of the tool being executed
+            args: Tool arguments dict
+
+        Returns:
+            Formatted status message
+        """
+        # Friendly display names for tools
+        display_names = {
+            "execute_python": "Running Python",
+            "suggest_command": "Preparing command",
+            "sandboxed_shell": "Running shell",
+            "search_google": "Searching",
+            "context": "Getting context",
+            "read_file": "Reading",
+            "write_file": "Writing",
+            "edit_file": "Editing",
+            "web_fetch": "Fetching",
+        }
+
+        action = display_names.get(tool_name, f"Executing {tool_name}")
+
+        # Add args preview for simple cases
+        if tool_name == "search_google" and args.get("query"):
+            query = args["query"]
+            if len(query) > 30:
+                query = query[:30] + "..."
+            return f'{action}: "{query}"'
+        elif tool_name in ("read_file", "write_file", "edit_file") and args.get("path"):
+            path = args["path"]
+            if len(path) > 30:
+                path = "..." + path[-27:]
+            return f'{action}: {path}'
+        elif tool_name == "web_fetch" and args.get("url"):
+            url = args["url"]
+            if len(url) > 40:
+                url = url[:40] + "..."
+            return f'{action}: {url}'
+
+        return f"{action}..."
+
     def _worker(self, request: dict):
         """Background worker that streams events."""
         ensure_daemon()
@@ -99,9 +144,12 @@ class StreamingQuery:
                 })
             elif event_type == "tool_start":
                 tool_name = event.get("tool", "unknown")
+                args = event.get("args", {})
+                # Build status message with simple args preview when available
+                message = self._format_tool_status(tool_name, args)
                 GLib.idle_add(self.on_event, {
                     "type": "tool_status",
-                    "message": f"Executing {tool_name}..."
+                    "message": message
                 })
             elif event_type == "tool_done":
                 pass  # Tool completion handled by next text event
@@ -126,14 +174,15 @@ class ActionPanel(Gtk.Popover):
     - New session
     """
 
-    def __init__(self, parent_window):
+    def __init__(self, parent_window, relative_widget):
         super().__init__()
         self.parent_window = parent_window
         self.actions = []
         self.filtered_actions = []
         self.selected_index = 0
 
-        self.set_relative_to(parent_window)
+        # Popover must be relative to a widget inside the window, not the window itself
+        self.set_relative_to(relative_widget)
         self.set_position(Gtk.PositionType.TOP)
         self.set_modal(True)
 
@@ -394,6 +443,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.streaming = False
         self.session_id = f"guiassistant:{os.getpid()}"
         self.last_response = ""  # Track last response for action panel
+        self._save_state_timeout_id = None  # Debounce window state saves
 
         # Input history for shell-like navigation
         self.history = InputHistory()
@@ -412,16 +462,16 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Build UI
         self._build_ui()
 
-        # Action panel (Ctrl+K)
-        self.action_panel = ActionPanel(self)
+        # Action panel (Ctrl+K) - must be relative to a widget inside the window
+        self.action_panel = ActionPanel(self, self.main_box)
 
         # Gather initial context
         self._gather_context()
 
     def _build_ui(self):
         """Build the popup UI."""
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        self.add(vbox)
+        self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        self.add(self.main_box)
 
         # Header bar with model selector and new session button
         header = Gtk.HeaderBar()
@@ -445,7 +495,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.context_label.set_margin_top(4)
         self.context_label.set_margin_bottom(4)
         self.context_label.get_style_context().add_class("dim-label")
-        vbox.pack_start(self.context_label, False, False, 0)
+        self.main_box.pack_start(self.context_label, False, False, 0)
 
         # WebKit view for conversation
         scrolled = Gtk.ScrolledWindow()
@@ -455,15 +505,24 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.webview = WebKit2.WebView()
         self.webview.set_vexpand(True)
 
-        # Enable file:// access for loading JS assets from ~/.local/share/
+        # Configure WebKit settings
         settings = self.webview.get_settings()
+
+        # Disable hardware acceleration to fix blank page in VMs/Docker
+        # See: https://github.com/tauri-apps/tauri/issues/7927
+        # See: https://github.com/reflex-frp/reflex-platform/issues/735
+        settings.set_hardware_acceleration_policy(
+            WebKit2.HardwareAccelerationPolicy.NEVER
+        )
+
+        # Enable file:// access for loading JS assets from ~/.local/share/
         settings.set_allow_file_access_from_file_urls(True)
         settings.set_allow_universal_access_from_file_urls(True)
 
         self._load_template()
 
         scrolled.add(self.webview)
-        vbox.pack_start(scrolled, True, True, 0)
+        self.main_box.pack_start(scrolled, True, True, 0)
 
         # Input area
         input_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
@@ -485,18 +544,84 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.send_btn.connect("clicked", self._on_submit)
         input_box.pack_start(self.send_btn, False, False, 0)
 
-        vbox.pack_start(input_box, False, False, 0)
+        self.main_box.pack_start(input_box, False, False, 0)
 
         # Set up drag and drop
         self._setup_drag_drop()
 
+    def _embed_js_assets(self, html: str) -> str:
+        """Embed JavaScript assets inline to avoid file:// loading issues.
+
+        WebKit in sandboxed/Docker environments may block file:// script loading.
+        This reads the JS files and embeds them directly in the HTML.
+        """
+        marked_path = ASSETS_DIR / "marked.min.js"
+        hljs_path = ASSETS_DIR / "highlight.min.js"
+
+        try:
+            if marked_path.exists() and hljs_path.exists():
+                marked_js = marked_path.read_text()
+                hljs_js = hljs_path.read_text()
+
+                # Replace external script tags with inline scripts
+                html = html.replace(
+                    f'<script src="file://{Path.home()}/.local/share/llm-guiassistant/js/marked.min.js"></script>',
+                    f'<script>{marked_js}</script>'
+                )
+                html = html.replace(
+                    f'<script src="file://{Path.home()}/.local/share/llm-guiassistant/js/highlight.min.js"></script>',
+                    f'<script>{hljs_js}</script>'
+                )
+
+                if self.debug:
+                    print("[WebKit] Embedded JS assets inline")
+        except Exception as e:
+            if self.debug:
+                print(f"[WebKit] Failed to embed JS assets: {e}")
+
+        return html
+
     def _load_template(self):
         """Load the conversation HTML template."""
+        # Enable WebKit developer tools in debug mode
+        if self.debug:
+            settings = self.webview.get_settings()
+            settings.set_enable_developer_extras(True)
+
+        # Connect load handlers for debugging
+        self.webview.connect("load-changed", self._on_load_changed)
+        self.webview.connect("load-failed", self._on_load_failed)
+
         if TEMPLATE_PATH.exists():
             html = TEMPLATE_PATH.read_text()
             # Expand $HOME in the template
             html = html.replace("$HOME", str(Path.home()))
-            self.webview.load_html(html, f"file://{TEMPLATE_PATH.parent}/")
+
+            # Embed JavaScript inline to avoid file:// loading issues in sandboxed environments
+            html = self._embed_js_assets(html)
+
+            if self.debug:
+                print(f"[WebKit] Loading HTML ({len(html)} bytes)")
+                # Print first 200 chars to verify template loaded
+                print(f"[WebKit] HTML start: {html[:200]}...")
+                # Check if scripts were embedded (look for inline script content)
+                if "marked.setOptions" in html and "function appendMessage" in html:
+                    print("[WebKit] Template contains expected JavaScript functions")
+                else:
+                    print("[WebKit] WARNING: JavaScript functions may be missing!")
+
+            # Write HTML to temp file and load via file:// URI
+            # This works around load_html() issues in some WebKit versions
+            self._temp_html = tempfile.NamedTemporaryFile(
+                mode='w', suffix='.html', delete=False
+            )
+            self._temp_html.write(html)
+            self._temp_html.close()
+
+            if self.debug:
+                print(f"[WebKit] Loading from temp file: {self._temp_html.name}")
+
+            self.webview.load_uri(f"file://{self._temp_html.name}")
         else:
             # Fallback minimal template
             self.webview.load_html("""
@@ -504,6 +629,23 @@ class PopupWindow(Gtk.ApplicationWindow):
                 <p>Template not found. Please reinstall llm-guiassistant.</p>
                 </body></html>
             """, "file://")
+
+    def _on_load_changed(self, webview, load_event):
+        """Handle WebView load state changes."""
+        if self.debug:
+            from gi.repository import WebKit2
+            event_names = {
+                WebKit2.LoadEvent.STARTED: "STARTED",
+                WebKit2.LoadEvent.REDIRECTED: "REDIRECTED",
+                WebKit2.LoadEvent.COMMITTED: "COMMITTED",
+                WebKit2.LoadEvent.FINISHED: "FINISHED",
+            }
+            print(f"[WebKit] Load {event_names.get(load_event, load_event)}")
+
+    def _on_load_failed(self, webview, load_event, failing_uri, error):
+        """Handle WebView load failures."""
+        print(f"[WebKit ERROR] Failed to load {failing_uri}: {error.message}")
+        return False  # Let default error handling proceed
 
     def _setup_drag_drop(self):
         """Set up drag and drop for files and images."""
@@ -537,12 +679,35 @@ class PopupWindow(Gtk.ApplicationWindow):
             self.context_label.hide()
 
     def _on_configure(self, widget, event):
-        """Save window dimensions on resize."""
-        save_window_state(event.width, event.height)
+        """Save window dimensions on resize (debounced to avoid excessive I/O)."""
+        # Cancel any pending save
+        if self._save_state_timeout_id is not None:
+            GLib.source_remove(self._save_state_timeout_id)
+
+        # Schedule save after 500ms of no resize activity
+        self._save_state_timeout_id = GLib.timeout_add(
+            500,
+            self._do_save_state,
+            event.width,
+            event.height
+        )
         return False
+
+    def _do_save_state(self, width: int, height: int) -> bool:
+        """Actually save window state (called after debounce delay)."""
+        self._save_state_timeout_id = None
+        save_window_state(width, height)
+        return False  # Don't repeat
 
     def _on_delete(self, widget, event):
         """Handle window close - hide instead of destroy."""
+        # Flush any pending state save
+        if self._save_state_timeout_id is not None:
+            GLib.source_remove(self._save_state_timeout_id)
+            self._save_state_timeout_id = None
+            # Save current size immediately
+            alloc = self.get_allocation()
+            save_window_state(alloc.width, alloc.height)
         self.hide()
         return True  # Prevent destruction
 
@@ -684,6 +849,10 @@ class PopupWindow(Gtk.ApplicationWindow):
             self._run_js("finalizeMessage()")
             self._set_streaming(False)
 
+    def _on_stop_clicked(self, widget):
+        """Handle stop button click during streaming."""
+        self.query.cancel()
+
     def _set_streaming(self, streaming: bool):
         """Update UI for streaming state."""
         self.streaming = streaming
@@ -695,7 +864,7 @@ class PopupWindow(Gtk.ApplicationWindow):
             )
             self.send_btn.set_tooltip_text("Stop (Escape)")
             self.send_btn.disconnect_by_func(self._on_submit)
-            self.send_btn.connect("clicked", lambda w: self.query.cancel())
+            self.send_btn.connect("clicked", self._on_stop_clicked)
             self.entry.set_sensitive(False)
         else:
             # Restore send button
@@ -703,11 +872,11 @@ class PopupWindow(Gtk.ApplicationWindow):
                 Gtk.Image.new_from_icon_name("go-next-symbolic", Gtk.IconSize.BUTTON)
             )
             self.send_btn.set_tooltip_text("Send (Enter)")
-            # Reconnect submit handler
+            # Disconnect stop handler and reconnect submit handler
             try:
-                self.send_btn.disconnect_by_func(lambda w: self.query.cancel())
-            except Exception:
-                pass
+                self.send_btn.disconnect_by_func(self._on_stop_clicked)
+            except TypeError:
+                pass  # Handler wasn't connected (shouldn't happen)
             self.send_btn.connect("clicked", self._on_submit)
             self.entry.set_sensitive(True)
             self.entry.grab_focus()
@@ -737,6 +906,9 @@ class PopupApplication(Gtk.Application):
                 with_selection=self.with_selection,
                 debug=self.debug
             )
+        # Explicitly show all widgets before presenting
+        # Some WebKit rendering issues require explicit show_all()
+        self.window.show_all()
         self.window.present()
         self.window.entry.grab_focus()
 

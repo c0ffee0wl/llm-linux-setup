@@ -13,7 +13,21 @@ Usage:
 """
 
 import argparse
+import os
 import sys
+
+# Suppress EGL/Mesa warnings in VMs without 3D acceleration
+# Must be set BEFORE importing GTK/WebKit
+os.environ.setdefault("LIBGL_ALWAYS_SOFTWARE", "1")
+os.environ.setdefault("MESA_DEBUG", "silent")
+
+# Fix blank page issue with WebKit2GTK hardware acceleration
+# See: https://github.com/tauri-apps/tauri/issues/7927
+# See: https://github.com/reflex-frp/reflex-platform/issues/735
+# See: https://bugs.launchpad.net/ubuntu/+source/webkit2gtk/+bug/2023322
+# See: https://bugs.webkit.org/show_bug.cgi?id=238244
+os.environ.setdefault("WEBKIT_DISABLE_COMPOSITING_MODE", "1")
+os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 
 def main():

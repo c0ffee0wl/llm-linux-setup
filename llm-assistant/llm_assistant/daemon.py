@@ -815,8 +815,10 @@ class AssistantDaemon:
     async def handle_get_responses(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
         """Handle get_responses request for /copy command.
 
-        Request: {"cmd": "get_responses", "tid": "...", "count": N, "all": false, "raw": false}
+        Request: {"cmd": "get_responses", "tid": "...", "count": N, "all": false}
         Response: {"type": "responses", "items": [{"prompt": "...", "response": "..."}]}
+
+        Note: Raw mode (markdown stripping) is handled client-side, not here.
         """
         state = self.sessions.get(terminal_id)
         if not state or not state.session.conversation:
