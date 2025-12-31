@@ -9,7 +9,6 @@ Handles:
 import json
 import os
 import socket
-import sys
 from typing import Iterator, Optional, Tuple
 
 import click
@@ -23,10 +22,7 @@ from rich.text import Text
 from llm_tools_core import (
     get_socket_path,
     get_terminal_session_id,
-    is_daemon_running,
-    start_daemon,
     ensure_daemon,
-    DAEMON_STARTUP_TIMEOUT,
     RECV_BUFFER_SIZE,
     REQUEST_TIMEOUT,
 )

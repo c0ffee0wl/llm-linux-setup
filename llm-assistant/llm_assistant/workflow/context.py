@@ -6,7 +6,7 @@ bridging workflow actions to llm-assistant's command execution, user
 prompting, and logging capabilities.
 """
 
-from typing import Any, Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING
 import asyncio
 import os
 import signal

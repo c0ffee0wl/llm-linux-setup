@@ -11,7 +11,7 @@ import os
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..protocols import AuditLogger
 
@@ -38,9 +38,9 @@ class FileAuditLogger(AuditLogger):
     flush_on_write: bool = True
 
     # Internal state
-    _jsonl_file: Optional[Any] = field(default=None, repr=False)
+    _jsonl_file: Any | None = field(default=None, repr=False)
     _md_content: dict = field(default_factory=dict, repr=False)
-    _current_execution_id: Optional[str] = field(default=None, repr=False)
+    _current_execution_id: str | None = field(default=None, repr=False)
 
     def __post_init__(self):
         """Ensure log directory exists."""
@@ -99,11 +99,11 @@ class FileAuditLogger(AuditLogger):
     async def workflow_start(
         self,
         workflow_name: str,
-        workflow_version: Optional[str],
+        workflow_version: str | None,
         inputs: dict[str, Any],
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log workflow execution start."""
         ts = timestamp or self._get_timestamp()
@@ -131,11 +131,11 @@ class FileAuditLogger(AuditLogger):
     async def step_start(
         self,
         step_id: str,
-        step_name: Optional[str],
+        step_name: str | None,
         step_type: str,
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log step start."""
         ts = timestamp or self._get_timestamp()
@@ -157,9 +157,9 @@ class FileAuditLogger(AuditLogger):
         duration_ms: float,
         *,
         execution_id: str,
-        output: Optional[dict[str, Any]] = None,
-        error: Optional[str] = None,
-        timestamp: Optional[str] = None,
+        output: dict[str, Any] | None = None,
+        error: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log step completion."""
         ts = timestamp or self._get_timestamp()
@@ -199,8 +199,8 @@ class FileAuditLogger(AuditLogger):
         successful_steps: int,
         failed_steps: int,
         skipped_steps: int,
-        error: Optional[str] = None,
-        timestamp: Optional[str] = None,
+        error: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log workflow completion."""
         ts = timestamp or self._get_timestamp()
@@ -240,7 +240,7 @@ class FileAuditLogger(AuditLogger):
         data: dict[str, Any],
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log arbitrary audit event."""
         ts = timestamp or self._get_timestamp()

@@ -7,13 +7,13 @@ backend to be used (OpenAI, Anthropic, local models, etc.).
 Supports chunking for large content via the chunking module.
 """
 
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import AbstractAction, ActionResult
 
 if TYPE_CHECKING:
-    from ..protocols import LLMClient, ExecutionContext
-    from ..chunking import TextSplitter, Aggregator
+    from ..evaluator import ContextEvaluator
+    from ..protocols import ExecutionContext, LLMClient
 
 
 class LLMExtractAction(AbstractAction):
@@ -158,7 +158,7 @@ Respond with valid JSON matching the schema. No additional text."""
         exec_context: Optional["ExecutionContext"] = None,
     ) -> ActionResult:
         """Execute extraction on chunked content."""
-        from ..chunking import get_splitter, get_aggregator
+        from ..chunking import get_aggregator, get_splitter
 
         # Get splitter
         strategy = chunking_config.get("strategy", "sliding_window")
@@ -525,7 +525,7 @@ CONTENT:
         self,
         prompt: str,
         input_content: str,
-        system_prompt: Optional[str],
+        system_prompt: str | None,
         output_format: str,
         format_instructions: dict[str, str],
         chunking_config: dict,
@@ -534,7 +534,7 @@ CONTENT:
         exec_context: Optional["ExecutionContext"] = None,
     ) -> ActionResult:
         """Execute generation on chunked content."""
-        from ..chunking import get_splitter, get_aggregator
+        from ..chunking import get_aggregator, get_splitter
 
         # Get splitter
         strategy = chunking_config.get("strategy", "sliding_window")
@@ -883,7 +883,7 @@ Be specific about commands, paths, and expected outputs."""
         if feedback_type == "file_path" and isinstance(feedback, str):
             import os
             try:
-                with open(os.path.expanduser(feedback), "r") as f:
+                with open(os.path.expanduser(feedback)) as f:
                     feedback_content = f.read()
             except Exception as e:
                 return ActionResult(

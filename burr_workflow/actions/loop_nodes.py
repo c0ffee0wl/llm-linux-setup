@@ -52,17 +52,15 @@ import logging
 import os
 import tempfile
 from pathlib import Path
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from burr.core.action import SingleStepAction
 from burr.core.state import State
 
-from ..core.types import RESERVED_STATE_KEYS
-
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
-    from ..evaluator import ContextEvaluator
+    pass
 
 
 class IteratorInitNode(SingleStepAction):
@@ -92,7 +90,7 @@ class IteratorInitNode(SingleStepAction):
         continue_on_error: bool = False,
         aggregate_results: bool = True,
         result_storage: str = "memory",
-        result_file_dir: Optional[str] = None,
+        result_file_dir: str | None = None,
     ):
         """Initialize the loop init node.
 
@@ -236,7 +234,7 @@ class IteratorInitNode(SingleStepAction):
                     )
             except (OSError, ValueError) as e:
                 logger.error(f"Invalid result_file_dir '{file_dir}': {e}")
-                raise ValueError(f"Invalid result_file_dir: {e}")
+                raise ValueError(f"Invalid result_file_dir: {e}") from e
 
             os.makedirs(file_dir, exist_ok=True)
 
@@ -247,11 +245,11 @@ class IteratorInitNode(SingleStepAction):
             # Ensure the resolved path is still within the intended directory
             if not results_file.startswith(os.path.realpath(file_dir) + os.sep):
                 raise ValueError(
-                    f"Path traversal detected: result file would escape directory"
+                    "Path traversal detected: result file would escape directory"
                 )
 
             # Create empty file (will be appended to during iteration)
-            with open(results_file, "w") as f:
+            with open(results_file, "w"):
                 pass  # Empty file
 
         new_state = state.update(
@@ -420,7 +418,7 @@ class IteratorAdvanceNode(SingleStepAction):
         body_step_id: str,
         check_node: str,
         finalize_node: str,
-        break_if: Optional[str] = None,
+        break_if: str | None = None,
     ):
         """Initialize the advance node.
 

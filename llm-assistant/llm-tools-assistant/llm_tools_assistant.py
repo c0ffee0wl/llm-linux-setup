@@ -9,7 +9,6 @@ This approach provides schema validation at the model level while keeping
 the actual terminal control logic in assistant.
 """
 import json
-from typing import Optional
 
 import llm
 

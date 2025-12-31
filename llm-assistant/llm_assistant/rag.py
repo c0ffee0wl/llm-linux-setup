@@ -10,7 +10,7 @@ This module provides RAG functionality via llm-tools-rag:
 from typing import TYPE_CHECKING, Optional
 
 from .ui import Spinner
-from .utils import check_import, parse_command, parse_comma_list, ConsoleHelper
+from .utils import check_import, parse_command, ConsoleHelper
 
 if TYPE_CHECKING:
     from rich.console import Console

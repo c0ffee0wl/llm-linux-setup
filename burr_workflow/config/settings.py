@@ -7,7 +7,6 @@ Supports configuration via environment variables and
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Optional
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,11 +33,11 @@ class WorkflowSettings(BaseSettings):
         default_factory=lambda: Path.home() / ".config" / "burr_workflow",
         description="Directory for workflow data storage",
     )
-    db_path: Optional[Path] = Field(
+    db_path: Path | None = Field(
         default=None,
         description="SQLite database path (default: data_dir/workflows.db)",
     )
-    secrets_dir: Optional[Path] = Field(
+    secrets_dir: Path | None = Field(
         default=None,
         description="Directory containing secret files",
     )

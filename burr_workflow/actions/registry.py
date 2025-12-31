@@ -5,8 +5,9 @@ The registry provides a centralized way to register and resolve
 action types, enabling extensibility through plugins.
 """
 
+from collections.abc import Callable
 from functools import lru_cache
-from typing import Any, Callable, Optional, Type, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 from ..core.errors import ActionNotFoundError
 from ..protocols import ActionProvider
@@ -37,15 +38,15 @@ class ActionRegistry(ActionProvider):
 
     def __init__(self):
         """Initialize an empty registry."""
-        self._actions: dict[str, Type[BaseAction] | ActionFactory] = {}
+        self._actions: dict[str, type[BaseAction] | ActionFactory] = {}
         self._aliases: dict[str, str] = {}
 
     def register(
         self,
         action_type: str,
-        action_class: Type[BaseAction] | ActionFactory,
+        action_class: type[BaseAction] | ActionFactory,
         *,
-        aliases: Optional[list[str]] = None,
+        aliases: list[str] | None = None,
     ) -> None:
         """Register an action type.
 
@@ -157,7 +158,7 @@ class ActionRegistry(ActionProvider):
 
     # ActionProvider protocol methods
 
-    def get_action(self, action_type: str) -> Optional[type]:
+    def get_action(self, action_type: str) -> type | None:
         """Get action class by type name (ActionProvider protocol).
 
         Unlike get(), this returns the class/factory, not an instance.
@@ -185,15 +186,15 @@ class ActionRegistry(ActionProvider):
 
 def _register_builtin_actions(registry: ActionRegistry) -> None:
     """Register built-in actions with the registry."""
-    from .shell import ShellAction
-    from .http import HTTPAction
-    from .state import StateSetAction, StateAppendAction
-    from .control import ExitAction, FailAction, BreakAction, ContinueAction, WaitAction
-    from .human import HumanInputAction, HumanDecideAction
+    from .control import BreakAction, ContinueAction, ExitAction, FailAction, WaitAction
     from .file import FileReadAction, FileWriteAction
-    from .parse import ParseJSONAction, ParseRegexAction
+    from .http import HTTPAction
+    from .human import HumanDecideAction, HumanInputAction
     from .notify import NotifyDesktopAction, NotifyWebhookAction
-    from .script import PythonScriptAction, BashScriptAction
+    from .parse import ParseJSONAction, ParseRegexAction
+    from .script import BashScriptAction, PythonScriptAction
+    from .shell import ShellAction
+    from .state import StateAppendAction, StateSetAction
 
     # Shell commands
     registry.register("shell", ShellAction, aliases=["run"])
@@ -279,8 +280,8 @@ def register_llm_actions(
         llm_client: LLM client for action execution
     """
     from .llm import (
-        LLMExtractAction,
         LLMDecideAction,
+        LLMExtractAction,
         LLMGenerateAction,
         LLMInstructAction,
     )

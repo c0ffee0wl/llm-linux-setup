@@ -14,7 +14,6 @@ import sys
 # Import shared utilities from llm_tools_core
 from llm_tools_core import (
     get_socket_path,
-    is_daemon_running,
     ensure_daemon,
     build_simple_system_prompt,
     REQUEST_TIMEOUT,

@@ -4,7 +4,7 @@ HTTP action for making web requests.
 Uses httpx for async HTTP with proper timeout and retry handling.
 """
 
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import AbstractAction, ActionResult
 

@@ -19,7 +19,7 @@ import signal
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import click
 import llm
@@ -31,7 +31,6 @@ from rich.console import Console
 # Import shared utilities from llm_tools_core
 from llm_tools_core import (
     get_socket_path,
-    ensure_socket_dir,
     build_simple_system_prompt,
     ErrorCode,
     IDLE_TIMEOUT_MINUTES,
@@ -43,8 +42,6 @@ from .headless_session import (
     HeadlessSession,
     get_headless_tools,
     get_tool_implementations,
-    capture_shell_context,
-    format_context_for_prompt,
 )
 from .utils import get_config_dir, logs_on
 

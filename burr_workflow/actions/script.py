@@ -11,9 +11,9 @@ import asyncio
 import os
 import shutil
 import tempfile
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
-from .base import BaseAction, ActionResult
+from .base import ActionResult, BaseAction
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext
@@ -58,7 +58,7 @@ class ScriptAction(BaseAction):
                 if not os.path.isabs(script_file):
                     workspace = context.get("env", {}).get("WORKSPACE", os.getcwd())
                     script_file = os.path.join(workspace, script_file)
-                with open(script_file, "r", encoding="utf-8") as f:
+                with open(script_file, encoding="utf-8") as f:
                     code = f.read()
             except FileNotFoundError:
                 return ActionResult(

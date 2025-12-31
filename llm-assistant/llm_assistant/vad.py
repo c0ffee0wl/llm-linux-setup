@@ -6,9 +6,7 @@ via ONNX Runtime, without requiring PyTorch.
 The model is downloaded and cached in ~/.cache/llm-assistant/models/
 """
 
-import os
 from pathlib import Path
-from typing import Optional
 
 import numpy as np
 

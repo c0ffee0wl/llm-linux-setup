@@ -15,43 +15,40 @@ Burr API Notes (verified from /tmp/burr source):
 - Condition.when(**kwargs) creates key=value state checks
 """
 
-from dataclasses import dataclass, field
-from typing import Any, Callable, Optional, Union, TYPE_CHECKING
 import asyncio
 import re
-
+from dataclasses import dataclass, field
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional, Union
 
 from burr.core import ApplicationBuilder, default
-from burr.core.action import Action, Condition, SingleStepAction
+from burr.core.action import Condition, SingleStepAction
 from burr.core.persistence import SQLitePersister
 from burr.core.state import State
 from burr.tracking import LocalTrackingClient
 
-from .hooks import StepTimingHook
+from ..evaluator.security import SecurityError, validate_step_id
+from .adapters import BurrActionAdapter
 from .errors import (
+    ActionNotFoundError,
     WorkflowCompilationError,
     WorkflowValidationError,
-    ActionNotFoundError,
 )
-from .types import RESERVED_STATE_KEYS
-from .parser import WorkflowParser, SourceLocation
+from .hooks import StepTimingHook
+from .parser import WorkflowParser
 from .validator import validate_workflow
-from .adapters import BurrActionAdapter
-from ..evaluator.security import validate_step_id, SecurityError
 
 # Import new guard system (with graceful degradation)
 try:
-    from ..guard import GuardScanner, VaultManager, LLM_GUARD_AVAILABLE
+    from ..guard import LLM_GUARD_AVAILABLE, GuardScanner, VaultManager
 except ImportError:
     LLM_GUARD_AVAILABLE = False
     GuardScanner = None  # type: ignore[misc, assignment]
     VaultManager = None  # type: ignore[misc, assignment]
 
 if TYPE_CHECKING:
-    from typing import Literal
-    from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
+    from ..protocols import ExecutionContext, LLMClient
     from ..schemas.models import GuardrailsConfig, LLMDefaultsConfig
 
 
@@ -125,9 +122,9 @@ class CompiledStep:
 
     name: str
     action: "BurrActionAdapter"
-    transitions: list[tuple[str, Optional[Condition]]] = field(default_factory=list)
+    transitions: list[tuple[str, Condition | None]] = field(default_factory=list)
     # Original step config for actions needing full step definition
-    step_config: Optional[dict] = None
+    step_config: dict | None = None
 
 
 class NoOpAction(SingleStepAction):
@@ -370,7 +367,7 @@ class WorkflowCompiler:
         action_registry: Optional["ActionRegistry"] = None,
         exec_context: Optional["ExecutionContext"] = None,
         llm_client: Optional["LLMClient"] = None,
-        parser: Optional[WorkflowParser] = None,
+        parser: WorkflowParser | None = None,
     ):
         """Initialize the compiler.
 
@@ -396,20 +393,20 @@ class WorkflowCompiler:
         self._has_on_failure = False
 
         # Create LLM Guard components
-        self.vault_manager: Optional["VaultManager"] = None
-        self.guard_scanner: Optional["GuardScanner"] = None
+        self.vault_manager: VaultManager | None = None
+        self.guard_scanner: GuardScanner | None = None
         if LLM_GUARD_AVAILABLE and VaultManager is not None and GuardScanner is not None:
             self.vault_manager = VaultManager()
             self.guard_scanner = GuardScanner(self.vault_manager)
 
         # Workflow-level guardrails (set during compile)
-        self.workflow_guardrails: Optional["GuardrailsConfig"] = None
+        self.workflow_guardrails: GuardrailsConfig | None = None
 
         # Workflow-level LLM configuration (set during compile)
-        self.workflow_llm_config: Optional["LLMDefaultsConfig"] = None
+        self.workflow_llm_config: LLMDefaultsConfig | None = None
 
     @staticmethod
-    def _parse_retry_config(retry_dict: Optional[dict]) -> Optional[dict]:
+    def _parse_retry_config(retry_dict: dict | None) -> dict | None:
         """Parse retry configuration from step/loop configuration.
 
         Args:
@@ -437,12 +434,12 @@ class WorkflowCompiler:
     def compile(
         self,
         workflow: dict,
-        initial_state: Optional[dict] = None,
-        app_id: Optional[str] = None,
-        db_path: Optional[Path] = None,
+        initial_state: dict | None = None,
+        app_id: str | None = None,
+        db_path: Path | None = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
-        timing_hook: Optional[StepTimingHook] = None,
+        timing_hook: StepTimingHook | None = None,
     ) -> "Application":
         """Compile a workflow dictionary to a Burr Application.
 
@@ -475,7 +472,7 @@ class WorkflowCompiler:
                 for e in validation_result.errors
             ]
             raise WorkflowValidationError(
-                f"Workflow validation failed:\n  " + "\n  ".join(error_msgs)
+                "Workflow validation failed:\n  " + "\n  ".join(error_msgs)
             )
 
         # Store workflow-level guardrails for merge with step guardrails
@@ -573,7 +570,7 @@ class WorkflowCompiler:
             raise WorkflowCompilationError(
                 f"Invalid step ID '{step_id}': {e.message}",
                 location=location,
-            )
+            ) from e
 
         return step_id
 
@@ -632,10 +629,10 @@ class WorkflowCompiler:
                                   [next_step]
         """
         from ..actions.loop_nodes import (
-            IteratorInitNode,
-            IteratorCheckNode,
             IteratorAdvanceNode,
+            IteratorCheckNode,
             IteratorFinalizeNode,
+            IteratorInitNode,
         )
 
         loop_expr = step["loop"]
@@ -848,7 +845,7 @@ class WorkflowCompiler:
     def _merge_guardrails(
         self,
         workflow_config: Optional["GuardrailsConfig"],
-        step_config: Optional[Union["GuardrailsConfig", bool]],
+        step_config: Union["GuardrailsConfig", bool] | None,
     ) -> Optional["GuardrailsConfig"]:
         """Merge workflow defaults with step overrides.
 
@@ -1024,12 +1021,12 @@ class WorkflowCompiler:
     def _build_application(
         self,
         workflow: dict,
-        initial_state: Optional[dict],
-        app_id: Optional[str],
-        db_path: Optional[Path] = None,
+        initial_state: dict | None,
+        app_id: str | None,
+        db_path: Path | None = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
-        timing_hook: Optional[StepTimingHook] = None,
+        timing_hook: StepTimingHook | None = None,
     ) -> "Application":
         """Build the final Burr Application from compiled steps.
 
@@ -1129,12 +1126,12 @@ class WorkflowCompiler:
     def compile_from_yaml(
         self,
         yaml_content: str,
-        initial_state: Optional[dict] = None,
-        app_id: Optional[str] = None,
-        db_path: Optional[Path] = None,
+        initial_state: dict | None = None,
+        app_id: str | None = None,
+        db_path: Path | None = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
-        timing_hook: Optional[StepTimingHook] = None,
+        timing_hook: StepTimingHook | None = None,
     ) -> "Application":
         """Compile workflow from YAML string.
 
@@ -1165,13 +1162,13 @@ class WorkflowCompiler:
 
     def compile_with_validation(
         self,
-        workflow: Union[dict, str],
-        initial_state: Optional[dict] = None,
-        app_id: Optional[str] = None,
-        db_path: Optional[Path] = None,
+        workflow: dict | str,
+        initial_state: dict | None = None,
+        app_id: str | None = None,
+        db_path: Path | None = None,
         enable_tracking: bool = False,
         tracking_project: str = "burr_workflow",
-        timing_hook: Optional[StepTimingHook] = None,
+        timing_hook: StepTimingHook | None = None,
     ) -> "Application":
         """Compile workflow with Pydantic validation.
 
@@ -1208,7 +1205,7 @@ class WorkflowCompiler:
             # Convert back to dict for compilation
             workflow_dict = validated.model_dump(by_alias=True)
         except Exception as e:
-            raise WorkflowValidationError(f"Schema validation failed: {e}")
+            raise WorkflowValidationError(f"Schema validation failed: {e}") from e
 
         return self.compile(
             workflow_dict,
@@ -1224,4 +1221,5 @@ class WorkflowCompiler:
 # Type import for return type hints
 if TYPE_CHECKING:
     from burr.core import Application
+
     from ..actions.registry import ActionRegistry

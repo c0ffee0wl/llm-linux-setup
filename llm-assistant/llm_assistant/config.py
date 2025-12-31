@@ -67,7 +67,6 @@ HEADLESS_AVAILABLE_COMMANDS = {
 
 
 # TUI commands - imported from shared library
-from llm_tools_core import TUI_COMMANDS, is_tui_command
 
 
 # External tool plugins that are always available
@@ -142,9 +141,3 @@ EXTERNAL_TOOL_DISPLAY = {
 
 
 # Model context limits - imported from shared library
-from llm_tools_core import (
-    MODEL_CONTEXT_LIMITS,
-    PROVIDER_DEFAULT_LIMITS,
-    DEFAULT_CONTEXT_LIMIT,
-    get_model_context_limit,
-)

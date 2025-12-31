@@ -276,4 +276,4 @@ class MemoryMixin:
             else:
                 ConsoleHelper.info(self.console, "No memory loaded.")
                 self.console.print(f"[dim]Global: {self._get_global_agents_path()}[/]")
-                self.console.print(f"[dim]Local:  ./AGENTS.md[/]")
+                self.console.print("[dim]Local:  ./AGENTS.md[/]")

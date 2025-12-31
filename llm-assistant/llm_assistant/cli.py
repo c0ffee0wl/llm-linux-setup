@@ -8,7 +8,6 @@ Note: session.py is imported lazily to avoid loading audio dependencies
 (voice.py, sounddevice) when running in daemon mode.
 """
 
-import sys
 from typing import List, Optional, Tuple
 
 import click

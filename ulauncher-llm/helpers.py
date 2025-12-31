@@ -6,8 +6,8 @@ Provides text formatting, tool display names, and utility functions.
 import re
 
 import gi
-gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+gi.require_version('Gtk', '3.0')  # noqa: E402
+from gi.repository import Gtk, Gdk  # noqa: E402
 
 
 def strip_markdown_for_copy(text: str) -> str:

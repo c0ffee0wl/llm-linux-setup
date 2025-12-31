@@ -4,7 +4,7 @@ State action for setting workflow variables.
 Allows explicit state manipulation without running commands.
 """
 
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import AbstractAction, ActionResult
 

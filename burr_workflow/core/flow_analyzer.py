@@ -7,7 +7,7 @@ loops, and data dependencies without actually executing anything.
 
 import re
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -15,17 +15,17 @@ class StepAnalysis:
     """Analysis result for a single step."""
 
     step_id: str
-    step_name: Optional[str]
+    step_name: str | None
     step_type: str  # "run", "uses", "loop", "human", "script"
     action: str  # command or action type
-    condition: Optional[str]  # if: expression
-    loop_expr: Optional[str]  # loop: expression
-    max_iterations: Optional[int]  # loop max_iterations
+    condition: str | None  # if: expression
+    loop_expr: str | None  # loop: expression
+    max_iterations: int | None  # loop max_iterations
     dependencies: set[str] = field(default_factory=set)  # step IDs this depends on
     next_steps: list[str] = field(default_factory=list)  # possible next step IDs
     is_conditional: bool = False
     is_loop: bool = False
-    on_failure: Optional[str] = None  # on_failure target
+    on_failure: str | None = None  # on_failure target
 
 
 @dataclass
@@ -33,7 +33,7 @@ class FlowAnalysisResult:
     """Complete workflow flow analysis."""
 
     workflow_name: str
-    workflow_version: Optional[str]
+    workflow_version: str | None
     steps: list[StepAnalysis]
     data_dependencies: dict[str, set[str]]  # step_id → set of step_ids it reads from
     total_steps: int

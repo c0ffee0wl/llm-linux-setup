@@ -16,13 +16,12 @@ Uses ruamel.yaml source location tracking for precise error messages
 with line:column references.
 """
 
+import re
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional, Set, List, Dict
-import re
+from typing import Any
 
-from jinja2 import Environment
-from jinja2 import nodes
+from jinja2 import Environment, nodes
 from jinja2.exceptions import TemplateSyntaxError
 
 from burr_workflow.evaluator.filters import SAFE_FILTERS
@@ -41,13 +40,13 @@ class ValidationMessage:
     level: ValidationLevel
     code: str
     message: str
-    location: Optional[str] = None  # Logical path, e.g., "jobs.main.steps[2]"
-    suggestion: Optional[str] = None
-    source_line: Optional[int] = None  # 1-indexed line number
-    source_column: Optional[int] = None  # 0-indexed column
+    location: str | None = None  # Logical path, e.g., "jobs.main.steps[2]"
+    suggestion: str | None = None
+    source_line: int | None = None  # 1-indexed line number
+    source_column: int | None = None  # 0-indexed column
 
     @property
-    def source_location(self) -> Optional[str]:
+    def source_location(self) -> str | None:
         """Format source location as 'line X, column Y'."""
         if self.source_line is not None:
             if self.source_column is not None:
@@ -64,10 +63,10 @@ class ValidationResult:
 
     def add_error(
         self, code: str, message: str,
-        location: Optional[str] = None,
-        suggestion: Optional[str] = None,
-        source_line: Optional[int] = None,
-        source_column: Optional[int] = None,
+        location: str | None = None,
+        suggestion: str | None = None,
+        source_line: int | None = None,
+        source_column: int | None = None,
     ) -> None:
         """Add an error message."""
         self.messages.append(ValidationMessage(
@@ -83,10 +82,10 @@ class ValidationResult:
 
     def add_warning(
         self, code: str, message: str,
-        location: Optional[str] = None,
-        suggestion: Optional[str] = None,
-        source_line: Optional[int] = None,
-        source_column: Optional[int] = None,
+        location: str | None = None,
+        suggestion: str | None = None,
+        source_line: int | None = None,
+        source_column: int | None = None,
     ) -> None:
         """Add a warning message."""
         self.messages.append(ValidationMessage(
@@ -101,10 +100,10 @@ class ValidationResult:
 
     def add_info(
         self, code: str, message: str,
-        location: Optional[str] = None,
-        suggestion: Optional[str] = None,
-        source_line: Optional[int] = None,
-        source_column: Optional[int] = None,
+        location: str | None = None,
+        suggestion: str | None = None,
+        source_line: int | None = None,
+        source_column: int | None = None,
     ) -> None:
         """Add an info message."""
         self.messages.append(ValidationMessage(
@@ -300,13 +299,13 @@ class WorkflowValidator:
             strict: If True, treat warnings as errors
         """
         self.strict = strict
-        self._step_ids: Set[str] = set()
-        self._step_outputs: Dict[str, Set[str]] = {}
-        self._referenced_steps: Set[str] = set()
+        self._step_ids: set[str] = set()
+        self._step_outputs: dict[str, set[str]] = {}
+        self._referenced_steps: set[str] = set()
         self._jinja_validator = Jinja2ExpressionValidator()
 
     @staticmethod
-    def _get_source_loc(node: Any, key: Optional[str] = None) -> tuple[Optional[int], Optional[int]]:
+    def _get_source_loc(node: Any, key: str | None = None) -> tuple[int | None, int | None]:
         """Extract source line/column from a ruamel.yaml node.
 
         Args:
@@ -727,7 +726,7 @@ class WorkflowValidator:
         path: str,
         result: ValidationResult,
         parent: Any = None,
-        parent_key: Optional[str] = None,
+        parent_key: str | None = None,
     ) -> None:
         """Recursively validate expressions in any object."""
         if isinstance(obj, dict):
@@ -752,8 +751,8 @@ class WorkflowValidator:
         text: str,
         location: str,
         result: ValidationResult,
-        source_line: Optional[int] = None,
-        source_col: Optional[int] = None,
+        source_line: int | None = None,
+        source_col: int | None = None,
     ) -> None:
         """Validate expressions within a string."""
         # Find all expressions
@@ -842,7 +841,7 @@ class WorkflowValidator:
             # Handle both string and array commands
             commands = [run_cmd] if isinstance(run_cmd, str) else run_cmd
 
-            for cmd_idx, cmd in enumerate(commands):
+            for _cmd_idx, cmd in enumerate(commands):
                 if not isinstance(cmd, str):
                     continue
 
@@ -887,7 +886,7 @@ class WorkflowValidator:
         # Steps in sequence are implicitly referenced
         for idx, step in enumerate(steps):
             if isinstance(step, dict):
-                step_id = step.get("id") or step.get("name") or f"step_{idx}"
+                step.get("id") or step.get("name") or f"step_{idx}"
                 # Each step references the next (implicit transition)
                 if idx + 1 < len(steps):
                     next_step = steps[idx + 1]
@@ -928,8 +927,9 @@ def validate_workflow_yaml(yaml_content: str, strict: bool = False) -> Validatio
         ValidationResult with all findings
     """
     try:
-        from ruamel.yaml import YAML
         from io import StringIO
+
+        from ruamel.yaml import YAML
         # Use round-trip mode for source location tracking
         yaml = YAML(typ="rt")
         yaml.preserve_quotes = True

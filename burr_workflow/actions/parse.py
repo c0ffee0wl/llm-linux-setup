@@ -6,9 +6,9 @@ This module provides actions for parsing JSON and extracting data via regex.
 
 import json
 import re
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from .base import BaseAction, ActionResult
+from .base import ActionResult, BaseAction
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext

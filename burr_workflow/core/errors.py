@@ -7,7 +7,7 @@ providing a consistent interface for error handling.
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -17,7 +17,7 @@ class SourceLocation:
     Used with ruamel.yaml to track line/column info for
     user-friendly error messages.
     """
-    file: Optional[Path]
+    file: Path | None
     line: int  # 1-indexed for user display
     column: int
 
@@ -41,9 +41,9 @@ class WorkflowError(Exception):
         self,
         message: str,
         *,
-        suggestion: Optional[str] = None,
-        location: Optional[SourceLocation] = None,
-        context: Optional[dict[str, Any]] = None,
+        suggestion: str | None = None,
+        location: SourceLocation | None = None,
+        context: dict[str, Any] | None = None,
     ):
         self.message = message
         self.suggestion = suggestion
@@ -78,9 +78,9 @@ class WorkflowValidationError(WorkflowError):
         self,
         message: str,
         *,
-        field: Optional[str] = None,
-        expected: Optional[str] = None,
-        actual: Optional[str] = None,
+        field: str | None = None,
+        expected: str | None = None,
+        actual: str | None = None,
         **kwargs: Any,
     ):
         self.field = field
@@ -108,8 +108,8 @@ class WorkflowCompilationError(WorkflowError):
         self,
         message: str,
         *,
-        step_id: Optional[str] = None,
-        step_name: Optional[str] = None,
+        step_id: str | None = None,
+        step_name: str | None = None,
         **kwargs: Any,
     ):
         self.step_id = step_id
@@ -134,9 +134,9 @@ class WorkflowExecutionError(WorkflowError):
         self,
         message: str,
         *,
-        step_id: Optional[str] = None,
-        step_name: Optional[str] = None,
-        original_error: Optional[Exception] = None,
+        step_id: str | None = None,
+        step_name: str | None = None,
+        original_error: Exception | None = None,
         **kwargs: Any,
     ):
         self.step_id = step_id
@@ -193,9 +193,9 @@ class StepError(WorkflowExecutionError):
         self,
         message: str,
         *,
-        exit_code: Optional[int] = None,
-        stdout: Optional[str] = None,
-        stderr: Optional[str] = None,
+        exit_code: int | None = None,
+        stdout: str | None = None,
+        stderr: str | None = None,
         **kwargs: Any,
     ):
         self.exit_code = exit_code
@@ -215,7 +215,7 @@ class ActionNotFoundError(WorkflowCompilationError):
         self,
         action_type: str,
         *,
-        available_actions: Optional[list[str]] = None,
+        available_actions: list[str] | None = None,
         **kwargs: Any,
     ):
         self.action_type = action_type
@@ -243,7 +243,7 @@ class ExpressionError(WorkflowError):
         message: str,
         *,
         expression: str,
-        available_vars: Optional[list[str]] = None,
+        available_vars: list[str] | None = None,
         **kwargs: Any,
     ):
         self.expression = expression
@@ -269,7 +269,7 @@ class PathTraversalError(SecurityError):
         self,
         path: str,
         *,
-        allowed_base: Optional[str] = None,
+        allowed_base: str | None = None,
         **kwargs: Any,
     ):
         self.path = path

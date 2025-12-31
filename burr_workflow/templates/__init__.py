@@ -6,21 +6,20 @@ conflicts with workflow ${{ expression }} syntax.
 """
 
 import importlib.resources
-from typing import Dict, Optional
 
 # Template registry: name -> description
 # TODO: Add more templates (osint, scan, credential, interactive, api)
-TEMPLATES: Dict[str, str] = {
+TEMPLATES: dict[str, str] = {
     "minimal": "Bare minimum valid workflow",
 }
 
 
-def list_templates() -> Dict[str, str]:
+def list_templates() -> dict[str, str]:
     """Return dict of template_name -> description."""
     return TEMPLATES.copy()
 
 
-def get_template(name: str, variables: Optional[Dict[str, str]] = None) -> str:
+def get_template(name: str, variables: dict[str, str] | None = None) -> str:
     """Load and optionally render template content by name.
 
     Args:

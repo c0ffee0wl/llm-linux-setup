@@ -8,7 +8,7 @@ This module provides web companion functionality:
 
 import threading
 import time
-from typing import TYPE_CHECKING, Optional, Set, Dict, List
+from typing import TYPE_CHECKING, Optional, Set, Dict
 
 from .templates import render
 from .utils import ConsoleHelper
@@ -18,7 +18,6 @@ try:
     from fastapi import FastAPI, WebSocket
     from fastapi.responses import HTMLResponse
     import uvicorn
-    import webbrowser
     WEB_AVAILABLE = True
 except ImportError:
     WEB_AVAILABLE = False

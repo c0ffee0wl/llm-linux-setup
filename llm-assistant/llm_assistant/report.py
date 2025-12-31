@@ -471,7 +471,7 @@ language_name: {language_name}
                             history_parts.append(f"Assistant: {cleaned.strip()}")
 
         if history_parts:
-            prompt += f"\n\n## Conversation Context:\n" + "\n\n".join(history_parts)
+            prompt += "\n\n## Conversation Context:\n" + "\n\n".join(history_parts)
 
         # Limit total attachments to avoid token bloat (most recent 5)
         conversation_attachments = conversation_attachments[-5:] if conversation_attachments else []

@@ -20,28 +20,28 @@ Usage:
 """
 
 import asyncio
+import logging
 import signal
 import threading
+import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Optional, TYPE_CHECKING
-import logging
-import time
+from typing import TYPE_CHECKING, Any, Optional
 
 from burr.core.state import State
 
 from .errors import (
     WorkflowExecutionError,
-    WorkflowTimeoutError,
-    WorkflowInterruptedError,
 )
 from .hooks import StepTimingHook
 
 if TYPE_CHECKING:
     from burr.core import Application
-    from ..protocols import ExecutionContext, OutputHandler, AuditLogger
+
+    from ..protocols import AuditLogger, ExecutionContext, OutputHandler
 
 logger = logging.getLogger(__name__)
 
@@ -61,12 +61,12 @@ class ExecutionStatus(Enum):
 class StepProgress:
     """Progress information for a single step."""
     step_id: str
-    step_name: Optional[str]
+    step_name: str | None
     status: str  # "pending", "running", "completed", "failed", "skipped"
-    started_at: Optional[datetime] = None
-    completed_at: Optional[datetime] = None
-    outcome: Optional[str] = None
-    error: Optional[str] = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    outcome: str | None = None
+    error: str | None = None
 
 
 @dataclass
@@ -74,11 +74,11 @@ class ExecutionProgress:
     """Overall execution progress."""
     workflow_name: str
     status: ExecutionStatus
-    workflow_version: Optional[str] = None
-    current_step: Optional[str] = None
+    workflow_version: str | None = None
+    current_step: str | None = None
     steps_completed: int = 0
     steps_total: int = 0
-    started_at: Optional[datetime] = None
+    started_at: datetime | None = None
     step_history: list[StepProgress] = field(default_factory=list)
     
     @property
@@ -95,11 +95,11 @@ class SuspensionRequest:
     step_id: str
     suspension_type: str  # "input", "approval", "review"
     prompt: str
-    options: Optional[list[str]] = None
-    default: Optional[str] = None
-    timeout: Optional[int] = None
+    options: list[str] | None = None
+    default: str | None = None
+    timeout: int | None = None
     # For resume: store state and app reference
-    suspended_state: Optional[dict[str, Any]] = None
+    suspended_state: dict[str, Any] | None = None
     app: Optional["Application"] = None
 
 
@@ -110,8 +110,8 @@ class ExecutionResult:
     final_state: dict[str, Any]
     outputs: dict[str, Any]
     progress: ExecutionProgress
-    error: Optional[str] = None
-    suspension: Optional[SuspensionRequest] = None
+    error: str | None = None
+    suspension: SuspensionRequest | None = None
     
     @property
     def success(self) -> bool:
@@ -131,7 +131,7 @@ class ExecutionResult:
 
 # Callback types
 ProgressCallback = Callable[[ExecutionProgress], None]
-StepCallback = Callable[[str, str, Optional[dict]], None]  # step_id, status, outputs
+StepCallback = Callable[[str, str, dict | None], None]  # step_id, status, outputs
 
 
 class WorkflowExecutor:
@@ -176,8 +176,8 @@ class WorkflowExecutor:
         exec_context: Optional["ExecutionContext"] = None,
         output_handler: Optional["OutputHandler"] = None,
         audit_logger: Optional["AuditLogger"] = None,
-        on_progress: Optional[ProgressCallback] = None,
-        on_step: Optional[StepCallback] = None,
+        on_progress: ProgressCallback | None = None,
+        on_step: StepCallback | None = None,
         default_timeout: int = 3600,  # 1 hour default
         step_timeout: int = 300,  # 5 minutes per step
         capture_timing: bool = True,
@@ -212,20 +212,20 @@ class WorkflowExecutor:
         self.capture_timing = capture_timing
 
         # Create timing hook if enabled
-        self._timing_hook: Optional[StepTimingHook] = None
+        self._timing_hook: StepTimingHook | None = None
         if capture_timing:
             self._timing_hook = StepTimingHook()
 
         # Execution state (use threading.Event for thread-safe signal handling)
         self._interrupted = threading.Event()
-        self._current_app: Optional["Application"] = None
-        self._progress: Optional[ExecutionProgress] = None
-        self._suspension: Optional[SuspensionRequest] = None
-        self._execution_id: Optional[str] = None
-        self._start_time: Optional[float] = None
+        self._current_app: Application | None = None
+        self._progress: ExecutionProgress | None = None
+        self._suspension: SuspensionRequest | None = None
+        self._execution_id: str | None = None
+        self._start_time: float | None = None
 
     @property
-    def timing_hook(self) -> Optional[StepTimingHook]:
+    def timing_hook(self) -> StepTimingHook | None:
         """Get the timing hook for passing to the compiler.
 
         Example:
@@ -237,8 +237,8 @@ class WorkflowExecutor:
 
     def _validate_and_coerce_inputs(
         self,
-        inputs: Optional[dict[str, Any]],
-        input_definitions: Optional[dict[str, Any]],
+        inputs: dict[str, Any] | None,
+        input_definitions: dict[str, Any] | None,
     ) -> dict[str, Any]:
         """Validate and coerce input values against their definitions.
 
@@ -292,7 +292,7 @@ class WorkflowExecutor:
             except (ValueError, TypeError) as e:
                 raise WorkflowExecutionError(
                     f"Input '{name}' type coercion failed: {e}"
-                )
+                ) from e
 
             # Validate enum constraint
             enum_values = spec.get("enum")
@@ -388,8 +388,8 @@ class WorkflowExecutor:
                     elif isinstance(parsed, dict):
                         # Valid JSON but not an array - error, don't fall through
                         raise ValueError(
-                            f"Expected JSON array but got object. "
-                            f"Use 'object' type for JSON objects."
+                            "Expected JSON array but got object. "
+                            "Use 'object' type for JSON objects."
                         )
                     else:
                         # Scalar JSON value (string, number, bool, null)
@@ -403,9 +403,9 @@ class WorkflowExecutor:
                 # For a single-element array with a comma, use JSON: '["foo,bar"]'
                 if "," in value:
                     logger.debug(
-                        f"Array input contains comma but is not valid JSON. "
-                        f"Splitting by comma. For a literal comma in array elements, "
-                        f"use JSON format: '[\"element,with,commas\"]'"
+                        "Array input contains comma but is not valid JSON. "
+                        "Splitting by comma. For a literal comma in array elements, "
+                        "use JSON format: '[\"element,with,commas\"]'"
                     )
                     return [v.strip() for v in value.split(",")]
                 else:
@@ -422,8 +422,8 @@ class WorkflowExecutor:
                     parsed = json.loads(value)
                     if isinstance(parsed, dict):
                         return parsed
-                except json.JSONDecodeError:
-                    raise ValueError(f"Cannot parse string as JSON object")
+                except json.JSONDecodeError as e:
+                    raise ValueError("Cannot parse string as JSON object") from e
             raise ValueError(f"Cannot convert {type(value).__name__} to object")
 
         else:
@@ -434,10 +434,10 @@ class WorkflowExecutor:
     async def run(
         self,
         app: "Application",
-        inputs: Optional[dict[str, Any]] = None,
-        timeout: Optional[int] = None,
-        resume_from: Optional[str] = None,
-        workflow_version: Optional[str] = None,
+        inputs: dict[str, Any] | None = None,
+        timeout: int | None = None,
+        resume_from: str | None = None,
+        workflow_version: str | None = None,
     ) -> ExecutionResult:
         """Run a workflow application.
 
@@ -601,7 +601,7 @@ class WorkflowExecutor:
         # Continue execution with rebuilt app
         return await self._execute(resumed_app, inputs=None)
     
-    async def step(self, app: "Application") -> Optional[StepProgress]:
+    async def step(self, app: "Application") -> StepProgress | None:
         """Execute a single step of the workflow.
         
         Args:
@@ -646,12 +646,12 @@ class WorkflowExecutor:
             
         except Exception as e:
             logger.exception(f"Step execution failed: {e}")
-            raise WorkflowExecutionError(f"Step execution failed: {e}")
+            raise WorkflowExecutionError(f"Step execution failed: {e}") from e
     
     async def _execute(
         self,
         app: "Application",
-        inputs: Optional[dict[str, Any]] = None,
+        inputs: dict[str, Any] | None = None,
     ) -> ExecutionResult:
         """Internal execution loop."""
 
@@ -668,8 +668,6 @@ class WorkflowExecutor:
 
         try:
             # Use Burr's async iteration
-            last_action = None
-            last_result = None
 
             # Burr's aiterate() yields AFTER action execution completes.
             # Use the timing hook (if available) for accurate per-step timing.
@@ -680,7 +678,7 @@ class WorkflowExecutor:
 
                 step_id = action.name
                 step_name = getattr(action, 'step_name', action.name)
-                step_type = getattr(action, 'step_type', 'unknown')
+                getattr(action, 'step_type', 'unknown')
                 step_outcome = result.get("outcome", "success") if result else "success"
                 step_error = result.get("error") if result else None
 
@@ -692,8 +690,6 @@ class WorkflowExecutor:
                 elif result and isinstance(result, dict):
                     step_duration_ms = result.get("duration_ms", 0.0)
 
-                last_action = action
-                last_result = result
 
                 # Log step completion (start event omitted - action already executed)
                 # For full before/after step events, use Burr's LifecycleHook system
@@ -825,7 +821,7 @@ class WorkflowExecutor:
     async def _log_workflow_end(
         self,
         outcome: str,
-        error: Optional[str],
+        error: str | None,
     ) -> None:
         """Log workflow completion to audit logger."""
         if not self.audit_logger or not self._execution_id:
@@ -928,7 +924,7 @@ class WorkflowExecutor:
         )
     
     @property
-    def current_progress(self) -> Optional[ExecutionProgress]:
+    def current_progress(self) -> ExecutionProgress | None:
         """Get current execution progress."""
         return self._progress
 
@@ -936,9 +932,9 @@ class WorkflowExecutor:
 # Convenience function
 async def run_workflow(
     app: "Application",
-    inputs: Optional[dict[str, Any]] = None,
-    timeout: Optional[int] = None,
-    on_progress: Optional[ProgressCallback] = None,
+    inputs: dict[str, Any] | None = None,
+    timeout: int | None = None,
+    on_progress: ProgressCallback | None = None,
 ) -> ExecutionResult:
     """Convenience function to run a workflow.
     

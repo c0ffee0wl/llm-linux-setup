@@ -9,7 +9,7 @@ Provides defense against:
 
 import re
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from ..core.errors import PathTraversalError, SecurityError
 from ..core.types import RESERVED_STATE_KEYS
@@ -56,7 +56,7 @@ class PathValidator:
         self,
         workspace: Path,
         *,
-        additional_allowed: Optional[set[Path]] = None,
+        additional_allowed: set[Path] | None = None,
         allow_tmp: bool = True,
     ):
         """Initialize the path validator.
@@ -139,7 +139,7 @@ class PathValidator:
             raise SecurityError(
                 f"Invalid path '{path_str}': {e}",
                 context={"path": path_str, "operation": operation},
-            )
+            ) from e
 
         # Check if path is within any allowed root
         is_allowed = False
@@ -218,7 +218,7 @@ def validate_path(
 
 def safe_path_filter(
     value: str,
-    workspace: Optional[str] = None,
+    workspace: str | None = None,
 ) -> str:
     """Jinja2 filter for path validation.
 

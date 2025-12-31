@@ -9,7 +9,7 @@ import json
 import re
 import shlex
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from jinja2 import ChainableUndefined, Undefined
 from jinja2.nativetypes import NativeEnvironment
@@ -128,9 +128,9 @@ class ContextEvaluator:
 
     def __init__(
         self,
-        ctx: Optional[dict[str, Any]] = None,
+        ctx: dict[str, Any] | None = None,
         *,
-        workspace: Optional[str] = None,
+        workspace: str | None = None,
     ):
         """Initialize the evaluator.
 
@@ -268,7 +268,7 @@ class ContextEvaluator:
         self,
         expr: str,
         *,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> Any:
         """Resolve a ${{ expr }} expression safely.
 
@@ -319,12 +319,12 @@ class ContextEvaluator:
                 str(e),
                 expression=inner,
                 available_vars=list(eval_ctx.keys()),
-            )
+            ) from e
 
     def _resolve_embedded(
         self,
         text: str,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> str:
         """Resolve embedded expressions in a string.
 
@@ -359,7 +359,7 @@ class ContextEvaluator:
         self,
         data: Any,
         *,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> Any:
         """Recursively resolve expressions in a data structure.
 
@@ -386,7 +386,7 @@ class ContextEvaluator:
         self,
         expr: str,
         *,
-        context: Optional[dict[str, Any]] = None,
+        context: dict[str, Any] | None = None,
     ) -> bool:
         """Evaluate an expression as a boolean condition.
 

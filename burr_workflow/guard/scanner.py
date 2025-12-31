@@ -5,45 +5,59 @@ the llm-guard library's scanner classes.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from .vault import VaultManager
 
 try:
-    from llm_guard import scan_prompt, scan_output
+    from llm_guard import scan_output, scan_prompt
     from llm_guard.input_scanners import (
         Anonymize,
-        PromptInjection,
-        TokenLimit,
-        Secrets,
-        InvisibleText,
-        BanTopics,
-        BanSubstrings,
         BanCode,
+        BanSubstrings,
+        BanTopics,
         Code,
         Gibberish,
+        InvisibleText,
         Language,
+        PromptInjection,
         Regex,
+        Secrets,
+        TokenLimit,
     )
     from llm_guard.output_scanners import (
-        Deanonymize,
-        Sensitive,
-        NoRefusal,
         JSON,
-        Relevance,
-        MaliciousURLs,
+        Deanonymize,
         FactualConsistency,
         LanguageSame,
-        URLReachability,
+        MaliciousURLs,
+        NoRefusal,
         ReadingTime,
-        Gibberish as GibberishOutput,
-        Code as CodeOutput,
-        Regex as RegexOutput,
+        Relevance,
+        Sensitive,
+        URLReachability,
+    )
+    from llm_guard.output_scanners import (
         BanCode as BanCodeOutput,
-        BanTopics as BanTopicsOutput,
+    )
+    from llm_guard.output_scanners import (
         BanSubstrings as BanSubstringsOutput,
+    )
+    from llm_guard.output_scanners import (
+        BanTopics as BanTopicsOutput,
+    )
+    from llm_guard.output_scanners import (
+        Code as CodeOutput,
+    )
+    from llm_guard.output_scanners import (
+        Gibberish as GibberishOutput,
+    )
+    from llm_guard.output_scanners import (
         Language as LanguageOutput,
+    )
+    from llm_guard.output_scanners import (
+        Regex as RegexOutput,
     )
     LLM_GUARD_AVAILABLE = True
 except ImportError:

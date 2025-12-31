@@ -7,7 +7,7 @@ This allows burr_workflow to remain standalone while enabling
 rich integrations with different systems.
 """
 
-from typing import Any, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -29,7 +29,7 @@ class ExecutionContext(Protocol):
         timeout: int,
         env: dict[str, str],
         *,
-        cwd: Optional[str] = None,
+        cwd: str | None = None,
         capture: bool = True,
     ) -> tuple[bool, str, str]:
         """Execute shell command.
@@ -50,7 +50,7 @@ class ExecutionContext(Protocol):
         self,
         command: str,
         *,
-        env: Optional[dict[str, str]] = None,
+        env: dict[str, str] | None = None,
     ) -> int:
         """Run command in foreground with full TTY control.
 
@@ -70,8 +70,8 @@ class ExecutionContext(Protocol):
         self,
         prompt: str,
         *,
-        options: Optional[list[str]] = None,
-        default: Optional[str] = None,
+        options: list[str] | None = None,
+        default: str | None = None,
     ) -> str:
         """Prompt user for input.
 
@@ -107,7 +107,7 @@ class ExecutionContext(Protocol):
         level: str,
         message: str,
         *,
-        step_id: Optional[str] = None,
+        step_id: str | None = None,
         **kwargs: Any,
     ) -> None:
         """Log a message.
@@ -134,7 +134,7 @@ class OutputHandler(Protocol):
         self,
         text: str,
         *,
-        style: Optional[str] = None,
+        style: str | None = None,
         end: str = "\n",
     ) -> None:
         """Write text output.
@@ -152,7 +152,7 @@ class OutputHandler(Protocol):
         total: int,
         message: str,
         *,
-        step_id: Optional[str] = None,
+        step_id: str | None = None,
     ) -> None:
         """Display progress indicator.
 
@@ -167,7 +167,7 @@ class OutputHandler(Protocol):
     def step_start(
         self,
         step_id: str,
-        step_name: Optional[str],
+        step_name: str | None,
         step_type: str,
     ) -> None:
         """Called when a step starts.
@@ -185,7 +185,7 @@ class OutputHandler(Protocol):
         outcome: str,
         duration_ms: float,
         *,
-        error: Optional[str] = None,
+        error: str | None = None,
     ) -> None:
         """Called when a step ends.
 
@@ -201,8 +201,8 @@ class OutputHandler(Protocol):
         self,
         message: str,
         *,
-        step_id: Optional[str] = None,
-        details: Optional[str] = None,
+        step_id: str | None = None,
+        details: str | None = None,
     ) -> None:
         """Display error message.
 
@@ -222,7 +222,7 @@ class ActionProvider(Protocol):
     types beyond the built-in ones.
     """
 
-    def get_action(self, action_type: str) -> Optional[type]:
+    def get_action(self, action_type: str) -> type | None:
         """Get action class by type name.
 
         Args:
@@ -269,10 +269,10 @@ class LLMClient(Protocol):
         self,
         prompt: str,
         *,
-        system: Optional[str] = None,
-        model: Optional[str] = None,
+        system: str | None = None,
+        model: str | None = None,
         temperature: float = 0.7,
-        max_tokens: Optional[int] = None,
+        max_tokens: int | None = None,
     ) -> str:
         """Generate text completion.
 
@@ -293,8 +293,8 @@ class LLMClient(Protocol):
         prompt: str,
         schema: dict[str, Any],
         *,
-        system: Optional[str] = None,
-        model: Optional[str] = None,
+        system: str | None = None,
+        model: str | None = None,
         temperature: float = 0.3,
         max_retries: int = 3,
     ) -> dict[str, Any]:
@@ -324,8 +324,8 @@ class LLMClient(Protocol):
         prompt: str,
         choices: list[str],
         *,
-        system: Optional[str] = None,
-        model: Optional[str] = None,
+        system: str | None = None,
+        model: str | None = None,
         temperature: float = 0.0,
     ) -> str:
         """Select from predefined choices.
@@ -362,7 +362,7 @@ class ReportBackend(Protocol):
     """
 
     @property
-    def findings_project(self) -> Optional[str]:
+    def findings_project(self) -> str | None:
         """Current project name, or None if not initialized.
 
         Returns:
@@ -374,8 +374,8 @@ class ReportBackend(Protocol):
         self,
         note: str,
         *,
-        severity_override: Optional[int] = None,
-        context: Optional[str] = None,
+        severity_override: int | None = None,
+        context: str | None = None,
     ) -> dict[str, Any]:
         """Add a finding with optional LLM analysis.
 
@@ -412,11 +412,11 @@ class AuditLogger(Protocol):
     async def workflow_start(
         self,
         workflow_name: str,
-        workflow_version: Optional[str],
+        workflow_version: str | None,
         inputs: dict[str, Any],
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log workflow execution start.
 
@@ -432,11 +432,11 @@ class AuditLogger(Protocol):
     async def step_start(
         self,
         step_id: str,
-        step_name: Optional[str],
+        step_name: str | None,
         step_type: str,
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log step start.
 
@@ -456,9 +456,9 @@ class AuditLogger(Protocol):
         duration_ms: float,
         *,
         execution_id: str,
-        output: Optional[dict[str, Any]] = None,
-        error: Optional[str] = None,
-        timestamp: Optional[str] = None,
+        output: dict[str, Any] | None = None,
+        error: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log step completion.
 
@@ -483,8 +483,8 @@ class AuditLogger(Protocol):
         successful_steps: int,
         failed_steps: int,
         skipped_steps: int,
-        error: Optional[str] = None,
-        timestamp: Optional[str] = None,
+        error: str | None = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log workflow completion.
 
@@ -507,7 +507,7 @@ class AuditLogger(Protocol):
         data: dict[str, Any],
         *,
         execution_id: str,
-        timestamp: Optional[str] = None,
+        timestamp: str | None = None,
     ) -> None:
         """Log arbitrary audit event.
 

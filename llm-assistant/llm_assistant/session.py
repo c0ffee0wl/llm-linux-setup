@@ -28,18 +28,17 @@ import site
 sys.path.insert(0, site.getusersitepackages())
 import os
 import re
-import readline  # Required for \001/\002 prompt markers to work with input()
 import time
 import hashlib
 import tempfile
 import asyncio
 import threading
 import queue
-from concurrent.futures import ThreadPoolExecutor
 import dbus
 import fcntl
 import signal
 import atexit
+import webbrowser
 from pathlib import Path
 from datetime import date
 from collections import deque
@@ -53,7 +52,6 @@ from rich.text import Text
 from typing import List, Optional, Tuple, Dict, Union, Set
 
 # YAML for findings file parsing
-import yaml
 
 # prompt_toolkit for keybindings (Ctrl+Space for voice) and completion
 from prompt_toolkit import PromptSession
@@ -65,22 +63,20 @@ from llm_tools_core import PromptDetector
 from llm_tools_core import detect_os, detect_shell, detect_environment
 from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
 from .speech import SpeechOutput, SentenceBuffer, TTS_AVAILABLE
-from .ui import Spinner, Confirm
+from .ui import Spinner
 from .completer import SlashCommandCompleter
 from .config import (
-    SLASH_COMMANDS,
     TUI_COMMANDS,
     EXTERNAL_TOOL_DISPLAY,
     is_tui_command,
 )
-from .schemas import FindingSchema, SafetySchema
+from .schemas import SafetySchema
 from .utils import (
-    strip_markdown_for_tts, strip_markdown, validate_language_code,
-    get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
-    process_exists, md_table_escape, yaml_escape, is_watch_response_dismissive,
+    strip_markdown, get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
     get_model_context_limit, ConsoleHelper,
 )
 from .templates import render
+from .cli import resolve_model_query
 from .kb import KnowledgeBaseMixin
 from .memory import MemoryMixin
 from .rag import RAGMixin
@@ -94,12 +90,6 @@ from .watch import WatchMixin
 from .workflow import WorkflowMixin
 from .mcp import (
     MCPMixin,
-    _ensure_mcp_loaded,
-    _all_tools,
-    ASSISTANT_TOOLS,
-    EXTERNAL_TOOLS,
-    AGENT_EXTERNAL_TOOLS,
-    OPTIONAL_EXTERNAL_TOOLS,
 )
 
 # Clipboard support for /copy command
@@ -110,14 +100,11 @@ except ImportError:
     CLIPBOARD_AVAILABLE = False
 
 # Web companion (optional - graceful degradation if not installed)
-try:
-    from fastapi import FastAPI, WebSocket
-    from fastapi.responses import HTMLResponse
-    import uvicorn
-    import webbrowser
-    WEB_AVAILABLE = True
-except ImportError:
-    WEB_AVAILABLE = False
+import importlib.util
+WEB_AVAILABLE = (
+    importlib.util.find_spec("fastapi") is not None
+    and importlib.util.find_spec("uvicorn") is not None
+)
 
 
 
@@ -1244,7 +1231,6 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         if self.no_exec_mode:
             return self._capture_context_asciinema(dedupe_unchanged)
 
-        import base64
 
         try:
             terminals = self.plugin_dbus.get_terminals_in_same_tab(self.chat_terminal_uuid)
@@ -1362,7 +1348,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 """Check if a terminal context part contains only placeholder content."""
                 # Extract content between terminal tags
                 lines = part.split('\n')
-                content_lines = [l for l in lines if not l.startswith('<terminal') and not l.startswith('</terminal') and l.strip()]
+                content_lines = [line for line in lines if not line.startswith('<terminal') and not line.startswith('</terminal') and line.strip()]
                 # Exact match only - avoids false positives from user content containing placeholder text
                 return len(content_lines) == 1 and content_lines[0] in PLACEHOLDER_MARKERS
 
@@ -1851,7 +1837,6 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             The Rich console is used for display, but input() handles actual capture
             to work around Rich console.input() rendering issues after prompt_toolkit.
         """
-        import asyncio
 
         # Ensure clean terminal state for the prompt
         self._prepare_for_interactive_prompt()
@@ -2139,7 +2124,6 @@ Screenshot size: {file_size} bytes"""
                 env={"NMAP_OPTS": "-v"},
             )
         """
-        import asyncio
 
         # Build environment
         cmd_env = {**os.environ}
@@ -2413,7 +2397,7 @@ Screenshot size: {file_size} bytes"""
                         start_new_session=True
                     )
                     ConsoleHelper.success(self.console, f"Web companion opened at {url}")
-                except Exception as e:
+                except Exception:
                     # Fallback to webbrowser if shell approach fails
                     try:
                         webbrowser.open(url)
@@ -2472,7 +2456,7 @@ Screenshot size: {file_size} bytes"""
                             term_match = re.search(term_pattern, context, re.DOTALL)
                             if term_match:
                                 term_content = term_match.group(1).strip()
-                                lines = len([l for l in term_content.split('\n') if l.strip()])
+                                lines = len([line for line in term_content.split('\n') if line.strip()])
                                 chars = len(term_content)
                                 self.console.print(f"  • [cyan]{title}[/]: {lines} lines, {chars} chars")
 
@@ -2546,7 +2530,6 @@ Screenshot size: {file_size} bytes"""
             # System prompt status (already rendered for current mode by Jinja2)
             if self.system_prompt:
                 prompt_len = len(self.system_prompt)
-                is_template = "terminal assistant" in self.system_prompt.lower()
                 system_status = f"System prompt: llm-assistant ({prompt_len:,} chars)"
             else:
                 system_status = "System prompt: NOT LOADED"
@@ -3365,7 +3348,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
             # Check if model supports this type
             if mime_type not in caps['supported_types']:
                 if mime_type == "application/pdf" and not caps['pdf']:
-                    result = f"Model doesn't support PDF viewing. Use load_pdf tool for text extraction."
+                    result = "Model doesn't support PDF viewing. Use load_pdf tool for text extraction."
                 elif mime_type and mime_type.startswith("audio/") and not caps['audio']:
                     result = f"Model doesn't support audio ({mime_type}). Only Gemini models can process audio."
                 elif mime_type and mime_type.startswith("video/") and not caps['video']:
@@ -3447,7 +3430,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.success(self.console, "YouTube video queued for native viewing")
                 return ToolResult(
                     name=tool_call.name,
-                    output=f"YouTube video queued for native viewing (visual + audio). Will process in next turn.",
+                    output="YouTube video queued for native viewing (visual + audio). Will process in next turn.",
                     tool_call_id=tool_call_id
                 )
             except Exception as e:
@@ -3932,7 +3915,7 @@ Type !fragment <name> [...] to insert fragments""",
                                     )
 
                                     # Stream follow-up response with Live markdown display
-                                    followup_text = self._stream_response_with_display(followup_response, tts_enabled=tts_enabled)
+                                    self._stream_response_with_display(followup_response, tts_enabled=tts_enabled)
 
                                     # Check if the model made more tool calls
                                     more_tool_calls = list(followup_response.tool_calls())

@@ -5,7 +5,7 @@ Provides early exit, failure, wait, and workflow control.
 """
 
 import asyncio
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import AbstractAction, ActionResult
 
@@ -249,7 +249,7 @@ class ContinueAction(AbstractAction):
             ActionResult with skipped outcome
         """
         with_config = self._get_with_config(step_config)
-        reason = with_config.get("reason", "Continuing to next iteration")
+        with_config.get("reason", "Continuing to next iteration")
 
         return ActionResult(
             outputs={},

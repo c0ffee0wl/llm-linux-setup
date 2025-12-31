@@ -424,7 +424,7 @@ class VoiceInput:
                             # Run VAD here in processing thread (not callback!)
                             is_speech = self._vad.is_speech(chunk)
                             if is_speech and self.debug:
-                                print(f"[DEBUG] VAD: speech detected!")
+                                print("[DEBUG] VAD: speech detected!")
 
                             if is_speech:
                                 if not speech_started:

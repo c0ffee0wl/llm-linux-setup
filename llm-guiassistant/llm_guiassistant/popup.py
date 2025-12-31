@@ -10,30 +10,27 @@ This module provides the main GTK application and window:
 
 import json
 import os
-import re
-import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+from typing import Callable, List, Tuple
 
 import gi
 gi.require_version('Gtk', '3.0')
 gi.require_version('WebKit2', '4.1')
 gi.require_version('Gdk', '3.0')
-from gi.repository import Gtk, Gdk, Gio, GLib, WebKit2, Pango
+from gi.repository import Gtk, Gdk, Gio, GLib, WebKit2, Pango  # noqa: E402
 
-from llm_tools_core import (
+from llm_tools_core import (  # noqa: E402
     ensure_daemon,
     stream_events,
     gather_context,
     format_context_for_llm,
-    get_session_type,
     capture_screenshot,
     extract_code_blocks,
 )
 
-from .history import InputHistory
+from .history import InputHistory  # noqa: E402
 
 
 # Configuration paths

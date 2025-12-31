@@ -56,7 +56,6 @@ class KeywordQueryListener(EventListener):
 
         # Get all keyword preferences
         simple_kw = extension.preferences.get('kw_simple', 'llm')
-        assistant_kw = extension.preferences.get('kw_assistant', '@')
         simple_clip_kw = extension.preferences.get('kw_simple_clip', 'llmc')
         assistant_clip_kw = extension.preferences.get('kw_assistant_clip', '@c')
 

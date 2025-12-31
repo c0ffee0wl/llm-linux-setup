@@ -12,7 +12,7 @@ This parser is MANDATORY for the workflow engine - do NOT use PyYAML.
 from dataclasses import dataclass
 from io import StringIO
 from pathlib import Path
-from typing import Any, Optional, Tuple, Union
+from typing import Any
 
 from ruamel.yaml import YAML
 
@@ -24,7 +24,7 @@ class SourceLocation:
     Provides precise file:line:column references for validation errors.
     """
 
-    file: Optional[Path] = None
+    file: Path | None = None
     line: int = 1
     column: int = 1
 
@@ -63,9 +63,9 @@ class WorkflowParser:
         """Initialize the parser with round-trip YAML settings."""
         self.yaml = YAML()
         self.yaml.preserve_quotes = True  # Preserve string quoting style
-        self._current_file: Optional[Path] = None
+        self._current_file: Path | None = None
 
-    def parse_file(self, path: Union[str, Path]) -> Tuple[dict, Path]:
+    def parse_file(self, path: str | Path) -> tuple[dict, Path]:
         """Parse workflow file with source tracking.
 
         Args:
@@ -103,8 +103,8 @@ class WorkflowParser:
         return data
 
     def get_location(
-        self, node: Any, key: Optional[str] = None
-    ) -> Optional[SourceLocation]:
+        self, node: Any, key: str | None = None
+    ) -> SourceLocation | None:
         """
         Get source location for a node or key within a node.
 
@@ -142,7 +142,7 @@ class WorkflowParser:
 
     def get_value_location(
         self, node: Any, key: str
-    ) -> Optional[SourceLocation]:
+    ) -> SourceLocation | None:
         """Get source location for a value (not key) within a mapping.
 
         Args:
@@ -188,7 +188,7 @@ class WorkflowParser:
         self,
         message: str,
         node: Any = None,
-        key: Optional[str] = None,
+        key: str | None = None,
     ) -> str:
         """Format an error message with source location.
 
@@ -210,7 +210,7 @@ class WorkflowParser:
 
 
 # Convenience function for simple parsing
-def parse_workflow(source: Union[str, Path]) -> Tuple[dict, Optional[Path]]:
+def parse_workflow(source: str | Path) -> tuple[dict, Path | None]:
     """Parse a workflow from file or string.
 
     Args:

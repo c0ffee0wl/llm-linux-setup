@@ -6,9 +6,9 @@ This module provides actions for file I/O within workflows.
 
 import base64
 import os
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
-from .base import BaseAction, ActionResult
+from .base import ActionResult, BaseAction
 
 # Maximum file size to read into memory (100 MB default)
 DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
@@ -110,7 +110,7 @@ class FileReadAction(BaseAction):
             elif encoding == "auto":
                 # Try text first, fall back to binary
                 try:
-                    with open(resolved_path, "r", encoding="utf-8") as f:
+                    with open(resolved_path, encoding="utf-8") as f:
                         content = f.read()
                     actual_encoding = "utf-8"
                 except UnicodeDecodeError:
@@ -119,7 +119,7 @@ class FileReadAction(BaseAction):
                     content = base64.b64encode(data).decode("ascii")
                     actual_encoding = "binary"
             else:
-                with open(resolved_path, "r", encoding=encoding) as f:
+                with open(resolved_path, encoding=encoding) as f:
                     content = f.read()
                 actual_encoding = encoding
 

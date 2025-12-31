@@ -34,12 +34,12 @@ class StepResult:
     """
 
     step_id: str
-    step_name: Optional[str]
+    step_name: str | None
     outcome: StepOutcome
     outputs: dict[str, Any] = field(default_factory=dict)
-    error: Optional[str] = None
-    error_type: Optional[str] = None
-    duration_ms: Optional[float] = None
+    error: str | None = None
+    error_type: str | None = None
+    duration_ms: float | None = None
     retry_count: int = 0
 
 
@@ -67,11 +67,11 @@ class LoopContext:
     revindex0: int  # 0-based from end
 
     # Loop metadata
-    output: Optional[dict[str, Any]] = None  # Current iteration output
+    output: dict[str, Any] | None = None  # Current iteration output
     parent: Optional["LoopContext"] = None  # For nested loops
 
     # Internal tracking
-    __loop_id: Optional[str] = None
+    __loop_id: str | None = None
     __ancestor_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:

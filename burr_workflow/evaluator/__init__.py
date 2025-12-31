@@ -7,8 +7,8 @@ from .context import (
 from .filters import SAFE_FILTERS
 from .security import (
     PathValidator,
-    validate_path,
     sanitize_output,
+    validate_path,
 )
 
 __all__ = [

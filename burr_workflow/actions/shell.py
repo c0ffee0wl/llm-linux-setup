@@ -9,10 +9,10 @@ import asyncio
 import os
 import re
 import signal
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
-from .base import AbstractAction, ActionResult
 from ..core.errors import WorkflowTimeoutError
+from .base import AbstractAction, ActionResult
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext
@@ -143,12 +143,12 @@ class ShellAction(AbstractAction):
                 error=stderr if not success else None,
             )
 
-        except asyncio.TimeoutError:
+        except asyncio.TimeoutError as e:
             raise WorkflowTimeoutError(
                 f"Command timed out after {timeout}s",
                 timeout_seconds=timeout,
                 step_id=step_config.get("id"),
-            )
+            ) from e
         except Exception as e:
             return ActionResult(
                 outputs={"exit_code": -1},

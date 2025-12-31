@@ -4,7 +4,7 @@ Provides input/output scanning with llm-guard library integration.
 Gracefully degrades when llm-guard is not installed.
 """
 
-from .scanner import GuardScanner, ScanResult, GuardError, LLM_GUARD_AVAILABLE, initialize_models
+from .scanner import LLM_GUARD_AVAILABLE, GuardError, GuardScanner, ScanResult, initialize_models
 from .vault import VaultManager
 
 __all__ = [

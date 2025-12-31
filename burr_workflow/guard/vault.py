@@ -27,7 +27,7 @@ class VaultManager:
 
     def __init__(self) -> None:
         if not LLM_GUARD_AVAILABLE:
-            self._vault: Optional["Vault"] = None
+            self._vault: Vault | None = None
         else:
             self._vault = Vault()
 

@@ -18,15 +18,12 @@ Usage:
         pass
 """
 
-import asyncio
 import os
 import signal
-from datetime import datetime
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from rich.console import Console
     from burr_workflow.actions.registry import ActionRegistry
 
 
@@ -321,11 +318,11 @@ class WorkflowMixin:
                 )
             elif result.status.value == "interrupted":
                 self.console.print(
-                    f"\n[yellow]⚠ Workflow interrupted. Resume with /workflow resume[/]"
+                    "\n[yellow]⚠ Workflow interrupted. Resume with /workflow resume[/]"
                 )
             elif result.status.value == "timeout":
                 self.console.print(
-                    f"\n[red]✗ Workflow timed out[/]"
+                    "\n[red]✗ Workflow timed out[/]"
                 )
             
             return result.success

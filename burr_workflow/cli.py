@@ -11,12 +11,12 @@ Provides a unified CLI with subcommands:
 import json
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import click
 import ruamel.yaml
 
-from .core.flow_analyzer import FlowAnalyzer, FlowAnalysisResult
+from .core.flow_analyzer import FlowAnalysisResult, FlowAnalyzer
 from .core.validator import (
     ValidationLevel,
     ValidationResult,
@@ -86,7 +86,7 @@ def print_result(result: ValidationResult, workflow_file: str = "") -> None:
 
 def print_flow_analysis(
     result: FlowAnalysisResult,
-    inputs: Optional[dict[str, Any]] = None,
+    inputs: dict[str, Any] | None = None,
 ) -> None:
     """Print flow analysis in human-readable format."""
     # Header
@@ -236,8 +236,8 @@ def validate(
     strict: bool,
     quiet: bool,
     dry_run: bool,
-    inputs: Optional[str],
-    visualize: Optional[Path],
+    inputs: str | None,
+    visualize: Path | None,
     engine: str,
     output_format: str,
     show_conditions: bool,
@@ -381,7 +381,7 @@ def validate(
     help='JSON string of inputs for display (e.g., \'{"target": "example.com"}\')'
 )
 @click.option("-q", "--quiet", is_flag=True, help="Suppress error messages")
-def analyze(workflow_file: Path, inputs: Optional[str], quiet: bool):
+def analyze(workflow_file: Path, inputs: str | None, quiet: bool):
     """Show execution flow (static analysis).
 
     This is equivalent to 'workflow validate --dry-run'.
@@ -433,7 +433,7 @@ def analyze(workflow_file: Path, inputs: Optional[str], quiet: bool):
 @click.option("-o", "--output", type=click.Path(path_type=Path), help="Output file path")
 @click.option("--pretty", is_flag=True, help="Pretty-print with indentation")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress status messages")
-def schema(output: Optional[Path], pretty: bool, quiet: bool):
+def schema(output: Path | None, pretty: bool, quiet: bool):
     """Export JSON Schema for IDE validation.
 
     \b
@@ -495,7 +495,7 @@ def schema(output: Optional[Path], pretty: bool, quiet: bool):
 @click.option("--list-templates", "list_tmpls", is_flag=True, help="List available templates")
 @click.option("-q", "--quiet", is_flag=True, help="Suppress status messages")
 def create(
-    name: Optional[str],
+    name: str | None,
     template: str,
     output_dir: Path,
     list_tmpls: bool,
@@ -557,7 +557,7 @@ def create(
 
     if not quiet:
         click.echo(f"Created: {output_path}")
-        click.echo(f"\nNext steps:")
+        click.echo("\nNext steps:")
         click.echo(f"  1. Edit {output_path} to customize your workflow")
         click.echo(f"  2. Validate: workflow validate {output_path}")
         click.echo(f"  3. Analyze:  workflow analyze {output_path}")

@@ -7,7 +7,7 @@ Provides functions to resolve LLM configuration with a clear precedence:
 4. Protocol defaults (handled by LLMClient, lowest priority)
 """
 
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
     from ..schemas.models import LLMDefaultsConfig

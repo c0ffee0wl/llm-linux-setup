@@ -24,14 +24,14 @@ import math
 import threading
 import traceback
 import gi
-gi.require_version('Vte', '2.91')
-gi.require_version('Gdk', '3.0')
-from gi.repository import Vte, Gdk
-import terminatorlib.plugin as plugin
-from terminatorlib.terminator import Terminator
-from terminatorlib.util import dbg, err
-import dbus.service
-from dbus.exceptions import DBusException
+gi.require_version('Vte', '2.91')  # noqa: E402
+gi.require_version('Gdk', '3.0')  # noqa: E402
+from gi.repository import Vte, Gdk  # noqa: E402
+import terminatorlib.plugin as plugin  # noqa: E402
+from terminatorlib.terminator import Terminator  # noqa: E402
+from terminatorlib.util import dbg, err  # noqa: E402
+import dbus.service  # noqa: E402
+from dbus.exceptions import DBusException  # noqa: E402
 
 # Import prompt detection for TUI heuristic (shell prompt = not TUI)
 try:
@@ -291,7 +291,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
             # DEBUG: Log capture parameters
             dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg(f'  Capture mode: viewport-based')
+            dbg('  Capture mode: viewport-based')
             dbg(f'  Terminal width: {term_width}')
             dbg(f'  Requested lines: {lines}')
             dbg(f'  Calculated range: start_row={capture_start}, end_row={capture_end}')
@@ -481,7 +481,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             gdk_window = vte.get_window()
             if not gdk_window:
                 err(f'GdkWindow not available for terminal {terminal_uuid}')
-                return f"ERROR: Terminal window not realized (widget not visible)"
+                return "ERROR: Terminal window not realized (widget not visible)"
 
             # Get widget dimensions
             width = vte.get_allocated_width()
@@ -494,14 +494,14 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
             if not pixbuf:
                 err(f'Failed to capture pixbuf from terminal {terminal_uuid}')
-                return f"ERROR: Screenshot capture failed (pixbuf is None)"
+                return "ERROR: Screenshot capture failed (pixbuf is None)"
 
             # Convert pixbuf to PNG in memory (avoids disk I/O)
             try:
                 success, buffer = pixbuf.save_to_bufferv("png", [], [])
                 if not success:
                     err(f'Failed to encode pixbuf as PNG for terminal {terminal_uuid}')
-                    return f"ERROR: Failed to encode screenshot as PNG"
+                    return "ERROR: Failed to encode screenshot as PNG"
 
                 base64_data = base64.b64encode(buffer).decode('utf-8')
 
@@ -813,7 +813,6 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
         Returns:
             Shell PID as integer, or -1 on error
         """
-        import os
 
         try:
             terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
@@ -1144,7 +1143,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             from gi.repository import Gtk
             clipboard = Gtk.Clipboard.get_default(Gdk.Display.get_default())
             if not clipboard:
-                err(f'Could not access clipboard')
+                err('Could not access clipboard')
                 return "ERROR: Clipboard not accessible"
 
             # Save current clipboard content to restore later

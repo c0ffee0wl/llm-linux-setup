@@ -5,7 +5,7 @@ These actions use the ReportBackend protocol, allowing any
 finding storage backend to be used (llm-assistant, standalone, etc.).
 """
 
-from typing import Any, ClassVar, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import AbstractAction, ActionResult
 
@@ -91,7 +91,7 @@ class ReportAddAction(AbstractAction):
             )
 
         # Get optional parameters
-        severity_override: Optional[int] = None
+        severity_override: int | None = None
         if "severity" in with_config:
             sev = with_config["severity"]
             if isinstance(sev, str):

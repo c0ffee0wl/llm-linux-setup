@@ -19,10 +19,6 @@ from llm_tools_core import ConsoleHelper
 from llm_tools_core import get_config_dir as _core_get_config_dir
 from llm_tools_core import get_temp_dir as _core_get_temp_dir
 from llm_tools_core import get_logs_db_path as _core_get_logs_db_path
-from llm_tools_core import (
-    strip_markdown,
-    strip_markdown_for_tts,
-)
 
 
 # =============================================================================
@@ -346,4 +342,3 @@ def is_watch_response_dismissive(response_text: str) -> bool:
 # =============================================================================
 
 # Re-export from llm_tools_core for backward compatibility
-from llm_tools_core import get_model_context_limit

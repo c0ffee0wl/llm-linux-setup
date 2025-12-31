@@ -6,9 +6,9 @@ to capture accurate timing and other execution metadata.
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from burr.lifecycle import PreRunStepHookAsync, PostRunStepHookAsync
+from burr.lifecycle import PostRunStepHookAsync, PreRunStepHookAsync
 
 if TYPE_CHECKING:
     from burr.core import Action, State
@@ -26,7 +26,7 @@ class StepTiming:
 
     step_id: str
     start_ns: int
-    end_ns: Optional[int] = None
+    end_ns: int | None = None
 
     @property
     def duration_ms(self) -> float:
@@ -57,7 +57,7 @@ class StepTimingHook(PreRunStepHookAsync, PostRunStepHookAsync):
     """
 
     timings: dict[str, StepTiming] = field(default_factory=dict)
-    _current: Optional[StepTiming] = field(default=None, repr=False)
+    _current: StepTiming | None = field(default=None, repr=False)
 
     async def pre_run_step(
         self,
@@ -67,7 +67,7 @@ class StepTimingHook(PreRunStepHookAsync, PostRunStepHookAsync):
         inputs: dict[str, Any],
         sequence_id: int,
         app_id: str,
-        partition_key: Optional[str] = None,
+        partition_key: str | None = None,
         **future_kwargs: Any,
     ) -> None:
         """Called before each step executes.
@@ -82,11 +82,11 @@ class StepTimingHook(PreRunStepHookAsync, PostRunStepHookAsync):
         *,
         action: "Action",
         state: "State",
-        result: Optional[dict[str, Any]],
-        exception: Optional[Exception],
+        result: dict[str, Any] | None,
+        exception: Exception | None,
         sequence_id: int,
         app_id: str,
-        partition_key: Optional[str] = None,
+        partition_key: str | None = None,
         **future_kwargs: Any,
     ) -> None:
         """Called after each step completes (success or failure).

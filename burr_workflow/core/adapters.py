@@ -28,25 +28,26 @@ import copy
 import random
 import time
 import traceback
-from typing import Any, Coroutine, Optional, TYPE_CHECKING, Union
+from collections.abc import Coroutine
+from typing import TYPE_CHECKING, Any, Optional
 
 from burr.core.action import SingleStepAction
 from burr.core.state import State
 
-from .types import RESERVED_STATE_KEYS
 from ..actions.base import ActionResult
+from .types import RESERVED_STATE_KEYS
 
 # Import new guard system (with graceful degradation)
 try:
-    from ..guard import GuardScanner, GuardError, LLM_GUARD_AVAILABLE
+    from ..guard import LLM_GUARD_AVAILABLE, GuardError, GuardScanner
 except ImportError:
     LLM_GUARD_AVAILABLE = False
     GuardScanner = None  # type: ignore[misc, assignment]
     GuardError = Exception  # type: ignore[misc, assignment]
 
 if TYPE_CHECKING:
-    from ..protocols import ExecutionContext, LLMClient
     from ..actions.base import BaseAction
+    from ..protocols import ExecutionContext
     from ..schemas.models import GuardrailsConfig, LLMDefaultsConfig
 
 # Default values when neither workflow nor step specifies
@@ -77,8 +78,8 @@ class BurrActionAdapter(SingleStepAction):
         step_id: str,
         step_config: dict,
         exec_context: Optional["ExecutionContext"] = None,
-        retry_config: Optional[dict] = None,
-        timeout: Optional[float] = None,
+        retry_config: dict | None = None,
+        timeout: float | None = None,
         guardrails_config: Optional["GuardrailsConfig"] = None,
         guard_scanner: Optional["GuardScanner"] = None,
         workflow_llm_config: Optional["LLMDefaultsConfig"] = None,
@@ -108,10 +109,10 @@ class BurrActionAdapter(SingleStepAction):
         self.retry_config = retry_config
         self.timeout = timeout
         # LLM Guard integration
-        self.guardrails_config: Optional["GuardrailsConfig"] = guardrails_config
-        self.guard_scanner: Optional["GuardScanner"] = guard_scanner
+        self.guardrails_config: GuardrailsConfig | None = guardrails_config
+        self.guard_scanner: GuardScanner | None = guard_scanner
         # Workflow-level LLM configuration
-        self.workflow_llm_config: Optional["LLMDefaultsConfig"] = workflow_llm_config
+        self.workflow_llm_config: LLMDefaultsConfig | None = workflow_llm_config
         # NOTE: Do NOT set self._name here! Burr's ApplicationBuilder calls
         # with_name() which raises ValueError if _name is already set.
         # The name property falls back to step_id when _name is None.
@@ -136,7 +137,7 @@ class BurrActionAdapter(SingleStepAction):
 
     def run_and_update(
         self, state: State, **run_kwargs
-    ) -> Union[tuple[dict, State], Coroutine[Any, Any, tuple[dict, State]]]:
+    ) -> tuple[dict, State] | Coroutine[Any, Any, tuple[dict, State]]:
         """Execute the wrapped action and return (result_dict, new_state).
 
         IMPORTANT: This method returns different types based on the action:
@@ -312,7 +313,7 @@ class BurrActionAdapter(SingleStepAction):
     def _is_retryable_error(
         self,
         result: ActionResult,
-        retry_on: Optional[list[str]] = None,
+        retry_on: list[str] | None = None,
     ) -> bool:
         """Check if error should trigger retry.
 
@@ -837,8 +838,8 @@ class LoopBodyAdapter(BurrActionAdapter):
         step_config: dict,
         exec_context: Optional["ExecutionContext"] = None,
         continue_on_error: bool = False,
-        retry_config: Optional[dict] = None,
-        timeout: Optional[float] = None,
+        retry_config: dict | None = None,
+        timeout: float | None = None,
         guardrails_config: Optional["GuardrailsConfig"] = None,
         guard_scanner: Optional["GuardScanner"] = None,
         workflow_llm_config: Optional["LLMDefaultsConfig"] = None,
@@ -872,7 +873,7 @@ class LoopBodyAdapter(BurrActionAdapter):
 
     def run_and_update(
         self, state: State, **run_kwargs
-    ) -> Union[tuple[dict, State], Coroutine[Any, Any, tuple[dict, State]]]:
+    ) -> tuple[dict, State] | Coroutine[Any, Any, tuple[dict, State]]:
         """Execute with exception handling for continue_on_error support.
 
         Returns different types based on action type (matching parent pattern):

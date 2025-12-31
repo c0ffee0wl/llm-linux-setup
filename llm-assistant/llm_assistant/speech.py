@@ -265,7 +265,7 @@ class SpeechOutput:
                 try:
                     self._current_audio = self._playback_queue.get_nowait()
                     self._audio_position = 0
-                except:
+                except queue.Empty:
                     # No audio available - output silence for remaining frames
                     output[position:] = 0
                     return
@@ -379,7 +379,7 @@ class SpeechOutput:
                 try:
                     self._stream.stop()
                     self._stream.close()
-                except:
+                except Exception:
                     pass
                 self._stream = None
 
@@ -392,7 +392,7 @@ class SpeechOutput:
             while not self._playback_queue.empty():
                 try:
                     self._playback_queue.get_nowait()
-                except:
+                except queue.Empty:
                     break
 
     def prewarm(self):

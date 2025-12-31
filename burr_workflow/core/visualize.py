@@ -6,7 +6,7 @@ supporting both Mermaid (text-based, markdown-embeddable) and Graphviz
 """
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
     from burr.core import Application
@@ -70,7 +70,7 @@ def to_mermaid(
 
 def visualize(
     app: "Application",
-    output_path: Optional[Path] = None,
+    output_path: Path | None = None,
     engine: Literal["mermaid", "graphviz"] = "mermaid",
     format: Literal["md", "png", "svg", "pdf", "dot"] = "md",
     include_conditions: bool = False,

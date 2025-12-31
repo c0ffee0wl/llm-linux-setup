@@ -7,7 +7,6 @@ Provides two V1 strategies:
 """
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class TextSplitter(ABC):
@@ -85,7 +84,7 @@ class LineAwareSplitter(TextSplitter):
                     if self.overlap_lines > 0 and len(current_chunk) > self.overlap_lines:
                         overlap = current_chunk[-self.overlap_lines:]
                         current_chunk = overlap.copy()
-                        current_size = sum(len(l) for l in current_chunk)
+                        current_size = sum(len(line) for line in current_chunk)
                     else:
                         current_chunk = []
                         current_size = 0

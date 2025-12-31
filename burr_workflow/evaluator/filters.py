@@ -6,7 +6,8 @@ All filters here are considered safe for use in workflow expressions.
 
 import re
 import shlex
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 
 def shell_quote(value: Any) -> str:

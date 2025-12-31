@@ -6,7 +6,7 @@ catching errors before runtime execution.
 """
 
 from enum import Enum
-from typing import Annotated, Any, Literal, Optional, Union
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
@@ -116,17 +116,17 @@ class LLMActionDefaultsConfig(BaseModel):
     Used within LLMDefaultsConfig to specify defaults for specific
     action types (extract, decide, generate, instruct).
     """
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description="Model override for this action type",
     )
-    temperature: Optional[float] = Field(
+    temperature: float | None = Field(
         default=None,
         ge=0,
         le=2,
         description="Temperature override for this action type",
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None,
         ge=1,
         description="Max tokens override for this action type",
@@ -150,36 +150,36 @@ class LLMDefaultsConfig(BaseModel):
             temperature: 0.0    # Deterministic
     """
     # Global defaults for all LLM actions
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description="Default model for all LLM actions",
     )
-    temperature: Optional[float] = Field(
+    temperature: float | None = Field(
         default=None,
         ge=0,
         le=2,
         description="Default temperature for all LLM actions",
     )
-    max_tokens: Optional[int] = Field(
+    max_tokens: int | None = Field(
         default=None,
         ge=1,
         description="Default max tokens for all LLM actions",
     )
 
     # Per-action-type overrides
-    extract: Optional[LLMActionDefaultsConfig] = Field(
+    extract: LLMActionDefaultsConfig | None = Field(
         default=None,
         description="Defaults for llm/extract actions (default temp: 0.3)",
     )
-    decide: Optional[LLMActionDefaultsConfig] = Field(
+    decide: LLMActionDefaultsConfig | None = Field(
         default=None,
         description="Defaults for llm/decide actions (default temp: 0.0)",
     )
-    generate: Optional[LLMActionDefaultsConfig] = Field(
+    generate: LLMActionDefaultsConfig | None = Field(
         default=None,
         description="Defaults for llm/generate actions (default temp: 0.7)",
     )
-    instruct: Optional[LLMActionDefaultsConfig] = Field(
+    instruct: LLMActionDefaultsConfig | None = Field(
         default=None,
         description="Defaults for llm/instruct actions (default temp: 0.7)",
     )
@@ -191,30 +191,30 @@ class LLMDefaultsConfig(BaseModel):
 
 class InputDefinition(BaseModel):
     """Definition for a workflow input parameter."""
-    description: Optional[str] = None
-    type: Optional[Literal["string", "number", "boolean", "array", "object", "file"]] = Field(
+    description: str | None = None
+    type: Literal["string", "number", "boolean", "array", "object", "file"] | None = Field(
         default="string",
         description="Input type: string, number, boolean, array, object, file",
     )
-    default: Optional[Any] = None
+    default: Any | None = None
     required: bool = Field(
         default=True,
         description="Whether this input is required",
     )
-    enum: Optional[list[Any]] = Field(
+    enum: list[Any] | None = Field(
         default=None,
         description="Allowed values (if restricted)",
     )
-    pattern: Optional[str] = Field(
+    pattern: str | None = Field(
         default=None,
         description="Regex pattern for validation (strings only)",
     )
-    min_: Optional[Union[int, float]] = Field(
+    min_: int | float | None = Field(
         default=None,
         alias="min",
         description="Minimum value for numeric types, or minimum length for arrays",
     )
-    max_: Optional[Union[int, float]] = Field(
+    max_: int | float | None = Field(
         default=None,
         alias="max",
         description="Maximum value for numeric types, or maximum length for arrays",
@@ -288,7 +288,7 @@ class RetryConfig(BaseModel):
         default=True,
         description="Add randomness to backoff (0.5-1.5x) to prevent thundering herd",
     )
-    retry_on: Optional[list[str]] = Field(
+    retry_on: list[str] | None = Field(
         default=None,
         description="Error types to retry on (None = default network errors)",
     )
@@ -324,19 +324,19 @@ class GuardrailsConfig(BaseModel):
           on_fail: abort
     """
 
-    input: Optional[dict[str, dict | None]] = Field(
+    input: dict[str, dict | None] | None = Field(
         default=None,
         description="Input scanners applied before step execution",
     )
-    output: Optional[dict[str, dict | None]] = Field(
+    output: dict[str, dict | None] | None = Field(
         default=None,
         description="Output scanners applied after step execution",
     )
-    on_fail: Optional[Literal["abort", "retry", "continue"] | str] = Field(
+    on_fail: Literal["abort", "retry", "continue"] | str | None = Field(
         default=None,
         description="Action on failure: abort, retry, continue, or step_id to route to",
     )
-    max_retries: Optional[int] = Field(
+    max_retries: int | None = Field(
         default=None,
         ge=1,
         le=5,
@@ -352,13 +352,13 @@ class HTTPRequestConfig(BaseModel):
     """Configuration for http/request action."""
     url: str
     method: Literal["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"] = "GET"
-    headers: Optional[dict[str, str]] = None
-    secret_headers: Optional[dict[str, str]] = Field(
+    headers: dict[str, str] | None = None
+    secret_headers: dict[str, str] | None = Field(
         default=None,
         description="Headers read from secrets directory (never logged)",
     )
-    body: Optional[Any] = None
-    json_body: Optional[dict[str, Any]] = Field(
+    body: Any | None = None
+    json_body: dict[str, Any] | None = Field(
         default=None,
         alias="json",
         description="JSON body (sets Content-Type automatically)",
@@ -370,40 +370,40 @@ class HTTPRequestConfig(BaseModel):
 
 class LLMActionConfig(BaseModel):
     """Configuration for llm/* actions."""
-    content: Optional[str] = Field(
+    content: str | None = Field(
         default=None,
         alias="input",
         description="Content to analyze/extract from",
     )
-    prompt: Optional[str] = Field(
+    prompt: str | None = Field(
         default=None,
         description="Custom prompt (overrides default)",
     )
-    schema_: Optional[dict[str, Any]] = Field(
+    schema_: dict[str, Any] | None = Field(
         default=None,
         alias="schema",
         description="JSON schema for structured output (llm/extract)",
     )
-    choices: Optional[list[str]] = Field(
+    choices: list[str] | None = Field(
         default=None,
         description="Decision options (llm/decide)",
     )
-    model: Optional[str] = Field(
+    model: str | None = Field(
         default=None,
         description="Model override (default: client's configured model)",
     )
-    temperature: Optional[float] = Field(
+    temperature: float | None = Field(
         default=None,
         ge=0,
         le=2,
         description="Sampling temperature (default varies by action type)",
     )
-    max_tokens: Optional[int] = Field(default=None, ge=1)
-    chunking: Optional[ChunkingConfig] = Field(
+    max_tokens: int | None = Field(default=None, ge=1)
+    chunking: ChunkingConfig | None = Field(
         default=None,
         description="Chunking configuration for large content",
     )
-    aggregation: Optional[AggregationConfig] = Field(
+    aggregation: AggregationConfig | None = Field(
         default=None,
         description="Aggregation configuration for chunked results",
     )
@@ -416,16 +416,16 @@ class HumanInputConfig(BaseModel):
     This action is for free-form text input only.
     """
     prompt: str
-    input_type: Optional[Literal["text", "multiline", "file", "editor"]] = Field(
+    input_type: Literal["text", "multiline", "file", "editor"] | None = Field(
         default="text",
         description="Input mode: text (single line), multiline, file (path), editor ($EDITOR)",
     )
-    default: Optional[str] = None
-    timeout: Optional[int] = Field(
+    default: str | None = None
+    timeout: int | None = Field(
         default=None,
         description="Timeout in seconds (None = wait indefinitely)",
     )
-    initial_content: Optional[str] = Field(
+    initial_content: str | None = Field(
         default=None,
         description="Initial content for editor mode",
     )
@@ -437,7 +437,7 @@ class HumanDecideConfig(BaseModel):
     Use for yes/no confirmation or selection from predefined choices.
     """
     prompt: str
-    choices: Optional[list[str]] = Field(
+    choices: list[str] | None = Field(
         default=None,
         description="Predefined choices (omit for yes/no confirmation)",
     )
@@ -445,8 +445,8 @@ class HumanDecideConfig(BaseModel):
         default=False,
         description="Allow multiple selections",
     )
-    default: Optional[str] = None
-    timeout: Optional[int] = Field(
+    default: str | None = None
+    timeout: int | None = Field(
         default=None,
         description="Timeout in seconds (None = wait indefinitely)",
     )
@@ -454,20 +454,20 @@ class HumanDecideConfig(BaseModel):
 
 class ScriptConfig(BaseModel):
     """Configuration for script/* action."""
-    path: Optional[str] = Field(
+    path: str | None = Field(
         default=None,
         description="Path to script file",
     )
-    inline: Optional[str] = Field(
+    inline: str | None = Field(
         default=None,
         description="Inline script content",
     )
-    language: Optional[Literal["python", "bash", "powershell"]] = Field(
+    language: Literal["python", "bash", "powershell"] | None = Field(
         default=None,
         description="Script language (auto-detected from path extension)",
     )
-    args: Optional[list[str]] = None
-    env: Optional[dict[str, str]] = None
+    args: list[str] | None = None
+    env: dict[str, str] | None = None
 
     @model_validator(mode="after")
     def validate_source(self) -> "ScriptConfig":
@@ -497,45 +497,45 @@ class StepDefinition(BaseModel):
     """Definition for a single workflow step."""
 
     # Identity
-    name: Optional[str] = Field(
+    name: str | None = Field(
         default=None,
         description="Human-readable step name",
     )
-    id: Optional[str] = Field(
+    id: str | None = Field(
         default=None,
         description="Step ID for referencing outputs",
     )
 
     # Action (exactly one of these must be set)
-    run: Optional[Union[str, list[str]]] = Field(
+    run: str | list[str] | None = Field(
         default=None,
         description="Shell command (string or array)",
     )
-    uses: Optional[str] = Field(
+    uses: str | None = Field(
         default=None,
         description="Action type (e.g., 'llm/extract', 'http/request')",
     )
 
     # Action configuration
-    with_: Optional[dict[str, Any]] = Field(
+    with_: dict[str, Any] | None = Field(
         default=None,
         alias="with",
         description="Action-specific configuration",
     )
 
     # Conditional execution
-    if_: Optional[str] = Field(
+    if_: str | None = Field(
         default=None,
         alias="if",
         description="Condition expression (step skipped if false)",
     )
 
     # Loop iteration
-    loop: Optional[str] = Field(
+    loop: str | None = Field(
         default=None,
         description="Expression returning list to iterate over",
     )
-    break_if: Optional[str] = Field(
+    break_if: str | None = Field(
         default=None,
         description="Condition to break out of loop early",
     )
@@ -588,20 +588,20 @@ class StepDefinition(BaseModel):
         le=86400,
         description="Timeout in seconds (default: 5 minutes)",
     )
-    on_failure: Optional[str] = Field(
+    on_failure: str | None = Field(
         default=None,
         description="Step ID to jump to on failure",
     )
-    resume_from: Optional[str] = Field(
+    resume_from: str | None = Field(
         default=None,
         description="Where to continue after error handler",
     )
 
     # Retry configuration
-    retry: Optional[RetryConfig] = None
+    retry: RetryConfig | None = None
 
     # Output validation (LLM Guard integration)
-    guardrails: Optional[GuardrailsConfig | Literal[False]] = Field(
+    guardrails: GuardrailsConfig | Literal[False] | None = Field(
         default=None,
         description="Step guardrails (merges with workflow defaults, or False to disable)",
     )
@@ -627,12 +627,11 @@ class StepDefinition(BaseModel):
 
     @field_validator("id")
     @classmethod
-    def validate_id(cls, v: Optional[str]) -> Optional[str]:
+    def validate_id(cls, v: str | None) -> str | None:
         """Validate step ID format."""
         if v is None:
             return v
 
-        import re
         from ..evaluator.security import validate_step_id
         validate_step_id(v)
         return v
@@ -644,9 +643,9 @@ class StepDefinition(BaseModel):
 
 class JobDefinition(BaseModel):
     """Definition for a workflow job."""
-    name: Optional[str] = None
+    name: str | None = None
     steps: list[StepDefinition]
-    finally_: Optional[list[StepDefinition]] = Field(
+    finally_: list[StepDefinition] | None = Field(
         default=None,
         alias="finally",
         description="Cleanup steps (always run)",
@@ -662,12 +661,12 @@ class WorkflowDefinition(BaseModel):
 
     # Identity
     name: str = Field(description="Workflow name")
-    description: Optional[str] = None
-    version: Optional[str] = Field(
+    description: str | None = None
+    version: str | None = Field(
         default=None,
         description="Workflow version (semver recommended, e.g., '1.0.0')",
     )
-    author: Optional[str] = Field(
+    author: str | None = Field(
         default=None,
         description="Workflow author or maintainer",
     )
@@ -677,11 +676,11 @@ class WorkflowDefinition(BaseModel):
     )
 
     # Inputs and environment
-    inputs: Optional[dict[str, Union[InputDefinition, Any]]] = Field(
+    inputs: dict[str, InputDefinition | Any] | None = Field(
         default=None,
         description="Input parameter definitions",
     )
-    env: Optional[dict[str, str]] = Field(
+    env: dict[str, str] | None = Field(
         default=None,
         description="Environment variables",
     )
@@ -692,28 +691,28 @@ class WorkflowDefinition(BaseModel):
     )
 
     # Lifecycle hooks
-    finally_: Optional[list[StepDefinition]] = Field(
+    finally_: list[StepDefinition] | None = Field(
         default=None,
         alias="finally",
         description="Workflow-level cleanup",
     )
-    on_complete: Optional[list[StepDefinition]] = Field(
+    on_complete: list[StepDefinition] | None = Field(
         default=None,
         description="Steps to run on successful completion",
     )
-    on_failure: Optional[list[StepDefinition]] = Field(
+    on_failure: list[StepDefinition] | None = Field(
         default=None,
         description="Steps to run on workflow failure",
     )
 
     # Guardrails (LLM Guard integration)
-    guardrails: Optional[GuardrailsConfig] = Field(
+    guardrails: GuardrailsConfig | None = Field(
         default=None,
         description="Default guardrails applied to all steps",
     )
 
     # LLM configuration
-    llm: Optional[LLMDefaultsConfig] = Field(
+    llm: LLMDefaultsConfig | None = Field(
         default=None,
         description="Default LLM configuration for all actions",
     )
@@ -723,11 +722,11 @@ class WorkflowDefinition(BaseModel):
         default=ShellSafetyMode.STRICT,
         description="Shell injection prevention mode",
     )
-    workspace: Optional[str] = Field(
+    workspace: str | None = Field(
         default=None,
         description="Working directory for the workflow",
     )
-    secrets_dir: Optional[str] = Field(
+    secrets_dir: str | None = Field(
         default=None,
         description="Directory containing secret files",
     )
@@ -748,7 +747,7 @@ class WorkflowDefinition(BaseModel):
     @classmethod
     def validate_schema_version(cls, v: str) -> str:
         """Validate schema version is supported."""
-        from ..core.types import SUPPORTED_SCHEMA_VERSIONS, DEPRECATED_VERSIONS
+        from ..core.types import DEPRECATED_VERSIONS, SUPPORTED_SCHEMA_VERSIONS
         if v not in SUPPORTED_SCHEMA_VERSIONS and v not in DEPRECATED_VERSIONS:
             raise ValueError(
                 f"Unsupported schema version '{v}'. "

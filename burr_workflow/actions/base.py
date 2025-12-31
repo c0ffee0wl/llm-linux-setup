@@ -6,7 +6,7 @@ enabling a unified execution model.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional, Protocol, TYPE_CHECKING, runtime_checkable
+from typing import TYPE_CHECKING, Any, ClassVar, Optional, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..protocols import ExecutionContext
@@ -29,10 +29,10 @@ class ActionResult:
     """
     outputs: dict[str, Any] = field(default_factory=dict)
     outcome: str = "success"
-    error: Optional[str] = None
-    error_type: Optional[str] = None
-    next_hint: Optional[str] = None
-    duration_ms: Optional[float] = None
+    error: str | None = None
+    error_type: str | None = None
+    next_hint: str | None = None
+    duration_ms: float | None = None
 
     def is_success(self) -> bool:
         """Check if action succeeded."""

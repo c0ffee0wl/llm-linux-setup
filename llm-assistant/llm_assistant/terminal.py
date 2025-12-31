@@ -750,8 +750,8 @@ class TerminalMixin:
 # D-Bus Signal Receiver (for event-driven monitoring)
 # =============================================================================
 
-import threading
-import queue
+import threading  # noqa: E402
+import queue  # noqa: E402
 
 # Plugin D-Bus constants (for signal reception)
 PLUGIN_BUS_NAME = 'net.tenshu.Terminator2.Assistant'

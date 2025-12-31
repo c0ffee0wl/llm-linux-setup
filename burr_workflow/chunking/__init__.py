@@ -16,18 +16,17 @@ Usage:
     merged = await aggregator.aggregate(chunk_results)
 """
 
-from .splitter import (
-    TextSplitter,
-    LineAwareSplitter,
-    SlidingWindowSplitter,
-    get_splitter,
-)
-
 from .aggregator import (
     Aggregator,
-    MergeStructuredAggregator,
     ConcatenateAggregator,
+    MergeStructuredAggregator,
     get_aggregator,
+)
+from .splitter import (
+    LineAwareSplitter,
+    SlidingWindowSplitter,
+    TextSplitter,
+    get_splitter,
 )
 
 __all__ = [
