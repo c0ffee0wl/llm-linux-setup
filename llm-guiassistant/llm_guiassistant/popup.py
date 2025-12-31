@@ -1057,7 +1057,13 @@ class PopupWindow(Gtk.ApplicationWindow):
             # Send /model command to daemon
             def send_model_cmd():
                 try:
-                    for _ in stream_events(f"/model {model}", mode="assistant", session_id=self.session_id):
+                    request = {
+                        "cmd": "query",
+                        "q": f"/model {model}",
+                        "tid": self.session_id,
+                        "mode": "assistant"
+                    }
+                    for _ in stream_events(request):
                         pass  # Consume events
                 except Exception:
                     pass
