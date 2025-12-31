@@ -97,7 +97,7 @@ class ReportAddAction(AbstractAction):
         if session is None:
             return False, "Cannot access session from execution context"
 
-        if not hasattr(session, "_report_add"):
+        if not hasattr(session, "add_finding"):
             return False, "Session does not have ReportMixin (report functionality not available)"
 
         return True, ""

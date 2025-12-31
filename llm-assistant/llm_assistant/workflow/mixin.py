@@ -67,6 +67,7 @@ class WorkflowMixin:
     _current_process_pgid: Optional[int] = None
     _original_sigint_handler: Optional[Any] = None
     _workflow_llm_client: Optional[Any] = None  # For timeout coordination
+    _workflow_audit_logger: Optional[Any] = None  # For execution audit logging
     
     def _workflow_init(self) -> None:
         """Initialize workflow state. Call from session __init__."""
@@ -79,6 +80,7 @@ class WorkflowMixin:
         self._workflow_progress = None
         self._interrupt_requested = False
         self._workflow_db_path = None
+        self._workflow_audit_logger = None
 
     def _get_workflow_db_path(self, workflow_name: str) -> Path:
         """Get the database path for workflow persistence.
@@ -142,30 +144,24 @@ class WorkflowMixin:
             from burr_workflow import (
                 WorkflowCompiler,
                 WorkflowExecutor,
-                validate_workflow,
+                validate_workflow_yaml,
             )
+            from burr_workflow.persistence import FileAuditLogger
             from .context import AssistantExecutionContext
             from .llm_client import AssistantLLMClient
-            
+
             # Resolve path
             workflow_path = Path(path).expanduser().resolve()
             if not workflow_path.exists():
                 self.console.print(f"[red]Workflow file not found: {path}[/]")
                 return False
-            
-            # Load YAML
-            try:
-                from ruamel.yaml import YAML
-                yaml = YAML(typ="safe")
-                with open(workflow_path) as f:
-                    workflow_dict = yaml.load(f)
-            except ImportError:
-                import yaml as pyyaml
-                with open(workflow_path) as f:
-                    workflow_dict = pyyaml.safe_load(f)
-            
-            # Validate
-            result = validate_workflow(workflow_dict)
+
+            # Read YAML content for validation with source tracking
+            with open(workflow_path) as f:
+                yaml_content = f.read()
+
+            # Validate with source location tracking (line:column in error messages)
+            result = validate_workflow_yaml(yaml_content)
             if not result.valid:
                 self.console.print("[red]Workflow validation failed:[/]")
                 for error in result.errors:
@@ -176,11 +172,22 @@ class WorkflowMixin:
             
             for warning in result.warnings:
                 self.console.print(f"[yellow]Warning: [{warning.code}] {warning.message}[/]")
-            
+
+            # Parse YAML into dict for compilation (validation already done)
+            try:
+                from ruamel.yaml import YAML
+                from io import StringIO
+                yaml = YAML(typ="safe")
+                workflow_dict = yaml.load(StringIO(yaml_content))
+            except ImportError:
+                import yaml as pyyaml
+                workflow_dict = pyyaml.safe_load(yaml_content)
+
             # Create execution context with session reference for actions like report/add
+            # Use execute_command_async for full parameter support (timeout, env, cwd, etc.)
             exec_context = AssistantExecutionContext(
                 console=self.console,
-                execute_fn=getattr(self, 'execute_command', None),
+                execute_fn=getattr(self, 'execute_command_async', None),
                 prompt_fn=getattr(self, 'prompt_async', None),
                 working_dir=os.getcwd(),
                 on_process_start=self._workflow_register_process,
@@ -219,10 +226,17 @@ class WorkflowMixin:
                 "steps": {},
                 "db_path": str(self._workflow_db_path),
             }
-            
-            # Create executor
+
+            # Create audit logger for execution logging
+            # Logs stored in ~/.config/llm-assistant/workflow-logs/
+            audit_log_dir = Path.home() / ".config" / "llm-assistant" / "workflow-logs"
+            audit_log_dir.mkdir(parents=True, exist_ok=True)
+            self._workflow_audit_logger = FileAuditLogger(log_dir=audit_log_dir)
+
+            # Create executor with audit logging
             self.workflow_executor = WorkflowExecutor(
                 exec_context=exec_context,
+                audit_logger=self._workflow_audit_logger,
                 on_progress=self._workflow_on_progress,
                 on_step=self._workflow_on_step,
             )
@@ -265,9 +279,11 @@ class WorkflowMixin:
         self._setup_workflow_signal_handler()
 
         # Coordinate LLM timeout with workflow timeout
-        if timeout and self._workflow_llm_client:
+        # Use executor's default_timeout if not specified, to ensure coordination
+        effective_timeout = timeout or self.workflow_executor.default_timeout
+        if self._workflow_llm_client:
             import time
-            self._workflow_llm_client.set_workflow_timeout(timeout, time.monotonic())
+            self._workflow_llm_client.set_workflow_timeout(effective_timeout, time.monotonic())
 
         try:
             self.console.print(
@@ -338,7 +354,6 @@ class WorkflowMixin:
         
         try:
             result = await self.workflow_executor.resume(
-                self.workflow_app,
                 input_value=input_value,
             )
             
@@ -401,6 +416,19 @@ class WorkflowMixin:
     
     def _workflow_clear(self) -> None:
         """Clear the current workflow."""
+        # Close audit logger if active
+        if self._workflow_audit_logger is not None:
+            try:
+                # FileAuditLogger uses sync file I/O internally
+                # Directly close the file handle for sync cleanup
+                if hasattr(self._workflow_audit_logger, '_jsonl_file'):
+                    if self._workflow_audit_logger._jsonl_file is not None:
+                        self._workflow_audit_logger._jsonl_file.close()
+                        self._workflow_audit_logger._jsonl_file = None
+            except Exception:
+                pass  # Best-effort cleanup
+            self._workflow_audit_logger = None
+
         self.current_workflow = None
         self.workflow_app = None
         self.workflow_executor = None

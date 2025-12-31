@@ -1,7 +1,8 @@
-"""Synchronous daemon communication for ulauncher-llm.
+"""Synchronous query functions for ulauncher-llm.
 
+Provides blocking query functions that communicate with the llm-assistant daemon.
 Uses blocking calls like ulauncher-gemini-direct for simplicity and reliability.
-No threading - all operations block until complete.
+No threading - all operations block until complete, then return the full response.
 """
 
 import json

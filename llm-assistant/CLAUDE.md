@@ -571,6 +571,8 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - `~/.config/llm-assistant/kb/` - Knowledge base files
 - `~/.config/llm-assistant/skills/` - Custom skills
 - `~/.config/llm-assistant/findings/` - Pentest findings
+- `~/.config/llm-assistant/workflows/` - Workflow state persistence (SQLite per workflow)
+- `~/.config/llm-assistant/workflow-logs/` - Workflow execution audit logs (JSONL + Markdown)
 - `~/.config/llm-assistant/assistant-config.yaml` - Configuration file
 - `~/.config/llm-assistant/AGENTS.md` - Global memory file
 - `./AGENTS.md` - Project-specific memory file (in current working directory)

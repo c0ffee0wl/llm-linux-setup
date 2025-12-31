@@ -18,7 +18,7 @@ from ulauncher.api.shared.action.DoNothingAction import DoNothingAction
 from ulauncher.api.shared.action.HideWindowAction import HideWindowAction
 from ulauncher.api.shared.action.SetUserQueryAction import SetUserQueryAction
 
-from streaming import query_daemon_sync, execute_slash_command_sync
+from query import query_daemon_sync, execute_slash_command_sync
 from helpers import strip_markdown_for_copy, truncate_query, extract_code_blocks, format_for_display, get_clipboard_text
 
 

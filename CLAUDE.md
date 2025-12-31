@@ -667,10 +667,12 @@ The repository includes **ulauncher-llm**, a Ulauncher extension for accessing t
 - **ulauncher-llm**: Extension connecting to llm-assistant daemon
 
 **Keywords**:
-| Keyword | Mode | Description |
-|---------|------|-------------|
-| `llm` | simple | Quick AI query without tools |
-| `@` | assistant | Full assistant with tools (execute code, search, etc.) |
+| Keyword | Mode | Clipboard | Description |
+|---------|------|-----------|-------------|
+| `llm` | simple | no | Quick AI query without tools |
+| `llmc` | simple | yes | Simple mode with clipboard context |
+| `@` | assistant | no | Full assistant with tools (execute code, search, etc.) |
+| `@c` | assistant | yes | Assistant with clipboard context |
 
 **Features**:
 - Streaming responses with live UI updates

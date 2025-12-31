@@ -135,6 +135,7 @@ HEADLESS_TOOL_NAMES = (
     'load_pdf',          # PDF extraction
     'load_yt',           # YouTube transcripts
     'prompt_fabric',     # AI patterns
+    'capture_screen',    # Screenshot capture (X11 only)
 )
 
 

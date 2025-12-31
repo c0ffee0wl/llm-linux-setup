@@ -1834,6 +1834,38 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         sys.stdout.flush()
         time.sleep(0.02)  # Give terminal time to render
 
+    async def prompt_async(self, prompt_text: str) -> str:
+        """Async user prompt with Rich formatting.
+
+        This method is used by workflow integration (AssistantExecutionContext)
+        to provide interactive prompts within workflow execution.
+
+        Args:
+            prompt_text: The prompt message to display
+
+        Returns:
+            User's input string
+
+        Note:
+            This is a simple wrapper that runs input() in an executor.
+            The Rich console is used for display, but input() handles actual capture
+            to work around Rich console.input() rendering issues after prompt_toolkit.
+        """
+        import asyncio
+
+        # Ensure clean terminal state for the prompt
+        self._prepare_for_interactive_prompt()
+        self._force_display()
+
+        def _sync_input():
+            try:
+                return input(prompt_text)
+            except EOFError:
+                return ""
+
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _sync_input)
+
     def _ask_confirmation(self, prompt_text: str, choices: List[str], default: str) -> str:
         """Ask for confirmation, ensuring prompt renders on first call.
 
@@ -2066,6 +2098,117 @@ Screenshot size: {file_size} bytes"""
         except Exception as e:
             ConsoleHelper.error(self.console, f"Error executing command ({type(e).__name__}): {e}")
             return False, ""
+
+    async def execute_command_async(
+        self,
+        command: str,
+        timeout: int = 300,
+        env: Optional[Dict[str, str]] = None,
+        cwd: Optional[str] = None,
+        capture: bool = True,
+        interactive: bool = False,
+    ) -> Tuple[bool, str, str]:
+        """Execute command asynchronously with full parameter support.
+
+        This method is designed for workflow integration (burr_workflow),
+        providing direct subprocess execution with proper stdout/stderr
+        separation and timeout handling.
+
+        Unlike execute_command(), this method:
+        - Is async-native
+        - Executes directly via subprocess (no D-Bus terminal)
+        - Properly separates stdout and stderr
+        - Supports all workflow parameters
+        - Does not require user approval (for automated workflows)
+
+        Args:
+            command: Shell command to execute
+            timeout: Timeout in seconds (default 300 = 5 minutes)
+            env: Additional environment variables (merged with os.environ)
+            cwd: Working directory (default: current working directory)
+            capture: Whether to capture output (default True)
+            interactive: Whether command requires interaction (default False)
+
+        Returns:
+            Tuple of (success: bool, stdout: str, stderr: str)
+
+        Example:
+            success, stdout, stderr = await session.execute_command_async(
+                "nmap -sV 192.168.1.1",
+                timeout=600,
+                env={"NMAP_OPTS": "-v"},
+            )
+        """
+        import asyncio
+
+        # Build environment
+        cmd_env = {**os.environ}
+        if env:
+            cmd_env.update(env)
+
+        # Use provided cwd or current directory
+        working_dir = cwd or os.getcwd()
+
+        # Log the command being executed
+        self._debug(f"execute_command_async: {command[:100]}...")
+
+        try:
+            if interactive:
+                # Interactive commands need full TTY - run in executor
+                import subprocess
+
+                def _run_interactive():
+                    try:
+                        result = subprocess.run(
+                            command,
+                            shell=True,
+                            env=cmd_env,
+                            cwd=working_dir,
+                        )
+                        return (result.returncode == 0, "", "")
+                    except Exception as e:
+                        return (False, "", str(e))
+
+                loop = asyncio.get_event_loop()
+                return await loop.run_in_executor(None, _run_interactive)
+
+            # Standard async subprocess execution
+            process = await asyncio.create_subprocess_shell(
+                command,
+                stdout=asyncio.subprocess.PIPE if capture else None,
+                stderr=asyncio.subprocess.PIPE if capture else None,
+                cwd=working_dir,
+                env=cmd_env,
+                start_new_session=True,  # New process group for clean kill
+            )
+
+            try:
+                stdout_bytes, stderr_bytes = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=timeout,
+                )
+
+                success = process.returncode == 0
+                stdout = stdout_bytes.decode() if stdout_bytes else ""
+                stderr = stderr_bytes.decode() if stderr_bytes else ""
+
+                return (success, stdout, stderr)
+
+            except asyncio.TimeoutError:
+                # Kill process on timeout
+                try:
+                    pgid = os.getpgid(process.pid)
+                    os.killpg(pgid, signal.SIGTERM)
+                except (OSError, ProcessLookupError):
+                    try:
+                        process.kill()
+                    except ProcessLookupError:
+                        pass
+
+                return (False, "", f"Command timed out after {timeout} seconds")
+
+        except Exception as e:
+            return (False, "", str(e))
 
     def execute_keypress(self, keypress: str) -> bool:
         """
@@ -2832,9 +2975,22 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
 
         elif cmd == "/workflow":
             import asyncio
-            return asyncio.get_event_loop().run_until_complete(
-                self._handle_workflow_command(args)
-            )
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is None:
+                # No running loop - use asyncio.run() (clean, preferred)
+                return asyncio.run(self._handle_workflow_command(args))
+            else:
+                # Already in async context - create task and run until complete
+                # This handles nested scenarios (e.g., called from async code)
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future = executor.submit(
+                        asyncio.run, self._handle_workflow_command(args)
+                    )
+                    return future.result()
 
         elif cmd in ["/quit", "/exit"]:
             self._shutdown()  # Explicit cleanup before exit

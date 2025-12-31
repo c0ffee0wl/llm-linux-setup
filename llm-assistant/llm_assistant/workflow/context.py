@@ -19,24 +19,24 @@ if TYPE_CHECKING:
 class AssistantExecutionContext:
     """
     ExecutionContext implementation for llm-assistant.
-    
+
     Bridges burr_workflow's execution protocol to llm-assistant's
     session capabilities:
-    
-    - execute_shell() → session.execute_command() with D-Bus/approval
-    - prompt_user() → Rich console prompts with options
+
+    - execute_shell() → session.execute_command_async() with full params
+    - prompt_user() → session.prompt_async() for user input
     - log() → Rich console output with styling
-    
+
     Also provides process tracking for clean interrupt handling.
-    
+
     Example:
         context = AssistantExecutionContext(
             console=session.console,
-            execute_fn=session.execute_command,
+            execute_fn=session.execute_command_async,
             prompt_fn=session.prompt_async,
             working_dir=session.working_dir,
         )
-        
+
         compiler = WorkflowCompiler(exec_context=context)
     """
     
@@ -112,23 +112,19 @@ class AssistantExecutionContext:
         
         try:
             if self._execute_fn:
-                # Use session's execute_command (handles D-Bus, approval, etc.)
-                # Note: Session's execute_command is synchronous and only takes command
-                # We run it in an executor for async compatibility
-                import inspect
-
+                # Use session's execute function
                 if asyncio.iscoroutinefunction(self._execute_fn):
-                    # Async function - call directly
+                    # Async function (execute_command_async) - call with all parameters
                     result = await self._execute_fn(
                         command,
                         timeout=timeout,
                         env=cmd_env,
+                        cwd=working_dir,
                         capture=capture,
                         interactive=interactive,
                     )
                 else:
-                    # Sync function (like session.execute_command) - run in executor
-                    # Session's execute_command only takes command parameter
+                    # Sync function (legacy execute_command) - only supports command
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(
                         None,
