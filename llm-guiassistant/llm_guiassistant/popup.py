@@ -147,12 +147,17 @@ class StreamingQuery:
                 args = event.get("args", {})
                 # Build status message with simple args preview when available
                 message = self._format_tool_status(tool_name, args)
+                # Finalize current message before showing tool status
+                # This ensures tool status appears AFTER current text
+                GLib.idle_add(self.on_event, {"type": "finalize_current"})
                 GLib.idle_add(self.on_event, {
                     "type": "tool_status",
                     "message": message
                 })
             elif event_type == "tool_done":
-                pass  # Tool completion handled by next text event
+                # Generate new message_id so subsequent text creates new div
+                # This ensures text after tool appears AFTER tool status
+                self._message_id = str(time.time())
             elif event_type == "error":
                 GLib.idle_add(self.on_event, {
                     "type": "error",
@@ -836,6 +841,10 @@ class PopupWindow(Gtk.ApplicationWindow):
             message_id = event.get("message_id")
             self.last_response = content  # Track for action panel (Ctrl+K)
             self._run_js(f"appendMessage('assistant', {json.dumps(content)}, {json.dumps(message_id)})")
+
+        elif event_type == "finalize_current":
+            # Finalize current message so tool status appears after it
+            self._run_js("finalizeMessage()")
 
         elif event_type == "tool_status":
             message = event.get("message", "")
