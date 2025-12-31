@@ -10,11 +10,12 @@ This module provides the main GTK application and window:
 
 import json
 import os
+import subprocess
 import tempfile
 import threading
 import time
 from pathlib import Path
-from typing import Callable, List, Tuple
+from typing import Callable, List, Optional, Tuple
 
 import gi
 gi.require_version('Gtk', '3.0')
@@ -29,6 +30,7 @@ from llm_tools_core import (  # noqa: E402
     format_context_for_llm,
     capture_screenshot,
     extract_code_blocks,
+    strip_markdown,
 )
 
 from .history import InputHistory  # noqa: E402
@@ -39,6 +41,14 @@ CONFIG_DIR = Path.home() / ".config" / "llm-guiassistant"
 STATE_FILE = CONFIG_DIR / "state.json"
 ASSETS_DIR = Path.home() / ".local" / "share" / "llm-guiassistant" / "js"
 TEMPLATE_PATH = Path(__file__).parent / "templates" / "conversation.html"
+
+# Quick action button definitions: (label, prompt_prefix)
+QUICK_ACTIONS = [
+    ("Explain", "Explain this: "),
+    ("Analyze", "Analyze this: "),
+    ("Improve", "Improve this: "),
+    ("Summarize", "Summarize: "),
+]
 
 
 def load_window_state() -> dict:
@@ -473,6 +483,9 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Gather initial context
         self._gather_context()
 
+        # Load models in background
+        threading.Thread(target=self._load_models, daemon=True).start()
+
     def _build_ui(self):
         """Build the popup UI."""
         self.main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -482,6 +495,14 @@ class PopupWindow(Gtk.ApplicationWindow):
         header = Gtk.HeaderBar()
         header.set_show_close_button(True)
         header.set_title("LLM Assistant")
+
+        # Model selector dropdown
+        self.model_combo = Gtk.ComboBoxText()
+        self.model_combo.set_tooltip_text("Select model")
+        self.model_combo.append_text("Loading...")
+        self.model_combo.set_active(0)
+        self.model_combo.connect("changed", self._on_model_changed)
+        header.pack_start(self.model_combo)
 
         # New session button
         new_btn = Gtk.Button.new_from_icon_name("view-refresh-symbolic", Gtk.IconSize.BUTTON)
@@ -501,6 +522,59 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.context_label.set_margin_bottom(4)
         self.context_label.get_style_context().add_class("dim-label")
         self.main_box.pack_start(self.context_label, False, False, 0)
+
+        # Attachment panel
+        attachment_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        attachment_box.set_margin_start(8)
+        attachment_box.set_margin_end(8)
+        attachment_box.set_margin_top(2)
+        attachment_box.set_margin_bottom(2)
+
+        self.attachment_label = Gtk.Label()
+        self.attachment_label.set_xalign(0)
+        self.attachment_label.set_hexpand(True)
+        attachment_box.pack_start(self.attachment_label, True, True, 0)
+
+        # Selection preview label (for --with-selection)
+        self.selection_label = Gtk.Label()
+        self.selection_label.set_xalign(0)
+        self.selection_label.set_line_wrap(True)
+        self.selection_label.set_max_width_chars(60)
+        self.selection_label.get_style_context().add_class("dim-label")
+
+        # Add file button
+        add_file_btn = Gtk.Button.new_from_icon_name("list-add-symbolic", Gtk.IconSize.BUTTON)
+        add_file_btn.set_tooltip_text("Add file")
+        add_file_btn.connect("clicked", self._on_add_file)
+        attachment_box.pack_start(add_file_btn, False, False, 0)
+
+        # Screenshot window button
+        screenshot_win_btn = Gtk.Button.new_from_icon_name("camera-photo-symbolic", Gtk.IconSize.BUTTON)
+        screenshot_win_btn.set_tooltip_text("Screenshot window")
+        screenshot_win_btn.connect("clicked", lambda w: self._on_screenshot("window"))
+        attachment_box.pack_start(screenshot_win_btn, False, False, 0)
+
+        # Screenshot region button
+        screenshot_region_btn = Gtk.Button.new_from_icon_name("edit-cut-symbolic", Gtk.IconSize.BUTTON)
+        screenshot_region_btn.set_tooltip_text("Screenshot region")
+        screenshot_region_btn.connect("clicked", lambda w: self._on_screenshot("region"))
+        attachment_box.pack_start(screenshot_region_btn, False, False, 0)
+
+        self.main_box.pack_start(attachment_box, False, False, 0)
+        self.main_box.pack_start(self.selection_label, False, False, 0)
+
+        # Quick actions toolbar
+        quick_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        quick_box.set_margin_start(8)
+        quick_box.set_margin_end(8)
+        quick_box.set_margin_bottom(4)
+
+        for label, prefix in QUICK_ACTIONS:
+            btn = Gtk.Button(label=label)
+            btn.connect("clicked", lambda w, p=prefix: self._on_quick_action(p))
+            quick_box.pack_start(btn, False, False, 0)
+
+        self.main_box.pack_start(quick_box, False, False, 0)
 
         # WebKit view for conversation
         scrolled = Gtk.ScrolledWindow()
@@ -550,6 +624,40 @@ class PopupWindow(Gtk.ApplicationWindow):
         input_box.pack_start(self.send_btn, False, False, 0)
 
         self.main_box.pack_start(input_box, False, False, 0)
+
+        # Bottom action buttons
+        bottom_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        bottom_box.set_margin_start(8)
+        bottom_box.set_margin_end(8)
+        bottom_box.set_margin_bottom(4)
+
+        copy_btn = Gtk.Button(label="Copy")
+        copy_btn.set_tooltip_text("Copy last response")
+        copy_btn.connect("clicked", self._on_copy_response)
+        bottom_box.pack_start(copy_btn, False, False, 0)
+
+        insert_btn = Gtk.Button(label="Insert")
+        insert_btn.set_tooltip_text("Paste into original window (best-effort)")
+        insert_btn.connect("clicked", self._on_insert_response)
+        bottom_box.pack_start(insert_btn, False, False, 0)
+
+        # Spacer
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        bottom_box.pack_start(spacer, True, True, 0)
+
+        # Screenshot buttons (duplicated for convenience)
+        ss_win = Gtk.Button.new_from_icon_name("camera-photo-symbolic", Gtk.IconSize.BUTTON)
+        ss_win.set_tooltip_text("Screenshot window")
+        ss_win.connect("clicked", lambda w: self._on_screenshot("window"))
+        bottom_box.pack_start(ss_win, False, False, 0)
+
+        ss_region = Gtk.Button.new_from_icon_name("edit-cut-symbolic", Gtk.IconSize.BUTTON)
+        ss_region.set_tooltip_text("Screenshot region")
+        ss_region.connect("clicked", lambda w: self._on_screenshot("region"))
+        bottom_box.pack_start(ss_region, False, False, 0)
+
+        self.main_box.pack_start(bottom_box, False, False, 0)
 
         # Set up drag and drop
         self._setup_drag_drop()
@@ -683,6 +791,18 @@ class PopupWindow(Gtk.ApplicationWindow):
         else:
             self.context_label.hide()
 
+        # Show selection preview if --with-selection and selection exists
+        selection = self.context.get("selection", "")
+        if self.with_selection and selection:
+            sel_len = len(selection)
+            preview = selection[:50].replace("\n", " ")
+            if len(selection) > 50:
+                preview += "..."
+            self.selection_label.set_text(f"Selected ({sel_len} chars): {preview}")
+            self.selection_label.show()
+        else:
+            self.selection_label.hide()
+
     def _on_configure(self, widget, event):
         """Save window dimensions on resize (debounced to avoid excessive I/O)."""
         # Cancel any pending save
@@ -718,6 +838,12 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_key_press(self, widget, event):
         """Handle global key presses."""
+        # Ctrl+V: Paste image from clipboard
+        if event.keyval == Gdk.KEY_v and event.state & Gdk.ModifierType.CONTROL_MASK:
+            if self._paste_image_from_clipboard():
+                return True  # Consumed - was an image
+            # Let GTK handle normal text paste
+
         # Ctrl+K: Show action panel
         if event.keyval == Gdk.KEY_k and event.state & Gdk.ModifierType.CONTROL_MASK:
             self.action_panel.show_actions(self.last_response)
@@ -829,8 +955,10 @@ class PopupWindow(Gtk.ApplicationWindow):
         count = len(self.attachments)
         if count > 0:
             self.entry.set_placeholder_text(f"Ask anything... ({count} attachment{'s' if count > 1 else ''})")
+            self.attachment_label.set_text(f"📎 {count} attached")
         else:
             self.entry.set_placeholder_text("Ask anything...")
+            self.attachment_label.set_text("")
 
     def _on_stream_event(self, event):
         """Handle streaming events from background thread."""
@@ -889,6 +1017,200 @@ class PopupWindow(Gtk.ApplicationWindow):
             self.send_btn.connect("clicked", self._on_submit)
             self.entry.set_sensitive(True)
             self.entry.grab_focus()
+
+    # --- Model selector methods ---
+
+    def _load_models(self):
+        """Load available models in background thread."""
+        try:
+            result = subprocess.run(
+                ["llm", "models"],
+                capture_output=True,
+                text=True,
+                timeout=10
+            )
+            models = []
+            for line in result.stdout.splitlines():
+                # Parse lines like "OpenAI Chat: gpt-4.1-mini (aliases: 4.1-mini)"
+                if ':' in line:
+                    parts = line.split(':')
+                    if len(parts) >= 2:
+                        model_part = parts[1].strip().split()[0]  # First word after colon
+                        models.append(model_part)
+            GLib.idle_add(self._populate_model_combo, models)
+        except Exception:
+            pass  # Graceful degradation
+
+    def _populate_model_combo(self, models: list):
+        """Populate the model combo box (called from main thread)."""
+        self.model_combo.remove_all()
+        for model in models:
+            self.model_combo.append_text(model)
+        if models:
+            self.model_combo.set_active(0)
+        return False  # Remove from idle
+
+    def _on_model_changed(self, combo):
+        """Handle model selection change."""
+        model = combo.get_active_text()
+        if model and model != "Loading...":
+            # Send /model command to daemon
+            def send_model_cmd():
+                try:
+                    for _ in stream_events(f"/model {model}", mode="assistant", session_id=self.session_id):
+                        pass  # Consume events
+                except Exception:
+                    pass
+            threading.Thread(target=send_model_cmd, daemon=True).start()
+
+    # --- Attachment methods ---
+
+    def _on_add_file(self, widget):
+        """Show file chooser dialog to add file attachment."""
+        dialog = Gtk.FileChooserDialog(
+            title="Add File",
+            parent=self,
+            action=Gtk.FileChooserAction.OPEN,
+        )
+        dialog.add_buttons(
+            Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL,
+            Gtk.STOCK_OPEN, Gtk.ResponseType.OK
+        )
+
+        # Allow images and common file types
+        filter_all = Gtk.FileFilter()
+        filter_all.set_name("All Files")
+        filter_all.add_pattern("*")
+        dialog.add_filter(filter_all)
+
+        filter_images = Gtk.FileFilter()
+        filter_images.set_name("Images")
+        filter_images.add_mime_type("image/*")
+        dialog.add_filter(filter_images)
+
+        response = dialog.run()
+        if response == Gtk.ResponseType.OK:
+            filepath = dialog.get_filename()
+            if filepath and filepath not in self.attachments:
+                self.attachments.append(filepath)
+                self._update_attachment_indicator()
+        dialog.destroy()
+
+    def _on_screenshot(self, mode: str):
+        """Initiate screenshot capture."""
+        if mode == "region":
+            # Hide window first for region capture
+            self.hide()
+            # Delay capture to let window hide
+            GLib.timeout_add(200, self._do_screenshot, mode)
+        else:
+            self._do_screenshot(mode)
+
+    def _do_screenshot(self, mode: str) -> bool:
+        """Perform the actual screenshot capture (may be delayed)."""
+        try:
+            filepath = capture_screenshot(mode)
+            if filepath:
+                self.attachments.append(filepath)
+                GLib.idle_add(self._update_attachment_indicator)
+        except Exception as e:
+            if self.debug:
+                print(f"[Screenshot] Error: {e}")
+
+        # Show window again if it was hidden
+        if mode == "region":
+            GLib.idle_add(self.show)
+            GLib.idle_add(self.present)
+
+        return False  # Remove from timeout
+
+    # --- Quick action methods ---
+
+    def _on_quick_action(self, prefix: str):
+        """Handle quick action button click."""
+        current_text = self.entry.get_text().strip()
+        if current_text:
+            self.entry.set_text(f"{prefix}{current_text}")
+        else:
+            self.entry.set_text(prefix)
+        self.entry.grab_focus()
+        self.entry.set_position(-1)  # Move cursor to end
+
+    # --- Response action methods ---
+
+    def _on_copy_response(self, widget):
+        """Copy last response to clipboard (plain text)."""
+        if not self.last_response:
+            return
+
+        # Strip markdown for plain text copy
+        plain_text = strip_markdown(self.last_response)
+
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(plain_text, -1)
+        clipboard.store()
+
+    def _on_insert_response(self, widget):
+        """Insert response into original window (best-effort via xdotool)."""
+        if not self.last_response:
+            return
+
+        # Get original window ID from context
+        window_id = self.context.get("window_id")
+        if not window_id:
+            return
+
+        # Copy response to clipboard
+        plain_text = strip_markdown(self.last_response)
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        clipboard.set_text(plain_text, -1)
+        clipboard.store()
+
+        # Hide popup
+        self.hide()
+
+        # Activate original window and paste
+        def do_insert():
+            try:
+                # Activate the original window
+                subprocess.run(
+                    ["xdotool", "windowactivate", "--sync", window_id],
+                    timeout=2
+                )
+                # Small delay for window activation
+                time.sleep(0.1)
+                # Paste via Ctrl+V
+                subprocess.run(
+                    ["xdotool", "key", "ctrl+v"],
+                    timeout=2
+                )
+            except Exception:
+                pass
+
+        # Run in background to not block GTK
+        threading.Thread(target=do_insert, daemon=True).start()
+
+    def _paste_image_from_clipboard(self) -> bool:
+        """Check clipboard for image and add to attachments.
+
+        Returns True if an image was found and added.
+        """
+        clipboard = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+        image = clipboard.wait_for_image()
+
+        if image is not None:
+            # Save image to temp file
+            fd, filepath = tempfile.mkstemp(suffix=".png", prefix="clipboard_")
+            os.close(fd)
+            image.savev(filepath, "png", [], [])
+
+            if filepath not in self.attachments:
+                self.attachments.append(filepath)
+                self._update_attachment_indicator()
+
+            return True
+
+        return False
 
     def _run_js(self, script: str):
         """Run JavaScript in the WebView."""

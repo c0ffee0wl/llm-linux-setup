@@ -1822,28 +1822,32 @@ EOF
         echo "marked@$MARKED_VERSION" > "$GUIASSISTANT_JS_DIR/.versions"
         echo "highlight.js@$HLJS_VERSION" >> "$GUIASSISTANT_JS_DIR/.versions"
 
-        # Install swhkd (Simple Wayland HotKey Daemon - also works on X11)
-        # Built from source using make (not available as 'swhkd' on crates.io)
-        install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc"
-
-        # Set up swhkd configuration (if swhkd is available)
-        if command -v swhkd &>/dev/null; then
-            SWHKD_CONFIG_DIR="$HOME/.config/swhkd"
-            mkdir -p "$SWHKD_CONFIG_DIR"
-
-            # Copy example config if no config exists
-            if [ ! -f "$SWHKD_CONFIG_DIR/swhkdrc" ]; then
-                cp "$SCRIPT_DIR/llm-guiassistant/config/swhkdrc.example" "$SWHKD_CONFIG_DIR/swhkdrc"
-                log "Installed swhkd config for llm-guiassistant hotkeys"
-            fi
-
-            # Check if user is in input group (required for swhkd)
-            if ! groups "$USER" | grep -q '\binput\b'; then
-                warn "swhkd requires 'input' group membership for hotkeys"
-                log "Run: sudo usermod -aG input $USER"
-                log "Then log out and back in for group change to take effect"
-            fi
-        fi
+        # NOTE: swhkd installation temporarily disabled
+        # The hotkey daemon has reliability issues on some systems.
+        # Users can manually install if needed: https://github.com/waycrate/swhkd
+        #
+        # # Install swhkd (Simple Wayland HotKey Daemon - also works on X11)
+        # # Built from source using make (not available as 'swhkd' on crates.io)
+        # install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc"
+        #
+        # # Set up swhkd configuration (if swhkd is available)
+        # if command -v swhkd &>/dev/null; then
+        #     SWHKD_CONFIG_DIR="$HOME/.config/swhkd"
+        #     mkdir -p "$SWHKD_CONFIG_DIR"
+        #
+        #     # Copy example config if no config exists
+        #     if [ ! -f "$SWHKD_CONFIG_DIR/swhkdrc" ]; then
+        #         cp "$SCRIPT_DIR/llm-guiassistant/config/swhkdrc.example" "$SWHKD_CONFIG_DIR/swhkdrc"
+        #         log "Installed swhkd config for llm-guiassistant hotkeys"
+        #     fi
+        #
+        #     # Check if user is in input group (required for swhkd)
+        #     if ! groups "$USER" | grep -q '\binput\b'; then
+        #         warn "swhkd requires 'input' group membership for hotkeys"
+        #         log "Run: sudo usermod -aG input $USER"
+        #         log "Then log out and back in for group change to take effect"
+        #     fi
+        # fi
 
         log "llm-guiassistant installed (Super+Shift+A to open)"
     else
