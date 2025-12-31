@@ -5,13 +5,14 @@ This package provides shared utilities:
 - hash_blocks, filter_new_blocks: Block-level content hashing
 - ConsoleHelper: Rich console output formatting
 - get_config_dir, get_temp_dir, get_logs_db_path: XDG directory helpers
-- strip_markdown, strip_markdown_for_tts: Markdown processing
+- strip_markdown, strip_markdown_for_tts, extract_code_blocks: Markdown processing
 - Model context limits and detection (models module)
 - System detection (system module)
 - TUI command detection (tui module)
 - Token estimation (tokens module)
 - Daemon socket paths and constants (daemon module)
 - Daemon client utilities (daemon_client module)
+- Linux desktop context gathering (linux_context module)
 - Shared system prompts (prompts module)
 - Error codes and exceptions (errors module)
 """
@@ -20,7 +21,7 @@ from .prompt_detection import PromptDetector
 from .hashing import hash_blocks, filter_new_blocks
 from .console import ConsoleHelper
 from .xdg import get_config_dir, get_temp_dir, get_logs_db_path
-from .markdown import strip_markdown, strip_markdown_for_tts
+from .markdown import strip_markdown, strip_markdown_for_tts, extract_code_blocks
 
 # Model context limits
 from .models import (
@@ -76,6 +77,25 @@ from .daemon_client import (
     ensure_daemon,
     get_terminal_session_id,
     connect_to_daemon,
+    stream_events,
+)
+
+# Linux desktop context (X11/Wayland)
+from .linux_context import (
+    is_x11,
+    is_wayland,
+    get_session_type,
+    get_focused_window_id,
+    get_wm_class,
+    get_window_title,
+    get_focused_window_pid,
+    get_cwd,
+    get_cmdline,
+    get_selection,
+    capture_screenshot,
+    gather_context,
+    format_context_for_llm,
+    MAX_SELECTION_BYTES,
 )
 
 # Shared system prompts
@@ -114,6 +134,7 @@ __all__ = [
     # Markdown processing
     "strip_markdown",
     "strip_markdown_for_tts",
+    "extract_code_blocks",
     # Model context limits
     "MODEL_CONTEXT_LIMITS",
     "PROVIDER_DEFAULT_LIMITS",
@@ -155,6 +176,22 @@ __all__ = [
     "ensure_daemon",
     "get_terminal_session_id",
     "connect_to_daemon",
+    "stream_events",
+    # Linux desktop context
+    "is_x11",
+    "is_wayland",
+    "get_session_type",
+    "get_focused_window_id",
+    "get_wm_class",
+    "get_window_title",
+    "get_focused_window_pid",
+    "get_cwd",
+    "get_cmdline",
+    "get_selection",
+    "capture_screenshot",
+    "gather_context",
+    "format_context_for_llm",
+    "MAX_SELECTION_BYTES",
     # System prompts
     "build_simple_system_prompt",
     "build_context_section",

@@ -5,15 +5,11 @@ Uses blocking calls like ulauncher-gemini-direct for simplicity and reliability.
 No threading - all operations block until complete, then return the full response.
 """
 
-import json
-import socket
-from typing import Iterator, Tuple, Optional
+from typing import Tuple, Optional
 
-from daemon_client import (
+from llm_tools_core import (
     ensure_daemon,
-    get_socket_path,
-    RECV_BUFFER_SIZE,
-    REQUEST_TIMEOUT,
+    stream_events,
 )
 
 
@@ -120,64 +116,3 @@ def query_daemon_sync(query: str, mode: str, session_id: str) -> Tuple[str, Opti
         return "", error_msg
 
     return accumulated_text, None
-
-
-def stream_events(request: dict) -> Iterator[dict]:
-    """Send JSON request to daemon and yield NDJSON events.
-
-    Generator pattern ensures clean exit when "done" is received.
-
-    Args:
-        request: JSON request dict
-
-    Yields:
-        Event dicts from NDJSON response
-    """
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(REQUEST_TIMEOUT)
-        sock.connect(str(get_socket_path()))
-
-        # Send JSON request
-        sock.sendall(json.dumps(request).encode('utf-8'))
-        sock.shutdown(socket.SHUT_WR)
-
-        # Parse NDJSON response
-        buffer = ""
-        while True:
-            try:
-                chunk = sock.recv(RECV_BUFFER_SIZE)
-                if not chunk:
-                    break
-                buffer += chunk.decode('utf-8')
-
-                # Process complete lines
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    if not line.strip():
-                        continue
-                    try:
-                        event = json.loads(line)
-                        yield event
-                        if event.get('type') == 'done':
-                            sock.close()
-                            return
-                    except json.JSONDecodeError:
-                        continue
-
-            except socket.timeout:
-                yield {"type": "error", "message": "Request timed out"}
-                yield {"type": "done"}
-                break
-
-        sock.close()
-
-    except socket.timeout:
-        yield {"type": "error", "message": "Connection timed out"}
-        yield {"type": "done"}
-    except ConnectionRefusedError:
-        yield {"type": "error", "message": "Daemon not running. Start with: llm-assistant --daemon"}
-        yield {"type": "done"}
-    except Exception as e:
-        yield {"type": "error", "message": str(e)}
-        yield {"type": "done"}

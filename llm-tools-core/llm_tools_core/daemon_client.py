@@ -4,18 +4,22 @@ Provides shared client functions for connecting to the llm-assistant daemon:
 - Daemon availability checking
 - Daemon startup
 - Socket communication helpers
+- NDJSON event streaming
 
 Used by:
 - llm-inlineassistant (thin client)
 - espanso-llm (text expansion client)
+- ulauncher-llm (Ulauncher extension)
+- llm-guiassistant (GTK popup)
 """
 
+import json
 import os
 import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Iterator, Optional
 
 from .daemon import (
     get_socket_path,
@@ -187,3 +191,72 @@ def connect_to_daemon(timeout: float = REQUEST_TIMEOUT) -> socket.socket:
         return sock
     except (socket.error, OSError) as e:
         raise ConnectionError(f"Failed to connect to daemon: {e}")
+
+
+def stream_events(request: dict) -> Iterator[dict]:
+    """Send JSON request to daemon and yield NDJSON events.
+
+    Generator pattern ensures clean exit when "done" event is received.
+    Used for streaming responses from the llm-assistant daemon.
+
+    Args:
+        request: JSON request dict to send to daemon
+
+    Yields:
+        Event dicts from NDJSON response stream
+
+    Examples:
+        >>> for event in stream_events({"cmd": "query", "q": "Hello"}):
+        ...     if event.get("type") == "text":
+        ...         print(event.get("content", ""), end="")
+        ...     elif event.get("type") == "done":
+        ...         break
+    """
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(REQUEST_TIMEOUT)
+        sock.connect(str(get_socket_path()))
+
+        # Send JSON request
+        sock.sendall(json.dumps(request).encode('utf-8'))
+        sock.shutdown(socket.SHUT_WR)
+
+        # Parse NDJSON response
+        buffer = ""
+        while True:
+            try:
+                chunk = sock.recv(RECV_BUFFER_SIZE)
+                if not chunk:
+                    break
+                buffer += chunk.decode('utf-8')
+
+                # Process complete lines
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if not line.strip():
+                        continue
+                    try:
+                        event = json.loads(line)
+                        yield event
+                        if event.get('type') == 'done':
+                            sock.close()
+                            return
+                    except json.JSONDecodeError:
+                        continue
+
+            except socket.timeout:
+                yield {"type": "error", "message": "Request timed out"}
+                yield {"type": "done"}
+                break
+
+        sock.close()
+
+    except socket.timeout:
+        yield {"type": "error", "message": "Connection timed out"}
+        yield {"type": "done"}
+    except ConnectionRefusedError:
+        yield {"type": "error", "message": "Daemon not running. Start with: llm-assistant --daemon"}
+        yield {"type": "done"}
+    except Exception as e:
+        yield {"type": "error", "message": str(e)}
+        yield {"type": "done"}

@@ -230,6 +230,16 @@ class AssistantDaemon:
         session_log = request.get('log', '')
         mode = request.get('mode', 'assistant')
         custom_system_prompt = request.get('sys', '')
+        image_paths = request.get('images', [])  # List of image file paths
+
+        # Create attachments from image paths
+        attachments = []
+        for path in image_paths:
+            if path and os.path.isfile(path):
+                try:
+                    attachments.append(llm.Attachment(path=path))
+                except Exception:
+                    pass  # Skip invalid attachments
 
         if not query:
             await self._emit_error(writer, ErrorCode.EMPTY_QUERY, "Empty query")
@@ -289,17 +299,19 @@ class AssistantDaemon:
         conversation = session.get_or_create_conversation()
 
         try:
-            # Stream the response with system prompt and tools
+            # Stream the response with system prompt, tools, and attachments
             if len(conversation.responses) == 0:
                 response = conversation.prompt(
                     full_prompt,
                     system=system_prompt,
-                    tools=tools if tools else None
+                    tools=tools if tools else None,
+                    attachments=attachments if attachments else None
                 )
             else:
                 response = conversation.prompt(
                     full_prompt,
-                    tools=tools if tools else None
+                    tools=tools if tools else None,
+                    attachments=attachments if attachments else None
                 )
 
             # Stream the response text as NDJSON events

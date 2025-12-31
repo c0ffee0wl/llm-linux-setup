@@ -1,14 +1,15 @@
 """Markdown processing utilities.
 
-This module provides markdown stripping functions used by:
+This module provides markdown stripping and extraction functions used by:
 - llm-assistant (TTS speech synthesis, clipboard copy)
 - llm-inlineassistant (clipboard copy)
+- llm-guiassistant (smart actions on code blocks)
 
 The strip_markdown library is optional - functions degrade gracefully
 to regex-based fallbacks when not installed.
 """
 import re
-from typing import List
+from typing import List, Tuple
 
 # Regex to remove fenced code blocks entirely
 _CODE_BLOCK_RE = re.compile(r'```[\s\S]*?```', re.MULTILINE)
@@ -114,3 +115,53 @@ def strip_markdown_for_tts(text: str) -> str:
     Alias for strip_markdown(text, preserve_code_blocks=False).
     """
     return strip_markdown(text, preserve_code_blocks=False)
+
+
+# Pattern to extract code blocks with language identifier
+_CODE_BLOCK_EXTRACT_RE = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+
+
+def extract_code_blocks(text: str) -> List[Tuple[str, str]]:
+    """Extract fenced code blocks from markdown text.
+
+    Returns a list of (language, code) tuples. The language is an empty
+    string if no language identifier was specified.
+
+    Used by llm-guiassistant for smart action buttons on code blocks.
+
+    Args:
+        text: Markdown-formatted text
+
+    Returns:
+        List of (language, code) tuples
+
+    Examples:
+        >>> extract_code_blocks("```python\\nprint('hi')\\n```")
+        [('python', "print('hi')")]
+
+        >>> extract_code_blocks("```\\nplain code\\n```")
+        [('', 'plain code')]
+
+        >>> extract_code_blocks("no code here")
+        []
+
+        >>> text = '''Here's Python:
+        ... ```python
+        ... def hello():
+        ...     print("hi")
+        ... ```
+        ... And bash:
+        ... ```bash
+        ... echo hello
+        ... ```
+        ... '''
+        >>> blocks = extract_code_blocks(text)
+        >>> len(blocks)
+        2
+        >>> blocks[0][0]
+        'python'
+        >>> blocks[1][0]
+        'bash'
+    """
+    matches = _CODE_BLOCK_EXTRACT_RE.findall(text)
+    return [(lang, code.rstrip('\n')) for lang, code in matches]

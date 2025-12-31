@@ -1,0 +1,14 @@
+# swhkd configuration for llm-guiassistant
+# Copy to ~/.config/swhkd/swhkdrc
+#
+# Note: swhkd requires the user to be in the 'input' group:
+#   sudo usermod -aG input $USER
+#   # Log out and back in for group change to take effect
+
+# Open llm-guiassistant popup (no selection)
+super + shift + a
+    llm-guiassistant
+
+# Open llm-guiassistant popup with current selection
+super + shift + s
+    llm-guiassistant --with-selection

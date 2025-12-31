@@ -1776,6 +1776,81 @@ else:
             fi
         fi
     fi
+
+    # Install llm-guiassistant (GTK popup for llm-assistant daemon)
+    # Only on X11 for now (uses xdotool, xclip, maim, xprop)
+    if is_x11; then
+        log "Installing llm-guiassistant..."
+
+        # Install X11 dependencies (xprop from x11-utils for window detection)
+        install_apt_package x11-utils xprop
+
+        # Install llm-guiassistant package
+        install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-guiassistant"
+
+        # Create wrapper script
+        cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'
+#!/bin/bash
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_guiassistant "$@"
+EOF
+        chmod +x "$HOME/.local/bin/llm-guiassistant"
+
+        # Download JavaScript assets for WebKit template
+        GUIASSISTANT_JS_DIR="$HOME/.local/share/llm-guiassistant/js"
+        mkdir -p "$GUIASSISTANT_JS_DIR"
+
+        MARKED_VERSION="15.0.7"
+        HLJS_VERSION="11.11.1"
+
+        # Download marked.js if not present or version changed
+        if [ ! -f "$GUIASSISTANT_JS_DIR/marked.min.js" ] || \
+           ! grep -q "marked@$MARKED_VERSION" "$GUIASSISTANT_JS_DIR/.versions" 2>/dev/null; then
+            log "Downloading marked.js v$MARKED_VERSION..."
+            curl -fsSL "https://cdn.jsdelivr.net/npm/marked@${MARKED_VERSION}/marked.min.js" \
+                -o "$GUIASSISTANT_JS_DIR/marked.min.js" || warn "Failed to download marked.js"
+        fi
+
+        # Download highlight.js if not present or version changed
+        if [ ! -f "$GUIASSISTANT_JS_DIR/highlight.min.js" ] || \
+           ! grep -q "highlight.js@$HLJS_VERSION" "$GUIASSISTANT_JS_DIR/.versions" 2>/dev/null; then
+            log "Downloading highlight.js v$HLJS_VERSION..."
+            curl -fsSL "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@${HLJS_VERSION}/highlight.min.js" \
+                -o "$GUIASSISTANT_JS_DIR/highlight.min.js" || warn "Failed to download highlight.js"
+        fi
+
+        # Track versions for update detection
+        echo "marked@$MARKED_VERSION" > "$GUIASSISTANT_JS_DIR/.versions"
+        echo "highlight.js@$HLJS_VERSION" >> "$GUIASSISTANT_JS_DIR/.versions"
+
+        # Install swhkd (Simple Wayland HotKey Daemon - also works on X11)
+        if ! command -v swhkd &>/dev/null; then
+            log "Installing swhkd (hotkey daemon)..."
+            install_or_upgrade_cargo_tool swhkd
+        fi
+
+        # Set up swhkd configuration (if swhkd is available)
+        if command -v swhkd &>/dev/null; then
+            SWHKD_CONFIG_DIR="$HOME/.config/swhkd"
+            mkdir -p "$SWHKD_CONFIG_DIR"
+
+            # Copy example config if no config exists
+            if [ ! -f "$SWHKD_CONFIG_DIR/swhkdrc" ]; then
+                cp "$SCRIPT_DIR/llm-guiassistant/config/swhkdrc.example" "$SWHKD_CONFIG_DIR/swhkdrc"
+                log "Installed swhkd config for llm-guiassistant hotkeys"
+            fi
+
+            # Check if user is in input group (required for swhkd)
+            if ! groups "$USER" | grep -q '\binput\b'; then
+                warn "swhkd requires 'input' group membership for hotkeys"
+                log "Run: sudo usermod -aG input $USER"
+                log "Then log out and back in for group change to take effect"
+            fi
+        fi
+
+        log "llm-guiassistant installed (Super+Shift+A to open)"
+    else
+        log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
+    fi
 fi
 
 #############################################################################
@@ -2033,6 +2108,7 @@ log "  Desktop Tools (if GUI detected):"
 log "    - Handy            System-wide speech-to-text input"
 log "    - espanso          Text expander with LLM integration (:llm:, :llmc:, :@:, :@c:)"
 log "    - Ulauncher        Application launcher with LLM extension (llm, llmc, @, @c)"
+log "    - llm-guiassistant GTK popup assistant (Super+Shift+A/S, X11 only)"
 log ""
 log "Shell integration: $SCRIPT_DIR/integration/"
 log "  - llm-integration.bash (Bash)"

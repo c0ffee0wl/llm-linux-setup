@@ -228,6 +228,18 @@ is_wayland() {
     return 1
 }
 
+# Check if running on X11 display server
+# Returns 0 if X11, 1 if Wayland or unknown
+is_x11() {
+    if [ "${XDG_SESSION_TYPE:-}" = "x11" ]; then
+        return 0
+    fi
+    if [ -n "${DISPLAY:-}" ] && ! is_wayland; then
+        return 0
+    fi
+    return 1
+}
+
 #############################################################################
 # File Management
 #############################################################################

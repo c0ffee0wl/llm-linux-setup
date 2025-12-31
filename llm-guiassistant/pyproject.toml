@@ -1,0 +1,57 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "llm-guiassistant"
+version = "0.1.0"
+description = "GTK-based conversational popup client for llm-assistant daemon"
+readme = "CLAUDE.md"
+requires-python = ">=3.9"
+license = "Apache-2.0"
+authors = [
+    { name = "c0ffee0wl" }
+]
+keywords = ["llm", "assistant", "gtk", "popup", "gui"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: X11 Applications :: GTK",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+dependencies = [
+    "PyGObject>=3.42",
+    "llm-tools-core",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-cov",
+]
+
+[project.scripts]
+llm-guiassistant = "llm_guiassistant.__main__:main"
+
+[project.urls]
+Homepage = "https://github.com/c0ffee0wl/llm-linux-setup"
+Repository = "https://github.com/c0ffee0wl/llm-linux-setup"
+
+[tool.hatch.build.targets.wheel]
+packages = ["llm_guiassistant"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "llm_guiassistant/**/*.py",
+    "llm_guiassistant/**/*.html",
+    "config/**",
+    "CLAUDE.md",
+    "pyproject.toml",
+]
