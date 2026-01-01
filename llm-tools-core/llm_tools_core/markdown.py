@@ -108,13 +108,20 @@ def strip_markdown(text: str, preserve_code_blocks: bool = True) -> str:
     return stripped
 
 
-# Convenience alias for TTS (different default behavior)
-def strip_markdown_for_tts(text: str) -> str:
-    """Strip markdown for TTS. Removes code blocks entirely.
+# Pattern for inline citations like [1], [2][3], etc. - applied only for TTS
+_CITATION_PATTERN = re.compile(r'(\[\d+\])+')
 
-    Alias for strip_markdown(text, preserve_code_blocks=False).
+
+def strip_markdown_for_tts(text: str) -> str:
+    """Strip markdown for TTS. Removes code blocks and inline citations.
+
+    Extends strip_markdown(preserve_code_blocks=False) with additional
+    TTS-specific filtering (inline citations like [1][2][3]).
     """
-    return strip_markdown(text, preserve_code_blocks=False)
+    text = strip_markdown(text, preserve_code_blocks=False)
+    # Remove inline citations (not handled by strip_markdown library)
+    text = _CITATION_PATTERN.sub('', text)
+    return text
 
 
 # Pattern to extract code blocks with language identifier
