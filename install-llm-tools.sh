@@ -902,9 +902,13 @@ fi
 TERMINATOR_INSTALLED=false
 if command -v terminator &> /dev/null; then
     TERMINATOR_INSTALLED=true
-    log "Terminator detected - will install assistant integration"
+    if [ "$INSTALL_MODE" = "full" ]; then
+        log "Terminator detected - will install assistant integration"
+    fi
 else
-    log "Terminator not found - skipping assistant components"
+    if [ "$INSTALL_MODE" = "full" ]; then
+        log "Terminator not found - skipping assistant components"
+    fi
 fi
 
 # Detect VM environment (for PipeWire audio fix)
