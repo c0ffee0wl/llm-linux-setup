@@ -38,6 +38,8 @@ fi
 FORCE_AZURE_CONFIG=false
 FORCE_GEMINI_CONFIG=false
 CLEAR_CACHE=false
+MINIMAL_FLAG=false
+FULL_FLAG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -53,12 +55,22 @@ while [[ $# -gt 0 ]]; do
             CLEAR_CACHE=true
             shift
             ;;
+        --minimal)
+            MINIMAL_FLAG=true
+            shift
+            ;;
+        --full)
+            FULL_FLAG=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)"
             echo ""
             echo "Options:"
+            echo "  --minimal      Install only LLM core tools (persists for future runs)"
+            echo "  --full         Install all tools (overrides saved --minimal preference)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
@@ -66,6 +78,8 @@ while [[ $# -gt 0 ]]; do
             echo ""
             echo "Examples:"
             echo "  $0              # Normal installation/update"
+            echo "  $0 --minimal    # Install only LLM core tools"
+            echo "  $0 --full       # Install all tools (override saved minimal mode)"
             echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
             echo "  $0 --gemini     # Reconfigure Google Gemini settings"
             echo "  $0 --clear-cache  # Clear all package caches"
@@ -84,6 +98,34 @@ if [ "$FORCE_AZURE_CONFIG" = "true" ] && [ "$FORCE_GEMINI_CONFIG" = "true" ]; th
     echo "  $0 --azure    # Configure Azure OpenAI" >&2
     echo "  $0 --gemini   # Configure Google Gemini" >&2
     exit 1
+fi
+
+if [ "$MINIMAL_FLAG" = "true" ] && [ "$FULL_FLAG" = "true" ]; then
+    error "Cannot specify both --minimal and --full flags simultaneously."
+    exit 1
+fi
+
+#############################################################################
+# Installation Mode Resolution
+#############################################################################
+
+INSTALL_MODE_FILE="$LLM_TOOLS_CONFIG_DIR/install-mode"
+INSTALL_MODE="full"  # Default to full installation
+
+# Determine installation mode (flag takes precedence over saved mode)
+if [ "$MINIMAL_FLAG" = "true" ]; then
+    INSTALL_MODE="minimal"
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    echo "minimal" > "$INSTALL_MODE_FILE"
+    log "Installation mode: minimal (saved for future runs)"
+elif [ "$FULL_FLAG" = "true" ]; then
+    INSTALL_MODE="full"
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    echo "full" > "$INSTALL_MODE_FILE"
+    log "Installation mode: full (saved for future runs)"
+elif [ -f "$INSTALL_MODE_FILE" ]; then
+    INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
+    log "Using saved installation mode: $INSTALL_MODE (use --full to override)"
 fi
 
 #############################################################################
@@ -937,17 +979,20 @@ fi
 # Install/update uv
 install_or_upgrade_uv
 
-# Install/update Rust (with intelligent version detection and rustup fallback)
-install_or_upgrade_rust
+# The following are only needed in full mode (for Claude Code, llm-assistant, etc.)
+if [ "$INSTALL_MODE" = "full" ]; then
+    # Install/update Rust (with intelligent version detection and rustup fallback)
+    install_or_upgrade_rust
 
-# Install/update asciinema (with commit-hash checking to avoid unnecessary rebuilds)
-install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
+    # Install/update asciinema (with commit-hash checking to avoid unnecessary rebuilds)
+    install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
 
-# Install/update Node.js (with intelligent version detection and nvm fallback)
-install_or_upgrade_nodejs
+    # Install/update Node.js (with intelligent version detection and nvm fallback)
+    install_or_upgrade_nodejs
 
-# Detect if npm needs sudo for global installs
-detect_npm_permissions
+    # Detect if npm needs sudo for global installs
+    detect_npm_permissions
+fi
 
 #############################################################################
 # PHASE 2: Install/Update LLM Core
@@ -1186,11 +1231,14 @@ update_mcp_config() {
     fi
 }
 
-update_mcp_config
+# MCP servers only in full mode
+if [ "$INSTALL_MODE" = "full" ]; then
+    update_mcp_config
 
-# Install/update arxiv-mcp-server (optional MCP server for arXiv paper search)
-# This is installed for all users since MCP works with llm CLI, not just llm-assistant
-install_or_upgrade_uv_tool arxiv-mcp-server
+    # Install/update arxiv-mcp-server (optional MCP server for arXiv paper search)
+    # This is installed for all users since MCP works with llm CLI, not just llm-assistant
+    install_or_upgrade_uv_tool arxiv-mcp-server
+fi
 
 #############################################################################
 # PHASE 3: Configuring LLM
@@ -1460,32 +1508,34 @@ prompt_for_session_log_silent() {
     fi
 }
 
-# Update shell RC files
-update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
-update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
+# Shell integration and assistant tools are only in full mode
+if [ "$INSTALL_MODE" = "full" ]; then
+    # Update shell RC files
+    update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
+    update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
 
-# Create context wrapper script (CLI is now part of llm-tools-context package)
-log "Installing context wrapper..."
-mkdir -p "$HOME/.local/bin"
-cat > "$HOME/.local/bin/context" << 'EOF'
+    # Create context wrapper script (CLI is now part of llm-tools-context package)
+    log "Installing context wrapper..."
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/context" << 'EOF'
 #!/bin/sh
 exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_tools_context.cli "$@"
 EOF
-chmod +x "$HOME/.local/bin/context"
+    chmod +x "$HOME/.local/bin/context"
 
-# Note: llm-tools-core is already installed in the PLUGINS array (before llm-tools-context)
-# and also to user site-packages in Phase 2 for terminator plugin
+    # Note: llm-tools-core is already installed in the PLUGINS array (before llm-tools-context)
+    # and also to user site-packages in Phase 2 for terminator plugin
 
-# Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
-log "Installing llm-assistant package..."
-install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
+    # Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
+    log "Installing llm-assistant package..."
+    install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
 
-# Create wrapper script that calls into llm's environment
-cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
+    # Create wrapper script that calls into llm's environment
+    cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
 #!/bin/sh
 exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_assistant "$@"
 EOF
-chmod +x "$HOME/.local/bin/llm-assistant"
+    chmod +x "$HOME/.local/bin/llm-assistant"
 
 # Install Terminator-specific components (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
@@ -1855,6 +1905,8 @@ EOF
     fi
 fi
 
+fi  # End of INSTALL_MODE = "full" block for Phase 5
+
 #############################################################################
 # PHASE 6: Additional Tools
 #############################################################################
@@ -1889,69 +1941,75 @@ else
     log "Skipping llm-server (requires systemd)"
 fi
 
-# Configure VS Code for local LLM mode (if any VS Code variant is installed)
-# configure-vscode disables telemetry and cloud-dependent features
-if command -v configure-vscode &>/dev/null; then
-    if command -v code &>/dev/null || \
-       command -v code-insiders &>/dev/null || \
-       command -v codium &>/dev/null || \
-       command -v code-oss &>/dev/null; then
-        log "Configuring VS Code for local LLM mode..."
-        configure-vscode --all || warn "Failed to configure VS Code settings, continuing..."
-    fi
-fi
-
-# Install/update tldr (community-driven man pages with practical examples)
-install_or_upgrade_uv_tool tldr
-
 # Install/update toko (LLM token counter with cost estimation)
 # Requires Python 3.14 - installs with isolated Python environment
 install_or_upgrade_uv_tool toko 3.14
 
-# Install transcribe script (uses onnx-asr from llm environment)
-log "Installing transcribe script..."
-if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
-    # Copy script with modified shebang to use llm environment Python
-    echo "#!$HOME/.local/share/uv/tools/llm/bin/python3" > "$HOME/.local/bin/transcribe"
-    tail -n +2 "$SCRIPT_DIR/scripts/transcribe" >> "$HOME/.local/bin/transcribe"
-    chmod +x "$HOME/.local/bin/transcribe"
-    log "transcribe script installed to ~/.local/bin/transcribe"
-else
-    warn "transcribe script not found at $SCRIPT_DIR/scripts/transcribe"
-fi
+# Additional tools only in full mode
+if [ "$INSTALL_MODE" = "full" ]; then
+    # Configure VS Code for local LLM mode (if any VS Code variant is installed)
+    # configure-vscode disables telemetry and cloud-dependent features
+    if command -v configure-vscode &>/dev/null; then
+        if command -v code &>/dev/null || \
+           command -v code-insiders &>/dev/null || \
+           command -v codium &>/dev/null || \
+           command -v code-oss &>/dev/null; then
+            log "Configuring VS Code for local LLM mode..."
+            configure-vscode --all || warn "Failed to configure VS Code settings, continuing..."
+        fi
+    fi
 
-# Install/update files-to-prompt (from fork)
-install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt"
+    # Install/update tldr (community-driven man pages with practical examples)
+    install_or_upgrade_uv_tool tldr
 
-# Install/update argc (prerequisite for llm-functions if users want to install it)
-install_or_upgrade_cargo_tool argc
+    # Install transcribe script (uses onnx-asr from llm environment)
+    log "Installing transcribe script..."
+    if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
+        # Copy script with modified shebang to use llm environment Python
+        echo "#!$HOME/.local/share/uv/tools/llm/bin/python3" > "$HOME/.local/bin/transcribe"
+        tail -n +2 "$SCRIPT_DIR/scripts/transcribe" >> "$HOME/.local/bin/transcribe"
+        chmod +x "$HOME/.local/bin/transcribe"
+        log "transcribe script installed to ~/.local/bin/transcribe"
+    else
+        warn "transcribe script not found at $SCRIPT_DIR/scripts/transcribe"
+    fi
 
-# Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
-install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
+    # Install/update files-to-prompt (from fork)
+    install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/files-to-prompt"
 
-# Install clipboard tooling
-install_apt_package xclip
+    # Install/update argc (prerequisite for llm-functions if users want to install it)
+    install_or_upgrade_cargo_tool argc
 
-# Install Micro text editor
-install_apt_package micro
+    # Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
+    install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
 
-# Install llm-micro plugin
-log "Installing llm-micro plugin..."
-MICRO_PLUGIN_DIR="$HOME/.config/micro/plug"
-mkdir -p "$MICRO_PLUGIN_DIR"
+    # Install clipboard tooling
+    install_apt_package xclip
 
-if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
-    log "Cloning llm-micro plugin..."
-    git clone https://github.com/shamanicvocalarts/llm-micro "$MICRO_PLUGIN_DIR/llm"
-    log "llm-micro plugin installed to $MICRO_PLUGIN_DIR/llm"
-else
-    log "llm-micro plugin already installed, checking for updates..."
-    (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
-fi
+    # Install Micro text editor
+    install_apt_package micro
+
+    # Install llm-micro plugin
+    log "Installing llm-micro plugin..."
+    MICRO_PLUGIN_DIR="$HOME/.config/micro/plug"
+    mkdir -p "$MICRO_PLUGIN_DIR"
+
+    if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
+        log "Cloning llm-micro plugin..."
+        git clone https://github.com/shamanicvocalarts/llm-micro "$MICRO_PLUGIN_DIR/llm"
+        log "llm-micro plugin installed to $MICRO_PLUGIN_DIR/llm"
+    else
+        log "llm-micro plugin already installed, checking for updates..."
+        (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
+    fi
+fi  # End of INSTALL_MODE = "full" block for Phase 6
 
 #############################################################################
 # PHASE 7: Agentic CLI (coding) tools
 #############################################################################
+
+# Phase 7 tools are only installed in full mode
+if [ "$INSTALL_MODE" = "full" ]; then
 
 # Install/update Claude Code using native installation
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
@@ -1997,9 +2055,9 @@ else
     fi
 fi
 
-# Install/update claudo (Claude in Docker) if Docker is installed
-if command -v docker &> /dev/null; then
-    log "Installing/updating claudo (Claude Code in Docker)..."
+# Install/update claudo (Claude in Podman) if Podman is installed
+if command -v podman &> /dev/null; then
+    log "Installing/updating claudo (Claude Code in Podman)..."
     mkdir -p "$HOME/.local/bin"
     if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$HOME/.local/bin/claudo"; then
         chmod +x "$HOME/.local/bin/claudo"
@@ -2008,7 +2066,7 @@ if command -v docker &> /dev/null; then
         warn "Failed to download claudo"
     fi
 else
-    log "Skipping claudo installation (Docker not installed)"
+    log "Skipping claudo installation (Podman not installed)"
 fi
 
 # Install/update Claude Code Router with flexible provider support
@@ -2058,6 +2116,8 @@ upgrade_npm_global_if_installed opencode-ai
 # Clean up package caches to reclaim disk space
 clear_package_caches
 
+fi  # End of INSTALL_MODE = "full" block for Phase 7
+
 #############################################################################
 # COMPLETE
 #############################################################################
@@ -2067,61 +2127,89 @@ log "============================================="
 log "Installation/Update Complete!"
 log "============================================="
 log ""
-log "Installed tools:"
-log ""
-log "  AI Assistants:"
-log "    - llm              Simon Willison's LLM CLI tool"
-log "    - llm-inlineassistant  Inline AI assistant (@ syntax, espanso triggers)"
-log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
-log "    - Claude Code      Anthropic's agentic coding CLI"
-log "    - claudo           Claude Code in Docker (if Docker installed)"
-log "    - Claude Code Router  Multi-provider proxy for Claude Code"
-log "    - Codex CLI        OpenAI's coding agent (if Azure configured)"
-log ""
-log "  LLM Plugins:"
-log "    - Providers: gemini, vertex, openrouter, anthropic"
-log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
-log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
-log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
-log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
-log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
-log ""
-log "  CLI Utilities:"
-log "    - gitingest        Git repository to LLM-friendly text"
-log "    - yek              Fast repository to LLM-friendly text"
-log "    - files-to-prompt  File content formatter for LLMs"
-log "    - llm-observability  Log viewer for llm conversations"
-log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
-log "    - toko             LLM token counter with cost estimation"
-log "    - tldr             Community-driven man pages"
-log "    - argc             Bash CLI framework"
-log "    - asciinema        Terminal session recorder"
-log "    - transcribe       Speech-to-text (25 European languages)"
-log "    - micro            Terminal text editor with LLM plugin"
-log "    - context          Terminal history extractor"
-log ""
-log "  MCP Servers:"
-log "    - microsoft-learn    Microsoft documentation search and fetch"
-log "    - aws-knowledge      AWS documentation and best practices"
-log "    - arxiv-mcp-server   arXiv paper search and retrieval"
-log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
-log ""
-log "  Desktop Tools (if GUI detected):"
-log "    - Handy            System-wide speech-to-text input"
-log "    - espanso          Text expander with LLM integration (:llm:, :llmc:, :@:, :@c:)"
-log "    - Ulauncher        Application launcher with LLM extension (llm, llmc, @, @c)"
-log "    - llm-guiassistant GTK popup assistant (Super+Shift+A/S, X11 only)"
-log ""
-log "Shell integration: $SCRIPT_DIR/integration/"
-log "  - llm-integration.bash (Bash)"
-log "  - llm-integration.zsh (Zsh)"
-log ""
-log "Next steps:"
-log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
-log "  2. Test llm: llm 'Hello, how are you?'"
-log "  3. Test llm-inlineassistant: @ What date is it?"
-log "  4. Use Ctrl+N for AI command completion, Ctrl+G to apply suggested commands"
-log "  5. Test Claude Code Router: routed-claude"
+
+if [ "$INSTALL_MODE" = "full" ]; then
+    log "Installed tools (full mode):"
+    log ""
+    log "  AI Assistants:"
+    log "    - llm              Simon Willison's LLM CLI tool"
+    log "    - llm-inlineassistant  Inline AI assistant (@ syntax, espanso triggers)"
+    log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
+    log "    - Claude Code      Anthropic's agentic coding CLI"
+    log "    - claudo           Claude Code in Docker (if Docker installed)"
+    log "    - Claude Code Router  Multi-provider proxy for Claude Code"
+    log "    - Codex CLI        OpenAI's coding agent (if Azure configured)"
+    log ""
+    log "  LLM Plugins:"
+    log "    - Providers: gemini, vertex, openrouter, anthropic"
+    log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
+    log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
+    log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
+    log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log ""
+    log "  CLI Utilities:"
+    log "    - gitingest        Git repository to LLM-friendly text"
+    log "    - yek              Fast repository to LLM-friendly text"
+    log "    - files-to-prompt  File content formatter for LLMs"
+    log "    - llm-observability  Log viewer for llm conversations"
+    log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
+    log "    - toko             LLM token counter with cost estimation"
+    log "    - tldr             Community-driven man pages"
+    log "    - argc             Bash CLI framework"
+    log "    - asciinema        Terminal session recorder"
+    log "    - transcribe       Speech-to-text (25 European languages)"
+    log "    - micro            Terminal text editor with LLM plugin"
+    log "    - context          Terminal history extractor"
+    log ""
+    log "  MCP Servers:"
+    log "    - microsoft-learn    Microsoft documentation search and fetch"
+    log "    - aws-knowledge      AWS documentation and best practices"
+    log "    - arxiv-mcp-server   arXiv paper search and retrieval"
+    log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
+    log ""
+    log "  Desktop Tools (if GUI detected):"
+    log "    - Handy            System-wide speech-to-text input"
+    log "    - espanso          Text expander with LLM integration (:llm:, :llmc:, :@:, :@c:)"
+    log "    - Ulauncher        Application launcher with LLM extension (llm, llmc, @, @c)"
+    log "    - llm-guiassistant GTK popup assistant (Super+Shift+A/S, X11 only)"
+    log ""
+    log "Shell integration: $SCRIPT_DIR/integration/"
+    log "  - llm-integration.bash (Bash)"
+    log "  - llm-integration.zsh (Zsh)"
+    log ""
+    log "Next steps:"
+    log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
+    log "  2. Test llm: llm 'Hello, how are you?'"
+    log "  3. Test llm-inlineassistant: @ What date is it?"
+    log "  4. Use Ctrl+N for AI command completion, Ctrl+G to apply suggested commands"
+    log "  5. Test Claude Code Router: routed-claude"
+else
+    log "Installed tools (minimal mode):"
+    log ""
+    log "  Core LLM:"
+    log "    - llm              Simon Willison's LLM CLI tool"
+    log ""
+    log "  LLM Plugins:"
+    log "    - Providers: gemini, vertex, openrouter, anthropic"
+    log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
+    log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
+    log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
+    log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log ""
+    log "  CLI Utilities:"
+    log "    - gitingest        Git repository to LLM-friendly text"
+    log "    - llm-observability  Log viewer for llm conversations"
+    log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
+    log "    - toko             LLM token counter with cost estimation"
+    log ""
+    log "Next steps:"
+    log "  1. Test llm: llm 'Hello, how are you?'"
+    log ""
+    log "To install all tools (Claude Code, llm-assistant, MCP servers, shell integration, etc.):"
+    log "  ./install-llm-tools.sh --full"
+fi
 log ""
 log "To update all tools in the future, simply re-run this script:"
 log "  ./install-llm-tools.sh"

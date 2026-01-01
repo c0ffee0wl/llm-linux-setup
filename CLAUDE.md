@@ -706,12 +706,46 @@ The repository includes **ulauncher-llm**, a Ulauncher extension for accessing t
 ### Installation and Updates
 
 ```bash
-# First-time installation
+# First-time installation (full mode - all tools)
 ./install-llm-tools.sh
+
+# Minimal installation (LLM core only - skips Claude Code, shell integration, etc.)
+./install-llm-tools.sh --minimal
+
+# Full installation (override saved --minimal preference)
+./install-llm-tools.sh --full
 
 # Update all tools (pulls git updates, upgrades packages, preserves config)
 ./install-llm-tools.sh
 ```
+
+**Installation Modes:**
+
+| Flag | Description |
+|------|-------------|
+| `--minimal` | Install only LLM core tools. Persists for future runs. |
+| `--full` | Install all tools. Overrides saved `--minimal` preference. |
+| (no flag) | Uses saved preference, or defaults to full mode on first run. |
+
+**What `--minimal` mode includes:**
+- LLM CLI with all plugins (providers, tools, fragments, utilities)
+- Provider configuration (Azure/Gemini setup prompts)
+- Templates (llm.yaml, llm-code.yaml, etc.)
+- gitingest, llm-observability, llm-server, toko
+
+**What `--minimal` mode excludes:**
+- Rust installation (only needed for asciinema, argc, yek)
+- Node.js installation (only needed for Claude Code, CCR, npm packages)
+- asciinema (session recording)
+- Shell integration (llm wrapper function, session logging, Ctrl+N keybinding)
+- Context wrapper script
+- MCP servers (microsoft-learn, aws-knowledge, arxiv, chrome-devtools)
+- llm-assistant, llm-inlineassistant, terminator plugin
+- Additional CLI tools: tldr, transcribe, files-to-prompt, argc, yek, micro, xclip
+- Claude Code, Claudo, Claude Code Router, Codex CLI
+- Desktop tools: espanso, ulauncher, Handy, llm-guiassistant
+
+**Mode persistence:** The preference is saved to `~/.config/llm-tools/install-mode` and automatically used on subsequent runs unless overridden with `--full`.
 
 ## Common Development Tasks
 
@@ -924,6 +958,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
+- `~/.config/llm-tools/install-mode` - Persisted installation mode preference (`full` or `minimal`)
 - `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
 - `~/.config/micro/settings.json` - Micro editor configuration (optional)
