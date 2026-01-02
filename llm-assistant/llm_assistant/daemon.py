@@ -156,6 +156,12 @@ class AssistantDaemon:
                 await self.handle_shutdown(writer)
             elif cmd == 'get_responses':
                 await self.handle_get_responses(tid, request, writer)
+            elif cmd == 'truncate':
+                await self.handle_truncate(tid, request, writer)
+            elif cmd == 'pop_response':
+                await self.handle_pop_response(tid, writer)
+            elif cmd == 'fork':
+                await self.handle_fork(tid, request, writer)
             else:
                 await self._emit_error(writer, ErrorCode.PARSE_ERROR, f"Unknown command: {cmd}")
 
@@ -851,6 +857,98 @@ class AssistantDaemon:
                 })
 
         await self._emit(writer, {"type": "responses", "items": items})
+        await self._emit(writer, {"type": "done"})
+
+    async def handle_truncate(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
+        """Truncate conversation to keep only N user turns.
+
+        Request: {"cmd": "truncate", "tid": "...", "keep_turns": N}
+        Response: {"type": "truncated", "remaining": N}
+
+        Used by llm-guiassistant for edit + regenerate functionality.
+        """
+        state = self.sessions.get(terminal_id)
+        if not state or not state.session.conversation:
+            await self._emit(writer, {"type": "error", "message": "No active conversation"})
+            await self._emit(writer, {"type": "done"})
+            return
+
+        keep_turns = request.get('keep_turns', 0)
+        responses = state.session.conversation.responses
+
+        # Each response corresponds to one turn
+        if keep_turns < len(responses):
+            state.session.conversation.responses = responses[:keep_turns]
+
+        await self._emit(writer, {"type": "truncated", "remaining": len(state.session.conversation.responses)})
+        await self._emit(writer, {"type": "done"})
+
+    async def handle_pop_response(self, terminal_id: str, writer: asyncio.StreamWriter):
+        """Remove the last response from conversation.
+
+        Request: {"cmd": "pop_response", "tid": "..."}
+        Response: {"type": "popped", "remaining": N}
+
+        Used by llm-guiassistant for regenerate functionality.
+        """
+        state = self.sessions.get(terminal_id)
+        if not state or not state.session.conversation:
+            await self._emit(writer, {"type": "error", "message": "No active conversation"})
+            await self._emit(writer, {"type": "done"})
+            return
+
+        responses = state.session.conversation.responses
+        if responses:
+            responses.pop()
+
+        await self._emit(writer, {"type": "popped", "remaining": len(responses)})
+        await self._emit(writer, {"type": "done"})
+
+    async def handle_fork(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
+        """Fork conversation to a new session.
+
+        Request: {"cmd": "fork", "tid": "...", "new_tid": "...", "messages": [...]}
+        Response: {"type": "forked", "new_tid": "..."}
+
+        Used by llm-guiassistant for branch functionality.
+        The messages array contains conversation up to the fork point.
+        """
+        new_tid = request.get('new_tid')
+        messages = request.get('messages', [])
+
+        if not new_tid:
+            await self._emit(writer, {"type": "error", "message": "new_tid required"})
+            await self._emit(writer, {"type": "done"})
+            return
+
+        source_state = self.sessions.get(terminal_id)
+        if not source_state:
+            await self._emit(writer, {"type": "error", "message": "Source session not found"})
+            await self._emit(writer, {"type": "done"})
+            return
+
+        # Count assistant messages to determine how many responses to copy
+        # Each assistant message corresponds to one Response in conversation.responses
+        turns_to_keep = sum(1 for m in messages if m.get('role') == 'assistant')
+
+        # Create new session
+        new_session = HeadlessSession(
+            model_name=source_state.session.model_name,
+            debug=source_state.session.debug,
+            terminal_id=new_tid
+        )
+
+        # Copy conversation responses up to fork point only
+        if source_state.session.conversation and turns_to_keep > 0:
+            new_session.get_or_create_conversation()
+            source_responses = source_state.session.conversation.responses
+            new_session.conversation.responses = list(source_responses[:turns_to_keep])
+
+        # Register new session
+        new_state = SessionState(new_tid, new_session)
+        self.sessions[new_tid] = new_state
+
+        await self._emit(writer, {"type": "forked", "new_tid": new_tid, "messages": len(messages)})
         await self._emit(writer, {"type": "done"})
 
     async def idle_checker(self):

@@ -313,7 +313,7 @@ class ActionPanel(Gtk.Popover):
         actions.append(("🔄", "New session", self._new_session))
         actions.append(("🎯", "Refresh context from focused window", self._refresh_context))
         actions.append(("📷", "Capture screenshot (window)", self._screenshot_window))
-        actions.append(("✂️", "Capture screenshot (region)", self._screenshot_region))
+        actions.append(("✂️", "Capture screenshot (annotate)", self._screenshot_annotate))
 
         return actions
 
@@ -473,9 +473,9 @@ class ActionPanel(Gtk.Popover):
         """Capture active window screenshot (delegates to parent with countdown)."""
         self.parent_window._on_screenshot("window")
 
-    def _screenshot_region(self):
-        """Capture region screenshot (delegates to parent with countdown)."""
-        self.parent_window._on_screenshot("region")
+    def _screenshot_annotate(self):
+        """Capture annotated screenshot (delegates to parent with countdown)."""
+        self.parent_window._on_screenshot("annotate")
 
 
 class PopupWindow(Gtk.ApplicationWindow):
@@ -562,6 +562,21 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.webview.connect("decide-policy", self._on_decide_policy)
 
         self._load_template()
+
+        # Register WebKit message handlers for JS→Python communication
+        content_manager = self.webview.get_user_content_manager()
+
+        content_manager.register_script_message_handler("editAndRegenerate")
+        content_manager.connect("script-message-received::editAndRegenerate",
+                               self._on_edit_and_regenerate)
+
+        content_manager.register_script_message_handler("regenerate")
+        content_manager.connect("script-message-received::regenerate",
+                               self._on_regenerate)
+
+        content_manager.register_script_message_handler("branchConversation")
+        content_manager.connect("script-message-received::branchConversation",
+                               self._on_branch_conversation)
 
         scrolled.add(self.webview)
         self.main_box.pack_start(scrolled, True, True, 0)
@@ -650,11 +665,11 @@ class PopupWindow(Gtk.ApplicationWindow):
         ss_win.connect("clicked", lambda w: self._on_screenshot("window"))
         bottom_box.pack_start(ss_win, False, False, 0)
 
-        # Screenshot region button
-        ss_region = Gtk.Button.new_from_icon_name("edit-cut-symbolic", Gtk.IconSize.BUTTON)
-        ss_region.set_tooltip_text("Screenshot region")
-        ss_region.connect("clicked", lambda w: self._on_screenshot("region"))
-        bottom_box.pack_start(ss_region, False, False, 0)
+        # Screenshot annotate button
+        ss_annotate = Gtk.Button.new_from_icon_name("edit-cut-symbolic", Gtk.IconSize.BUTTON)
+        ss_annotate.set_tooltip_text("Screenshot annotate")
+        ss_annotate.connect("clicked", lambda w: self._on_screenshot("annotate"))
+        bottom_box.pack_start(ss_annotate, False, False, 0)
 
         # Delay selector (0-60 seconds)
         delay_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
@@ -667,6 +682,8 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.delay_spin = Gtk.SpinButton()
         self.delay_spin.set_adjustment(adjustment)
         self.delay_spin.set_numeric(True)
+        self.delay_spin.set_update_policy(Gtk.SpinButtonUpdatePolicy.IF_VALID)
+        self.delay_spin.set_max_length(2)  # Only allow 2 digits
         self.delay_spin.set_width_chars(2)
         self.delay_spin.set_tooltip_text("Delay in seconds (0-60) for screenshot and context capture")
         self.delay_spin.connect("value-changed", self._on_delay_changed)
@@ -695,7 +712,7 @@ class PopupWindow(Gtk.ApplicationWindow):
 
         # Send/Stop button with text label
         self.send_btn = Gtk.Button(label="↵ Send")
-        self.send_btn.set_tooltip_text("Send (Ctrl+Enter)")
+        self.send_btn.set_tooltip_text("Send (Enter)")
         self.send_btn.connect("clicked", self._on_submit)
         bottom_box.pack_start(self.send_btn, False, False, 0)
 
@@ -952,10 +969,59 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_textview_key_press(self, widget, event):
         """Handle key presses in the text input field."""
-        # Ctrl+Enter to submit
-        if event.keyval == Gdk.KEY_Return and event.state & Gdk.ModifierType.CONTROL_MASK:
+        ctrl = event.state & Gdk.ModifierType.CONTROL_MASK
+        shift = event.state & Gdk.ModifierType.SHIFT_MASK
+
+        # Enter to submit (Shift+Enter for newline)
+        if event.keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            if shift:
+                return False  # Let default handler insert newline
             self._on_submit(None)
             return True
+
+        # Readline-style shortcuts
+        if ctrl:
+            cursor = self.textbuffer.get_iter_at_mark(self.textbuffer.get_insert())
+
+            # Ctrl+W or Ctrl+Backspace: Delete previous word
+            if event.keyval in (Gdk.KEY_w, Gdk.KEY_BackSpace):
+                if cursor.get_offset() > 0:
+                    word_start = cursor.copy()
+                    # Skip whitespace backwards
+                    while word_start.get_offset() > 0:
+                        word_start.backward_char()
+                        if not word_start.get_char().isspace():
+                            word_start.forward_char()
+                            break
+                    # Skip word backwards
+                    while word_start.get_offset() > 0:
+                        word_start.backward_char()
+                        if word_start.get_char().isspace():
+                            word_start.forward_char()
+                            break
+                    self.textbuffer.delete(word_start, cursor)
+                return True
+
+            # Ctrl+U: Clear line before cursor
+            if event.keyval == Gdk.KEY_u:
+                line_start = cursor.copy()
+                line_start.set_line_offset(0)
+                self.textbuffer.delete(line_start, cursor)
+                return True
+
+            # Ctrl+A: Go to beginning of line
+            if event.keyval == Gdk.KEY_a:
+                cursor.set_line_offset(0)
+                self.textbuffer.place_cursor(cursor)
+                return True
+
+            # Ctrl+E: Go to end of line
+            if event.keyval == Gdk.KEY_e:
+                if not cursor.ends_line():
+                    cursor.forward_to_line_end()
+                self.textbuffer.place_cursor(cursor)
+                return True
+
         # Up arrow at start of buffer for history
         if event.keyval == Gdk.KEY_Up:
             # Only navigate history if cursor is at the start
@@ -979,7 +1045,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         return False
 
     def _on_submit(self, widget):
-        """Handle submit button or Ctrl+Enter."""
+        """Handle submit button or Enter key."""
         if self.streaming:
             return
 
@@ -1230,7 +1296,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         else:
             # Restore send button
             self.send_btn.set_label("↵ Send")
-            self.send_btn.set_tooltip_text("Send (Ctrl+Enter)")
+            self.send_btn.set_tooltip_text("Send (Enter)")
             # Disconnect stop handler and reconnect submit handler
             try:
                 self.send_btn.disconnect_by_func(self._on_stop_clicked)
@@ -1452,6 +1518,141 @@ class PopupWindow(Gtk.ApplicationWindow):
             return True
 
         return False
+
+    def _submit_query(self, query: str):
+        """Submit a query to the daemon (extracted for reuse by edit/regenerate).
+
+        Args:
+            query: The raw user query text (context will be prepended)
+        """
+        if self.streaming:
+            return
+
+        # Build full query with context
+        context_text = format_context_for_llm(self.context)
+        if context_text:
+            full_query = f"{context_text}\n\n{query}"
+        else:
+            full_query = query
+
+        # Build request
+        request = {
+            "cmd": "query",
+            "tid": self.session_id,
+            "q": full_query,
+            "mode": "assistant"
+        }
+
+        # Add image attachments
+        if self.attachments:
+            request["images"] = [str(p) for p in self.attachments]
+            self.attachments.clear()
+            self._update_attachment_indicator()
+
+        # Start streaming
+        self._set_streaming(True)
+        self.query.start(request)
+
+    def _on_edit_and_regenerate(self, content_manager, js_result):
+        """Handle edit + regenerate from JavaScript."""
+        try:
+            # Parse JS message - use to_json() not to_string() for objects
+            data = json.loads(js_result.get_js_value().to_json(0))
+            new_content = data.get('newContent', '')
+            keep_turns = data.get('keepTurns', 0)
+
+            if not new_content:
+                return
+
+            if self.debug:
+                print(f"[Edit] Keeping {keep_turns} turns, new content: {new_content[:50]}...")
+
+            # Truncate daemon conversation
+            truncate_request = {
+                "cmd": "truncate",
+                "tid": self.session_id,
+                "keep_turns": keep_turns
+            }
+            for _ in stream_events(truncate_request):
+                pass
+
+            # Re-submit with edited content
+            self._submit_query(new_content)
+
+        except Exception as e:
+            if self.debug:
+                print(f"[Edit] Error: {e}")
+
+    def _on_regenerate(self, content_manager, js_result):
+        """Handle regenerate from JavaScript."""
+        try:
+            # Use to_json() not to_string() for objects
+            data = json.loads(js_result.get_js_value().to_json(0))
+            user_content = data.get('userContent', '')
+
+            if not user_content:
+                return
+
+            if self.debug:
+                print(f"[Regenerate] Re-submitting: {user_content[:50]}...")
+
+            # Pop last response from daemon
+            pop_request = {
+                "cmd": "pop_response",
+                "tid": self.session_id
+            }
+            for _ in stream_events(pop_request):
+                pass
+
+            # Re-submit same query
+            self._submit_query(user_content)
+
+        except Exception as e:
+            if self.debug:
+                print(f"[Regenerate] Error: {e}")
+
+    def _on_branch_conversation(self, content_manager, js_result):
+        """Handle branch/fork from JavaScript."""
+        try:
+            # Use to_json() not to_string() for objects
+            data = json.loads(js_result.get_js_value().to_json(0))
+            conversation = data.get('conversation', [])
+
+            if not conversation:
+                return
+
+            if self.debug:
+                print(f"[Branch] Forking conversation with {len(conversation)} messages")
+
+            # Create new session ID
+            new_session_id = f"guiassistant:{os.getpid()}:{int(time.time())}"
+
+            # Fork in daemon
+            fork_request = {
+                "cmd": "fork",
+                "tid": self.session_id,
+                "new_tid": new_session_id,
+                "messages": conversation
+            }
+
+            for event in stream_events(fork_request):
+                if event.get("type") == "forked":
+                    # Switch to new session
+                    self.session_id = new_session_id
+
+                    # Clear UI and re-add messages
+                    self._run_js("clearConversation()")
+                    for msg in conversation:
+                        role = msg['role']
+                        content = msg['content']
+                        self._run_js(f"appendMessage({json.dumps(role)}, {json.dumps(content)}, null)")
+
+                    self._run_js('showToast("Branched to new conversation")')
+                    break
+
+        except Exception as e:
+            if self.debug:
+                print(f"[Branch] Error: {e}")
 
     def _run_js(self, script: str):
         """Run JavaScript in the WebView."""
