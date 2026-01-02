@@ -8,7 +8,6 @@ Handles:
 
 import json
 import os
-import socket
 from typing import Iterator, Optional, Tuple
 
 import click
@@ -20,11 +19,9 @@ from rich.text import Text
 
 # Import shared utilities from llm_tools_core
 from llm_tools_core import (
-    get_socket_path,
     get_terminal_session_id,
     ensure_daemon,
-    RECV_BUFFER_SIZE,
-    REQUEST_TIMEOUT,
+    stream_events,
 )
 
 
@@ -39,65 +36,6 @@ TOOL_DISPLAY = {
     'prompt_fabric': 'Executing Fabric pattern',
     'suggest_command': 'Preparing command',
 }
-
-
-def send_json_request(request: dict) -> Iterator[dict]:
-    """Send JSON request to daemon and yield NDJSON events.
-
-    Args:
-        request: JSON request dict
-
-    Yields:
-        Event dicts from NDJSON response
-    """
-    socket_path = get_socket_path()
-
-    try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-        sock.settimeout(REQUEST_TIMEOUT)
-        sock.connect(str(socket_path))
-
-        # Send JSON request
-        request_bytes = json.dumps(request).encode('utf-8')
-        sock.sendall(request_bytes)
-        sock.shutdown(socket.SHUT_WR)
-
-        # Parse NDJSON response
-        buffer = ""
-        while True:
-            try:
-                chunk = sock.recv(RECV_BUFFER_SIZE)
-                if not chunk:
-                    break
-                buffer += chunk.decode('utf-8')
-
-                # Process complete lines
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    if not line.strip():
-                        continue
-                    try:
-                        event = json.loads(line)
-                        yield event
-                        if event.get('type') == 'done':
-                            sock.close()
-                            return
-                    except json.JSONDecodeError:
-                        continue
-
-            except socket.timeout:
-                yield {"type": "error", "code": "TIMEOUT", "message": "Request timed out"}
-                yield {"type": "done"}
-                break
-
-        sock.close()
-
-    except socket.timeout:
-        yield {"type": "error", "code": "TIMEOUT", "message": "Connection timed out"}
-        yield {"type": "done"}
-    except (socket.error, OSError) as e:
-        yield {"type": "error", "code": "SOCKET_ERROR", "message": str(e)}
-        yield {"type": "done"}
 
 
 def stream_request(query: str, mode: str = "assistant", system_prompt: str = "") -> Iterator[Tuple[str, str]]:
@@ -123,7 +61,7 @@ def stream_request(query: str, mode: str = "assistant", system_prompt: str = "")
         "sys": system_prompt,
     }
 
-    for event in send_json_request(request):
+    for event in stream_events(request):
         event_type = event.get("type", "")
         if event_type == "text":
             yield ("text", event.get("content", ""))
@@ -150,14 +88,14 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
 
     if command in ('/new', '/reset', '/clear'):
         request = {**request_base, "cmd": "new"}
-        for event in send_json_request(request):
+        for event in stream_events(request):
             if event.get("type") == "text":
                 console.print(f"[green]{event.get('content', '')}[/]")
         return True
 
     elif command in ('/status', '/info'):
         request = {**request_base, "cmd": "status"}
-        for event in send_json_request(request):
+        for event in stream_events(request):
             if event.get("type") == "text":
                 content = event.get('content', '')
                 try:
@@ -175,14 +113,14 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
 
     elif command == '/quit' or command == '/exit':
         request = {**request_base, "cmd": "shutdown"}
-        for event in send_json_request(request):
+        for event in stream_events(request):
             if event.get("type") == "text":
                 console.print(f"[dim]{event.get('content', '')}[/]")
         return True
 
     elif command == '/help':
         request = {**request_base, "cmd": "help"}
-        for event in send_json_request(request):
+        for event in stream_events(request):
             if event.get("type") == "text":
                 console.print(event.get('content', ''))
         return True
@@ -206,7 +144,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
         }
 
         items = []
-        for event in send_json_request(request):
+        for event in stream_events(request):
             if event.get("type") == "responses":
                 items = event.get("items", [])
 
@@ -347,7 +285,7 @@ def get_completions(prefix: str, model: Optional[str] = None) -> list:
     }
 
     completions = []
-    for event in send_json_request(request):
+    for event in stream_events(request):
         if event.get("type") == "completions":
             completions = event.get("items", [])
         elif event.get("type") == "done":

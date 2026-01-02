@@ -2,8 +2,8 @@
 
 A system-wide LLM access popup that:
 - Connects to the existing llm-assistant daemon
-- Provides global hotkey activation via swhkd
-- Captures X11/Wayland desktop context (selection, window info)
+- Provides global hotkey activation via XFCE keyboard shortcuts
+- Captures X11 desktop context (selection, window info)
 - Renders Markdown responses with syntax highlighting via WebKit2GTK
 - Supports screenshots, drag-drop files/images, and smart action buttons
 

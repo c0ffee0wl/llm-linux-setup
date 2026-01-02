@@ -60,7 +60,12 @@ def main():
         with_selection=args.with_selection,
         debug=args.debug
     )
-    return app.run(sys.argv[:1])  # Only pass program name to GTK
+    try:
+        return app.run(sys.argv[:1])  # Only pass program name to GTK
+    except KeyboardInterrupt:
+        # GTK's signal handler cleanup raises KeyboardInterrupt on Ctrl+C
+        # This is expected behavior - exit cleanly
+        return 0
 
 
 if __name__ == "__main__":

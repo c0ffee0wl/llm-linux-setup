@@ -22,19 +22,19 @@ GTK-based conversational popup for system-wide LLM access on Linux. Connects to 
 
 ## Components
 
-### popup.py (~400 lines)
+### popup.py (~1400 lines)
 Main GTK application with single-instance D-Bus activation:
 - `PopupApplication`: GTK Application with D-Bus activation for instant (<50ms) re-activation
 - `PopupWindow`: Main window with WebKit conversation view, input field, context panel
 - `StreamingQuery`: Background thread for streaming daemon responses via `GLib.idle_add()`
 
-### history.py (~80 lines)
+### history.py (~120 lines)
 Shell-like input history with Up/Down arrow navigation:
 - Persists to `~/.config/llm-guiassistant/input-history.json`
 - 100 entry limit with deduplication
 - Preserves draft when navigating
 
-### templates/conversation.html (~150 lines)
+### templates/conversation.html (~430 lines)
 WebKit template for rich Markdown rendering:
 - Uses marked.js + highlight.js for Markdown and syntax highlighting
 - Light/dark theme via `@media (prefers-color-scheme: dark)`
@@ -50,49 +50,63 @@ WebKit template for rich Markdown rendering:
 ### System (apt)
 - gir1.2-webkit2-4.1 (WebKit2GTK for GTK3)
 - x11-utils (xprop for window detection)
-- xdotool, xclip, maim (context gathering and screenshots)
+- xdotool, xclip (context gathering)
+- maim, flameshot (screenshots via llm-tools-capture-screen)
 
 ### JavaScript (downloaded to ~/.local/share/llm-guiassistant/js/)
-- marked.min.js v15.0.7 (Markdown parsing)
-- highlight.min.js v11.11.1 (syntax highlighting)
+- marked.min.js v17.0.1 (Markdown parsing)
+- highlight.min.js v11.11.2 (syntax highlighting)
 
 ## Hotkeys
 
-Configured via swhkd (`~/.config/swhkd/swhkdrc`):
+Configured automatically via XFCE keyboard shortcuts (`xfconf-query`):
 
 | Hotkey | Action |
 |--------|--------|
-| Super+Shift+A | Open popup (no selection) |
-| Super+Shift+S | Open popup with current selection |
+| Super+^ | Open popup (German/European keyboards) |
+| Super+Shift+^ | Open popup with current selection |
+| Super+` | Open popup (US keyboards, backtick) |
+| Super+Shift+` | Open popup with current selection |
 
-### swhkd Setup
+### Manual Configuration (if needed)
 
-swhkd requires user to be in the `input` group:
 ```bash
-sudo usermod -aG input $USER
-# Log out and back in for group change to take effect
+# German keyboards (^ key)
+xfconf-query -c xfce4-keyboard-shortcuts \
+  -p "/commands/custom/<Super>dead_circumflex" \
+  -n -t string -s "llm-guiassistant"
+
+# US keyboards (` backtick key)
+xfconf-query -c xfce4-keyboard-shortcuts \
+  -p "/commands/custom/<Super>grave" \
+  -n -t string -s "llm-guiassistant"
 ```
 
 ## Usage
 
 ```bash
 # Open popup (also starts daemon if not running)
+# Context: app, window, working directory (no selection)
 llm-guiassistant
 
 # Open with current X11 selection included as context
+# Context: app, window, working directory, AND selected text
 llm-guiassistant --with-selection
 
 # Debug mode
 llm-guiassistant --debug
 ```
 
+**Note:** Without `--with-selection`, the popup captures basic context (app, window title, working directory) but excludes any selected text. With `--with-selection`, the current X11 selection is captured at launch and included in the context sent with your query.
+
 ### Keyboard Shortcuts (in popup)
 
 | Key | Action |
 |-----|--------|
+| Ctrl+Enter | Send message |
 | Ctrl+K | Open action panel (fuzzy-searchable) |
-| ↑/↓ | Navigate input history |
-| Enter | Send message |
+| Ctrl+V | Paste image from clipboard |
+| ↑/↓ | Navigate input history (at start/end of input) |
 | Escape | Stop generation / Close popup |
 
 ### Action Panel (Ctrl+K)
@@ -103,6 +117,7 @@ Raycast-style keyboard-first action panel with fuzzy search:
 - **Copy code blocks** (individually, with language preview)
 - **Save to file** (file chooser dialog)
 - **New session** (clear conversation)
+- **Refresh context** (5-second countdown to focus target window)
 - **Capture screenshot** (window or region)
 
 Type to filter actions, use ↑/↓ to navigate, Enter to execute.
@@ -110,11 +125,12 @@ Type to filter actions, use ↑/↓ to navigate, Enter to execute.
 ### Features
 
 1. **Context Gathering**: Automatically captures focused window info (app class, title, working directory)
-2. **Image Attachments**: Drag & drop images or paste from clipboard
-3. **Streaming Responses**: Real-time Markdown rendering during response streaming
-4. **Session Persistence**: Conversations persist within popup session (uses daemon's session management)
-5. **New Session Button**: Clear conversation and context (prevents target contamination in security work)
-6. **Action Panel (Ctrl+K)**: Keyboard-first quick actions with fuzzy search
+2. **Context Refresh**: Switch to a different window mid-session via Ctrl+K → "Refresh context" (5s countdown)
+3. **Image Attachments**: Drag & drop images or paste from clipboard
+4. **Streaming Responses**: Real-time Markdown rendering during response streaming
+5. **Session Persistence**: Conversations persist within popup session (uses daemon's session management)
+6. **New Session Button**: Clear conversation and context (prevents target contamination in security work)
+7. **Action Panel (Ctrl+K)**: Keyboard-first quick actions with fuzzy search
 
 ## Protocol
 
@@ -146,7 +162,7 @@ Uses the llm-assistant daemon protocol with image attachment extension:
 | `~/.config/llm-guiassistant/state.json` | Window dimensions |
 | `~/.config/llm-guiassistant/input-history.json` | Input history |
 | `~/.local/share/llm-guiassistant/js/` | JavaScript assets |
-| `~/.config/swhkd/swhkdrc` | Hotkey configuration |
+| XFCE: `xfconf-query` | Keyboard shortcuts (stored in xfconf) |
 
 ## Limitations (v1)
 
@@ -161,9 +177,15 @@ Uses the llm-assistant daemon protocol with image attachment extension:
 2. Start daemon manually: `llm-assistant --daemon`
 
 ### Hotkeys don't work
-1. Verify swhkd is running: `pgrep swhkd`
-2. Check group membership: `groups | grep input`
-3. Start swhkd: `swhkd &`
+1. Verify XFCE shortcuts are configured:
+   ```bash
+   xfconf-query -c xfce4-keyboard-shortcuts -l | grep guiassistant
+   ```
+2. Re-run install script to configure:
+   ```bash
+   ./install-llm-tools.sh
+   ```
+3. Or add manually via XFCE Settings → Keyboard → Application Shortcuts
 
 ### JavaScript assets missing
 Re-run install script to download:

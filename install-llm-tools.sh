@@ -1546,7 +1546,6 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     # Terminator-specific tool plugins (require D-Bus terminal access)
     TERMINATOR_PLUGINS=(
         "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
-        "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
         "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
     )
 
@@ -1842,6 +1841,10 @@ else:
         # Install llm-guiassistant package
         install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-guiassistant"
 
+        # Install llm-tools-capture-screen for GUI screenshot functionality
+        # (previously Terminator-only, now available for all X11 GUIs)
+        install_or_upgrade_llm_plugin "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
+
         # Create wrapper script
         cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'
 #!/bin/bash
@@ -1853,8 +1856,8 @@ EOF
         GUIASSISTANT_JS_DIR="$HOME/.local/share/llm-guiassistant/js"
         mkdir -p "$GUIASSISTANT_JS_DIR"
 
-        MARKED_VERSION="15.0.7"
-        HLJS_VERSION="11.11.1"
+        MARKED_VERSION="17.0.1"
+        HLJS_VERSION="11.11.2"
 
         # Download marked.js if not present or version changed
         if [ ! -f "$GUIASSISTANT_JS_DIR/marked.min.js" ] || \
@@ -1876,34 +1879,46 @@ EOF
         echo "marked@$MARKED_VERSION" > "$GUIASSISTANT_JS_DIR/.versions"
         echo "highlight.js@$HLJS_VERSION" >> "$GUIASSISTANT_JS_DIR/.versions"
 
-        # NOTE: swhkd installation temporarily disabled
-        # The hotkey daemon has reliability issues on some systems.
-        # Users can manually install if needed: https://github.com/waycrate/swhkd
-        #
-        # # Install swhkd (Simple Wayland HotKey Daemon - also works on X11)
-        # # Built from source using make (not available as 'swhkd' on crates.io)
-        # install_or_upgrade_make_git_tool swhkd https://github.com/waycrate/swhkd "libudev-dev scdoc"
-        #
-        # # Set up swhkd configuration (if swhkd is available)
-        # if command -v swhkd &>/dev/null; then
-        #     SWHKD_CONFIG_DIR="$HOME/.config/swhkd"
-        #     mkdir -p "$SWHKD_CONFIG_DIR"
-        #
-        #     # Copy example config if no config exists
-        #     if [ ! -f "$SWHKD_CONFIG_DIR/swhkdrc" ]; then
-        #         cp "$SCRIPT_DIR/llm-guiassistant/config/swhkdrc.example" "$SWHKD_CONFIG_DIR/swhkdrc"
-        #         log "Installed swhkd config for llm-guiassistant hotkeys"
-        #     fi
-        #
-        #     # Check if user is in input group (required for swhkd)
-        #     if ! groups "$USER" | grep -q '\binput\b'; then
-        #         warn "swhkd requires 'input' group membership for hotkeys"
-        #         log "Run: sudo usermod -aG input $USER"
-        #         log "Then log out and back in for group change to take effect"
-        #     fi
-        # fi
+        # Configure XFCE keyboard shortcuts for llm-guiassistant
+        if command -v xfconf-query &>/dev/null; then
+            log "Configuring XFCE keyboard shortcuts for llm-guiassistant..."
 
-        log "llm-guiassistant installed (Super+Shift+A to open)"
+            # Detect keyboard layout to choose appropriate shortcut key
+            # German/European keyboards: dead_circumflex (^ key, top-left)
+            # US keyboards fallback: grave (` backtick key, top-left)
+            LAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}')
+            if [[ "$LAYOUT" == "de" || "$LAYOUT" == "at" || "$LAYOUT" == "ch" ]]; then
+                SHORTCUT_KEY="dead_circumflex"
+                KEY_DISPLAY="Super+^"
+            else
+                SHORTCUT_KEY="grave"
+                KEY_DISPLAY="Super+\`"
+            fi
+
+            # Super+^ (or Super+`): Open llm-guiassistant
+            # Use full path because XFCE shortcuts don't inherit user's PATH
+            GUIASSISTANT_CMD="$HOME/.local/bin/llm-guiassistant"
+            if xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
+                -n -t string -s "$GUIASSISTANT_CMD" 2>/dev/null || \
+               xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
+                -s "$GUIASSISTANT_CMD" 2>/dev/null; then
+                log "  $KEY_DISPLAY: Open llm-guiassistant"
+            fi
+
+            # Super+Shift+^ (or Super+Shift+`): Open with selection
+            if xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
+                -n -t string -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null || \
+               xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
+                -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null; then
+                log "  ${KEY_DISPLAY/Super/Super+Shift}: Open with selection"
+            fi
+        else
+            log "llm-guiassistant installed (configure keyboard shortcut manually)"
+        fi
     else
         log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
     fi
@@ -2176,7 +2191,7 @@ if [ "$INSTALL_MODE" = "full" ]; then
     log "    - Handy            System-wide speech-to-text input"
     log "    - espanso          Text expander with LLM integration (:llm:, :llmc:, :@:, :@c:)"
     log "    - Ulauncher        Application launcher with LLM extension (llm, llmc, @, @c)"
-    log "    - llm-guiassistant GTK popup assistant (Super+Shift+A/S, X11 only)"
+    log "    - llm-guiassistant GTK popup assistant (Super+^, X11/XFCE only)"
     log ""
     log "Shell integration: $SCRIPT_DIR/integration/"
     log "  - llm-integration.bash (Bash)"
