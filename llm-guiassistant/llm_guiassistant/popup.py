@@ -51,20 +51,35 @@ TEMPLATE_PATH = Path(__file__).parent / "templates" / "conversation.html"
 
 
 def load_window_state() -> dict:
-    """Load saved window dimensions, or return defaults."""
+    """Load saved window dimensions and delay, or return defaults."""
+    defaults = {"width": 500, "height": 600, "delay": 3}
     try:
         if STATE_FILE.exists():
-            return json.loads(STATE_FILE.read_text())
+            state = json.loads(STATE_FILE.read_text())
+            # Merge with defaults to handle missing keys from old state files
+            return {**defaults, **state}
     except (json.JSONDecodeError, OSError):
         pass
-    return {"width": 500, "height": 600}
+    return defaults
 
 
-def save_window_state(width: int, height: int):
-    """Save window dimensions for next session."""
+def save_window_state(width: int, height: int, delay: int = None):
+    """Save window dimensions and delay for next session."""
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        STATE_FILE.write_text(json.dumps({"width": width, "height": height}))
+        # Load existing state to preserve delay if not provided
+        existing = {}
+        if STATE_FILE.exists():
+            try:
+                existing = json.loads(STATE_FILE.read_text())
+            except (json.JSONDecodeError, OSError):
+                pass
+        state = {"width": width, "height": height}
+        if delay is not None:
+            state["delay"] = delay
+        elif "delay" in existing:
+            state["delay"] = existing["delay"]
+        STATE_FILE.write_text(json.dumps(state))
     except OSError:
         pass  # Best effort - don't crash on disk errors
 
@@ -488,6 +503,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Window setup
         state = load_window_state()
         self.set_default_size(state["width"], state["height"])
+        self.delay = state.get("delay", 3)  # Delay for screenshots/context refresh
         self.set_position(Gtk.WindowPosition.MOUSE)
         self.connect("configure-event", self._on_configure)
         self.connect("delete-event", self._on_delete)
@@ -639,6 +655,26 @@ class PopupWindow(Gtk.ApplicationWindow):
         ss_region.set_tooltip_text("Screenshot region")
         ss_region.connect("clicked", lambda w: self._on_screenshot("region"))
         bottom_box.pack_start(ss_region, False, False, 0)
+
+        # Delay selector (0-60 seconds)
+        delay_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        delay_box.set_margin_start(8)
+        delay_label = Gtk.Label(label="⏱")
+        delay_label.set_tooltip_text("Delay before capture (seconds)")
+        delay_box.pack_start(delay_label, False, False, 0)
+
+        adjustment = Gtk.Adjustment(value=self.delay, lower=0, upper=60, step_increment=1)
+        self.delay_spin = Gtk.SpinButton()
+        self.delay_spin.set_adjustment(adjustment)
+        self.delay_spin.set_numeric(True)
+        self.delay_spin.set_width_chars(2)
+        self.delay_spin.set_tooltip_text("Delay in seconds (0-60) for screenshot and context capture")
+        self.delay_spin.connect("value-changed", self._on_delay_changed)
+        delay_box.pack_start(self.delay_spin, False, False, 0)
+
+        delay_unit = Gtk.Label(label="s")
+        delay_box.pack_start(delay_unit, False, False, 0)
+        bottom_box.pack_start(delay_box, False, False, 0)
 
         # Spacer
         spacer = Gtk.Box()
@@ -831,6 +867,13 @@ class PopupWindow(Gtk.ApplicationWindow):
         )
         return False
 
+    def _on_delay_changed(self, spin_button):
+        """Save delay when spinner value changes."""
+        self.delay = int(spin_button.get_value())
+        # Save immediately (delay changes are intentional, not frequent like resize)
+        alloc = self.get_allocation()
+        save_window_state(alloc.width, alloc.height, self.delay)
+
     def _do_save_state(self, width: int, height: int) -> bool:
         """Actually save window state (called after debounce delay)."""
         self._save_state_timeout_id = None
@@ -1011,9 +1054,13 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Hide window so user can focus target
         self.hide()
 
-        # Start 5-second countdown
-        self._refresh_countdown = 5
-        self._do_refresh_countdown()
+        # Start countdown (uses configured delay)
+        self._refresh_countdown = self.delay
+        if self.delay == 0:
+            # No delay - capture immediately
+            self._do_refresh_immediate()
+        else:
+            self._do_refresh_countdown()
 
     def _do_refresh_countdown(self) -> bool:
         """Countdown timer for context refresh."""
@@ -1061,6 +1108,19 @@ class PopupWindow(Gtk.ApplicationWindow):
             GLib.idle_add(self.textview.grab_focus)
 
         return False  # Don't repeat (we schedule next iteration manually)
+
+    def _do_refresh_immediate(self):
+        """Immediate context refresh (no countdown)."""
+        # Gather context from now-focused window
+        self.context = gather_context()
+
+        # Reset flag
+        self._refresh_in_progress = False
+
+        # Show window again
+        GLib.idle_add(self.show)
+        GLib.idle_add(self.present)
+        GLib.idle_add(self.textview.grab_focus)
 
     def _on_drag_data_received(self, widget, drag_context, x, y, data, info, time):
         """Handle drag and drop data."""
@@ -1244,10 +1304,14 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Hide window so it's not in the screenshot
         self.hide()
 
-        # Start 5-second countdown
+        # Start countdown (uses configured delay)
         self._screenshot_mode = mode
-        self._screenshot_countdown = 5
-        self._do_screenshot_countdown()
+        self._screenshot_countdown = self.delay
+        if self.delay == 0:
+            # No delay - capture immediately
+            self._do_screenshot(mode)
+        else:
+            self._do_screenshot_countdown()
 
     def _do_screenshot_countdown(self) -> bool:
         """Countdown timer for screenshot capture."""
