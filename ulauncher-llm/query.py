@@ -11,21 +11,7 @@ from llm_tools_core import (
     ensure_daemon,
     stream_events,
 )
-
-
-# Friendly names for tools (used in UI feedback)
-TOOL_DISPLAY_NAMES = {
-    "execute_python": "Python",
-    "suggest_command": "Command",
-    "sandboxed_shell": "Shell",
-    "search_google": "Google Search",
-    "context": "Context",
-    "read_file": "Read File",
-    "write_file": "Write File",
-    "edit_file": "Edit File",
-    "multi_edit_file": "Multi Edit",
-    "web_fetch": "Web Fetch",
-}
+from llm_tools_core.tool_display import get_action_verb
 
 
 def execute_slash_command_sync(
@@ -129,11 +115,11 @@ def query_daemon_sync(
         if event_type == "text":
             accumulated_text += event.get("content", "")
         elif event_type == "tool_start":
-            # Track tool execution
+            # Track tool execution using shared tool_display config
             tool_name = event.get("tool", "")
-            friendly_name = TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
-            if friendly_name and friendly_name not in tools_used:
-                tools_used.append(friendly_name)
+            action_verb = get_action_verb(tool_name)
+            if action_verb and action_verb not in tools_used:
+                tools_used.append(action_verb)
         elif event_type == "error":
             error_msg = event.get("message", "Unknown error")
 

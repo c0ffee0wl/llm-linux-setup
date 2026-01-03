@@ -10,16 +10,26 @@
  */
 
 // Check if required libraries loaded
-if (typeof marked === 'undefined' || typeof hljs === 'undefined') {
+if (typeof marked === 'undefined' || typeof hljs === 'undefined' || typeof DOMPurify === 'undefined') {
     document.body.innerHTML = '<div style="padding: 20px; color: #c00;">' +
         '<h3>JavaScript assets failed to load</h3>' +
         '<p>Missing: ' +
         (typeof marked === 'undefined' ? 'marked.js ' : '') +
-        (typeof hljs === 'undefined' ? 'highlight.js' : '') +
+        (typeof hljs === 'undefined' ? 'highlight.js ' : '') +
+        (typeof DOMPurify === 'undefined' ? 'purify.js' : '') +
         '</p>' +
         '<p>Run: <code>./install-llm-tools.sh</code> to download assets.</p>' +
         '</div>';
     throw new Error('Required JavaScript libraries not loaded');
+}
+
+// Helper function to safely render markdown with DOMPurify sanitization
+function safeMarkdown(content) {
+    return DOMPurify.sanitize(marked.parse(content), {
+        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div'],
+        ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel'],
+        ALLOW_DATA_ATTR: false
+    });
 }
 
 // Configure marked for safe rendering
@@ -308,10 +318,13 @@ const atAutocomplete = {
     selectedIndex: 0,
     triggerStart: -1,
     currentPrefix: '',
+    cwd: null,  // Set from context when available
 
     async getSuggestions(prefix) {
         try {
-            const response = await fetch('/api/completions?prefix=' + encodeURIComponent(prefix));
+            // Use cwd from context, or fall back to root (server will use home)
+            const cwdParam = this.cwd || '/';
+            const response = await fetch('/api/completions?prefix=' + encodeURIComponent(prefix) + '&cwd=' + encodeURIComponent(cwdParam));
             if (!response.ok) return [];
             const data = await response.json();
             return data.completions || [];
@@ -579,12 +592,12 @@ const ragPanel = {
             div.onclick = () => this.activate(coll.name);
 
             const name = document.createElement('span');
-            name.className = 'rag-name';
+            name.className = 'rag-collection-name';
             name.textContent = coll.name;
             div.appendChild(name);
 
             const count = document.createElement('span');
-            count.className = 'rag-count';
+            count.className = 'rag-collection-count';
             count.textContent = (coll.count || 0) + ' docs';
             div.appendChild(count);
 
@@ -688,6 +701,8 @@ function connect() {
 
     ws.onclose = () => {
         console.log('WebSocket closed, reconnecting...');
+        // Clear pending requests - their callbacks will never fire
+        pendingRequests.clear();
         setTimeout(connect, Math.min(1000 * Math.pow(2, reconnectAttempts++), 5000));
     };
 
@@ -779,7 +794,7 @@ function handleTextMessage(msg) {
         container = document.getElementById('current-message');
         if (container) {
             const contentDiv = container.querySelector('.message-content');
-            contentDiv.innerHTML = marked.parse(msg.content);
+            contentDiv.innerHTML = safeMarkdown(msg.content);
             applyCodeBlockEnhancements(contentDiv);
             // Update stored content
             const msgId = container.dataset.messageId;
@@ -840,7 +855,7 @@ function appendMessage(role, content, streamingId) {
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    contentDiv.innerHTML = marked.parse(content);
+    contentDiv.innerHTML = safeMarkdown(content);
     container.appendChild(contentDiv);
 
     const msgId = messageStore.add(role, content, container);
@@ -910,7 +925,7 @@ function addToolCall(toolName, args, toolCallId) {
     const preview = getToolPreview(toolName, args);
 
     const container = document.createElement('div');
-    container.className = 'tool-call collapsed running';
+    container.className = 'tool-call running';
     container.id = 'tool-' + (toolCallId || Date.now());
     currentToolCallId = container.id;
 
@@ -1012,7 +1027,7 @@ function completeToolCall(toolCallId, result) {
 }
 
 function toggleToolCall(container) {
-    container.classList.toggle('collapsed');
+    container.classList.toggle('expanded');
 }
 
 // ============================================================================
@@ -1046,7 +1061,7 @@ function addThinkingTrace(content) {
     // Full content
     const body = document.createElement('div');
     body.className = 'thinking-trace-content';
-    body.innerHTML = marked.parse(content);
+    body.innerHTML = safeMarkdown(content);
     details.appendChild(body);
 
     wrapper.appendChild(details);
@@ -1253,7 +1268,7 @@ function submitEditedMessage(messageId, newContent) {
 
     msg.content = newContent;
     const contentDiv = msg.element.querySelector('.message-content');
-    contentDiv.innerHTML = marked.parse(newContent);
+    contentDiv.innerHTML = safeMarkdown(newContent);
     applyCodeBlockEnhancements(contentDiv);
 
     messageStore.truncateAfter(messageId);

@@ -875,6 +875,12 @@ pre code {
     font-size: 13px;
 }
 
+.rag-collection-count {
+    font-size: 11px;
+    color: var(--text-color);
+    opacity: 0.6;
+}
+
 .rag-add-section {
     display: flex;
     gap: 4px;

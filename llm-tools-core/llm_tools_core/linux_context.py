@@ -21,7 +21,7 @@ Used by:
 import os
 import subprocess
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 # Selection size limit for security (prevents hangs on massive clipboard content)
 MAX_SELECTION_BYTES = 100 * 1024  # 100KB hard limit
@@ -96,6 +96,39 @@ def get_focused_window_id() -> Optional[str]:
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         pass
     return None
+
+
+def get_visible_window_ids() -> List[str]:
+    """Get all visible window IDs via xdotool.
+
+    Returns:
+        List of window ID strings (e.g., ["0x2a00003", "0x1800005"]) or empty list
+
+    Examples:
+        >>> get_visible_window_ids()
+        ['0x2a00003', '0x1800005', '0x2200007']
+    """
+    if not is_x11():
+        return []
+
+    try:
+        result = subprocess.run(
+            ["xdotool", "search", "--onlyvisible", "--name", ""],
+            capture_output=True,
+            timeout=SUBPROCESS_TIMEOUT
+        )
+        if result.returncode == 0:
+            window_ids = []
+            for wid in result.stdout.decode('utf-8').strip().split('\n'):
+                if wid:
+                    try:
+                        window_ids.append(hex(int(wid)))
+                    except ValueError:
+                        window_ids.append(wid)
+            return window_ids
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        pass
+    return []
 
 
 def get_wm_class(window_id: Optional[str] = None) -> Optional[str]:
@@ -331,11 +364,44 @@ def get_selection(selection: str = "PRIMARY") -> Tuple[Optional[str], bool]:
         return None, False
 
 
+def gather_all_visible_windows() -> List[Dict]:
+    """Gather info for all visible windows.
+
+    Returns:
+        List of window info dicts with: window_id, app_class, window_title, pid, cwd
+
+    Examples:
+        >>> gather_all_visible_windows()
+        [
+            {'window_id': '0x2a00003', 'app_class': 'firefox', 'window_title': 'GitHub', 'pid': 1234, 'cwd': '/home/user'},
+            {'window_id': '0x1800005', 'app_class': 'Terminator', 'window_title': '~/projects', 'pid': 5678, 'cwd': '/home/user/projects'}
+        ]
+    """
+    windows = []
+    for wid in get_visible_window_ids():
+        pid = get_focused_window_pid(wid)
+        windows.append({
+            'window_id': wid,
+            'app_class': get_wm_class(wid),
+            'window_title': get_window_title(wid),
+            'pid': pid,
+            'cwd': get_cwd(pid),
+        })
+    return windows
+
+
 def gather_context() -> dict:
     """Gather all context from current desktop state.
 
-    Returns dict with: session_type, app_class, window_title, working_dir,
-    command_line, selection, selection_truncated, window_id, pid
+    Returns dict with:
+    - session_type: Current session type (x11, wayland, etc.)
+    - focused: Dict with focused window info (window_id, app_class, window_title, pid, cwd)
+    - visible_windows: List of all visible window dicts
+    - selection: Primary selection text
+    - selection_truncated: Whether selection was truncated
+
+    Legacy fields (for backward compat): app_class, window_title, working_dir,
+    command_line, window_id, pid - these mirror the focused window data.
 
     On Wayland: Most fields will be None except session_type.
 
@@ -346,10 +412,19 @@ def gather_context() -> dict:
         >>> gather_context()
         {
             'session_type': 'x11',
-            'app_class': 'burpsuite',
-            'window_title': 'Repeater - https://api.example.com',
+            'focused': {
+                'window_id': '0x2a00003',
+                'app_class': 'burpsuite',
+                'window_title': 'Repeater - https://api.example.com',
+                'pid': 12345,
+                'cwd': '/home/kali/pentests/acme-corp'
+            },
+            'visible_windows': [...],
             'selection': 'GET /api/users?id=1 HTTP/1.1',
             'selection_truncated': False,
+            # Legacy fields for backward compat:
+            'app_class': 'burpsuite',
+            'window_title': 'Repeater - https://api.example.com',
             'working_dir': '/home/kali/pentests/acme-corp',
             'command_line': 'java -jar burpsuite.jar',
             'window_id': '0x2a00003',
@@ -360,13 +435,26 @@ def gather_context() -> dict:
     window_id = get_focused_window_id()
     pid = get_focused_window_pid(window_id)
 
-    return {
-        'session_type': get_session_type(),
+    # Build focused window info
+    focused = {
+        'window_id': window_id,
         'app_class': get_wm_class(window_id),
         'window_title': get_window_title(window_id),
+        'pid': pid,
+        'cwd': get_cwd(pid),
+    }
+
+    return {
+        'session_type': get_session_type(),
+        # New structured fields
+        'focused': focused,
+        'visible_windows': gather_all_visible_windows(),
         'selection': selection_text,
         'selection_truncated': was_truncated,
-        'working_dir': get_cwd(pid),
+        # Legacy fields for backward compat
+        'app_class': focused['app_class'],
+        'window_title': focused['window_title'],
+        'working_dir': focused['cwd'],
         'command_line': get_cmdline(pid),
         'window_id': window_id,
         'pid': pid,
@@ -421,3 +509,94 @@ def format_context_for_llm(ctx: dict) -> str:
         lines.append("```")
 
     return '\n'.join(lines)
+
+
+def format_gui_context(
+    ctx: dict,
+    new_window_hashes: Set[str],
+    is_first: bool,
+    include_selection: bool = True
+) -> str:
+    """Format GUI context as plain text with deduplication support.
+
+    Generates context formatted for LLM consumption with window IDs for
+    targeted capture. Shows full context on first message, incremental
+    updates thereafter.
+
+    Args:
+        ctx: Context dictionary from gather_context()
+        new_window_hashes: Set of hashes for newly appeared windows
+        is_first: Whether this is the first message in session
+        include_selection: Whether to include selection text
+
+    Returns:
+        Formatted string wrapped in <gui_context> tags
+
+    Examples:
+        >>> ctx = gather_context()
+        >>> print(format_gui_context(ctx, set(), is_first=True))
+        <gui_context>
+        Focused: firefox - "GitHub - Mozilla Firefox" [0x2a00003]
+          Working directory: /home/user
+
+        Visible windows:
+        - Terminator: "~/projects" [0x1800005] cwd:/home/user/projects
+        - Code: "project - VSCode" [0x2200007] cwd:/home/user/projects/myapp
+
+        Selection: "selected text"
+        </gui_context>
+    """
+    lines = []
+    focused = ctx.get('focused', {})
+
+    if is_first:
+        # Full context on first message
+        if focused and focused.get('app_class'):
+            wid = focused.get('window_id', '')
+            lines.append(f"Focused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
+            if focused.get('cwd'):
+                lines.append(f"  Working directory: {focused['cwd']}")
+
+        visible = ctx.get('visible_windows', [])
+        if visible:
+            lines.append("")
+            lines.append("Visible windows:")
+            for win in visible:
+                wid = win.get('window_id', '')
+                app = win.get('app_class') or 'unknown'
+                title = win.get('window_title') or ''
+                cwd = win.get('cwd')
+                cwd_suffix = f" cwd:{cwd}" if cwd else ""
+                lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
+
+        if include_selection and ctx.get('selection'):
+            lines.append("")
+            selection = ctx['selection']
+            truncated = " (truncated)" if ctx.get('selection_truncated') else ""
+            lines.append(f"Selection{truncated}: \"{selection[:200]}{'...' if len(selection) > 200 else ''}\"")
+
+    elif new_window_hashes:
+        # Incremental: only show new windows
+        lines.append("[New windows appeared]:")
+        visible = ctx.get('visible_windows', [])
+        from .hashing import hash_window  # Import here to avoid circular import
+        for win in visible:
+            if hash_window(win) in new_window_hashes:
+                wid = win.get('window_id', '')
+                app = win.get('app_class') or 'unknown'
+                title = win.get('window_title') or ''
+                cwd = win.get('cwd')
+                cwd_suffix = f" cwd:{cwd}" if cwd else ""
+                lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
+
+        # Also note focus change
+        if focused and focused.get('app_class'):
+            wid = focused.get('window_id', '')
+            lines.append(f"\nFocused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
+
+    else:
+        # No changes
+        return "<gui_context>[Desktop context unchanged]</gui_context>"
+
+    content = '\n'.join(lines)
+    return f"<gui_context>\n{content}\n</gui_context>"

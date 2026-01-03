@@ -21,7 +21,7 @@ This package provides shared utilities:
 """
 
 from .prompt_detection import PromptDetector
-from .hashing import hash_blocks, filter_new_blocks
+from .hashing import hash_blocks, filter_new_blocks, hash_window, hash_gui_context
 from .console import ConsoleHelper
 from .xdg import get_config_dir, get_temp_dir, get_logs_db_path
 from .markdown import strip_markdown, strip_markdown_for_tts, extract_code_blocks
@@ -89,14 +89,17 @@ from .linux_context import (
     is_wayland,
     get_session_type,
     get_focused_window_id,
+    get_visible_window_ids,
     get_wm_class,
     get_window_title,
     get_focused_window_pid,
     get_cwd,
     get_cmdline,
     get_selection,
+    gather_all_visible_windows,
     gather_context,
     format_context_for_llm,
+    format_gui_context,
     MAX_SELECTION_BYTES,
 )
 
@@ -157,6 +160,8 @@ __all__ = [
     # Hashing
     "hash_blocks",
     "filter_new_blocks",
+    "hash_window",
+    "hash_gui_context",
     # Console output
     "ConsoleHelper",
     # XDG directories
@@ -214,14 +219,17 @@ __all__ = [
     "is_wayland",
     "get_session_type",
     "get_focused_window_id",
+    "get_visible_window_ids",
     "get_wm_class",
     "get_window_title",
     "get_focused_window_pid",
     "get_cwd",
     "get_cmdline",
     "get_selection",
+    "gather_all_visible_windows",
     "gather_context",
     "format_context_for_llm",
+    "format_gui_context",
     "MAX_SELECTION_BYTES",
     # System prompts
     "build_simple_system_prompt",

@@ -318,6 +318,14 @@ class ContextMixin:
             flags=re.DOTALL
         )
 
+        # Remove GUI context section (from guiassistant)
+        result = re.sub(
+            r'<gui_context>.*?</gui_context>\s*',
+            '',
+            result,
+            flags=re.DOTALL
+        )
+
         # Remove conversation summary section
         result = re.sub(
             r'<conversation_summary>.*?</conversation_summary>\s*',

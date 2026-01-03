@@ -1878,6 +1878,7 @@ EOF
 
         MARKED_VERSION="17.0.1"
         HLJS_VERSION="11.11.1"
+        DOMPURIFY_VERSION="3.3.1"
 
         # Download marked.js if not present or version changed
         # Note: marked v16+ moved to lib/marked.umd.js (no more marked.min.js at root)
@@ -1896,9 +1897,18 @@ EOF
                 -o "$DAEMON_STATIC_DIR/highlight.min.js" || warn "Failed to download highlight.js"
         fi
 
+        # Download DOMPurify if not present or version changed
+        if [ ! -f "$DAEMON_STATIC_DIR/purify.min.js" ] || \
+           ! grep -q "dompurify@$DOMPURIFY_VERSION" "$DAEMON_STATIC_DIR/.versions" 2>/dev/null; then
+            log "Downloading DOMPurify v$DOMPURIFY_VERSION..."
+            curl -fsSL "https://unpkg.com/dompurify@${DOMPURIFY_VERSION}/dist/purify.min.js" \
+                -o "$DAEMON_STATIC_DIR/purify.min.js" || warn "Failed to download DOMPurify"
+        fi
+
         # Track versions for update detection
         echo "marked@$MARKED_VERSION" > "$DAEMON_STATIC_DIR/.versions"
         echo "highlight.js@$HLJS_VERSION" >> "$DAEMON_STATIC_DIR/.versions"
+        echo "dompurify@$DOMPURIFY_VERSION" >> "$DAEMON_STATIC_DIR/.versions"
 
         # Configure XFCE keyboard shortcuts for llm-guiassistant
         if command -v xfconf-query &>/dev/null; then

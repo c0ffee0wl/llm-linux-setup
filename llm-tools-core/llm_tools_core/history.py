@@ -357,18 +357,24 @@ class ConversationHistory:
                 daemon_conn.close()
 
     def get_grouped_by_date(
-        self, limit: int = 50
+        self, limit: int = 50, source: Optional[str] = None
     ) -> Dict[str, List[ConversationSummary]]:
         """Get conversations grouped by date.
 
         Args:
             limit: Maximum total conversations to return
+            source: Optional filter by source ('gui', 'tui', 'inline', 'cli')
 
         Returns:
             Dict with keys 'Today', 'Yesterday', 'This Week', 'Older'
             containing lists of conversation summaries
         """
-        conversations = self.get_conversations(limit=limit)
+        # If source filter is specified, fetch more to account for filtering
+        # then trim to limit after filtering
+        fetch_limit = limit * 3 if source else limit
+        conversations = self.get_conversations(limit=fetch_limit, source=source)
+        # Trim to actual limit after filtering
+        conversations = conversations[:limit]
 
         now = datetime.now(timezone.utc)
         today = now.date()

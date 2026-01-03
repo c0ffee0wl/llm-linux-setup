@@ -69,9 +69,9 @@ class AtHandler:
         """Initialize handler.
 
         Args:
-            cwd: Current working directory for relative paths
+            cwd: Current working directory for relative paths (supports ~ expansion)
         """
-        self.cwd = Path(cwd) if cwd else Path.cwd()
+        self.cwd = Path(cwd).expanduser() if cwd else Path.cwd()
 
     def parse_references(self, text: str) -> List[str]:
         """Extract @ references from text.
@@ -133,7 +133,7 @@ class AtHandler:
         Returns:
             List of completion suggestions
         """
-        working_dir = Path(cwd) if cwd else self.cwd
+        working_dir = Path(cwd).expanduser() if cwd else self.cwd
         completions = []
 
         # Handle empty prefix - show available prefixes
@@ -223,12 +223,17 @@ class AtHandler:
             dir_to_list = working_dir
             name_prefix = ""
         else:
-            partial = Path(partial_path)
+            # Expand ~ in path (e.g., @~/Documents or @~user/file)
+            partial = Path(partial_path).expanduser()
             if partial_path.endswith("/"):
-                dir_to_list = working_dir / partial
+                # Use expanded path directly if absolute, else relative to working_dir
+                dir_to_list = partial if partial.is_absolute() else working_dir / partial
                 name_prefix = ""
             else:
-                dir_to_list = working_dir / partial.parent if partial.parent != Path(".") else working_dir
+                if partial.is_absolute():
+                    dir_to_list = partial.parent
+                else:
+                    dir_to_list = working_dir / partial.parent if partial.parent != Path(".") else working_dir
                 name_prefix = partial.name
 
         try:
@@ -298,12 +303,17 @@ class AtHandler:
             dir_to_list = working_dir
             name_prefix = ""
         else:
-            partial = Path(partial_path)
+            # Expand ~ in path (e.g., @dir:~/Documents)
+            partial = Path(partial_path).expanduser()
             if partial_path.endswith("/"):
-                dir_to_list = working_dir / partial
+                # Use expanded path directly if absolute, else relative to working_dir
+                dir_to_list = partial if partial.is_absolute() else working_dir / partial
                 name_prefix = ""
             else:
-                dir_to_list = working_dir / partial.parent if partial.parent != Path(".") else working_dir
+                if partial.is_absolute():
+                    dir_to_list = partial.parent
+                else:
+                    dir_to_list = working_dir / partial.parent if partial.parent != Path(".") else working_dir
                 name_prefix = partial.name
 
         try:
@@ -343,7 +353,7 @@ class AtHandler:
         Returns:
             ResolvedReference with content or error
         """
-        working_dir = Path(cwd) if cwd else self.cwd
+        working_dir = Path(cwd).expanduser() if cwd else self.cwd
 
         # Handle prefix:path patterns
         if ":" in reference and not reference.startswith(("http://", "https://")):
@@ -378,7 +388,9 @@ class AtHandler:
             # Try to use llm's PDF fragment loader
             from llm.default_plugins.loaders.pdf import load_pdf
 
-            file_path = working_dir / path
+            # Expand ~ in path and resolve relative to working_dir
+            expanded_path = Path(path).expanduser()
+            file_path = expanded_path if expanded_path.is_absolute() else working_dir / path
             if not file_path.exists():
                 return ResolvedReference(
                     original=f"@pdf:{path}",
@@ -477,7 +489,12 @@ class AtHandler:
     def _resolve_directory(self, path: str, working_dir: Path) -> ResolvedReference:
         """Resolve a directory reference to a listing."""
         try:
-            dir_path = working_dir / path if path else working_dir
+            # Expand ~ in path
+            if path:
+                expanded_path = Path(path).expanduser()
+                dir_path = expanded_path if expanded_path.is_absolute() else working_dir / path
+            else:
+                dir_path = working_dir
             if not dir_path.exists():
                 return ResolvedReference(
                     original=f"@dir:{path}",
@@ -581,7 +598,9 @@ class AtHandler:
 
     def _resolve_file(self, path: str, working_dir: Path) -> ResolvedReference:
         """Resolve a file reference."""
-        file_path = working_dir / path
+        # Expand ~ in path
+        expanded_path = Path(path).expanduser()
+        file_path = expanded_path if expanded_path.is_absolute() else working_dir / path
         if not file_path.exists():
             return ResolvedReference(
                 original=f"@{path}",

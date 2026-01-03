@@ -30,7 +30,10 @@ from llm_tools_core import (
     ConversationHistory,
     AtHandler,
     RAGHandler,
+    gather_context,
+    format_gui_context,
 )
+from llm_tools_core.hashing import hash_gui_context
 
 from .headless_session import get_tool_implementations
 
@@ -418,18 +421,69 @@ class WebUIServer:
             implementations.update(active_impls)
 
         # Build prompt with context if available
-        context = None
-        if hasattr(self, "_session_contexts") and session_id in self._session_contexts:
-            context = self._session_contexts[session_id]
-            # Clear context after first use
-            del self._session_contexts[session_id]
+        full_query = query
 
-        # Add context to query if present
-        if context:
-            context_str = json.dumps(context, indent=2)
-            full_query = f"<context>\n{context_str}\n</context>\n\n{query}"
+        # For guiassistant sessions: Capture fresh GUI context with deduplication
+        if session_id.startswith("guiassistant:"):
+            # Lazy-init state dict (same pattern as _session_contexts)
+            if not hasattr(self, "_gui_context_state"):
+                self._gui_context_state: Dict[str, tuple] = {}
+
+            # Capture fresh context from X11
+            gui_context = gather_context()
+
+            if gui_context and gui_context.get('session_type') == 'x11':
+                focused_hash, window_hashes = hash_gui_context(gui_context)
+                prev_focused, prev_windows = self._gui_context_state.get(session_id, ("", set()))
+
+                # Determine what changed
+                is_first = not prev_focused
+                if focused_hash == prev_focused and window_hashes == prev_windows:
+                    # No changes - use compact message
+                    context_block = "<gui_context>[Desktop context unchanged]</gui_context>"
+                else:
+                    # Something changed - format with deduplication
+                    new_windows = window_hashes - prev_windows
+                    context_block = format_gui_context(
+                        gui_context,
+                        new_windows,
+                        is_first=is_first,
+                        include_selection=is_first  # Selection only on first message
+                    )
+                    # Update state
+                    self._gui_context_state[session_id] = (focused_hash, window_hashes)
+
+                full_query = f"{context_block}\n\n{query}"
         else:
-            full_query = query
+            # For non-guiassistant sessions: Use popup-posted context (legacy behavior)
+            context = None
+            if hasattr(self, "_session_contexts") and session_id in self._session_contexts:
+                context = self._session_contexts[session_id]
+                # Clear context after first use
+                del self._session_contexts[session_id]
+
+            # Add context to query if present (legacy format)
+            if context:
+                context_str = json.dumps(context, indent=2)
+                full_query = f"<gui_context>\n{context_str}\n</gui_context>\n\n{query}"
+
+        # Inject RAG context if a collection is active
+        rag_collection = None
+        if hasattr(state.session, "active_rag_collection"):
+            rag_collection = state.session.active_rag_collection
+        elif hasattr(self, "_rag_sessions") and session_id in self._rag_sessions:
+            rag_collection = self._rag_sessions[session_id]
+
+        if rag_collection:
+            handler = RAGHandler()
+            if handler.available():
+                try:
+                    results = handler.search(rag_collection, query, top_k=5)
+                    if results:
+                        rag_context = handler.format_context(results)
+                        full_query = f"{rag_context}\n\n{full_query}"
+                except Exception:
+                    pass  # Continue without RAG context on error
 
         accumulated_text = ""
         message_id = f"msg-{int(time.time() * 1000)}"
@@ -490,6 +544,35 @@ class WebUIServer:
                         tool_calls = list(response.tool_calls())
                     except Exception:
                         pass
+
+            # Extract and broadcast thinking traces if present
+            response = response_holder[0]
+            if response:
+                try:
+                    # Check for thinking in response_json (Claude extended thinking)
+                    response_json = getattr(response, "response_json", None)
+                    if response_json:
+                        thinking = None
+                        # Handle different response formats
+                        if isinstance(response_json, dict):
+                            thinking = response_json.get("thinking")
+                            # Also check content blocks for thinking
+                            if not thinking and "content" in response_json:
+                                content = response_json["content"]
+                                if isinstance(content, list):
+                                    thinking_blocks = [
+                                        b.get("thinking", "") for b in content
+                                        if isinstance(b, dict) and b.get("type") == "thinking"
+                                    ]
+                                    if thinking_blocks:
+                                        thinking = "\n\n".join(thinking_blocks)
+                        if thinking:
+                            await ws.send_json({
+                                "type": "thinking",
+                                "content": thinking,
+                            })
+                except Exception:
+                    pass  # Continue without thinking trace on error
 
             await ws.send_json({"type": "done"})
 
@@ -624,7 +707,15 @@ class WebUIServer:
 
                 if hasattr(r, "prompt") and r.prompt:
                     prompt_text = r.prompt.prompt or ""
-                    # Strip context from prompt (both formats)
+                    # Strip context from prompt (all formats)
+                    if "<gui_context>" in prompt_text:
+                        prompt_text = re.sub(
+                            r"<gui_context>.*?</gui_context>\s*",
+                            "",
+                            prompt_text,
+                            flags=re.DOTALL,
+                        )
+                    # Legacy <context> tag (for backward compat)
                     if "<context>" in prompt_text:
                         prompt_text = re.sub(
                             r"<context>.*?</context>\s*",
@@ -733,7 +824,8 @@ class WebUIServer:
             source = request.query.get("source")
 
             history = ConversationHistory()
-            grouped = history.get_grouped_by_date(limit=limit)
+            # Pass source to get_grouped_by_date for proper filtering before LIMIT
+            grouped = history.get_grouped_by_date(limit=limit, source=source)
 
             # Convert to JSON-serializable format
             result = {}
@@ -749,7 +841,6 @@ class WebUIServer:
                         "preview": c.preview,
                     }
                     for c in conversations
-                    if source is None or c.source == source
                 ]
 
             return web.json_response(result)
@@ -826,7 +917,16 @@ class WebUIServer:
         """
         try:
             prefix = request.query.get("prefix", "")
-            cwd = request.query.get("cwd", str(Path.cwd()))
+            cwd = request.query.get("cwd")
+
+            # Use home directory if cwd not provided or invalid
+            # (don't use server's cwd which would be wrong for daemon)
+            if not cwd:
+                cwd = str(Path.home())
+            else:
+                cwd_path = Path(cwd)
+                if not cwd_path.exists() or not cwd_path.is_dir():
+                    cwd = str(Path.home())
 
             # Strip leading @ if present
             if prefix.startswith("@"):
