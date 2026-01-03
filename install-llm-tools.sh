@@ -690,6 +690,32 @@ update_template_file() {
     fi
 }
 
+# Extract normalized plugin name from various source formats
+# Git URLs: git+https://github.com/user/llm-foo → llm-foo
+# Local paths: /path/to/llm-foo → llm-foo
+# PyPI names: llm-foo → llm-foo (passthrough)
+# Usage: extract_plugin_name "source"
+extract_plugin_name() {
+    local source="$1"
+
+    if [[ "$source" =~ ^git\+ ]]; then
+        # Git URL: extract repo name from URL
+        # git+https://github.com/user/llm-foo → llm-foo
+        echo "$source" | sed 's|.*[/]||; s|\.git$||'
+    elif [[ "$source" =~ ^/ ]]; then
+        # Local path: extract directory name
+        # /path/to/llm-foo → llm-foo
+        basename "$source"
+    else
+        # PyPI name: passthrough
+        echo "$source"
+    fi
+}
+
+# DEPRECATED: This function is kept for backward compatibility and edge cases.
+# Main plugin installation now uses consolidated ALL_PLUGINS array with single uv tool install.
+# Only use this function if you need to install individual plugins outside the main flow.
+#
 # Install or upgrade an LLM plugin with intelligent skip logic
 # Skips already-installed plugins unless:
 #   - Plugin is not installed (missing from llm plugins output)
@@ -719,17 +745,23 @@ install_or_upgrade_llm_plugin() {
     if [ "$is_installed" = "false" ]; then
         # Not installed -> install (use --upgrade to handle partial installs)
         log "Installing $plugin_name..."
-        command llm install "$plugin_source" --upgrade 2>/dev/null
+        if ! command llm install "$plugin_source" --upgrade 2>&1; then
+            warn "Failed to install $plugin_name (continuing...)"
+        fi
 
     elif [[ "$plugin_source" =~ ^/ ]]; then
         # Local/editable package -> always reinstall with --upgrade to re-resolve dependencies
         log "Reinstalling local plugin $plugin_name..."
-        command llm install "$plugin_source" --upgrade 2>/dev/null
+        if ! command llm install "$plugin_source" --upgrade 2>&1; then
+            warn "Failed to reinstall $plugin_name (continuing...)"
+        fi
 
     elif [[ "$plugin_source" =~ ^git[+] ]] && [ "$source_tracked" = "false" ]; then
         # Git source but URL not tracked -> migration needed
         log "Migrating $plugin_name to git source..."
-        command llm install "$plugin_source" --upgrade 2>/dev/null
+        if ! command llm install "$plugin_source" --upgrade 2>&1; then
+            warn "Failed to migrate $plugin_name (continuing...)"
+        fi
 
     else
         # Already installed with correct source -> skip
@@ -1047,21 +1079,142 @@ if [ -d "$PYTHON_USER_SITE/llm_tools" ]; then
     rm -rf "$PYTHON_USER_SITE/llm_tools"
 fi
 
-# Check if llm is already installed
-if uv tool list 2>/dev/null | grep -q "^llm "; then
-    log "Upgrading llm (with llm-uv-tool)..."
-    uv tool upgrade llm
-else
-    log "Installing llm with llm-uv-tool for persistent plugin management..."
-    uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"
-fi
-
-# Install pymupdf_layout (for improved PDF processing with llm-fragments-pdf)
-log "Installing/updating pymupdf_layout for improved PDF processing..."
-install_or_upgrade_llm_plugin pymupdf_layout
-
 # Ensure llm is in PATH
 export PATH=$HOME/.local/bin:$PATH
+
+#############################################################################
+# Define ALL plugins to be installed with LLM
+#############################################################################
+
+# Base plugins (always installed)
+ALL_PLUGINS=(
+    # Plugin management (must be first)
+    "git+https://github.com/c0ffee0wl/llm-uv-tool"
+
+    # Provider plugins
+    "git+https://github.com/c0ffee0wl/llm-gemini"
+    "git+https://github.com/c0ffee0wl/llm-vertex"
+    "llm-openrouter"
+    "llm-anthropic"
+
+    # Command plugins
+    "git+https://github.com/c0ffee0wl/llm-cmd"
+    "git+https://github.com/c0ffee0wl/llm-cmd-comp"
+
+    # Tool plugins
+    "llm-tools-quickjs"
+    "llm-tools-sqlite"
+    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
+    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-python"
+    "git+https://github.com/c0ffee0wl/llm-tools-patch"
+    "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
+    "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
+    "git+https://github.com/c0ffee0wl/llm-tools-google-search"
+    "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
+    "git+https://github.com/c0ffee0wl/llm-tools-fabric"
+    "git+https://github.com/c0ffee0wl/llm-tools-mcp"
+    "git+https://github.com/c0ffee0wl/llm-tools-rag"
+    "git+https://github.com/c0ffee0wl/llm-tools-skills"
+
+    # Fragment plugins
+    "llm-fragments-site-text"
+    "pymupdf_layout"
+    "git+https://github.com/c0ffee0wl/llm-fragments-pdf"
+    "llm-fragments-github"
+    "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
+    "llm-fragments-dir"
+
+    # Utility plugins
+    "llm-jq"
+    "git+https://github.com/c0ffee0wl/llm-templates-fabric"
+    "llm-git-commit"
+    "llm-sort"
+    "llm-classify"
+    "llm-consortium"
+
+    # Local plugins (dependency order matters)
+    "$SCRIPT_DIR/llm-tools-core"
+    "$SCRIPT_DIR/llm-tools-context"
+)
+
+# Full mode plugins
+if [ "$INSTALL_MODE" = "full" ]; then
+    # Core assistant packages (always in full mode)
+    ALL_PLUGINS+=(
+        "$SCRIPT_DIR/llm-assistant"
+        "$SCRIPT_DIR/llm-inlineassistant"
+    )
+
+    # X11 desktop-only plugins (capture-screen and guiassistant require X11)
+    if has_desktop_environment && is_x11; then
+        ALL_PLUGINS+=(
+            "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
+            "$SCRIPT_DIR/llm-guiassistant"
+        )
+    fi
+
+    # Terminator-specific plugins
+    if [ "$TERMINATOR_INSTALLED" = "true" ]; then
+        ALL_PLUGINS+=(
+            "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
+            "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
+        )
+    fi
+fi
+
+#############################################################################
+# Install/Update LLM with ALL Plugins (consolidated for performance)
+#############################################################################
+
+log "Installing/upgrading LLM with all plugins..."
+
+# Build --with flags from plugin array
+WITH_FLAGS=""
+for plugin in "${ALL_PLUGINS[@]}"; do
+    WITH_FLAGS+=" --with \"$plugin\""
+done
+
+# Generate hash of current plugin list to detect changes
+# Include git commit to detect local plugin updates after git pull
+PLUGINS_HASH_FILE="$HOME/.config/llm-tools/plugins-hash"
+mkdir -p "$(dirname "$PLUGINS_HASH_FILE")"
+REPO_COMMIT=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "no-git")
+CURRENT_HASH=$(printf '%s\n' "${ALL_PLUGINS[@]}" "$REPO_COMMIT" | sort | sha256sum | awk '{print $1}')
+STORED_HASH=$(cat "$PLUGINS_HASH_FILE" 2>/dev/null || echo "")
+
+# Check if llm is installed
+LLM_INSTALLED=false
+if uv tool list 2>/dev/null | grep -q "^llm "; then
+    LLM_INSTALLED=true
+fi
+
+# Decide whether to use --force or upgrade
+# Force reinstall if: not installed, hash changed, or local plugins may have changed
+if [ "$LLM_INSTALLED" = "false" ]; then
+    log "Installing llm with ${#ALL_PLUGINS[@]} plugins (fresh install)..."
+    eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
+elif [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
+    log "Plugin list changed, reinstalling llm with ${#ALL_PLUGINS[@]} plugins..."
+    eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
+else
+    log "Plugin list unchanged, checking for updates..."
+    # Use upgrade for efficiency (only checks if newer commits available)
+    uv tool upgrade llm
+fi
+
+# Store current hash for next run
+echo "$CURRENT_HASH" > "$PLUGINS_HASH_FILE"
+
+# Update uv-tool-packages.json for llm-uv-tool compatibility
+LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"
+PACKAGES_FILE="$LLM_CONFIG_DIR_TEMP/uv-tool-packages.json"
+mkdir -p "$LLM_CONFIG_DIR_TEMP"
+
+# Generate JSON array using jq (skip llm-uv-tool itself from tracking)
+# jq handles special characters in paths correctly
+printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool" | jq -R . | jq -s . > "$PACKAGES_FILE"
+
+log "LLM and plugins ready"
 
 # Define the extra models file path early so we can check/preserve existing config
 LLM_CONFIG_DIR="$(get_llm_config_dir)"
@@ -1079,54 +1232,6 @@ if [ -f "$EXTRA_MODELS_FILE" ] || \
 else
     IS_FIRST_RUN=true
 fi
-
-#############################################################################
-# PHASE 2.5: Install/Update LLM Plugins
-#############################################################################
-
-log "Checking llm plugins..."
-
-# Cache installed plugins list once (avoid calling llm plugins 20+ times)
-INSTALLED_PLUGINS=$(command llm plugins 2>/dev/null | grep -o '"name": *"[^"]*"' | sed 's/"name": *"//;s/"$//' || echo "")
-
-PLUGINS=(
-    "git+https://github.com/c0ffee0wl/llm-gemini"
-    "git+https://github.com/c0ffee0wl/llm-vertex"
-    "llm-openrouter"
-    "llm-anthropic"
-    "git+https://github.com/c0ffee0wl/llm-cmd"
-    "git+https://github.com/c0ffee0wl/llm-cmd-comp"
-    "llm-tools-quickjs"
-    "llm-tools-sqlite"
-    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-shell"
-    "git+https://github.com/c0ffee0wl/llm-tools-sandboxed-python"
-    "git+https://github.com/c0ffee0wl/llm-tools-patch"
-    "llm-fragments-site-text"
-    "git+https://github.com/c0ffee0wl/llm-fragments-pdf"
-    "llm-fragments-github"
-    "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
-    "llm-fragments-dir"
-    "llm-jq"
-    "git+https://github.com/c0ffee0wl/llm-templates-fabric"
-    "git+https://github.com/c0ffee0wl/llm-tools-llm-functions"
-    "llm-git-commit"
-    "llm-sort"
-    "llm-classify"
-    "llm-consortium"
-    "$SCRIPT_DIR/llm-tools-core"        # Must be before llm-tools-context (dependency)
-    "$SCRIPT_DIR/llm-tools-context"
-    "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
-    "git+https://github.com/c0ffee0wl/llm-tools-google-search"
-    "git+https://github.com/c0ffee0wl/llm-tools-web-fetch"
-    "git+https://github.com/c0ffee0wl/llm-tools-fabric"
-    "git+https://github.com/c0ffee0wl/llm-tools-mcp"
-    "git+https://github.com/c0ffee0wl/llm-tools-rag"
-    "git+https://github.com/c0ffee0wl/llm-tools-skills"
-)
-
-for plugin in "${PLUGINS[@]}"; do
-    install_or_upgrade_llm_plugin "$plugin"
-done
 
 # Update MCP configuration with checksum tracking (same pattern as templates)
 MCP_CONFIG_DIR="$HOME/.llm-tools-mcp"
@@ -1527,13 +1632,10 @@ exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_tools_context.cli "$@"
 EOF
     chmod +x "$HOME/.local/bin/context"
 
-    # Note: llm-tools-core is already installed in the PLUGINS array (before llm-tools-context)
+    # Note: llm-tools-core is already installed in the ALL_PLUGINS array (before llm-tools-context)
     # and also to user site-packages in Phase 2 for terminator plugin
 
-    # Install llm-assistant package (unconditional - llm-inlineassistant depends on it)
-    log "Installing llm-assistant package..."
-    install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-assistant"
-
+    # Note: llm-assistant package is already installed via ALL_PLUGINS in Phase 2
     # Create wrapper script that calls into llm's environment
     cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
 #!/bin/sh
@@ -1542,17 +1644,8 @@ EOF
     chmod +x "$HOME/.local/bin/llm-assistant"
 
 # Install Terminator-specific components (conditional)
+# Note: Terminator plugins (llm-tools-assistant, llm-tools-imagemage) are installed via ALL_PLUGINS in Phase 2
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-    # Terminator-specific tool plugins (require D-Bus terminal access)
-    TERMINATOR_PLUGINS=(
-        "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
-        "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
-    )
-
-    for plugin in "${TERMINATOR_PLUGINS[@]}"; do
-        install_or_upgrade_llm_plugin "$plugin"
-    done
-
     log "Installing Terminator assistant integration..."
 
     # Remove old application and plugin
@@ -1572,10 +1665,9 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 fi
 
-# Install llm-inlineassistant (thin client for llm-assistant daemon)
+# llm-inlineassistant (thin client for llm-assistant daemon)
 # Works in any terminal (not just Terminator) and espanso text expander
-log "Installing llm-inlineassistant package..."
-install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-inlineassistant"
+# Note: Package is already installed via ALL_PLUGINS in Phase 2
 
 # Create wrapper script for llm-inlineassistant
 cat > "$HOME/.local/bin/llm-inlineassistant" << 'EOF'
@@ -1830,20 +1922,14 @@ else:
         fi
     fi
 
-    # Install llm-guiassistant (GTK popup for llm-assistant daemon)
+    # llm-guiassistant (GTK popup for llm-assistant daemon)
     # Only on X11 for now (uses xdotool, xclip, maim, xprop)
+    # Note: Package and llm-tools-capture-screen are installed via ALL_PLUGINS in Phase 2
     if is_x11; then
-        log "Installing llm-guiassistant..."
+        log "Setting up llm-guiassistant..."
 
         # Install X11 dependencies (xprop from x11-utils for window detection)
         install_apt_package x11-utils xprop
-
-        # Install llm-guiassistant package
-        install_or_upgrade_llm_plugin "$SCRIPT_DIR/llm-guiassistant"
-
-        # Install llm-tools-capture-screen for GUI screenshot functionality
-        # (previously Terminator-only, now available for all X11 GUIs)
-        install_or_upgrade_llm_plugin "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
 
         # Create wrapper script
         cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'

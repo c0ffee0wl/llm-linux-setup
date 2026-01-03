@@ -56,7 +56,7 @@ The repository includes an **automatic session recording and context extraction 
    - **Regex patterns** for fallback:
      - Supports bash, zsh, and Kali two-line prompts (┌/╭ and └/╰ box-drawing characters)
      - Pattern matching for various prompt styles ($/#, %/❯/→/➜, user@host)
-   - Installed to Python user site-packages (`python3 -m site --user-site`)/llm_tools/ in Phase 5
+   - Installed to Python user site-packages (`python3 -m site --user-site`)/llm_tools/ in Phase 4
 
 4. **LLM Integration** (`llm-tools-context/`): LLM plugin exposing context as a tool
    - Registered as a tool that LLMs can call during conversations
@@ -179,12 +179,41 @@ The script is organized into numbered phases:
 
 0. **Self-Update**: Git fetch/pull/exec pattern
 1. **Prerequisites**: Install pipx, uv, Node.js, Rust/Cargo, asciinema, document processors (poppler-utils, pandoc)
-2. **LLM Core**: Install/upgrade llm (with llm-uv-tool for persistent plugins), configure Azure OpenAI, create `extra-openai-models.yaml` (chat) and `azure/config.yaml` (embeddings), install pymupdf_layout for enhanced PDF processing
-3. **LLM Plugins**: Install/upgrade all plugins using `llm install --upgrade` (llm-uv-tool intercepts for persistence; includes llm-tools-llm-functions bridge plugin, llm-tools-sandboxed-shell, llm-tools-patch)
-4. **LLM Templates**: Install/update custom templates from `llm-templates/` directory to `~/.config/io.datasette.llm/templates/`
-5. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
-6. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), argc (cargo), context script
-7. **Claude Code & Router**: Install Claude Code, claudo (Claude in Docker, if Docker installed), Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
+2. **LLM Core + Plugins**: Install llm with ALL plugins in a single `uv tool install --force --with ...` command; configure Azure OpenAI, create `extra-openai-models.yaml` (chat) and `azure/config.yaml` (embeddings)
+3. **LLM Templates**: Install/update custom templates from `llm-templates/` directory to `~/.config/io.datasette.llm/templates/`
+4. **Shell Integration**: Add source statements to `.bashrc`/`.zshrc` (idempotent checks), llm wrapper includes RAG routing
+5. **Additional Tools**: Install/update gitingest (uv), files-to-prompt (uv), argc (cargo), context script, wrapper scripts
+6. **Claude Code & Router**: Install Claude Code, claudo (Claude in Docker, if Docker installed), Claude Code Router (with dual-provider support: Azure primary, Gemini web search), and Codex CLI
+
+### Consolidated Plugin Installation
+
+The installation script uses a **consolidated installation approach** for maximum performance:
+
+**The Pattern**: Instead of installing plugins one at a time (30+ separate `llm install` calls), all plugins are installed in a single `uv tool install --with ... --with ...` command.
+
+**How It Works**:
+1. **ALL_PLUGINS array**: Defines all plugins upfront in Phase 2
+2. **Single command**: `uv tool install --force --with plugin1 --with plugin2 ... llm`
+3. **Hash-based detection**: Only reinstalls when plugin list changes
+
+**Hash-Based Force Detection**:
+- Generates SHA256 hash of sorted ALL_PLUGINS array **plus git commit hash**
+- Stores hash in `~/.config/llm-tools/plugins-hash`
+- **Hash matches**: Uses fast `uv tool upgrade llm` (~2-5 seconds)
+- **Hash differs**: Uses full `uv tool install --force` (~60-90 seconds)
+- **First run**: Always uses `--force` for fresh installation
+- **Git commit included**: Ensures local plugin updates after `git pull` trigger reinstall
+
+**Performance Impact**:
+| Scenario | Old Approach | New Approach |
+|----------|-------------|--------------|
+| First run | ~90-120s (30+ installs) | ~60-90s (single install) |
+| Subsequent (unchanged) | ~60-90s | ~2-5s |
+| Plugin list changed | ~60-90s | ~60-90s |
+
+**Tracking Files**:
+- `~/.config/llm-tools/plugins-hash` - SHA256 hash of plugin list
+- `~/.config/io.datasette.llm/uv-tool-packages.json` - Plugin list for llm-uv-tool
 
 ### Plugin Persistence with llm-uv-tool
 
@@ -246,7 +275,7 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Automatically extracts tool name from git URLs (e.g., `git+https://github.com/user/llm` → `llm`)
   - **Implementation**: Parses uv's output format: `llm v0.27.1 [required:  git+https://github.com/...]` to detect git sources
   - **Why this matters**: uv remembers the original installation source. Without source detection, `uv tool upgrade` checks the original source (PyPI→PyPI, git→git). The intelligent detection only forces reinstall when source switching is needed.
-- **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 5)
+- **`update_shell_rc_file(rc_file, integration_file, shell_name)`**: Updates bash/zsh RC files with integration (used in Phase 4)
 - **`install_or_upgrade_uv()`**: Install or upgrade uv via pipx and configure system Python preference (used in Phase 1)
 - **`install_or_upgrade_rust()`**: Install or upgrade Rust with intelligent version detection (used in Phase 1)
   - Uses apt if repo version >= 1.85, otherwise falls back to rustup
@@ -264,31 +293,25 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Stores checksums in `~/.config/llm-tools/template-checksums`
   - Auto-updates if user hasn't modified the file (installed checksum = stored checksum)
   - Prompts user if local modifications detected (installed checksum ≠ stored checksum)
-  - Used in Phase 4 for llm.yaml and llm-code.yaml templates
-- **`install_or_upgrade_cargo_tool(tool_name)`**: Install/upgrade cargo tools from crates.io (used in Phase 6)
+  - Used in Phase 3 for llm.yaml and llm-code.yaml templates
+- **`install_or_upgrade_cargo_tool(tool_name)`**: Install/upgrade cargo tools from crates.io (used in Phase 5)
   - Checks if installed, provides feedback, runs `cargo install`
   - Used for argc (crates.io packages only)
-- **`install_or_upgrade_cargo_git_tool(tool_name, git_url)`**: Install/upgrade cargo tools from git with commit-hash tracking (used in Phase 6)
+- **`install_or_upgrade_cargo_git_tool(tool_name, git_url)`**: Install/upgrade cargo tools from git with commit-hash tracking (used in Phase 5)
   - Stores commit hash in `~/.config/llm-tools/{tool}-commit`
   - Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
   - Used for asciinema, yek (git packages that change frequently)
-- **`install_go()`**: Install Go if not present or version is insufficient (used in Phase 6)
+- **`install_go()`**: Install Go if not present or version is insufficient (used in Phase 5)
   - Returns 0 if Go >= 1.22 is available, 1 otherwise
   - Only installs from apt - warns and skips if repo version insufficient
   - Called lazily only when Gemini is configured (for imagemage)
-- **`extract_plugin_name(source)`**: Extract normalized plugin name from various source formats (used in Phase 2.5)
+- **`extract_plugin_name(source)`**: Extract normalized plugin name from various source formats (used in Phase 2)
   - Git URLs: `git+https://github.com/user/llm-foo` → `llm-foo`
   - Local paths: `/path/to/llm-foo` → `llm-foo`
   - PyPI names: `llm-foo` → `llm-foo` (passthrough)
-- **`install_or_upgrade_llm_plugin(plugin_source)`**: Smart LLM plugin installation with skip logic (used in Phase 2.5)
-  - Caches `llm plugins` output once (via `INSTALLED_PLUGINS` variable) to avoid 20+ subprocess calls
-  - Checks `uv-tool-packages.json` for exact source tracking (detects PyPI→git migrations)
-  - **Decision logic**:
-    - Not installed → install
-    - Local path (`/path/to/...`) → always reinstall (may have changed via git pull)
-    - Git URL not in uv-packages.json → migration needed, install with --upgrade
-    - Already installed with correct source → skip (logs "X is already installed")
-  - **Performance**: Reduces plugin phase from ~20-40s to ~2-5s on subsequent runs
+- **`install_or_upgrade_llm_plugin(plugin_source)`**: **DEPRECATED** - Smart LLM plugin installation (legacy, kept for backward compatibility)
+  - **Deprecated**: Plugins are now installed via consolidated `uv tool install --with` in Phase 2
+  - Logs deprecation warning and delegates to `llm install --upgrade`
 - **`cleanup_stale_local_plugin_paths()`**: Remove stale local plugin paths from tracking files (used in Phase 2)
   - Handles migration from local plugins to git repositories
   - Cleans **two files**: `uv-tool-packages.json` (llm-uv-tool) and `uv-receipt.toml` (uv internal)
@@ -297,14 +320,14 @@ The installation script uses **helper functions** to eliminate code duplication 
 - **`remove_plugin_from_tracking(plugin_name)`**: Remove a specific plugin by name from both tracking files (used in Phase 2)
   - Cleans both `uv-tool-packages.json` and `uv-receipt.toml`
   - Must run BEFORE any llm operations - invalid local paths cause failures
-- **`npm_install(package_name)`**: NPM global installation with retry logic (used in Phase 7)
+- **`npm_install(package_name)`**: NPM global installation with retry logic (used in Phase 6)
   - 3 attempts with 2-second delay between retries
   - Handles ENOTEMPTY errors by detecting and removing conflicting directories
   - Auto-detects if sudo is required based on write permissions
-- **`install_or_upgrade_npm_global(package_name)`**: Version-aware npm package management (used in Phase 7)
+- **`install_or_upgrade_npm_global(package_name)`**: Version-aware npm package management (used in Phase 6)
 - **`upgrade_npm_global_if_installed(package_name)`**: Conditional upgrade only if package already installed
-- **`prompt_for_session_log_dir()`**: Interactive first-run prompt for session log storage preference (used in Phase 5)
-- **`prompt_for_session_log_silent()`**: Interactive first-run prompt for silent mode preference (used in Phase 5)
+- **`prompt_for_session_log_dir()`**: Interactive first-run prompt for session log storage preference (used in Phase 4)
+- **`prompt_for_session_log_silent()`**: Interactive first-run prompt for silent mode preference (used in Phase 4)
 
 **Helper Functions Philosophy:**
 These functions follow the DRY (Don't Repeat Yourself) principle and ensure consistent behavior across the script. When adding new features:
@@ -440,7 +463,7 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 - **Why two config files?**: The built-in openai_models plugin doesn't support Azure embeddings. The llm-azure plugin provides native Azure SDK support for embeddings via a separate config file. Both plugins coexist - they read different files and register different model types.
 
 **Google Gemini Configuration:**
-- Uses `llm-gemini` plugin (installed in Phase 3)
+- Uses `llm-gemini` plugin (installed in Phase 2 via ALL_PLUGINS)
 - API key managed via `llm keys set gemini`
 - Free tier available from Google AI Studio
 - Models: `gemini-2.5-flash`, `gemini-2.5-pro`, etc.
@@ -460,7 +483,7 @@ The system supports **Azure OpenAI** and **Google Gemini** providers:
 - Mounts your current directory for filesystem access
 - Maintains separate authentication via `~/.claudo` (isolated from host `~/.claude`)
 
-**Installation (Phase 7):**
+**Installation (Phase 6):**
 - Only installed when Docker is detected (`command -v docker`)
 - Downloaded from: `https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo`
 - Installed to: `~/.local/bin/claudo`
@@ -496,7 +519,7 @@ claudo --docker-socket    # Mount Docker socket for sibling containers
 - Transformer plugin: `~/.claude-code-router/plugins/strip-reasoning.js` (Azure configs only)
 - LOG_LEVEL: Always set to `"warn"` (not `"debug"`)
 
-**Installation Logic (Phase 7):**
+**Installation Logic (Phase 6):**
 - **Independent of configuration flags**: Checks actual key store (`llm keys get azure/gemini`)
 - If Azure key exists but Gemini doesn't → Prompts to configure Gemini for web search
 - Exports provider keys to `~/.profile` (`AZURE_OPENAI_API_KEY`, `GEMINI_API_KEY`)
@@ -524,7 +547,7 @@ claudo --docker-socket    # Mount Docker socket for sibling containers
 - ✅ Auto-disables Claude Code updater (`DISABLE_AUTOUPDATER=1` in `llm-common.sh`)
 
 **Dual-Provider Auto-Configuration:**
-- When Azure is configured but Gemini is not, Phase 7 prompts to configure Gemini for web search
+- When Azure is configured but Gemini is not, Phase 6 prompts to configure Gemini for web search
 - Enables the dual-provider routing (Azure primary + Gemini web search) automatically
 - This allows Claude Code Router to use Azure for all tasks except web search, which uses Gemini
 
@@ -856,18 +879,24 @@ llm plugins | grep context
 
 ### Adding New LLM Plugins
 
-Edit the `PLUGINS` array in Phase 3 of `install-llm-tools.sh`:
+Add to the `ALL_PLUGINS` array in Phase 2 of `install-llm-tools.sh`:
 
 ```bash
-PLUGINS=(
-    "llm-gemini"
+ALL_PLUGINS=(
+    # Plugin management (must be first)
+    "git+https://github.com/c0ffee0wl/llm-uv-tool"
+    # Provider plugins
+    "git+https://github.com/c0ffee0wl/llm-gemini"
     "llm-anthropic"
     # Add new plugin here
     "git+https://github.com/user/repo"  # For git-based plugins
+    # Local plugins (at the end, after dependencies)
+    "$SCRIPT_DIR/llm-tools-core"
+    "$SCRIPT_DIR/llm-tools-context"
 )
 ```
 
-The loop handles both PyPI packages and git URLs automatically.
+All plugins are installed in a single `uv tool install --force --with ...` command for better performance (single dependency resolution pass instead of 30+ separate operations).
 
 ### Modifying Installation Script
 
@@ -894,7 +923,7 @@ When adding new functionality to `install-llm-tools.sh`:
 4. **Test with syntax check**: `bash -n install-llm-tools.sh`
 5. **Preserve self-update logic**: Never move or remove Phase 0
 
-**Adding new templates**: Simply add a new YAML file to `llm-templates/` and add one line to Phase 4: `update_template_file "newtemplate"`
+**Adding new templates**: Simply add a new YAML file to `llm-templates/` and add one line to Phase 3: `update_template_file "newtemplate"`
 
 ### Modifying Shell Integration
 
@@ -958,6 +987,7 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
+- `~/.config/llm-tools/plugins-hash` - SHA256 hash of ALL_PLUGINS array + git commit for smart reinstall detection
 - `~/.config/llm-tools/install-mode` - Persisted installation mode preference (`full` or `minimal`)
 - `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin
