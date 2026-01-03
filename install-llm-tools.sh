@@ -1861,7 +1861,9 @@ if settings_file.exists():
         if ! espanso status &>/dev/null; then
             log "Registering espanso service..."
             espanso service register || true
-            espanso start || true
+            # Start in background to avoid blocking (espanso start opens a GUI window)
+            nohup espanso start &>/dev/null &
+            log "espanso started in background"
         fi
 
     fi
