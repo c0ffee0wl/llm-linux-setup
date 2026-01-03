@@ -176,12 +176,16 @@
             overflow-x: auto;
             margin: 8px 0;
             position: relative;
+            white-space: pre-wrap;
+            word-wrap: break-word;
         }
 
         pre code {
             font-family: 'Fira Code', 'Consolas', 'Monaco', monospace;
             font-size: 13px;
             line-height: 1.4;
+            white-space: pre-wrap;
+            word-break: break-word;
         }
 
         code {
@@ -553,10 +557,103 @@
         // SVG Icons
         const ICONS = {
             copy: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>',
+            copyPlain: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/><text x="15.5" y="18" font-size="8" fill="currentColor" stroke="none" text-anchor="middle">T</text></svg>',
             edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
             regenerate: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>',
             branch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>'
         };
+
+        // Add readline-style keyboard shortcuts to a textarea
+        // Supports: Ctrl+W (delete word), Ctrl+U (clear line), Ctrl+A (start of line), Ctrl+E (end of line)
+        // Pass optional onResize callback for auto-resizing textareas
+        function addReadlineShortcuts(textarea, onResize) {
+            textarea.addEventListener('keydown', (e) => {
+                if (!e.ctrlKey) return;
+
+                if (e.key === 'w' || e.key === 'Backspace') {
+                    // Ctrl+W / Ctrl+Backspace: delete previous word
+                    e.preventDefault();
+                    const pos = textarea.selectionStart;
+                    if (pos > 0) {
+                        const text = textarea.value;
+                        let start = pos;
+                        // Skip whitespace backwards
+                        while (start > 0 && /\s/.test(text[start - 1])) start--;
+                        // Skip word backwards
+                        while (start > 0 && !/\s/.test(text[start - 1])) start--;
+                        textarea.value = text.slice(0, start) + text.slice(pos);
+                        textarea.setSelectionRange(start, start);
+                        if (onResize) onResize();
+                    }
+                }
+                else if (e.key === 'u') {
+                    // Ctrl+U: clear line before cursor
+                    e.preventDefault();
+                    const pos = textarea.selectionStart;
+                    const text = textarea.value;
+                    let lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+                    textarea.value = text.slice(0, lineStart) + text.slice(pos);
+                    textarea.setSelectionRange(lineStart, lineStart);
+                    if (onResize) onResize();
+                }
+                else if (e.key === 'a') {
+                    // Ctrl+A: go to beginning of line (not select all)
+                    e.preventDefault();
+                    const pos = textarea.selectionStart;
+                    const text = textarea.value;
+                    let lineStart = text.lastIndexOf('\n', pos - 1) + 1;
+                    textarea.setSelectionRange(lineStart, lineStart);
+                }
+                else if (e.key === 'e') {
+                    // Ctrl+E: go to end of line
+                    e.preventDefault();
+                    const pos = textarea.selectionStart;
+                    const text = textarea.value;
+                    let lineEnd = text.indexOf('\n', pos);
+                    if (lineEnd === -1) lineEnd = text.length;
+                    textarea.setSelectionRange(lineEnd, lineEnd);
+                }
+            });
+        }
+
+        // Strip markdown formatting from text (preserves code block content)
+        // JS port of llm_tools_core.strip_markdown for use in WebKit context
+        function stripMarkdown(text) {
+            // Extract and preserve code blocks
+            const codeBlocks = [];
+            text = text.replace(/```\w*\n([\s\S]*?)```/g, (match, code) => {
+                codeBlocks.push(code.trim());
+                return `\x00CODE${codeBlocks.length - 1}\x00`;
+            });
+
+            // Strip inline markdown formatting
+            const patterns = [
+                [/`([^`]+)`/g, '$1'],                      // Inline code
+                [/\*\*([^*]+)\*\*/g, '$1'],                // Bold **text**
+                [/__([^_]+)__/g, '$1'],                    // Bold __text__
+                [/\*([^*]+)\*/g, '$1'],                    // Italic *text*
+                [/_([^_]+)_/g, '$1'],                      // Italic _text_
+                [/~~([^~]+)~~/g, '$1'],                    // Strikethrough
+                [/^#{1,6}\s*/gm, ''],                      // Headers
+                [/^>\s*/gm, ''],                           // Blockquotes
+                [/^[-*+]\s+/gm, ''],                       // Unordered lists
+                [/^\d+\.\s+/gm, ''],                       // Ordered lists
+                [/!\[([^\]]*)\]\([^)]+\)/g, '$1'],         // Images
+                [/\[([^\]]+)\]\([^)]+\)/g, '$1'],          // Links
+                [/^[-*_]{3,}\s*$/gm, ''],                  // Horizontal rules
+            ];
+
+            for (const [pattern, replacement] of patterns) {
+                text = text.replace(pattern, replacement);
+            }
+
+            // Restore code blocks
+            for (let i = 0; i < codeBlocks.length; i++) {
+                text = text.replace(`\x00CODE${i}\x00`, codeBlocks[i]);
+            }
+
+            return text;
+        }
 
         // Helper: escape HTML for safe textarea content
         function escapeHtml(text) {
@@ -634,14 +731,25 @@
             const container = document.createElement('div');
             container.className = 'message-actions';
 
-            // Copy (always)
-            container.appendChild(createIconButton('copy', 'Copy', () => {
+            // Copy markdown (always)
+            container.appendChild(createIconButton('copy', 'Copy markdown', () => {
                 const msg = messageStore.messages.find(m => m.id === messageId);
                 if (msg) {
                     navigator.clipboard.writeText(msg.content);
                     showToast('Copied to clipboard');
                 }
             }));
+
+            // Copy plain text (strip markdown) - for assistant only
+            if (role === 'assistant') {
+                container.appendChild(createIconButton('copyPlain', 'Copy plain text', () => {
+                    const msg = messageStore.messages.find(m => m.id === messageId);
+                    if (msg) {
+                        navigator.clipboard.writeText(stripMarkdown(msg.content));
+                        showToast('Copied plain text');
+                    }
+                }));
+            }
 
             if (role === 'user') {
                 // Edit (last user only - visibility controlled by CSS)
@@ -704,6 +812,7 @@
                 if (newContent) submitEditedMessage(messageId, newContent);
             };
 
+            // Escape and Ctrl+Enter handlers
             textarea.addEventListener('keydown', (e) => {
                 if (e.key === 'Escape') cancelInlineEditor();
                 else if (e.key === 'Enter' && e.ctrlKey) {
@@ -711,6 +820,9 @@
                     if (newContent) submitEditedMessage(messageId, newContent);
                 }
             });
+
+            // Add readline shortcuts (Ctrl+W, Ctrl+U, Ctrl+A, Ctrl+E)
+            addReadlineShortcuts(textarea, autoResize);
 
             activeEditor = { messageId, container, contentDiv, editor };
         }
