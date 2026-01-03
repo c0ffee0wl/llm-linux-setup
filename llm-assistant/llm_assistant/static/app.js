@@ -343,6 +343,14 @@ const atAutocomplete = {
             text.textContent = item.text;
             div.appendChild(text);
 
+            // Show type badge if available
+            if (item.type) {
+                const type = document.createElement('span');
+                type.className = 'at-completion-type';
+                type.textContent = item.type;
+                div.appendChild(type);
+            }
+
             const desc = document.createElement('span');
             desc.className = 'at-completion-desc';
             desc.textContent = item.description || '';
@@ -518,9 +526,11 @@ const captureControls = {
             }
 
             const data = await response.json();
-            if (data.image) {
-                window.pendingImages.push(data.image);
+            if (data.path) {
+                window.pendingImages.push(data.path);
                 showToast('Screenshot captured');
+            } else {
+                showToast('Capture failed: no path returned');
             }
         } catch (err) {
             console.error('Capture error:', err);
@@ -1614,10 +1624,18 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // New conversation button
+    // New conversation button (sidebar)
     var newConvBtn = document.getElementById('new-conversation-btn');
     if (newConvBtn) {
         newConvBtn.addEventListener('click', function() {
+            startNewSession();
+        });
+    }
+
+    // New conversation button (input controls)
+    var newConvBtnInput = document.getElementById('new-conversation-btn-input');
+    if (newConvBtnInput) {
+        newConvBtnInput.addEventListener('click', function() {
             startNewSession();
         });
     }

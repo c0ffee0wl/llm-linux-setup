@@ -220,4 +220,4 @@ llm-assistant/llm_assistant/static/highlight.min.js
 llm-assistant/llm_assistant/static/.versions
 
 # Plan files
-PLAN_*.*
+PLAN*.*

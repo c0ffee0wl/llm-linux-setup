@@ -22,20 +22,10 @@ from llm_tools_core import (
     get_terminal_session_id,
     ensure_daemon,
     stream_events,
+    get_action_verb,
+    RAGHandler,
+    strip_markdown,
 )
-
-
-# Tool display configuration: tool_name -> action_verb (same as llm-assistant)
-TOOL_DISPLAY = {
-    'execute_python': 'Executing Python',
-    'fetch_url': 'Fetching',
-    'search_google': 'Searching',
-    'load_github': 'Loading repo',
-    'load_pdf': 'Extracting PDF',
-    'load_yt': 'Loading transcript',
-    'prompt_fabric': 'Executing Fabric pattern',
-    'suggest_command': 'Preparing command',
-}
 
 
 def stream_request(query: str, mode: str = "assistant", system_prompt: str = "") -> Iterator[Tuple[str, str]]:
@@ -70,7 +60,9 @@ def stream_request(query: str, mode: str = "assistant", system_prompt: str = "")
         elif event_type == "tool_done":
             yield ("tool_done", event.get("tool", ""))
         elif event_type == "error":
-            yield ("error", event.get("message", "Unknown error"))
+            code = event.get("code", "UNKNOWN")
+            message = event.get("message", "Unknown error")
+            yield ("error", f"{message} ({code})")
         elif event_type == "done":
             return
 
@@ -88,27 +80,22 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
 
     # /rag or /rag list - list collections
     if len(parts) == 1 or (len(parts) == 2 and parts[1] == 'list'):
-        try:
-            from llm_tools_core import RAGHandler
-            handler = RAGHandler()
-            if not handler.available():
-                console.print("[yellow]RAG not available (llm-tools-rag not installed)[/]")
-                return True
+        handler = RAGHandler()
+        if not handler.available():
+            console.print("[yellow]RAG not available (llm-tools-rag not installed)[/]")
+            return True
 
-            collections = handler.list_collections()
-            if not collections:
-                console.print("[dim]No RAG collections found[/]")
-                console.print("[dim]Add documents with: /rag add <collection> <path>[/]")
-                return True
+        collections = handler.list_collections()
+        if not collections:
+            console.print("[dim]No RAG collections found[/]")
+            console.print("[dim]Add documents with: /rag add <collection> <path>[/]")
+            return True
 
-            console.print("[bold]RAG Collections:[/]")
-            for coll in collections:
-                name = coll.get('name', 'unknown')
-                count = coll.get('count', 0)
-                console.print(f"  {name}: {count} documents")
-
-        except ImportError:
-            console.print("[red]RAG not available (llm-tools-core not found)[/]")
+        console.print("[bold]RAG Collections:[/]")
+        for coll in collections:
+            name = coll.get('name', 'unknown')
+            count = coll.get('count', 0)
+            console.print(f"  {name}: {count} documents")
         return True
 
     subcommand = parts[1]
@@ -129,30 +116,25 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
         collection = search_parts[0]
         query = search_parts[1]
 
-        try:
-            from llm_tools_core import RAGHandler
-            handler = RAGHandler()
-            if not handler.available():
-                console.print("[yellow]RAG not available[/]")
-                return True
+        handler = RAGHandler()
+        if not handler.available():
+            console.print("[yellow]RAG not available[/]")
+            return True
 
-            results = handler.search(collection, query, top_k=5)
-            if not results:
-                console.print(f"[dim]No results found in '{collection}'[/]")
-                return True
+        results = handler.search(collection, query, top_k=5)
+        if not results:
+            console.print(f"[dim]No results found in '{collection}'[/]")
+            return True
 
-            console.print(f"[bold]Search results from '{collection}':[/]")
-            for i, result in enumerate(results, 1):
-                score = result.score
-                content = result.content
-                source = result.source or 'unknown'
-                # Truncate content for display
-                preview = content[:200] + '...' if len(content) > 200 else content
-                console.print(f"\n[cyan]{i}. Score: {score:.3f} | Source: {source}[/]")
-                console.print(preview)
-
-        except ImportError:
-            console.print("[red]RAG not available[/]")
+        console.print(f"[bold]Search results from '{collection}':[/]")
+        for i, result in enumerate(results, 1):
+            score = result.score
+            content = result.content
+            source = result.source or 'unknown'
+            # Truncate content for display
+            preview = content[:200] + '...' if len(content) > 200 else content
+            console.print(f"\n[cyan]{i}. Score: {score:.3f} | Source: {source}[/]")
+            console.print(preview)
         return True
 
     # /rag add <collection> <path>
@@ -170,21 +152,16 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
         collection = add_parts[0]
         path = add_parts[1]
 
-        try:
-            from llm_tools_core import RAGHandler
-            handler = RAGHandler()
-            if not handler.available():
-                console.print("[yellow]RAG not available[/]")
-                return True
+        handler = RAGHandler()
+        if not handler.available():
+            console.print("[yellow]RAG not available[/]")
+            return True
 
-            result = handler.add_documents(collection, path)
-            if result.status == "success":
-                console.print(f"[green]Added {result.chunks} chunks to '{collection}'[/]")
-            else:
-                console.print(f"[red]Failed to add documents: {result.error}[/]")
-
-        except ImportError:
-            console.print("[red]RAG not available[/]")
+        result = handler.add_documents(collection, path)
+        if result.status == "success":
+            console.print(f"[green]Added {result.chunks} chunks to '{collection}'[/]")
+        else:
+            console.print(f"[red]Failed to add documents: {result.error}[/]")
         return True
 
     # /rag <collection> - activate for session
@@ -306,11 +283,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
 
         # Strip markdown unless raw mode
         if not raw_mode:
-            try:
-                from llm_tools_core import strip_markdown
-                combined = strip_markdown(combined)
-            except ImportError:
-                pass  # Keep markdown if library unavailable
+            combined = strip_markdown(combined)
 
         # Copy to clipboard
         try:
@@ -372,7 +345,7 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
 
                 # Update display
                 if active_tool:
-                    action = TOOL_DISPLAY.get(active_tool, f'Executing {active_tool}')
+                    action = get_action_verb(active_tool)
                     spinner_text = Text(f"{action}...", style="cyan")
                     live.update(Group(
                         Markdown(accumulated_text),

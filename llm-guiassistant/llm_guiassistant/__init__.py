@@ -12,4 +12,4 @@ Usage:
     llm-guiassistant --with-selection  # Open with current selection
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"

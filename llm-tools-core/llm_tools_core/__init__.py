@@ -143,6 +143,14 @@ from .rag_handler import (
     AddResult,
 )
 
+# Tool display configuration
+from .tool_display import (
+    TOOL_DISPLAY,
+    get_action_verb,
+    get_tool_info,
+    get_action_verb_map,
+)
+
 __all__ = [
     # Prompt detection
     "PromptDetector",
@@ -243,6 +251,11 @@ __all__ = [
     "RAGHandler",
     "SearchResult",
     "AddResult",
+    # Tool display configuration
+    "TOOL_DISPLAY",
+    "get_action_verb",
+    "get_tool_info",
+    "get_action_verb_map",
 ]
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"

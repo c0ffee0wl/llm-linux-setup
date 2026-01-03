@@ -93,52 +93,10 @@ OPTIONAL_TOOL_PLUGINS = ('imagemage',)
 GEMINI_ONLY_TOOL_NAMES = ('view_youtube_native',)
 
 
-# Display configuration for external tools: tool_name -> (param_name, action_verb, brief_description)
+# Display configuration for external tools - imported from shared library
+# Structure: tool_name -> (param_name, action_verb, brief_description)
 # Tools not in this dict will use generic "Calling {tool_name}..." message
-EXTERNAL_TOOL_DISPLAY = {
-    'search_google': ('query', 'Searching', 'Search the web'),
-    'fetch_url': ('url', 'Fetching', 'Fetch web page content'),
-    # Fragment bridge tools
-    'load_yt': ('argument', 'Loading transcript', 'Load YouTube transcript'),
-    'load_github': ('argument', 'Loading repo', 'Load GitHub repository'),
-    'load_pdf': ('argument', 'Extracting PDF', 'Extract PDF content'),
-    # Fabric pattern tool
-    'prompt_fabric': ('task', 'Processing with Fabric', 'Execute Fabric AI pattern'),
-    # Microsoft Learn MCP tools
-    'microsoft_docs_search': ('query', 'Searching Microsoft Learn', 'Search Microsoft documentation'),
-    'microsoft_docs_fetch': ('url', 'Fetching Microsoft documentation', 'Fetch Microsoft documentation page'),
-    'microsoft_code_sample_search': ('query', 'Searching Microsoft code samples', 'Search Microsoft code examples'),
-    # AWS Knowledge MCP tools (prefixed with aws___)
-    'aws___search_documentation': ('query', 'Searching AWS docs', 'Search AWS documentation'),
-    'aws___read_documentation': ('url', 'Reading AWS docs', 'Fetch AWS documentation page'),
-    'aws___recommend': ('url', 'Getting AWS recommendations', 'Get related AWS content'),
-    # Screen capture tool
-    'capture_screen': ('mode', 'Capturing screenshot', 'Capture screen or window'),
-    # Image generation tool (imagemage)
-    'generate_image': ('prompt', 'Generating image', 'Generate or edit images with Gemini'),
-    # Sandboxed Python execution
-    'execute_python': ('code', 'Running Python', 'Execute Python code in sandbox'),
-    # ArXiv MCP tools (optional)
-    'search_papers': ('query', 'Searching arXiv', 'Search arXiv papers'),
-    'download_paper': ('paper_id', 'Downloading arXiv paper', 'Download arXiv paper'),
-    'list_papers': ('', 'Listing arXiv papers', 'List downloaded arXiv papers'),
-    'read_paper': ('paper_id', 'Reading arXiv paper', 'Read arXiv paper content'),
-    # Chrome DevTools CDP navigation tools (optional)
-    'close_page': ('', 'Closing CDP page', 'Close browser page via CDP'),
-    'list_pages': ('', 'Listing CDP pages', 'List open browser pages via CDP'),
-    'navigate_page': ('url', 'Navigating CDP page', 'Navigate to URL via CDP'),
-    'new_page': ('url', 'Opening CDP page', 'Open new browser page via CDP'),
-    'select_page': ('pageId', 'Selecting CDP page', 'Select browser page via CDP'),
-    'wait_for': ('selector', 'Waiting for CDP element', 'Wait for element via CDP'),
-    # Chrome DevTools CDP MCP tools (optional)
-    'get_network_request': ('requestId', 'Getting CDP request', 'Get CDP network request details'),
-    'list_network_requests': ('', 'Listing CDP requests', 'List CDP network requests'),
-    'evaluate_script': ('expression', 'Evaluating CDP script', 'Evaluate JavaScript via CDP'),
-    'get_console_message': ('messageId', 'Getting CDP message', 'Get CDP console message'),
-    'list_console_messages': ('', 'Listing CDP messages', 'List CDP console messages'),
-    'take_screenshot': ('', 'Taking CDP screenshot', 'Capture page screenshot via CDP'),
-    'take_snapshot': ('', 'Taking CDP snapshot', 'Capture DOM snapshot via CDP')
-}
+from llm_tools_core import TOOL_DISPLAY as EXTERNAL_TOOL_DISPLAY, get_action_verb  # noqa: F401 (re-export)
 
 
 # Model context limits - imported from shared library
