@@ -13,6 +13,7 @@ dependencies = [
     "jinja2>=3.0",
     "PyYAML>=6.0",
     "iso639-lang>=2.0",
+    "aiohttp>=3.9",
 ]
 
 [project.optional-dependencies]
@@ -38,3 +39,6 @@ allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["llm_assistant"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"llm_assistant/static" = "llm_assistant/static"

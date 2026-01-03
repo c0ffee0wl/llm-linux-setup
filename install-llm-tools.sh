@@ -1941,33 +1941,34 @@ exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_guiassistant "$@"
 EOF
         chmod +x "$HOME/.local/bin/llm-guiassistant"
 
-        # Download JavaScript assets for WebKit template
-        GUIASSISTANT_JS_DIR="$HOME/.local/share/llm-guiassistant/js"
-        mkdir -p "$GUIASSISTANT_JS_DIR"
+        # Download JavaScript assets for web UI (served by llm-assistant daemon)
+        # Assets go to the daemon's static directory in the repository
+        DAEMON_STATIC_DIR="$SCRIPT_DIR/llm-assistant/llm_assistant/static"
+        mkdir -p "$DAEMON_STATIC_DIR"
 
         MARKED_VERSION="17.0.1"
         HLJS_VERSION="11.11.1"
 
         # Download marked.js if not present or version changed
         # Note: marked v16+ moved to lib/marked.umd.js (no more marked.min.js at root)
-        if [ ! -f "$GUIASSISTANT_JS_DIR/marked.min.js" ] || \
-           ! grep -q "marked@$MARKED_VERSION" "$GUIASSISTANT_JS_DIR/.versions" 2>/dev/null; then
+        if [ ! -f "$DAEMON_STATIC_DIR/marked.min.js" ] || \
+           ! grep -q "marked@$MARKED_VERSION" "$DAEMON_STATIC_DIR/.versions" 2>/dev/null; then
             log "Downloading marked.js v$MARKED_VERSION..."
             curl -fsSL "https://cdn.jsdelivr.net/npm/marked@${MARKED_VERSION}/lib/marked.umd.js" \
-                -o "$GUIASSISTANT_JS_DIR/marked.min.js" || warn "Failed to download marked.js"
+                -o "$DAEMON_STATIC_DIR/marked.min.js" || warn "Failed to download marked.js"
         fi
 
         # Download highlight.js if not present or version changed
-        if [ ! -f "$GUIASSISTANT_JS_DIR/highlight.min.js" ] || \
-           ! grep -q "highlight.js@$HLJS_VERSION" "$GUIASSISTANT_JS_DIR/.versions" 2>/dev/null; then
+        if [ ! -f "$DAEMON_STATIC_DIR/highlight.min.js" ] || \
+           ! grep -q "highlight.js@$HLJS_VERSION" "$DAEMON_STATIC_DIR/.versions" 2>/dev/null; then
             log "Downloading highlight.js v$HLJS_VERSION..."
             curl -fsSL "https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@${HLJS_VERSION}/highlight.min.js" \
-                -o "$GUIASSISTANT_JS_DIR/highlight.min.js" || warn "Failed to download highlight.js"
+                -o "$DAEMON_STATIC_DIR/highlight.min.js" || warn "Failed to download highlight.js"
         fi
 
         # Track versions for update detection
-        echo "marked@$MARKED_VERSION" > "$GUIASSISTANT_JS_DIR/.versions"
-        echo "highlight.js@$HLJS_VERSION" >> "$GUIASSISTANT_JS_DIR/.versions"
+        echo "marked@$MARKED_VERSION" > "$DAEMON_STATIC_DIR/.versions"
+        echo "highlight.js@$HLJS_VERSION" >> "$DAEMON_STATIC_DIR/.versions"
 
         # Configure XFCE keyboard shortcuts for llm-guiassistant
         if command -v xfconf-query &>/dev/null; then

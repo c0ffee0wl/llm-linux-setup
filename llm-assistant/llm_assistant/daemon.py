@@ -45,6 +45,9 @@ from .headless_session import (
 )
 from .utils import get_config_dir, logs_on
 
+# GUI server (aiohttp - always available)
+from .web_ui_server import WebUIServer
+
 
 def get_logs_db_path() -> Path:
     """Get the database path for conversation logs."""
@@ -89,6 +92,10 @@ class AssistantDaemon:
 
         # Request counter for foreground logging
         self.request_count = 0
+
+        # Web UI server (for llm-guiassistant)
+        self.web_port = int(os.environ.get('LLM_GUI_PORT', 8741))
+        self.web_server: Optional["WebUIServer"] = None
 
     def _log_request(self, tid: str, direction: str, info: str, duration: float = None):
         """Log request activity in foreground mode."""
@@ -294,10 +301,10 @@ class AssistantDaemon:
 
         implementations = get_tool_implementations()
 
-        # Add MCP tool implementations if available
-        if hasattr(session, '_get_mcp_tool_implementations'):
-            mcp_impls = session._get_mcp_tool_implementations()
-            implementations.update(mcp_impls)
+        # Add MCP and other active tool implementations if available
+        if hasattr(session, '_get_active_external_tools'):
+            active_impls = session._get_active_external_tools()
+            implementations.update(active_impls)
 
         conversation = session.get_or_create_conversation()
 
@@ -992,18 +999,31 @@ class AssistantDaemon:
         finally:
             os.umask(old_umask)  # Restore original umask
 
+        # Start web UI server
+        try:
+            self.web_server = WebUIServer(self, self.web_port)
+            await self.web_server.start()
+            web_url = self.web_server.get_url()
+        except Exception as e:
+            web_url = None
+            if self.foreground:
+                self.console.print(f"[yellow]Web UI server failed: {e}[/]", highlight=False)
+
         if self.foreground:
             self.console.print(
                 f"llm-assistant daemon started [dim](socket: {self.socket_path})[/]",
                 highlight=False
             )
+            if web_url:
+                self.console.print(f"Web UI available at [bold]{web_url}[/]", highlight=False)
             self.console.print("[dim]Press Ctrl+C to stop[/]", highlight=False)
             self.console.print()
         else:
-            self.console.print(
-                f"[dim]llm-assistant daemon started (socket: {self.socket_path})[/]",
-                highlight=False
-            )
+            msg = f"[dim]llm-assistant daemon started (socket: {self.socket_path})"
+            if web_url:
+                msg += f" (web: {web_url})"
+            msg += "[/]"
+            self.console.print(msg, highlight=False)
 
         # Start idle checker
         idle_task = asyncio.create_task(self.idle_checker())
@@ -1017,6 +1037,10 @@ class AssistantDaemon:
             # Cancel all workers
             for task in self.workers.values():
                 task.cancel()
+
+            # Stop web UI server
+            if self.web_server:
+                await self.web_server.stop()
 
             self.server.close()
             await self.server.wait_closed()

@@ -28,6 +28,7 @@ classifiers = [
 ]
 dependencies = [
     "PyGObject>=3.42",
+    "requests>=2.25",
     "llm-tools-core",
 ]
 
@@ -50,7 +51,6 @@ packages = ["llm_guiassistant"]
 [tool.hatch.build.targets.sdist]
 include = [
     "llm_guiassistant/**/*.py",
-    "llm_guiassistant/**/*.html",
     "config/**",
     "CLAUDE.md",
     "pyproject.toml",

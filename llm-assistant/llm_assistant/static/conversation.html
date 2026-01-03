@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>llm-guiassistant</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/marked.min.js"></script>
+    <script src="/static/highlight.min.js"></script>
+</head>
+<body>
+    <div id="conversation">
+        <div class="empty-state" id="empty-state">
+            <h2>How can I help you today?</h2>
+            <p>Type a question below and press Ctrl+Enter to send.</p>
+        </div>
+    </div>
+
+    <div id="input-container">
+        <textarea id="input" placeholder="Ask a question..." rows="1"></textarea>
+        <button id="send-btn" title="Send (Ctrl+Enter)">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <line x1="22" y1="2" x2="11" y2="13"></line>
+                <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+            </svg>
+        </button>
+    </div>
+
+    <div id="toast"></div>
+
+    <!-- Action Panel (Ctrl+K) -->
+    <div id="action-panel" class="hidden">
+        <div class="action-panel-backdrop"></div>
+        <div class="action-panel-content">
+            <input type="text" id="action-search" placeholder="Search actions...">
+            <div id="action-list"></div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -354,11 +354,20 @@ class HeadlessSession(
     def get_tools(self) -> List[Tool]:
         """Get tools available in this session."""
         tools = get_headless_tools()
+        existing_names = {t.name for t in tools}
 
-        # Add MCP tools if available
-        if hasattr(self, '_get_mcp_tools'):
-            mcp_tools = self._get_mcp_tools()
-            tools.extend(mcp_tools)
+        # Add MCP tools from active servers
+        if hasattr(self, 'active_mcp_servers'):
+            all_tools = llm.get_tools()
+            for tool in all_tools.values():
+                if not isinstance(tool, Tool):
+                    continue
+                # Check if this is an MCP tool (has server_name attribute)
+                server = getattr(tool, 'server_name', None)
+                if server and server in self.active_mcp_servers:
+                    if tool.name not in existing_names:
+                        tools.append(tool)
+                        existing_names.add(tool.name)
 
         return tools
 
