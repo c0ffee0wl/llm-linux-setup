@@ -214,9 +214,7 @@ burr/
 Ulauncher/
 llm/
 
-# Downloaded JS assets (installed at runtime)
-llm-assistant/llm_assistant/static/marked.min.js
-llm-assistant/llm_assistant/static/highlight.min.js
+# JS version tracking (libraries now bundled in git)
 llm-assistant/llm_assistant/static/.versions
 
 # Plan files

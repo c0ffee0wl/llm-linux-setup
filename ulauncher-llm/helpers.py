@@ -9,6 +9,10 @@ import gi
 gi.require_version('Gtk', '3.0')  # noqa: E402
 from gi.repository import Gtk, Gdk  # noqa: E402
 
+# Import shared markdown utilities from llm_tools_core
+from llm_tools_core import strip_markdown
+from llm_tools_core.markdown import extract_code_blocks as _extract_code_blocks
+
 
 def strip_markdown_for_copy(text: str) -> str:
     """Strip markdown formatting for plain text copy.
@@ -21,26 +25,7 @@ def strip_markdown_for_copy(text: str) -> str:
     """
     if not text:
         return ""
-
-    # Remove code fences and their content markers (preserve the code inside)
-    text = re.sub(r'```\w*\n(.*?)\n```', r'\1', text, flags=re.DOTALL)
-
-    # Remove inline code backticks
-    text = re.sub(r'`([^`]+)`', r'\1', text)
-
-    # Remove bold
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-
-    # Remove italic
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-
-    # Remove headers (lines starting with #)
-    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
-
-    # Remove bullet points (convert to plain dashes)
-    text = re.sub(r'^[\*\-]\s+', '- ', text, flags=re.MULTILINE)
-
-    return text.strip()
+    return strip_markdown(text, preserve_code_blocks=True)
 
 
 def truncate_query(query: str, max_len: int = 60) -> str:
@@ -70,27 +55,18 @@ def extract_code_blocks(text: str) -> list:
     if not text:
         return []
 
-    # Match fenced code blocks: ```[lang]\n...\n```
-    pattern = r'```(?:\w*\n)?(.*?)```'
-    matches = re.findall(pattern, text, re.DOTALL)
-    return [m.strip() for m in matches if m.strip()]
+    # Use shared function and extract just the code content
+    return [code for lang, code in _extract_code_blocks(text)]
 
 
 # --- Line wrapping functions (inspired by ulauncher-gemini-direct) ---
 
 def _clean_markdown(text: str) -> str:
-    """Remove markdown formatting for display."""
-    # Remove bold/italic markers
-    text = re.sub(r'\*\*([^*]+)\*\*', r'\1', text)
-    text = re.sub(r'\*([^*]+)\*', r'\1', text)
-    # Convert bullets to •
-    text = re.sub(r'^[\*\-]\s+', '• ', text, flags=re.MULTILINE)
-    # Remove code fences
-    text = re.sub(r'```\w*\n?', '', text)
-    # Remove inline code backticks
-    text = re.sub(r'`([^`]+)`', r'\1', text)
-    # Remove headers
-    text = re.sub(r'^#+\s+', '', text, flags=re.MULTILINE)
+    """Remove markdown formatting for display, converting bullets to •."""
+    # Use shared strip_markdown for most cleanup
+    text = strip_markdown(text, preserve_code_blocks=True)
+    # Convert plain bullets/dashes to Unicode bullet for display
+    text = re.sub(r'^[-]\s+', '• ', text, flags=re.MULTILINE)
     return text.strip()
 
 

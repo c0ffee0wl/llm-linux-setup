@@ -575,28 +575,29 @@ def format_gui_context(
             truncated = " (truncated)" if ctx.get('selection_truncated') else ""
             lines.append(f"Selection{truncated}: \"{selection[:200]}{'...' if len(selection) > 200 else ''}\"")
 
-    elif new_window_hashes:
-        # Incremental: only show new windows
-        lines.append("[New windows appeared]:")
-        visible = ctx.get('visible_windows', [])
-        from .hashing import hash_window  # Import here to avoid circular import
-        for win in visible:
-            if hash_window(win) in new_window_hashes:
-                wid = win.get('window_id', '')
-                app = win.get('app_class') or 'unknown'
-                title = win.get('window_title') or ''
-                cwd = win.get('cwd')
-                cwd_suffix = f" cwd:{cwd}" if cwd else ""
-                lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
+    else:
+        # Incremental update: show new windows (if any) and current focus
+        # This branch is reached when something changed (focus or windows)
+        if new_window_hashes:
+            lines.append("[New windows appeared]:")
+            visible = ctx.get('visible_windows', [])
+            from .hashing import hash_window  # Import here to avoid circular import
+            for win in visible:
+                if hash_window(win) in new_window_hashes:
+                    wid = win.get('window_id', '')
+                    app = win.get('app_class') or 'unknown'
+                    title = win.get('window_title') or ''
+                    cwd = win.get('cwd')
+                    cwd_suffix = f" cwd:{cwd}" if cwd else ""
+                    lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
+            lines.append("")
 
-        # Also note focus change
+        # Always show current focus (caller ensures something changed)
         if focused and focused.get('app_class'):
             wid = focused.get('window_id', '')
-            lines.append(f"\nFocused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
-
-    else:
-        # No changes
-        return "<gui_context>[Desktop context unchanged]</gui_context>"
+            lines.append(f"Focused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
+            if focused.get('cwd'):
+                lines.append(f"  Working directory: {focused['cwd']}")
 
     content = '\n'.join(lines)
     return f"<gui_context>\n{content}\n</gui_context>"

@@ -12,11 +12,16 @@ GTK-based conversational popup for system-wide LLM access on Linux. Uses a hybri
 │  │  GET /                    → conversation.html           ││
 │  │  GET /static/*            → JS/CSS assets               ││
 │  │  POST /upload             → image attachments           ││
-│  │  POST /context            → receive context from GTK    ││
 │  │  WS  /ws?session=xxx      → streaming + commands        ││
 │  └─────────────────────────────────────────────────────────┘│
 │  ┌─────────────────────────────────────────────────────────┐│
 │  │ Unix Socket (existing)    → CLI/terminal clients        ││
+│  └─────────────────────────────────────────────────────────┘│
+│  ┌─────────────────────────────────────────────────────────┐│
+│  │ GUI Context Capture       → direct X11 context capture  ││
+│  │  - All visible windows    → xdotool search --onlyvisible││
+│  │  - Window IDs for capture → maim -i <window_id>         ││
+│  │  - SHA256 deduplication   → skip unchanged context      ││
 │  └─────────────────────────────────────────────────────────┘│
 └─────────────────────────────────────────────────────────────┘
         ▲                              ▲
@@ -30,14 +35,15 @@ GTK-based conversational popup for system-wide LLM access on Linux. Uses a hybri
 └─────────────────┘
 ```
 
-**Key design:** The GTK popup is a thin shell (~340 lines) that loads the web UI from the daemon. All conversation logic, streaming, and tool execution happens in the web UI via WebSocket.
+**Key design:** The GTK popup is a thin shell (~300 lines) that loads the web UI from the daemon. All conversation logic, streaming, context capture, and tool execution happens in the daemon/web UI via WebSocket.
 
 ## Components
 
-### popup.py (~340 lines)
+### popup.py (~300 lines)
 Thin GTK shell with single-instance D-Bus activation:
 - `PopupApplication`: GTK Application with D-Bus activation for instant (<50ms) re-activation
-- `PopupWindow`: Loads web UI from daemon via WebKit, gathers context, handles drag-drop
+- `PopupWindow`: Loads web UI from daemon via WebKit, handles drag-drop
+- No context posting - daemon captures GUI context directly on each query
 - No streaming logic - all handled by web UI via WebSocket
 
 ### history.py (~120 lines)
@@ -56,8 +62,8 @@ Located in `llm-assistant/llm_assistant/static/`:
 
 ### Python (installed via llm plugin mechanism)
 - PyGObject (GTK3 bindings)
-- requests (for context posting)
-- llm-tools-core (shared utilities: context gathering)
+- requests (for file upload)
+- llm-tools-core (shared utilities: context gathering, hashing)
 
 ### System (apt)
 - gir1.2-webkit2-4.1 (WebKit2GTK for GTK3)
@@ -136,20 +142,65 @@ Type to filter actions, use ↑/↓ to navigate, Enter to execute.
 
 ### Features
 
-1. **Context Gathering**: Automatically captures focused window info (app class, title, working directory)
-2. **Context Refresh**: Re-gather context from currently focused window
-3. **Image Attachments**: Drag & drop images onto the window
-4. **Streaming Responses**: Real-time Markdown rendering during response streaming
-5. **Session Persistence**: Conversations persist within session (identified by session ID)
-6. **Browser Access**: Open http://localhost:8741 directly in any browser
-7. **Action Panel (Ctrl+K)**: Keyboard-first quick actions with fuzzy search
+1. **GUI Context Capture**: Automatically captures ALL visible windows (not just focused)
+2. **Window IDs**: Each window includes X11 ID for targeted screenshot capture
+3. **Smart Deduplication**: SHA256 hashing skips unchanged context between messages
+4. **Image Attachments**: Drag & drop images onto the window
+5. **Streaming Responses**: Real-time Markdown rendering during response streaming
+6. **Session Persistence**: Conversations persist within session (identified by session ID)
+7. **Browser Access**: Open http://localhost:8741 directly in any browser
+8. **Action Panel (Ctrl+K)**: Keyboard-first quick actions with fuzzy search
+
+## GUI Context Capture
+
+The daemon captures desktop context directly on each user message (similar to `<terminal_context>` in llm-assistant).
+
+### What's Captured
+
+For `guiassistant:*` sessions, the daemon captures:
+- **Focused window**: app class, title, PID, working directory, window ID
+- **All visible windows**: Same info for every visible X11 window
+- **Selection** (first message only): X11 primary selection text
+
+### Deduplication
+
+Context uses block-level SHA256 hashing:
+- **Unchanged**: Shows `<gui_context>[Desktop context unchanged]</gui_context>`
+- **Changed**: Shows full context for new/changed windows only
+- **First message**: Always shows complete context with all visible windows
+
+### Format
+
+```xml
+<gui_context>
+Focused Window:
+  App: firefox
+  Title: GitHub - llm-linux-setup
+  PID: 12345
+  CWD: /home/user/projects
+  Window ID: 0x2a00003
+
+Visible Windows:
+  1. terminator | ~/projects | 0x2800001
+  2. firefox | GitHub - llm-linux-setup | 0x2a00003
+  3. code | llm-linux-setup - VS Code | 0x2c00005
+</gui_context>
+```
+
+### Targeted Window Capture
+
+The AI can use window IDs with `capture_screen`:
+```python
+capture_screen(mode="window_id", window_id="0x2a00003")
+```
+This captures a specific window without user interaction, using `maim -i <window_id>`.
 
 ## WebSocket Protocol
 
 ### Client → Server
 
 ```typescript
-{type: "query", query: string, mode: "assistant"|"simple", context?: object, images?: string[]}
+{type: "query", query: string, mode: "assistant"|"simple", images?: string[]}
 {type: "edit", messageIndex: number, newContent: string}
 {type: "regenerate"}
 {type: "branch", messageIndex: number}
@@ -157,6 +208,8 @@ Type to filter actions, use ↑/↓ to navigate, Enter to execute.
 {type: "getHistory"}
 {type: "command", command: "new"|"status"|"model", args?: string}
 ```
+
+**Note:** GUI context is NOT sent by the client. For `guiassistant:*` sessions, the daemon captures context directly via X11 tools on each query.
 
 ### Server → Client
 

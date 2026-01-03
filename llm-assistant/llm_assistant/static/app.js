@@ -10,24 +10,37 @@
  */
 
 // Check if required libraries loaded
-if (typeof marked === 'undefined' || typeof hljs === 'undefined' || typeof DOMPurify === 'undefined') {
+if (typeof marked === 'undefined' || typeof hljs === 'undefined' || typeof DOMPurify === 'undefined' || typeof mermaid === 'undefined') {
     document.body.innerHTML = '<div style="padding: 20px; color: #c00;">' +
         '<h3>JavaScript assets failed to load</h3>' +
         '<p>Missing: ' +
         (typeof marked === 'undefined' ? 'marked.js ' : '') +
         (typeof hljs === 'undefined' ? 'highlight.js ' : '') +
-        (typeof DOMPurify === 'undefined' ? 'purify.js' : '') +
+        (typeof DOMPurify === 'undefined' ? 'purify.js ' : '') +
+        (typeof mermaid === 'undefined' ? 'mermaid.js' : '') +
         '</p>' +
         '<p>Run: <code>./install-llm-tools.sh</code> to download assets.</p>' +
         '</div>';
     throw new Error('Required JavaScript libraries not loaded');
 }
 
+// Initialize Mermaid with dark theme
+mermaid.initialize({
+    startOnLoad: false,
+    theme: 'dark',
+    securityLevel: 'strict',
+    fontFamily: 'monospace'
+});
+
 // Helper function to safely render markdown with DOMPurify sanitization
 function safeMarkdown(content) {
     return DOMPurify.sanitize(marked.parse(content), {
-        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div'],
-        ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel'],
+        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div',
+            // SVG elements for mermaid diagrams
+            'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'marker', 'foreignObject', 'style'],
+        ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel',
+            // SVG attributes for mermaid
+            'viewBox', 'width', 'height', 'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'transform', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'points', 'font-size', 'font-family', 'text-anchor', 'dominant-baseline', 'clip-path', 'marker-end', 'marker-start', 'id', 'style', 'xmlns', 'aria-roledescription', 'role'],
         ALLOW_DATA_ATTR: false
     });
 }
@@ -61,6 +74,11 @@ const pendingRequests = new Map();
 
 // Pending images for capture/upload
 window.pendingImages = [];
+
+// Helper to check WebSocket connection state
+function isConnected() {
+    return ws && ws.readyState === WebSocket.OPEN;
+}
 
 // Message store for tracking conversation history
 const messageStore = {
@@ -534,8 +552,15 @@ const captureControls = {
             });
 
             if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error || 'Capture failed');
+                let errorMsg = 'Capture failed';
+                try {
+                    const err = await response.json();
+                    errorMsg = err.error || errorMsg;
+                } catch {
+                    // Response wasn't JSON, use status text
+                    errorMsg = response.statusText || errorMsg;
+                }
+                throw new Error(errorMsg);
             }
 
             const data = await response.json();
@@ -703,11 +728,24 @@ function connect() {
         console.log('WebSocket closed, reconnecting...');
         // Clear pending requests - their callbacks will never fire
         pendingRequests.clear();
-        setTimeout(connect, Math.min(1000 * Math.pow(2, reconnectAttempts++), 5000));
+
+        // Max 10 retries with exponential backoff (caps at 30s)
+        if (reconnectAttempts >= 10) {
+            console.error('Max reconnection attempts exceeded');
+            showToast('Connection lost. Please refresh the page.');
+            return;
+        }
+
+        const delay = Math.min(1000 * Math.pow(2, reconnectAttempts++), 30000);
+        console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/10)`);
+        setTimeout(connect, delay);
     };
 
     ws.onerror = (err) => {
         console.error('WebSocket error:', err);
+        // Note: onerror is always followed by onclose, which handles reconnection
+        // Show user feedback for the error
+        showToast('Connection error occurred');
     };
 }
 
@@ -1095,7 +1133,56 @@ function clearConversation() {
 // ============================================================================
 
 function applyCodeBlockEnhancements(container) {
+    // Render mermaid diagrams first
+    container.querySelectorAll('pre code.language-mermaid').forEach(async (block) => {
+        const pre = block.parentElement;
+        if (pre.parentElement.classList.contains('mermaid-wrapper')) return;
+
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mermaid-wrapper';
+        pre.parentNode.insertBefore(wrapper, pre);
+
+        const mermaidDiv = document.createElement('div');
+        mermaidDiv.className = 'mermaid';
+        wrapper.appendChild(mermaidDiv);
+
+        // Store original code for copy button
+        const originalCode = block.textContent;
+
+        try {
+            const { svg } = await mermaid.render('mermaid-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9), originalCode);
+            mermaidDiv.innerHTML = svg;
+            pre.remove();
+
+            // Add copy button for original mermaid code
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'copy-btn';
+            copyBtn.innerHTML = ICONS.copy + '<span>Copy</span>';
+            copyBtn.onclick = function() {
+                navigator.clipboard.writeText(originalCode).then(() => {
+                    copyBtn.innerHTML = ICONS.copy + '<span>Copied!</span>';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = ICONS.copy + '<span>Copy</span>';
+                    }, 1500);
+                }).catch(err => {
+                    console.error('Clipboard write failed:', err);
+                    showToast('Failed to copy to clipboard');
+                });
+            };
+            wrapper.appendChild(copyBtn);
+        } catch (err) {
+            console.error('Mermaid render error:', err);
+            // Keep original code block on error, apply normal enhancements
+            wrapper.remove();
+        }
+    });
+
+    // Handle regular code blocks
     container.querySelectorAll('pre').forEach(pre => {
+        // Skip mermaid blocks (handled above)
+        const code = pre.querySelector('code');
+        if (code && code.classList.contains('language-mermaid')) return;
+
         if (!pre.parentElement.classList.contains('code-wrapper')) {
             const wrapper = document.createElement('div');
             wrapper.className = 'code-wrapper';
@@ -1106,18 +1193,24 @@ function applyCodeBlockEnhancements(container) {
             copyBtn.className = 'copy-btn';
             copyBtn.innerHTML = ICONS.copy + '<span>Copy</span>';
             copyBtn.onclick = function() {
-                const code = pre.querySelector('code') || pre;
-                navigator.clipboard.writeText(code.textContent);
-                copyBtn.innerHTML = ICONS.copy + '<span>Copied!</span>';
-                setTimeout(() => {
-                    copyBtn.innerHTML = ICONS.copy + '<span>Copy</span>';
-                }, 1500);
+                const codeEl = pre.querySelector('code') || pre;
+                navigator.clipboard.writeText(codeEl.textContent).then(() => {
+                    copyBtn.innerHTML = ICONS.copy + '<span>Copied!</span>';
+                    setTimeout(() => {
+                        copyBtn.innerHTML = ICONS.copy + '<span>Copy</span>';
+                    }, 1500);
+                }).catch(err => {
+                    console.error('Clipboard write failed:', err);
+                    showToast('Failed to copy to clipboard');
+                });
             };
             wrapper.appendChild(copyBtn);
         }
     });
 
     container.querySelectorAll('pre code').forEach(block => {
+        // Skip mermaid blocks
+        if (block.classList.contains('language-mermaid')) return;
         hljs.highlightElement(block);
     });
 }
@@ -1154,8 +1247,12 @@ function createActionIcons(role, messageId) {
     container.appendChild(createIconButton('copy', 'Copy markdown', () => {
         const msg = messageStore.messages.find(m => m.id === messageId);
         if (msg) {
-            navigator.clipboard.writeText(msg.content);
-            showToast('Copied to clipboard');
+            navigator.clipboard.writeText(msg.content).then(() => {
+                showToast('Copied to clipboard');
+            }).catch(err => {
+                console.error('Clipboard write failed:', err);
+                showToast('Failed to copy to clipboard');
+            });
         }
     }));
 
@@ -1186,11 +1283,36 @@ function createActionIcons(role, messageId) {
 
 // Copy plain text using server-side stripMarkdown
 function copyPlainText(content) {
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
+
     const requestId = crypto.randomUUID();
+
+    // Set timeout to prevent memory leak if server never responds
+    const timeout = setTimeout(() => {
+        if (pendingRequests.has(requestId)) {
+            pendingRequests.delete(requestId);
+            console.warn('stripMarkdown request timed out:', requestId);
+            // Fallback: copy raw content
+            navigator.clipboard.writeText(content).catch(err => {
+                console.error('Clipboard write failed:', err);
+            });
+            showToast('Copied (server timeout, raw text)');
+        }
+    }, 5000);
+
     pendingRequests.set(requestId, (stripped) => {
-        navigator.clipboard.writeText(stripped);
+        clearTimeout(timeout);
+        navigator.clipboard.writeText(stripped).catch(err => {
+            console.error('Clipboard write failed:', err);
+            showToast('Failed to copy to clipboard');
+            return;
+        });
         showToast('Copied plain text');
     });
+
     ws.send(JSON.stringify({ type: 'stripMarkdown', text: content, requestId }));
 }
 
@@ -1283,6 +1405,10 @@ function submitEditedMessage(messageId, newContent) {
         }
     }
 
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
     ws.send(JSON.stringify({
         type: 'edit',
         keepTurns: turnCount,
@@ -1304,6 +1430,11 @@ function regenerateResponse(messageId) {
     }
     if (!userMsg) return;
 
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
+
     messageStore.removeMessage(messageId);
     updateLastMessageIndicators();
 
@@ -1314,6 +1445,11 @@ function regenerateResponse(messageId) {
 }
 
 function branchConversation(messageId) {
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
+
     const messages = messageStore.getMessagesUpTo(messageId);
     if (messages.length === 0) return;
 
@@ -1337,6 +1473,11 @@ function sendMessage() {
     const query = input.value.trim();
 
     if (!query || isStreaming) return;
+
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
 
     // Add user message to UI
     appendMessage('user', query);
@@ -1420,6 +1561,10 @@ function escapeHtml(text) {
 
 function showToast(message) {
     let toast = document.getElementById('toast');
+    if (!toast) {
+        console.warn('Toast element not found');
+        return;
+    }
     toast.textContent = message;
     toast.classList.add('show');
     setTimeout(() => toast.classList.remove('show'), 2000);
@@ -1467,6 +1612,13 @@ function renderActionList(filter = '') {
         a.label.toLowerCase().includes(filterLower)
     );
 
+    // Clamp selectedActionIndex to valid range for filtered list
+    if (filtered.length > 0) {
+        selectedActionIndex = Math.min(selectedActionIndex, filtered.length - 1);
+    } else {
+        selectedActionIndex = 0;
+    }
+
     list.innerHTML = '';
     filtered.forEach((action, i) => {
         const item = document.createElement('div');
@@ -1483,8 +1635,12 @@ function renderActionList(filter = '') {
 function copyLastResponse() {
     const lastAssistant = messageStore.getLastByRole('assistant');
     if (lastAssistant) {
-        navigator.clipboard.writeText(lastAssistant.content);
-        showToast('Copied last response');
+        navigator.clipboard.writeText(lastAssistant.content).then(() => {
+            showToast('Copied last response');
+        }).catch(err => {
+            console.error('Clipboard write failed:', err);
+            showToast('Failed to copy to clipboard');
+        });
     }
 }
 
@@ -1492,15 +1648,27 @@ function copyAllMessages() {
     const text = messageStore.messages.map(m =>
         `${m.role === 'user' ? 'You' : 'Assistant'}: ${m.content}`
     ).join('\n\n');
-    navigator.clipboard.writeText(text);
-    showToast('Copied conversation');
+    navigator.clipboard.writeText(text).then(() => {
+        showToast('Copied conversation');
+    }).catch(err => {
+        console.error('Clipboard write failed:', err);
+        showToast('Failed to copy to clipboard');
+    });
 }
 
 function startNewSession() {
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
     ws.send(JSON.stringify({ type: 'command', command: 'new' }));
 }
 
 function showStatus() {
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
     ws.send(JSON.stringify({ type: 'command', command: 'status' }));
 }
 

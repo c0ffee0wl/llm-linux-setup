@@ -149,24 +149,8 @@ class PopupWindow(Gtk.ApplicationWindow):
 
         self.webview.load_uri(url)
 
-        # Post context to daemon after short delay (let page load)
-        GLib.timeout_add(500, self._post_context)
-
-    def _post_context(self) -> bool:
-        """POST context to daemon's /context endpoint."""
-        try:
-            url = f"http://localhost:{self.web_port}/context"
-            data = {
-                "session": self.session_id,
-                "context": self.context,
-            }
-            requests.post(url, json=data, timeout=2)
-            if self.debug:
-                print(f"[Context] Posted context to daemon")
-        except Exception as e:
-            if self.debug:
-                print(f"[Context] Failed to post context: {e}")
-        return False  # Don't repeat
+        # Note: Context is now captured directly by daemon on each query
+        # (see web_ui_server.py _handle_query for guiassistant sessions)
 
     def _on_load_changed(self, webview, load_event):
         """Handle WebView load state changes."""
@@ -301,9 +285,8 @@ class PopupWindow(Gtk.ApplicationWindow):
                 print(f"[Upload] Error: {e}")
 
     def refresh_context(self):
-        """Refresh context and post to daemon."""
+        """Refresh local context (daemon captures fresh context on each query)."""
         self._gather_context()
-        self._post_context()
 
 
 class PopupApplication(Gtk.Application):

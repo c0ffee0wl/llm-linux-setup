@@ -222,6 +222,30 @@ pre code {
     position: relative;
 }
 
+/* Mermaid diagram wrapper */
+.mermaid-wrapper {
+    position: relative;
+    background: var(--code-bg);
+    border-radius: 8px;
+    padding: 16px;
+    margin: 8px 0;
+    overflow-x: auto;
+}
+
+.mermaid-wrapper .mermaid {
+    display: flex;
+    justify-content: center;
+}
+
+.mermaid-wrapper svg {
+    max-width: 100%;
+    height: auto;
+}
+
+.mermaid-wrapper:hover .copy-btn {
+    opacity: 1;
+}
+
 .copy-btn {
     position: absolute;
     top: 4px;

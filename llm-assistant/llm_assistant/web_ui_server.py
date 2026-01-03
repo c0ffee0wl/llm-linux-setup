@@ -81,7 +81,7 @@ class WebUIServer:
         self.app.router.add_get("/", self.handle_index)
         self.app.router.add_get("/ws", self.handle_websocket)
         self.app.router.add_post("/upload", self.handle_upload)
-        self.app.router.add_post("/context", self.handle_context)
+        # Note: /context endpoint removed - daemon captures context directly for guiassistant sessions
 
         # API routes for history, completions, capture, and RAG
         self.app.router.add_get("/api/history", self.handle_api_history)
@@ -136,28 +136,6 @@ class WebUIServer:
                 temp_path = f.name
 
             return web.json_response({"path": temp_path})
-
-        except Exception as e:
-            return web.json_response({"error": str(e)}, status=500)
-
-    async def handle_context(self, request: web.Request) -> web.Response:
-        """Handle context updates from GTK client.
-
-        POST body: {"session": "...", "context": {...}}
-        """
-        try:
-            data = await request.json()
-            session_id = data.get("session")
-            context = data.get("context", {})
-
-            if session_id:
-                # Store context for this session
-                # Context will be used when the session sends its first query
-                if not hasattr(self, "_session_contexts"):
-                    self._session_contexts: Dict[str, dict] = {}
-                self._session_contexts[session_id] = context
-
-            return web.json_response({"ok": True})
 
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -347,7 +325,11 @@ class WebUIServer:
 
         try:
             impl = implementations[tool_name]
-            result = impl(**tool_args)
+            # Run tool in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: impl(**tool_args)
+            )
 
             # Handle different result types
             if hasattr(result, "output"):
@@ -425,12 +407,13 @@ class WebUIServer:
 
         # For guiassistant sessions: Capture fresh GUI context with deduplication
         if session_id.startswith("guiassistant:"):
-            # Lazy-init state dict (same pattern as _session_contexts)
+            # Lazy-init state dict for GUI context deduplication
             if not hasattr(self, "_gui_context_state"):
                 self._gui_context_state: Dict[str, tuple] = {}
 
-            # Capture fresh context from X11
-            gui_context = gather_context()
+            # Capture fresh context from X11 (run in executor to avoid blocking)
+            loop = asyncio.get_running_loop()
+            gui_context = await loop.run_in_executor(None, gather_context)
 
             if gui_context and gui_context.get('session_type') == 'x11':
                 focused_hash, window_hashes = hash_gui_context(gui_context)
@@ -454,18 +437,6 @@ class WebUIServer:
                     self._gui_context_state[session_id] = (focused_hash, window_hashes)
 
                 full_query = f"{context_block}\n\n{query}"
-        else:
-            # For non-guiassistant sessions: Use popup-posted context (legacy behavior)
-            context = None
-            if hasattr(self, "_session_contexts") and session_id in self._session_contexts:
-                context = self._session_contexts[session_id]
-                # Clear context after first use
-                del self._session_contexts[session_id]
-
-            # Add context to query if present (legacy format)
-            if context:
-                context_str = json.dumps(context, indent=2)
-                full_query = f"<gui_context>\n{context_str}\n</gui_context>\n\n{query}"
 
         # Inject RAG context if a collection is active
         rag_collection = None
@@ -478,9 +449,15 @@ class WebUIServer:
             handler = RAGHandler()
             if handler.available():
                 try:
-                    results = handler.search(rag_collection, query, top_k=5)
+                    # Run RAG operations in executor to avoid blocking event loop
+                    loop = asyncio.get_running_loop()
+                    results = await loop.run_in_executor(
+                        None, lambda: handler.search(rag_collection, query, top_k=5)
+                    )
                     if results:
-                        rag_context = handler.format_context(results)
+                        rag_context = await loop.run_in_executor(
+                            None, lambda: handler.format_context(results)
+                        )
                         full_query = f"{rag_context}\n\n{full_query}"
                 except Exception:
                     pass  # Continue without RAG context on error
@@ -754,6 +731,9 @@ class WebUIServer:
             state.session.reset_conversation()
             if hasattr(state.session, 'context_hashes'):
                 state.session.context_hashes = set()
+            # Reset GUI context state so next message shows full context
+            if hasattr(self, '_gui_context_state') and session_id in self._gui_context_state:
+                del self._gui_context_state[session_id]
             await ws.send_json({
                 "type": "commandResult",
                 "command": "new",
@@ -781,7 +761,9 @@ class WebUIServer:
                 try:
                     import llm
 
-                    new_model = llm.get_model(args)
+                    # Run in executor to avoid blocking event loop
+                    loop = asyncio.get_running_loop()
+                    new_model = await loop.run_in_executor(None, llm.get_model, args)
                     self.daemon.model_id = args
                     state = self.daemon.get_session_state(session_id)
                     state.session.model = new_model
@@ -825,7 +807,11 @@ class WebUIServer:
 
             history = ConversationHistory()
             # Pass source to get_grouped_by_date for proper filtering before LIMIT
-            grouped = history.get_grouped_by_date(limit=limit, source=source)
+            # Run in executor to avoid blocking event loop (DB query)
+            loop = asyncio.get_running_loop()
+            grouped = await loop.run_in_executor(
+                None, lambda: history.get_grouped_by_date(limit=limit, source=source)
+            )
 
             # Convert to JSON-serializable format
             result = {}
@@ -855,7 +841,11 @@ class WebUIServer:
         try:
             conversation_id = request.match_info["id"]
             history = ConversationHistory()
-            conversation = history.get_conversation(conversation_id)
+            # Run in executor to avoid blocking event loop (DB query)
+            loop = asyncio.get_running_loop()
+            conversation = await loop.run_in_executor(
+                None, lambda: history.get_conversation(conversation_id)
+            )
 
             if conversation is None:
                 return web.json_response({"error": "Conversation not found"}, status=404)
@@ -891,7 +881,11 @@ class WebUIServer:
                 return web.json_response({"error": "Missing query parameter 'q'"}, status=400)
 
             history = ConversationHistory()
-            results = history.search(query, limit=limit)
+            # Run in executor to avoid blocking event loop (DB query)
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(
+                None, lambda: history.search(query, limit=limit)
+            )
 
             return web.json_response({
                 "results": [
@@ -933,7 +927,11 @@ class WebUIServer:
                 prefix = prefix[1:]
 
             handler = AtHandler(cwd=cwd)
-            completions = handler.get_completions(prefix, cwd=cwd)
+            # Run in executor to avoid blocking event loop (filesystem I/O)
+            loop = asyncio.get_running_loop()
+            completions = await loop.run_in_executor(
+                None, lambda: handler.get_completions(prefix, cwd=cwd)
+            )
 
             return web.json_response({
                 "completions": [
@@ -965,7 +963,11 @@ class WebUIServer:
             # Try to import and use capture_screen
             try:
                 from llm_tools_capture_screen import capture_screen
-                result = capture_screen(mode=mode, delay=delay)
+                # Run in executor to avoid blocking event loop (subprocess)
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None, lambda: capture_screen(mode=mode, delay=delay)
+                )
 
                 # capture_screen returns llm.ToolOutput with output dict containing path
                 if hasattr(result, "output") and isinstance(result.output, dict):
@@ -999,7 +1001,11 @@ class WebUIServer:
             if not handler.available():
                 return web.json_response({"collections": [], "available": False})
 
-            collections = handler.list_collections()
+            # Run in executor to avoid blocking event loop (DB query)
+            loop = asyncio.get_running_loop()
+            collections = await loop.run_in_executor(
+                None, handler.list_collections
+            )
             return web.json_response({
                 "collections": collections,
                 "available": True,
@@ -1032,7 +1038,11 @@ class WebUIServer:
                     status=500
                 )
 
-            results = handler.search(collection, query, top_k=top_k)
+            # Run in executor to avoid blocking event loop (DB query)
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(
+                None, lambda: handler.search(collection, query, top_k=top_k)
+            )
             return web.json_response({
                 "results": [
                     {
@@ -1109,7 +1119,11 @@ class WebUIServer:
                     status=500
                 )
 
-            result = handler.add_documents(collection, path, refresh=refresh)
+            # Run in executor to avoid blocking event loop (DB/network I/O)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: handler.add_documents(collection, path, refresh=refresh)
+            )
             return web.json_response({
                 "status": result.status,
                 "path": result.path,
