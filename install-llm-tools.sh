@@ -1945,13 +1945,14 @@ EOF
         mkdir -p "$GUIASSISTANT_JS_DIR"
 
         MARKED_VERSION="17.0.1"
-        HLJS_VERSION="11.11.2"
+        HLJS_VERSION="11.11.1"
 
         # Download marked.js if not present or version changed
+        # Note: marked v16+ moved to lib/marked.umd.js (no more marked.min.js at root)
         if [ ! -f "$GUIASSISTANT_JS_DIR/marked.min.js" ] || \
            ! grep -q "marked@$MARKED_VERSION" "$GUIASSISTANT_JS_DIR/.versions" 2>/dev/null; then
             log "Downloading marked.js v$MARKED_VERSION..."
-            curl -fsSL "https://cdn.jsdelivr.net/npm/marked@${MARKED_VERSION}/marked.min.js" \
+            curl -fsSL "https://cdn.jsdelivr.net/npm/marked@${MARKED_VERSION}/lib/marked.umd.js" \
                 -o "$GUIASSISTANT_JS_DIR/marked.min.js" || warn "Failed to download marked.js"
         fi
 
