@@ -15,6 +15,9 @@ This package provides shared utilities:
 - Linux desktop context gathering (linux_context module)
 - Shared system prompts (prompts module)
 - Error codes and exceptions (errors module)
+- ConversationHistory: Shared history access (history module)
+- AtHandler: @ reference parsing and resolution (at_handler module)
+- RAGHandler: RAG integration wrapper (rag_handler module)
 """
 
 from .prompt_detection import PromptDetector
@@ -113,9 +116,31 @@ from .errors import (
     EmptyQueryError,
     ModelError,
     ToolError,
-    TimeoutError,
+    DaemonTimeoutError,
     DaemonUnavailableError,
     format_error_response,
+)
+
+# Conversation history
+from .history import (
+    ConversationHistory,
+    ConversationSummary,
+    FullConversation,
+    Message,
+)
+
+# @ reference handling
+from .at_handler import (
+    AtHandler,
+    Completion,
+    ResolvedReference,
+)
+
+# RAG integration
+from .rag_handler import (
+    RAGHandler,
+    SearchResult,
+    AddResult,
 )
 
 __all__ = [
@@ -202,9 +227,22 @@ __all__ = [
     "EmptyQueryError",
     "ModelError",
     "ToolError",
-    "TimeoutError",
+    "DaemonTimeoutError",
     "DaemonUnavailableError",
     "format_error_response",
+    # Conversation history
+    "ConversationHistory",
+    "ConversationSummary",
+    "FullConversation",
+    "Message",
+    # @ reference handling
+    "AtHandler",
+    "Completion",
+    "ResolvedReference",
+    # RAG integration
+    "RAGHandler",
+    "SearchResult",
+    "AddResult",
 ]
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

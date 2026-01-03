@@ -169,6 +169,8 @@ class AssistantDaemon:
                 await self.handle_pop_response(tid, writer)
             elif cmd == 'fork':
                 await self.handle_fork(tid, request, writer)
+            elif cmd == 'rag_activate':
+                await self.handle_rag_activate(tid, request, writer)
             else:
                 await self._emit_error(writer, ErrorCode.PARSE_ERROR, f"Unknown command: {cmd}")
 
@@ -626,14 +628,15 @@ class AssistantDaemon:
     async def handle_complete(self, request: dict, writer: asyncio.StreamWriter):
         """Handle completion request for slash commands and fragments."""
         prefix = request.get('prefix', '')
+        cwd = request.get('cwd')  # Optional working directory for file completions
         completions = []
 
         if prefix.startswith('/'):
             # Slash command completion
             completions = self._complete_slash_commands(prefix)
         elif prefix.startswith('@'):
-            # Fragment completion (@github:, @pdf:, @yt:)
-            completions = self._complete_fragments(prefix)
+            # Fragment completion (@github:, @pdf:, @yt:, @file:, etc.)
+            completions = self._complete_fragments(prefix, cwd=cwd)
         elif prefix.startswith('model:'):
             # Model name completion
             completions = self._complete_models(prefix[6:])
@@ -664,23 +667,36 @@ class AssistantDaemon:
 
         return completions
 
-    def _complete_fragments(self, prefix: str) -> List[Dict[str, str]]:
-        """Complete fragment prefixes."""
-        # Common fragment types
-        fragments = [
-            ("@github:", "Load GitHub repository"),
-            ("@pdf:", "Load PDF document"),
-            ("@yt:", "Load YouTube transcript"),
-            ("@url:", "Load web page"),
-            ("@file:", "Load local file"),
-        ]
+    def _complete_fragments(self, prefix: str, cwd: Optional[str] = None) -> List[Dict[str, str]]:
+        """Complete fragment prefixes and file paths.
 
-        prefix_lower = prefix.lower()
-        return [
-            {"text": frag, "description": desc}
-            for frag, desc in fragments
-            if frag.lower().startswith(prefix_lower)
-        ]
+        Uses AtHandler from llm-tools-core for unified completion logic.
+        """
+        try:
+            from llm_tools_core import AtHandler
+            handler = AtHandler()
+            completions = handler.get_completions(prefix, cwd=cwd)
+            return [
+                {"text": c.text, "description": c.description}
+                for c in completions
+            ]
+        except ImportError:
+            # Fallback: basic fragment types if AtHandler not available
+            fragments = [
+                ("@github:", "Load GitHub repository"),
+                ("@pdf:", "Load PDF document"),
+                ("@yt:", "Load YouTube transcript"),
+                ("@url:", "Load web page"),
+                ("@file:", "Load local file"),
+                ("@dir:", "Load directory contents"),
+            ]
+
+            prefix_lower = prefix.lower()
+            return [
+                {"text": frag, "description": desc}
+                for frag, desc in fragments
+                if frag.lower().startswith(prefix_lower)
+            ]
 
     def _call_session_handler(
         self,
@@ -956,6 +972,63 @@ class AssistantDaemon:
         self.sessions[new_tid] = new_state
 
         await self._emit(writer, {"type": "forked", "new_tid": new_tid, "messages": len(messages)})
+        await self._emit(writer, {"type": "done"})
+
+    async def handle_rag_activate(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
+        """Activate a RAG collection for this terminal's session.
+
+        Request: {"cmd": "rag_activate", "tid": "...", "collection": "..."}
+        Response: {"type": "text", "content": "RAG collection ... activated"}
+        """
+        collection = request.get('collection', '')
+
+        if not collection:
+            await self._emit(writer, {"type": "error", "message": "Collection name required"})
+            await self._emit(writer, {"type": "done"})
+            return
+
+        # Get or create session for this terminal
+        state = self.sessions.get(terminal_id)
+        if not state:
+            # Create session if it doesn't exist
+            session = HeadlessSession(
+                model_name=self.model_id,
+                debug=self.debug,
+                terminal_id=terminal_id,
+            )
+            state = SessionState(terminal_id, session)
+            self.sessions[terminal_id] = state
+
+        session = state.session
+
+        # Check if RAG is available (HeadlessSession has active_rag_collection via RAGMixin)
+        if hasattr(session, 'active_rag_collection'):
+            try:
+                # Try to activate RAG via the session's RAG mixin
+                if hasattr(session, '_handle_rag_command'):
+                    # Use the session's built-in RAG handling
+                    result = session._handle_rag_command(collection)
+                    if result:
+                        await self._emit(writer, {"type": "text", "content": result})
+                    else:
+                        # Directly set active_rag_collection if handler didn't return output
+                        session.active_rag_collection = collection
+                        await self._emit(writer, {
+                            "type": "text",
+                            "content": f"RAG collection '{collection}' activated for this session"
+                        })
+                else:
+                    # Direct RAG activation
+                    session.active_rag_collection = collection
+                    await self._emit(writer, {
+                        "type": "text",
+                        "content": f"RAG collection '{collection}' activated for this session"
+                    })
+            except Exception as e:
+                await self._emit(writer, {"type": "error", "message": str(e)})
+        else:
+            await self._emit(writer, {"type": "error", "message": "RAG not available in this session"})
+
         await self._emit(writer, {"type": "done"})
 
     async def idle_checker(self):

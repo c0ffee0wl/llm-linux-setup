@@ -25,7 +25,12 @@ import llm
 from llm import ToolResult
 
 from llm_tools_core.markdown import strip_markdown
-from llm_tools_core import MAX_TOOL_ITERATIONS
+from llm_tools_core import (
+    MAX_TOOL_ITERATIONS,
+    ConversationHistory,
+    AtHandler,
+    RAGHandler,
+)
 
 from .headless_session import get_tool_implementations
 
@@ -46,8 +51,14 @@ class WebUIServer:
         # Track WebSocket clients per session
         self.ws_clients: Dict[str, Set[web.WebSocketResponse]] = {}
 
-        # Static assets directory
-        self.static_dir = Path(__file__).parent / "static"
+        # Static assets directory - prefer development source if available
+        # Check for LLM_DEV_STATIC env var first (explicit override)
+        dev_static = os.environ.get("LLM_DEV_STATIC")
+        if dev_static and Path(dev_static).exists():
+            self.static_dir = Path(dev_static)
+        else:
+            # Use static dir relative to this file (works for both installed and source)
+            self.static_dir = Path(__file__).parent / "static"
 
         self._setup_routes()
 
@@ -68,6 +79,17 @@ class WebUIServer:
         self.app.router.add_get("/ws", self.handle_websocket)
         self.app.router.add_post("/upload", self.handle_upload)
         self.app.router.add_post("/context", self.handle_context)
+
+        # API routes for history, completions, capture, and RAG
+        self.app.router.add_get("/api/history", self.handle_api_history)
+        self.app.router.add_get("/api/history/search", self.handle_api_history_search)
+        self.app.router.add_get("/api/history/{id}", self.handle_api_history_item)
+        self.app.router.add_get("/api/completions", self.handle_api_completions)
+        self.app.router.add_post("/api/capture", self.handle_api_capture)
+        self.app.router.add_get("/api/rag/collections", self.handle_api_rag_collections)
+        self.app.router.add_post("/api/rag/search", self.handle_api_rag_search)
+        self.app.router.add_post("/api/rag/activate", self.handle_api_rag_activate)
+        self.app.router.add_post("/api/rag/add", self.handle_api_rag_add)
 
         # Static file serving
         if self.static_dir.exists():
@@ -698,6 +720,305 @@ class WebUIServer:
                 "type": "error",
                 "message": f"Unknown command: {command}",
             })
+
+    # --- API Handlers ---
+
+    async def handle_api_history(self, request: web.Request) -> web.Response:
+        """Get conversation history grouped by date.
+
+        GET /api/history?limit=50&source=gui
+        """
+        try:
+            limit = int(request.query.get("limit", "50"))
+            source = request.query.get("source")
+
+            history = ConversationHistory()
+            grouped = history.get_grouped_by_date(limit=limit)
+
+            # Convert to JSON-serializable format
+            result = {}
+            for group_name, conversations in grouped.items():
+                result[group_name] = [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "model": c.model,
+                        "source": c.source,
+                        "datetime_utc": c.datetime_utc,
+                        "message_count": c.message_count,
+                        "preview": c.preview,
+                    }
+                    for c in conversations
+                    if source is None or c.source == source
+                ]
+
+            return web.json_response(result)
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_history_item(self, request: web.Request) -> web.Response:
+        """Get a single conversation by ID.
+
+        GET /api/history/{id}
+        """
+        try:
+            conversation_id = request.match_info["id"]
+            history = ConversationHistory()
+            conversation = history.get_conversation(conversation_id)
+
+            if conversation is None:
+                return web.json_response({"error": "Conversation not found"}, status=404)
+
+            return web.json_response({
+                "id": conversation.id,
+                "name": conversation.name,
+                "model": conversation.model,
+                "source": conversation.source,
+                "messages": [
+                    {
+                        "id": m.id,
+                        "role": m.role,
+                        "content": m.content,
+                        "datetime_utc": m.datetime_utc,
+                    }
+                    for m in conversation.messages
+                ],
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_history_search(self, request: web.Request) -> web.Response:
+        """Search conversations.
+
+        GET /api/history/search?q=query&limit=20
+        """
+        try:
+            query = request.query.get("q", "")
+            limit = int(request.query.get("limit", "20"))
+
+            if not query:
+                return web.json_response({"error": "Missing query parameter 'q'"}, status=400)
+
+            history = ConversationHistory()
+            results = history.search(query, limit=limit)
+
+            return web.json_response({
+                "results": [
+                    {
+                        "id": c.id,
+                        "name": c.name,
+                        "model": c.model,
+                        "source": c.source,
+                        "datetime_utc": c.datetime_utc,
+                        "message_count": c.message_count,
+                        "preview": c.preview,
+                    }
+                    for c in results
+                ]
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_completions(self, request: web.Request) -> web.Response:
+        """Get @ autocomplete suggestions.
+
+        GET /api/completions?prefix=@pdf:&cwd=/path
+        """
+        try:
+            prefix = request.query.get("prefix", "")
+            cwd = request.query.get("cwd", str(Path.cwd()))
+
+            # Strip leading @ if present
+            if prefix.startswith("@"):
+                prefix = prefix[1:]
+
+            handler = AtHandler(cwd=cwd)
+            completions = handler.get_completions(prefix, cwd=cwd)
+
+            return web.json_response({
+                "completions": [
+                    {
+                        "text": c.text,
+                        "description": c.description,
+                        "type": c.type,
+                    }
+                    for c in completions
+                ]
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_capture(self, request: web.Request) -> web.Response:
+        """Capture screenshot using llm-tools-capture-screen.
+
+        POST /api/capture
+        Body: {"mode": "window", "delay": 3}
+        """
+        try:
+            data = await request.json()
+            mode = data.get("mode", "window")
+            delay = int(data.get("delay", 3))
+
+            # Clamp delay to 0-60 seconds
+            delay = max(0, min(60, delay))
+
+            # Try to import and use capture_screen
+            try:
+                from llm_tools_capture_screen import capture_screen
+                result = capture_screen(mode=mode, delay=delay)
+
+                # capture_screen returns llm.ToolOutput with output dict containing path
+                if hasattr(result, "output") and isinstance(result.output, dict):
+                    path = result.output.get("path")
+                    if path:
+                        return web.json_response({"path": path})
+                elif hasattr(result, "path"):
+                    return web.json_response({"path": result.path})
+                elif isinstance(result, str):
+                    return web.json_response({"path": result})
+
+                return web.json_response({"error": "No path returned"}, status=500)
+            except ImportError:
+                return web.json_response(
+                    {"error": "llm-tools-capture-screen not installed"},
+                    status=500
+                )
+            except Exception as e:
+                return web.json_response({"error": str(e)}, status=500)
+
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_collections(self, request: web.Request) -> web.Response:
+        """List RAG collections.
+
+        GET /api/rag/collections
+        """
+        try:
+            handler = RAGHandler()
+            if not handler.available():
+                return web.json_response({"collections": [], "available": False})
+
+            collections = handler.list_collections()
+            return web.json_response({
+                "collections": collections,
+                "available": True,
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_search(self, request: web.Request) -> web.Response:
+        """Search a RAG collection.
+
+        POST /api/rag/search
+        Body: {"collection": "name", "query": "search text", "top_k": 5}
+        """
+        try:
+            data = await request.json()
+            collection = data.get("collection")
+            query = data.get("query")
+            top_k = data.get("top_k", 5)
+
+            if not collection or not query:
+                return web.json_response(
+                    {"error": "Missing collection or query"},
+                    status=400
+                )
+
+            handler = RAGHandler()
+            if not handler.available():
+                return web.json_response(
+                    {"error": "llm-tools-rag not installed"},
+                    status=500
+                )
+
+            results = handler.search(collection, query, top_k=top_k)
+            return web.json_response({
+                "results": [
+                    {
+                        "content": r.content,
+                        "source": r.source,
+                        "score": r.score,
+                    }
+                    for r in results
+                ]
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_activate(self, request: web.Request) -> web.Response:
+        """Activate a RAG collection for the session.
+
+        POST /api/rag/activate
+        Body: {"session": "session_id", "collection": "name"}
+        """
+        try:
+            data = await request.json()
+            session_id = data.get("session")
+            collection = data.get("collection")
+
+            if not session_id or not collection:
+                return web.json_response(
+                    {"error": "Missing session or collection"},
+                    status=400
+                )
+
+            # Store active collection for this session
+            state = self.daemon.get_session_state(session_id)
+            if hasattr(state.session, "active_rag_collection"):
+                state.session.active_rag_collection = collection
+            else:
+                # Store on daemon if session doesn't have the attribute
+                if not hasattr(self, "_rag_sessions"):
+                    self._rag_sessions: Dict[str, str] = {}
+                self._rag_sessions[session_id] = collection
+
+            return web.json_response({"ok": True, "collection": collection})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_add(self, request: web.Request) -> web.Response:
+        """Add documents to a RAG collection.
+
+        POST /api/rag/add
+        Body: {"collection": "name", "path": "path/or/url"}
+
+        Supported path formats:
+        - /path/to/file.pdf, /path/to/dir/
+        - git:/path/to/local/repo
+        - git:https://github.com/user/repo
+        - https://example.com/doc.pdf
+        - *.py (glob patterns)
+        """
+        try:
+            data = await request.json()
+            collection = data.get("collection")
+            path = data.get("path")
+            refresh = data.get("refresh", False)
+
+            if not collection or not path:
+                return web.json_response(
+                    {"error": "Missing collection or path"},
+                    status=400
+                )
+
+            handler = RAGHandler()
+            if not handler.available():
+                return web.json_response(
+                    {"error": "llm-tools-rag not installed"},
+                    status=500
+                )
+
+            result = handler.add_documents(collection, path, refresh=refresh)
+            return web.json_response({
+                "status": result.status,
+                "path": result.path,
+                "chunks": result.chunks,
+                "reason": result.reason,
+                "error": result.error,
+            })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
 
     async def start(self):
         """Start the web server."""

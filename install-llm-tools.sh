@@ -712,63 +712,6 @@ extract_plugin_name() {
     fi
 }
 
-# DEPRECATED: This function is kept for backward compatibility and edge cases.
-# Main plugin installation now uses consolidated ALL_PLUGINS array with single uv tool install.
-# Only use this function if you need to install individual plugins outside the main flow.
-#
-# Install or upgrade an LLM plugin with intelligent skip logic
-# Skips already-installed plugins unless:
-#   - Plugin is not installed (missing from llm plugins output)
-#   - Plugin is local/editable (always reinstall, may have changed)
-#   - Plugin needs source migration (git URL not in uv-tool-packages.json)
-# Usage: install_or_upgrade_llm_plugin "plugin_source"
-install_or_upgrade_llm_plugin() {
-    local plugin_source="$1"
-    local plugin_name
-    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
-
-    plugin_name=$(extract_plugin_name "$plugin_source")
-
-    # Check if plugin is loaded (uses cached result from INSTALLED_PLUGINS)
-    local is_installed=false
-    if echo "$INSTALLED_PLUGINS" | grep -q "^${plugin_name}$"; then
-        is_installed=true
-    fi
-
-    # Check if exact source is tracked in uv-tool-packages.json
-    local source_tracked=false
-    if [ -f "$uv_packages_file" ] && grep -q "\"${plugin_source}\"" "$uv_packages_file" 2>/dev/null; then
-        source_tracked=true
-    fi
-
-    # Decision logic
-    if [ "$is_installed" = "false" ]; then
-        # Not installed -> install (use --upgrade to handle partial installs)
-        log "Installing $plugin_name..."
-        if ! command llm install "$plugin_source" --upgrade 2>&1; then
-            warn "Failed to install $plugin_name (continuing...)"
-        fi
-
-    elif [[ "$plugin_source" =~ ^/ ]]; then
-        # Local/editable package -> always reinstall with --upgrade to re-resolve dependencies
-        log "Reinstalling local plugin $plugin_name..."
-        if ! command llm install "$plugin_source" --upgrade 2>&1; then
-            warn "Failed to reinstall $plugin_name (continuing...)"
-        fi
-
-    elif [[ "$plugin_source" =~ ^git[+] ]] && [ "$source_tracked" = "false" ]; then
-        # Git source but URL not tracked -> migration needed
-        log "Migrating $plugin_name to git source..."
-        if ! command llm install "$plugin_source" --upgrade 2>&1; then
-            warn "Failed to migrate $plugin_name (continuing...)"
-        fi
-
-    else
-        # Already installed with correct source -> skip
-        log "$plugin_name is already installed"
-    fi
-}
-
 # Clean up stale local paths from both tracking files:
 # 1. uv-tool-packages.json - llm-uv-tool's tracking (for llm install interception)
 # 2. uv-receipt.toml - uv's internal tracking (for uv tool upgrade)
@@ -1086,8 +1029,8 @@ export PATH=$HOME/.local/bin:$PATH
 # Define ALL plugins to be installed with LLM
 #############################################################################
 
-# Base plugins (always installed)
-ALL_PLUGINS=(
+# Remote plugins (from PyPI or git repositories)
+REMOTE_PLUGINS=(
     # Plugin management (must be first)
     "git+https://github.com/c0ffee0wl/llm-uv-tool"
 
@@ -1131,8 +1074,11 @@ ALL_PLUGINS=(
     "llm-sort"
     "llm-classify"
     "llm-consortium"
+)
 
-    # Local plugins (dependency order matters)
+# Local plugins (in-repo packages that should always be reinstalled)
+# These use --reinstall-package to force rebuild on every run
+LOCAL_PLUGINS=(
     "$SCRIPT_DIR/llm-tools-core"
     "$SCRIPT_DIR/llm-tools-context"
 )
@@ -1140,27 +1086,26 @@ ALL_PLUGINS=(
 # Full mode plugins
 if [ "$INSTALL_MODE" = "full" ]; then
     # Core assistant packages (always in full mode)
-    ALL_PLUGINS+=(
+    LOCAL_PLUGINS+=(
         "$SCRIPT_DIR/llm-assistant"
         "$SCRIPT_DIR/llm-inlineassistant"
     )
 
-    # X11 desktop-only plugins (capture-screen and guiassistant require X11)
+    # X11 desktop-only plugins
     if has_desktop_environment && is_x11; then
-        ALL_PLUGINS+=(
-            "git+https://github.com/c0ffee0wl/llm-tools-capture-screen"
-            "$SCRIPT_DIR/llm-guiassistant"
-        )
+        REMOTE_PLUGINS+=("git+https://github.com/c0ffee0wl/llm-tools-capture-screen")
+        LOCAL_PLUGINS+=("$SCRIPT_DIR/llm-guiassistant")
     fi
 
     # Terminator-specific plugins
     if [ "$TERMINATOR_INSTALLED" = "true" ]; then
-        ALL_PLUGINS+=(
-            "$SCRIPT_DIR/llm-assistant/llm-tools-assistant"
-            "git+https://github.com/c0ffee0wl/llm-tools-imagemage"
-        )
+        LOCAL_PLUGINS+=("$SCRIPT_DIR/llm-assistant/llm-tools-assistant")
+        REMOTE_PLUGINS+=("git+https://github.com/c0ffee0wl/llm-tools-imagemage")
     fi
 fi
+
+# Combine into ALL_PLUGINS for --with flags
+ALL_PLUGINS=("${REMOTE_PLUGINS[@]}" "${LOCAL_PLUGINS[@]}")
 
 #############################################################################
 # Install/Update LLM with ALL Plugins (consolidated for performance)
@@ -1168,43 +1113,28 @@ fi
 
 log "Installing/upgrading LLM with all plugins..."
 
-# Build --with flags from plugin array
+# Build --with flags from ALL plugins
 WITH_FLAGS=""
 for plugin in "${ALL_PLUGINS[@]}"; do
     WITH_FLAGS+=" --with \"$plugin\""
 done
 
-# Generate hash of current plugin list to detect changes
-# Include git commit to detect local plugin updates after git pull
-PLUGINS_HASH_FILE="$HOME/.config/llm-tools/plugins-hash"
-mkdir -p "$(dirname "$PLUGINS_HASH_FILE")"
-REPO_COMMIT=$(git -C "$SCRIPT_DIR" rev-parse HEAD 2>/dev/null || echo "no-git")
-CURRENT_HASH=$(printf '%s\n' "${ALL_PLUGINS[@]}" "$REPO_COMMIT" | sort | sha256sum | awk '{print $1}')
-STORED_HASH=$(cat "$PLUGINS_HASH_FILE" 2>/dev/null || echo "")
+# Build --reinstall-package flags for local plugins
+# This forces uv to always rebuild in-repo packages regardless of version number
+REINSTALL_FLAGS=""
+for local_path in "${LOCAL_PLUGINS[@]}"; do
+    # Extract package name from path (last directory component, replace - with _)
+    pkg_name=$(basename "$local_path")
+    # Convert package name to Python package format (hyphens to underscores)
+    pkg_name_normalized="${pkg_name//-/_}"
+    REINSTALL_FLAGS+=" --reinstall-package $pkg_name_normalized"
+done
 
-# Check if llm is installed
-LLM_INSTALLED=false
-if uv tool list 2>/dev/null | grep -q "^llm "; then
-    LLM_INSTALLED=true
-fi
-
-# Decide install action based on state
-# Always use --force with --with flags because:
-# 1. uv tool upgrade doesn't support --with flags
-# 2. Without --with, local plugins get removed during upgrade
-if [ "$LLM_INSTALLED" = "false" ]; then
-    log "Installing llm with ${#ALL_PLUGINS[@]} plugins (fresh install)..."
-elif [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
-    log "Plugin list changed, reinstalling llm with ${#ALL_PLUGINS[@]} plugins..."
-else
-    log "Plugin list unchanged, checking for updates..."
-fi
-
-# Always use --force to preserve local plugins (uv tool upgrade doesn't support --with)
-eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
-
-# Store current hash for next run
-echo "$CURRENT_HASH" > "$PLUGINS_HASH_FILE"
+# Install llm with all plugins
+# --force: required because uv tool upgrade doesn't support --with flags
+# --reinstall-package: forces rebuild of local plugins even if version unchanged
+log "Installing llm with ${#ALL_PLUGINS[@]} plugins (${#LOCAL_PLUGINS[@]} local)..."
+eval "uv tool install --force $REINSTALL_FLAGS $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
 
 # Update uv-tool-packages.json for llm-uv-tool compatibility
 LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"

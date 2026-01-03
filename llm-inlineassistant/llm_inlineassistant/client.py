@@ -75,6 +75,141 @@ def stream_request(query: str, mode: str = "assistant", system_prompt: str = "")
             return
 
 
+def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool:
+    """Handle /rag commands.
+
+    Syntax:
+        /rag                 - List collections
+        /rag list            - List collections
+        /rag search <coll> <query>  - Search collection
+        /rag <collection>    - Activate collection for session
+    """
+    parts = command.split(maxsplit=2)
+
+    # /rag or /rag list - list collections
+    if len(parts) == 1 or (len(parts) == 2 and parts[1] == 'list'):
+        try:
+            from llm_tools_core import RAGHandler
+            handler = RAGHandler()
+            if not handler.available():
+                console.print("[yellow]RAG not available (llm-tools-rag not installed)[/]")
+                return True
+
+            collections = handler.list_collections()
+            if not collections:
+                console.print("[dim]No RAG collections found[/]")
+                console.print("[dim]Add documents with: /rag add <collection> <path>[/]")
+                return True
+
+            console.print("[bold]RAG Collections:[/]")
+            for coll in collections:
+                name = coll.get('name', 'unknown')
+                count = coll.get('count', 0)
+                console.print(f"  {name}: {count} documents")
+
+        except ImportError:
+            console.print("[red]RAG not available (llm-tools-core not found)[/]")
+        return True
+
+    subcommand = parts[1]
+
+    # /rag search <collection> <query>
+    if subcommand == 'search':
+        if len(parts) < 3:
+            console.print("[yellow]Usage: /rag search <collection> <query>[/]")
+            return True
+
+        # Parse collection and query from remaining args
+        rest = parts[2]
+        search_parts = rest.split(maxsplit=1)
+        if len(search_parts) < 2:
+            console.print("[yellow]Usage: /rag search <collection> <query>[/]")
+            return True
+
+        collection = search_parts[0]
+        query = search_parts[1]
+
+        try:
+            from llm_tools_core import RAGHandler
+            handler = RAGHandler()
+            if not handler.available():
+                console.print("[yellow]RAG not available[/]")
+                return True
+
+            results = handler.search(collection, query, top_k=5)
+            if not results:
+                console.print(f"[dim]No results found in '{collection}'[/]")
+                return True
+
+            console.print(f"[bold]Search results from '{collection}':[/]")
+            for i, result in enumerate(results, 1):
+                score = result.score
+                content = result.content
+                source = result.source or 'unknown'
+                # Truncate content for display
+                preview = content[:200] + '...' if len(content) > 200 else content
+                console.print(f"\n[cyan]{i}. Score: {score:.3f} | Source: {source}[/]")
+                console.print(preview)
+
+        except ImportError:
+            console.print("[red]RAG not available[/]")
+        return True
+
+    # /rag add <collection> <path>
+    if subcommand == 'add':
+        if len(parts) < 3:
+            console.print("[yellow]Usage: /rag add <collection> <path>[/]")
+            return True
+
+        rest = parts[2]
+        add_parts = rest.split(maxsplit=1)
+        if len(add_parts) < 2:
+            console.print("[yellow]Usage: /rag add <collection> <path>[/]")
+            return True
+
+        collection = add_parts[0]
+        path = add_parts[1]
+
+        try:
+            from llm_tools_core import RAGHandler
+            handler = RAGHandler()
+            if not handler.available():
+                console.print("[yellow]RAG not available[/]")
+                return True
+
+            result = handler.add_documents(collection, path)
+            if result.status == "success":
+                console.print(f"[green]Added {result.chunks} chunks to '{collection}'[/]")
+            else:
+                console.print(f"[red]Failed to add documents: {result.error}[/]")
+
+        except ImportError:
+            console.print("[red]RAG not available[/]")
+        return True
+
+    # /rag <collection> - activate for session
+    # Send to daemon to activate RAG for this terminal's session
+    collection = subcommand
+    request = {
+        "cmd": "rag_activate",
+        "tid": terminal_id,
+        "collection": collection,
+    }
+
+    activated = False
+    for event in stream_events(request):
+        if event.get("type") == "text":
+            console.print(event.get('content', ''))
+            activated = True
+        elif event.get("type") == "error":
+            console.print(f"[red]{event.get('message', 'Unknown error')}[/]")
+
+    if not activated:
+        console.print(f"[green]RAG collection '{collection}' activated for this session[/]")
+
+    return True
+
+
 def handle_slash_command(command: str, terminal_id: str) -> bool:
     """Handle slash commands.
 
@@ -124,6 +259,9 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
             if event.get("type") == "text":
                 console.print(event.get('content', ''))
         return True
+
+    elif command.startswith('/rag'):
+        return handle_rag_command(command, terminal_id, console)
 
     elif command.startswith('/copy'):
         # Parse /copy [raw] [all] [N]
@@ -265,12 +403,13 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
         return accumulated_text
 
 
-def get_completions(prefix: str, model: Optional[str] = None) -> list:
+def get_completions(prefix: str, model: Optional[str] = None, cwd: Optional[str] = None) -> list:
     """Get completions for a prefix from the daemon.
 
     Args:
         prefix: Prefix to complete (e.g., '/', '@', 'model:')
         model: Model to use (starts daemon if needed)
+        cwd: Working directory for file completions
 
     Returns:
         List of completion dicts with 'text' and 'description' keys
@@ -283,6 +422,13 @@ def get_completions(prefix: str, model: Optional[str] = None) -> list:
         "cmd": "complete",
         "prefix": prefix,
     }
+
+    # Include cwd for @ completions that need file paths
+    if cwd:
+        request["cwd"] = cwd
+    elif prefix.startswith('@'):
+        # Default to current directory for @ completions
+        request["cwd"] = os.getcwd()
 
     completions = []
     for event in stream_events(request):

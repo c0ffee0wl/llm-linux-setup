@@ -44,9 +44,13 @@ let reconnectAttempts = 0;
 let currentMessageId = null;
 let sessionId = null;
 let isStreaming = false;
+let currentToolCallId = null;
 
 // Pending requests for async responses (e.g., stripMarkdown)
 const pendingRequests = new Map();
+
+// Pending images for capture/upload
+window.pendingImages = [];
 
 // Message store for tracking conversation history
 const messageStore = {
@@ -104,7 +108,545 @@ const ICONS = {
     copyPlain: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/><path d="M12 13h7M15.5 13v6" stroke-width="1.5"/></svg>',
     edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
     regenerate: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>',
-    branch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>'
+    branch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>',
+    python: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 5.8 2.8 5.8 2.8v2.9h6.3v.9H3.9S0 6.2 0 12.1s3.4 5.7 3.4 5.7h2v-2.8s-.1-3.4 3.3-3.4h5.7s3.2 0 3.2-3.1V3.4S18.1 0 12 0zm-3.1 2c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z"/><path d="M12 24c6.6 0 6.2-2.8 6.2-2.8v-2.9h-6.3v-.9h8.2s3.9.4 3.9-5.5-3.4-5.7-3.4-5.7h-2v2.8s.1 3.4-3.3 3.4H9.6s-3.2 0-3.2 3.1v5.1S5.9 24 12 24zm3.1-2c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z"/></svg>',
+    shell: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
+    search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
+    web: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/></svg>',
+    tool: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/></svg>',
+    check: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>',
+    chevron: '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg>',
+    thinking: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+};
+
+// Tool display names and icons
+const TOOL_CONFIG = {
+    execute_python: { name: 'Python', icon: 'python' },
+    sandboxed_shell: { name: 'Shell', icon: 'shell' },
+    search_google: { name: 'Google Search', icon: 'search' },
+    fetch_url: { name: 'Fetch URL', icon: 'web' },
+    suggest_command: { name: 'Command', icon: 'shell' },
+    capture_screen: { name: 'Screenshot', icon: 'tool' }
+};
+
+// ============================================================================
+// History Sidebar
+// ============================================================================
+
+const historySidebar = {
+    conversations: [],
+    isLoading: false,
+
+    async load() {
+        if (this.isLoading) return;
+        this.isLoading = true;
+
+        try {
+            const response = await fetch('/api/history');
+            if (!response.ok) throw new Error('Failed to load history');
+            const data = await response.json();
+            // API returns grouped data: {"Today": [...], "Yesterday": [...], ...}
+            this.groupedConversations = data;
+            this.render();
+        } catch (err) {
+            console.error('History load error:', err);
+            showToast('Failed to load history');
+        } finally {
+            this.isLoading = false;
+        }
+    },
+
+    render() {
+        const list = document.getElementById('history-list');
+        if (!list) return;
+
+        list.textContent = ''; // Clear safely
+
+        // API returns pre-grouped data: {"Today": [...], "Yesterday": [...], ...}
+        const groups = this.groupedConversations || {};
+        const hasConversations = Object.values(groups).some(arr => arr.length > 0);
+
+        if (!hasConversations) {
+            const empty = document.createElement('div');
+            empty.className = 'history-empty';
+            empty.textContent = 'No conversations yet';
+            list.appendChild(empty);
+            return;
+        }
+
+        // Iterate in display order (also handles search results)
+        const displayOrder = ['Search Results', 'Today', 'Yesterday', 'This Week', 'Older'];
+        for (const label of displayOrder) {
+            const items = groups[label];
+            if (!items || items.length === 0) continue;
+
+            const group = document.createElement('div');
+            group.className = 'history-group';
+
+            const header = document.createElement('div');
+            header.className = 'history-group-header';
+            header.textContent = label;
+            group.appendChild(header);
+
+            for (const conv of items) {
+                const item = document.createElement('div');
+                item.className = 'history-item';
+                item.dataset.id = conv.id;
+                item.onclick = () => this.loadConversation(conv.id);
+
+                const itemHeader = document.createElement('div');
+                itemHeader.className = 'history-item-header';
+
+                const preview = document.createElement('span');
+                preview.className = 'history-preview';
+                preview.textContent = conv.preview || 'Empty conversation';
+                itemHeader.appendChild(preview);
+
+                // Source badge
+                const badge = this.createSourceBadge(conv.source);
+                if (badge) itemHeader.appendChild(badge);
+
+                item.appendChild(itemHeader);
+
+                const meta = document.createElement('div');
+                meta.className = 'history-meta';
+                meta.textContent = (conv.model || '') + ' · ' + (conv.message_count || 0) + ' msgs';
+                item.appendChild(meta);
+
+                group.appendChild(item);
+            }
+
+            list.appendChild(group);
+        }
+    },
+
+    createSourceBadge(source) {
+        const config = {
+            gui: { text: 'G', title: 'GUI', cls: 'badge-gui' },
+            tui: { text: 'T', title: 'TUI', cls: 'badge-tui' },
+            inline: { text: 'I', title: 'Inline', cls: 'badge-inline' },
+            cli: { text: 'C', title: 'CLI', cls: 'badge-cli' }
+        };
+        const cfg = config[source] || { text: '?', title: 'Unknown', cls: '' };
+        const badge = document.createElement('span');
+        badge.className = 'source-badge ' + cfg.cls;
+        badge.textContent = cfg.text;
+        badge.title = cfg.title;
+        return badge;
+    },
+
+    async loadConversation(id) {
+        try {
+            const response = await fetch('/api/history/' + id);
+            if (!response.ok) throw new Error('Failed to load conversation');
+            const data = await response.json();
+
+            // Load into main view
+            loadHistory(data.messages || []);
+            showToast('Loaded conversation');
+
+            // On mobile, collapse sidebar after selection
+            if (window.innerWidth < 768) {
+                this.toggle();
+            }
+        } catch (err) {
+            console.error('Load conversation error:', err);
+            showToast('Failed to load conversation');
+        }
+    },
+
+    async search(query) {
+        if (!query.trim()) {
+            await this.load();
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/history/search?q=' + encodeURIComponent(query));
+            if (!response.ok) throw new Error('Search failed');
+            const data = await response.json();
+            // Search API returns {results: [...]} - put all in "Search Results" group
+            const results = data.results || [];
+            this.groupedConversations = results.length > 0
+                ? { 'Search Results': results }
+                : {};
+            this.render();
+        } catch (err) {
+            console.error('Search error:', err);
+        }
+    },
+
+    toggle() {
+        const sidebar = document.getElementById('history-sidebar');
+        if (sidebar) {
+            sidebar.classList.toggle('collapsed');
+            // Save state
+            localStorage.setItem('sidebar_collapsed', sidebar.classList.contains('collapsed'));
+        }
+    },
+
+    init() {
+        // Restore sidebar state
+        const collapsed = localStorage.getItem('sidebar_collapsed') !== 'false';
+        const sidebar = document.getElementById('history-sidebar');
+        if (sidebar && collapsed) {
+            sidebar.classList.add('collapsed');
+        }
+
+        // Load history
+        this.load();
+    }
+};
+
+// ============================================================================
+// @ Autocomplete
+// ============================================================================
+
+const atAutocomplete = {
+    visible: false,
+    suggestions: [],
+    selectedIndex: 0,
+    triggerStart: -1,
+    currentPrefix: '',
+
+    async getSuggestions(prefix) {
+        try {
+            const response = await fetch('/api/completions?prefix=' + encodeURIComponent(prefix));
+            if (!response.ok) return [];
+            const data = await response.json();
+            return data.completions || [];
+        } catch (err) {
+            console.error('Completions error:', err);
+            return [];
+        }
+    },
+
+    render() {
+        const dropdown = document.getElementById('at-autocomplete');
+        const list = document.getElementById('at-autocomplete-list');
+        if (!dropdown || !list) return;
+
+        if (this.suggestions.length === 0) {
+            this.hide();
+            return;
+        }
+
+        list.textContent = ''; // Clear safely
+
+        this.suggestions.forEach((item, i) => {
+            const div = document.createElement('div');
+            div.className = 'at-completion' + (i === this.selectedIndex ? ' selected' : '');
+            div.dataset.index = i;
+
+            const text = document.createElement('span');
+            text.className = 'at-completion-text';
+            text.textContent = item.text;
+            div.appendChild(text);
+
+            const desc = document.createElement('span');
+            desc.className = 'at-completion-desc';
+            desc.textContent = item.description || '';
+            div.appendChild(desc);
+
+            div.onclick = () => this.select(i);
+            list.appendChild(div);
+        });
+
+        dropdown.classList.remove('hidden');
+        this.visible = true;
+
+        // Position dropdown near input
+        this.positionDropdown();
+    },
+
+    positionDropdown() {
+        const dropdown = document.getElementById('at-autocomplete');
+        const input = document.getElementById('input');
+        if (!dropdown || !input) return;
+
+        const rect = input.getBoundingClientRect();
+        dropdown.style.bottom = (window.innerHeight - rect.top + 5) + 'px';
+        dropdown.style.left = rect.left + 'px';
+        dropdown.style.width = Math.min(rect.width, 400) + 'px';
+    },
+
+    select(index) {
+        if (index < 0 || index >= this.suggestions.length) return;
+
+        const item = this.suggestions[index];
+        const input = document.getElementById('input');
+        if (!input) return;
+
+        // Replace @ prefix with selected item
+        const before = input.value.substring(0, this.triggerStart);
+        const after = input.value.substring(input.selectionStart);
+        input.value = before + item.text + ' ' + after;
+        input.setSelectionRange(before.length + item.text.length + 1, before.length + item.text.length + 1);
+
+        this.hide();
+        autoResizeInput();
+    },
+
+    hide() {
+        const dropdown = document.getElementById('at-autocomplete');
+        if (dropdown) {
+            dropdown.classList.add('hidden');
+        }
+        this.visible = false;
+        this.suggestions = [];
+        this.selectedIndex = 0;
+    },
+
+    navigate(direction) {
+        if (!this.visible) return;
+        this.selectedIndex = Math.max(0, Math.min(this.suggestions.length - 1, this.selectedIndex + direction));
+        this.render();
+    },
+
+    async handleInput(input) {
+        const text = input.value;
+        const pos = input.selectionStart;
+
+        // Find @ before cursor
+        let atPos = -1;
+        for (let i = pos - 1; i >= 0; i--) {
+            if (text[i] === '@') {
+                atPos = i;
+                break;
+            }
+            if (/\s/.test(text[i])) break;
+        }
+
+        if (atPos === -1) {
+            this.hide();
+            return;
+        }
+
+        const prefix = text.substring(atPos, pos);
+        if (prefix === this.currentPrefix) return;
+
+        this.currentPrefix = prefix;
+        this.triggerStart = atPos;
+
+        // Fetch suggestions
+        this.suggestions = await this.getSuggestions(prefix);
+        this.selectedIndex = 0;
+        this.render();
+    }
+};
+
+// ============================================================================
+// Capture Controls
+// ============================================================================
+
+const captureControls = {
+    delay: parseInt(localStorage.getItem('capture_delay') || '3', 10),
+    dropdownVisible: false,
+
+    init() {
+        const delayInput = document.getElementById('capture-delay-input');
+        const delaySlider = document.getElementById('capture-delay-slider');
+
+        if (delayInput) {
+            delayInput.value = this.delay;
+            delayInput.addEventListener('input', (e) => {
+                this.setDelay(parseInt(e.target.value, 10) || 0);
+            });
+        }
+
+        if (delaySlider) {
+            delaySlider.value = this.delay;
+            delaySlider.addEventListener('input', (e) => {
+                this.setDelay(parseInt(e.target.value, 10) || 0);
+            });
+        }
+
+        this.updateLabel();
+    },
+
+    setDelay(value) {
+        this.delay = Math.max(0, Math.min(60, value));
+        localStorage.setItem('capture_delay', this.delay.toString());
+
+        // Sync UI elements
+        const delayInput = document.getElementById('capture-delay-input');
+        const delaySlider = document.getElementById('capture-delay-slider');
+
+        if (delayInput) delayInput.value = this.delay;
+        if (delaySlider) delaySlider.value = this.delay;
+        this.updateLabel();
+    },
+
+    updateLabel() {
+        const label = document.getElementById('capture-delay-label');
+        if (label) {
+            label.textContent = this.delay + 's';
+        }
+    },
+
+    toggleDropdown() {
+        const dropdown = document.getElementById('capture-dropdown');
+        if (dropdown) {
+            dropdown.classList.toggle('hidden');
+            this.dropdownVisible = !dropdown.classList.contains('hidden');
+        }
+    },
+
+    hideDropdown() {
+        const dropdown = document.getElementById('capture-dropdown');
+        if (dropdown) {
+            dropdown.classList.add('hidden');
+            this.dropdownVisible = false;
+        }
+    },
+
+    async capture(mode) {
+        this.hideDropdown();
+
+        try {
+            showToast('Capturing ' + mode + (this.delay > 0 ? ' in ' + this.delay + 's...' : '...'));
+
+            const response = await fetch('/api/capture', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ mode: mode, delay: this.delay })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Capture failed');
+            }
+
+            const data = await response.json();
+            if (data.image) {
+                window.pendingImages.push(data.image);
+                showToast('Screenshot captured');
+            }
+        } catch (err) {
+            console.error('Capture error:', err);
+            showToast('Capture failed: ' + err.message);
+        }
+    }
+};
+
+// ============================================================================
+// RAG Panel
+// ============================================================================
+
+const ragPanel = {
+    collections: [],
+    activeCollection: null,
+
+    async load() {
+        try {
+            const response = await fetch('/api/rag/collections');
+            if (!response.ok) return;
+            const data = await response.json();
+            this.collections = data.collections || [];
+            this.render();
+        } catch (err) {
+            console.error('RAG load error:', err);
+        }
+    },
+
+    render() {
+        const container = document.getElementById('rag-collections');
+        if (!container) return;
+
+        container.textContent = ''; // Clear safely
+
+        if (this.collections.length === 0) {
+            const empty = document.createElement('div');
+            empty.className = 'rag-empty';
+            empty.textContent = 'No collections. Add documents below.';
+            container.appendChild(empty);
+            return;
+        }
+
+        for (const coll of this.collections) {
+            const div = document.createElement('div');
+            div.className = 'rag-collection' + (coll.name === this.activeCollection ? ' active' : '');
+            div.onclick = () => this.activate(coll.name);
+
+            const name = document.createElement('span');
+            name.className = 'rag-name';
+            name.textContent = coll.name;
+            div.appendChild(name);
+
+            const count = document.createElement('span');
+            count.className = 'rag-count';
+            count.textContent = (coll.count || 0) + ' docs';
+            div.appendChild(count);
+
+            container.appendChild(div);
+        }
+    },
+
+    async activate(name) {
+        try {
+            const response = await fetch('/api/rag/activate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ session: sessionId, collection: name })
+            });
+
+            if (!response.ok) throw new Error('Failed to activate collection');
+
+            this.activeCollection = name;
+            this.render();
+            showToast('RAG: ' + name + ' activated');
+        } catch (err) {
+            console.error('RAG activate error:', err);
+            showToast('Failed to activate collection');
+        }
+    },
+
+    async addDocument(path) {
+        if (!path.trim()) return;
+
+        try {
+            // Use default collection if none active
+            const collection = this.activeCollection || 'default';
+
+            const response = await fetch('/api/rag/add', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ collection: collection, path: path })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to add document');
+            }
+
+            showToast('Document added to ' + collection);
+            await this.load(); // Refresh collections
+        } catch (err) {
+            console.error('RAG add error:', err);
+            showToast('Failed to add: ' + err.message);
+        }
+    },
+
+    show() {
+        const historyPanel = document.getElementById('history-panel');
+        const ragPanelEl = document.getElementById('rag-panel');
+        if (historyPanel) historyPanel.classList.remove('active');
+        if (ragPanelEl) ragPanelEl.classList.add('active');
+        document.querySelectorAll('.sidebar-tab').forEach(function(tab) {
+            tab.classList.toggle('active', tab.dataset.tab === 'rag');
+        });
+        this.load();
+    },
+
+    hide() {
+        const historyPanel = document.getElementById('history-panel');
+        const ragPanelEl = document.getElementById('rag-panel');
+        if (ragPanelEl) ragPanelEl.classList.remove('active');
+        if (historyPanel) historyPanel.classList.add('active');
+        document.querySelectorAll('.sidebar-tab').forEach(function(tab) {
+            tab.classList.toggle('active', tab.dataset.tab === 'history');
+        });
+    }
 };
 
 // ============================================================================
@@ -148,7 +690,7 @@ function handleMessage(msg) {
     switch (msg.type) {
         case 'connected':
             sessionId = msg.sessionId;
-            console.log(`Connected to session: ${sessionId}, model: ${msg.model}`);
+            console.log('Connected to session: ' + sessionId + ', model: ' + msg.model);
             break;
 
         case 'text':
@@ -156,16 +698,22 @@ function handleMessage(msg) {
             break;
 
         case 'tool_start':
-            addToolStatus(`Running ${msg.tool}...`);
+            addToolCall(msg.tool, msg.args, msg.tool_call_id);
             break;
 
         case 'tool_done':
-            completeToolStatus();
+            completeToolCall(msg.tool_call_id, msg.result);
+            break;
+
+        case 'thinking':
+            addThinkingTrace(msg.content);
             break;
 
         case 'done':
             finalizeMessage();
             isStreaming = false;
+            // Refresh history sidebar to show updated conversation
+            historySidebar.load();
             break;
 
         case 'error':
@@ -175,7 +723,7 @@ function handleMessage(msg) {
 
         case 'stripped':
             // Handle stripMarkdown response
-            const callback = pendingRequests.get(msg.requestId);
+            var callback = pendingRequests.get(msg.requestId);
             if (callback) {
                 callback(msg.text);
                 pendingRequests.delete(msg.requestId);
@@ -187,16 +735,18 @@ function handleMessage(msg) {
             break;
 
         case 'branched':
-            showToast(`Branched to new session: ${msg.newSessionId}`);
+            showToast('Branched to new session: ' + msg.newSessionId);
             break;
 
         case 'commandResult':
             if (msg.command === 'new') {
                 clearConversation();
                 showToast('New conversation started');
+                // Refresh history to show the new session
+                historySidebar.load();
             } else if (msg.command === 'status' && msg.data) {
-                const status = msg.data;
-                showToast(`Model: ${status.model} | Messages: ${status.messages}`);
+                var status = msg.data;
+                showToast('Model: ' + status.model + ' | Messages: ' + status.messages);
             }
             break;
 
@@ -309,27 +859,189 @@ function finalizeMessage() {
     updateLastMessageIndicators();
 }
 
-function addToolStatus(message) {
-    const conversation = document.getElementById('conversation');
-    const statusDiv = document.createElement('div');
-    statusDiv.className = 'message tool-status running';
-    statusDiv.id = 'current-tool-status';
-    statusDiv.textContent = message;
+// ============================================================================
+// Collapsible Tool Calls
+// ============================================================================
 
-    // Append to end - server sends events in correct order, so this maintains order
-    // Tool statuses always appear after the current streaming message because
-    // the streaming message was appended first
-    conversation.appendChild(statusDiv);
+function getToolConfig(toolName) {
+    return TOOL_CONFIG[toolName] || { name: toolName, icon: 'tool' };
+}
+
+function getToolPreview(toolName, args) {
+    if (!args) return '';
+
+    // Generate a short preview based on tool type
+    if (toolName === 'execute_python' && args.code) {
+        const firstLine = args.code.split('\n')[0];
+        return firstLine.length > 50 ? firstLine.substring(0, 50) + '...' : firstLine;
+    }
+    if (toolName === 'sandboxed_shell' && args.command) {
+        return args.command.length > 50 ? args.command.substring(0, 50) + '...' : args.command;
+    }
+    if (toolName === 'fetch_url' && args.url) {
+        return args.url.length > 40 ? args.url.substring(0, 40) + '...' : args.url;
+    }
+    if (toolName === 'search_google' && args.query) {
+        return args.query;
+    }
+
+    // Default: show first argument value
+    const keys = Object.keys(args);
+    if (keys.length > 0) {
+        const val = String(args[keys[0]]);
+        return val.length > 50 ? val.substring(0, 50) + '...' : val;
+    }
+    return '';
+}
+
+function addToolCall(toolName, args, toolCallId) {
+    const conversation = document.getElementById('conversation');
+    const config = getToolConfig(toolName);
+    const preview = getToolPreview(toolName, args);
+
+    const container = document.createElement('div');
+    container.className = 'tool-call collapsed running';
+    container.id = 'tool-' + (toolCallId || Date.now());
+    currentToolCallId = container.id;
+
+    // Header (always visible)
+    const header = document.createElement('div');
+    header.className = 'tool-call-header';
+    header.onclick = function() { toggleToolCall(container); };
+
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'tool-call-icon';
+    iconSpan.innerHTML = ICONS[config.icon] || ICONS.tool;
+    header.appendChild(iconSpan);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'tool-call-name';
+    nameSpan.textContent = config.name;
+    header.appendChild(nameSpan);
+
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'tool-call-preview';
+    previewSpan.textContent = preview;
+    header.appendChild(previewSpan);
+
+    const statusSpan = document.createElement('span');
+    statusSpan.className = 'tool-call-status running';
+    header.appendChild(statusSpan);
+
+    const chevronSpan = document.createElement('span');
+    chevronSpan.className = 'tool-call-expand';
+    chevronSpan.innerHTML = ICONS.chevron;
+    header.appendChild(chevronSpan);
+
+    container.appendChild(header);
+
+    // Body (expandable)
+    const body = document.createElement('div');
+    body.className = 'tool-call-body';
+
+    // Input section
+    if (args) {
+        const inputSection = document.createElement('div');
+        inputSection.className = 'tool-call-section';
+
+        const inputLabel = document.createElement('div');
+        inputLabel.className = 'tool-call-section-label';
+        inputLabel.textContent = 'Input';
+        inputSection.appendChild(inputLabel);
+
+        const inputContent = document.createElement('pre');
+        inputContent.textContent = JSON.stringify(args, null, 2);
+        inputSection.appendChild(inputContent);
+
+        body.appendChild(inputSection);
+    }
+
+    // Output section (placeholder)
+    const outputSection = document.createElement('div');
+    outputSection.className = 'tool-call-section tool-call-output';
+
+    const outputLabel = document.createElement('div');
+    outputLabel.className = 'tool-call-section-label';
+    outputLabel.textContent = 'Output';
+    outputSection.appendChild(outputLabel);
+
+    const outputContent = document.createElement('pre');
+    outputContent.textContent = 'Running...';
+    outputSection.appendChild(outputContent);
+
+    body.appendChild(outputSection);
+    container.appendChild(body);
+
+    conversation.appendChild(container);
     window.scrollTo(0, document.body.scrollHeight);
 }
 
-function completeToolStatus() {
-    const current = document.getElementById('current-tool-status');
-    if (current) {
-        current.classList.remove('running');
-        current.classList.add('completed');
-        current.removeAttribute('id');
+function completeToolCall(toolCallId, result) {
+    const id = toolCallId ? 'tool-' + toolCallId : currentToolCallId;
+    const container = document.getElementById(id);
+
+    if (container) {
+        // Update status icon
+        const statusIcon = container.querySelector('.tool-call-status');
+        if (statusIcon) {
+            statusIcon.classList.remove('running');
+            statusIcon.classList.add('completed');
+        }
+
+        // Update output content
+        const outputContent = container.querySelector('.tool-call-output pre');
+        if (outputContent && result !== undefined) {
+            const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+            outputContent.textContent = resultStr.length > 2000
+                ? resultStr.substring(0, 2000) + '\n... (truncated)'
+                : resultStr;
+        }
     }
+
+    currentToolCallId = null;
+}
+
+function toggleToolCall(container) {
+    container.classList.toggle('collapsed');
+}
+
+// ============================================================================
+// Collapsible Thinking Traces
+// ============================================================================
+
+function addThinkingTrace(content) {
+    const conversation = document.getElementById('conversation');
+
+    const wrapper = document.createElement('div');
+    wrapper.className = 'thinking-trace';
+
+    const details = document.createElement('details');
+
+    const summary = document.createElement('summary');
+    // Note: CSS uses ::before pseudo-element to add the thinking icon
+
+    const labelSpan = document.createElement('span');
+    labelSpan.textContent = 'Thinking';
+    summary.appendChild(labelSpan);
+
+    // Preview (first 100 chars)
+    const previewSpan = document.createElement('span');
+    previewSpan.className = 'thinking-trace-preview';
+    const preview = content.replace(/\s+/g, ' ').trim();
+    previewSpan.textContent = preview.length > 100 ? preview.substring(0, 100) + '...' : preview;
+    summary.appendChild(previewSpan);
+
+    details.appendChild(summary);
+
+    // Full content
+    const body = document.createElement('div');
+    body.className = 'thinking-trace-content';
+    body.innerHTML = marked.parse(content);
+    details.appendChild(body);
+
+    wrapper.appendChild(details);
+    conversation.appendChild(wrapper);
+    window.scrollTo(0, document.body.scrollHeight);
 }
 
 function addError(message) {
@@ -771,15 +1483,48 @@ function showStatus() {
 // Event Listeners
 // ============================================================================
 
-document.addEventListener('DOMContentLoaded', () => {
-    const input = document.getElementById('input');
-    const sendBtn = document.getElementById('send-btn');
-    const actionSearch = document.getElementById('action-search');
-    const actionBackdrop = document.querySelector('.action-panel-backdrop');
+document.addEventListener('DOMContentLoaded', function() {
+    var input = document.getElementById('input');
+    var sendBtn = document.getElementById('send-btn');
+    var actionSearch = document.getElementById('action-search');
+    var actionBackdrop = document.querySelector('.action-panel-backdrop');
+
+    // Initialize modules
+    historySidebar.init();
+    captureControls.init();
 
     // Input handling
-    input.addEventListener('input', autoResizeInput);
-    input.addEventListener('keydown', (e) => {
+    input.addEventListener('input', function() {
+        autoResizeInput();
+        atAutocomplete.handleInput(input);
+    });
+
+    input.addEventListener('keydown', function(e) {
+        // Handle @ autocomplete navigation
+        if (atAutocomplete.visible) {
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                atAutocomplete.navigate(1);
+                return;
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                atAutocomplete.navigate(-1);
+                return;
+            } else if (e.key === 'Enter' && !e.ctrlKey) {
+                e.preventDefault();
+                atAutocomplete.select(atAutocomplete.selectedIndex);
+                return;
+            } else if (e.key === 'Escape') {
+                atAutocomplete.hide();
+                return;
+            } else if (e.key === 'Tab') {
+                e.preventDefault();
+                atAutocomplete.select(atAutocomplete.selectedIndex);
+                return;
+            }
+        }
+
+        // Send message with Ctrl+Enter
         if (e.key === 'Enter' && e.ctrlKey) {
             e.preventDefault();
             sendMessage();
@@ -790,8 +1535,107 @@ document.addEventListener('DOMContentLoaded', () => {
     // Send button
     sendBtn.addEventListener('click', sendMessage);
 
+    // Sidebar toggle buttons
+    var sidebarToggle = document.getElementById('sidebar-toggle');
+    var sidebarToggleInput = document.getElementById('sidebar-toggle-input');
+    if (sidebarToggle) {
+        sidebarToggle.addEventListener('click', function() {
+            historySidebar.toggle();
+        });
+    }
+    if (sidebarToggleInput) {
+        sidebarToggleInput.addEventListener('click', function() {
+            historySidebar.toggle();
+        });
+    }
+
+    // Sidebar tab switching
+    document.querySelectorAll('.sidebar-tab').forEach(function(tab) {
+        tab.addEventListener('click', function() {
+            if (tab.dataset.tab === 'rag') {
+                ragPanel.show();
+            } else {
+                ragPanel.hide();
+            }
+        });
+    });
+
+    // History search
+    var historySearch = document.getElementById('history-search');
+    if (historySearch) {
+        var searchTimeout = null;
+        historySearch.addEventListener('input', function(e) {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(function() {
+                historySidebar.search(e.target.value);
+            }, 300);
+        });
+    }
+
+    // @ button
+    var atBtn = document.getElementById('at-btn');
+    if (atBtn) {
+        atBtn.addEventListener('click', function() {
+            input.value += '@';
+            input.focus();
+            atAutocomplete.handleInput(input);
+        });
+    }
+
+    // Capture button and dropdown
+    var captureBtn = document.getElementById('capture-btn');
+    if (captureBtn) {
+        captureBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            captureControls.toggleDropdown();
+        });
+    }
+
+    // Capture mode buttons
+    document.querySelectorAll('.capture-mode').forEach(function(btn) {
+        btn.addEventListener('click', function() {
+            captureControls.capture(btn.dataset.mode);
+        });
+    });
+
+    // RAG add button
+    var ragAddBtn = document.getElementById('rag-add-btn');
+    var ragAddInput = document.getElementById('rag-add-input');
+    if (ragAddBtn && ragAddInput) {
+        ragAddBtn.addEventListener('click', function() {
+            ragPanel.addDocument(ragAddInput.value);
+            ragAddInput.value = '';
+        });
+        ragAddInput.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                ragPanel.addDocument(ragAddInput.value);
+                ragAddInput.value = '';
+            }
+        });
+    }
+
+    // New conversation button
+    var newConvBtn = document.getElementById('new-conversation-btn');
+    if (newConvBtn) {
+        newConvBtn.addEventListener('click', function() {
+            startNewSession();
+        });
+    }
+
+    // Close dropdowns when clicking outside
+    document.addEventListener('click', function(e) {
+        // Close capture dropdown
+        if (!e.target.closest('#capture-wrapper')) {
+            captureControls.hideDropdown();
+        }
+        // Close @ autocomplete
+        if (!e.target.closest('#at-autocomplete') && !e.target.closest('#input')) {
+            atAutocomplete.hide();
+        }
+    });
+
     // Global keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', function(e) {
         // Ctrl+K - Action panel
         if (e.ctrlKey && e.key === 'k') {
             e.preventDefault();
@@ -807,38 +1651,44 @@ document.addEventListener('DOMContentLoaded', () => {
             if (actionPanelVisible) {
                 hideActionPanel();
             }
+            atAutocomplete.hide();
+            captureControls.hideDropdown();
         }
     });
 
     // Action panel search
-    actionSearch?.addEventListener('input', (e) => {
-        selectedActionIndex = 0;
-        renderActionList(e.target.value);
-    });
+    if (actionSearch) {
+        actionSearch.addEventListener('input', function(e) {
+            selectedActionIndex = 0;
+            renderActionList(e.target.value);
+        });
 
-    actionSearch?.addEventListener('keydown', (e) => {
-        const list = document.getElementById('action-list');
-        const items = list.querySelectorAll('.action-item');
+        actionSearch.addEventListener('keydown', function(e) {
+            var list = document.getElementById('action-list');
+            var items = list.querySelectorAll('.action-item');
 
-        if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            selectedActionIndex = Math.min(selectedActionIndex + 1, items.length - 1);
-            renderActionList(actionSearch.value);
-        } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            selectedActionIndex = Math.max(selectedActionIndex - 1, 0);
-            renderActionList(actionSearch.value);
-        } else if (e.key === 'Enter') {
-            e.preventDefault();
-            const selected = items[selectedActionIndex];
-            if (selected) selected.click();
-        } else if (e.key === 'Escape') {
-            hideActionPanel();
-        }
-    });
+            if (e.key === 'ArrowDown') {
+                e.preventDefault();
+                selectedActionIndex = Math.min(selectedActionIndex + 1, items.length - 1);
+                renderActionList(actionSearch.value);
+            } else if (e.key === 'ArrowUp') {
+                e.preventDefault();
+                selectedActionIndex = Math.max(selectedActionIndex - 1, 0);
+                renderActionList(actionSearch.value);
+            } else if (e.key === 'Enter') {
+                e.preventDefault();
+                var selected = items[selectedActionIndex];
+                if (selected) selected.click();
+            } else if (e.key === 'Escape') {
+                hideActionPanel();
+            }
+        });
+    }
 
     // Action panel backdrop click
-    actionBackdrop?.addEventListener('click', hideActionPanel);
+    if (actionBackdrop) {
+        actionBackdrop.addEventListener('click', hideActionPanel);
+    }
 
     // Connect WebSocket
     connect();

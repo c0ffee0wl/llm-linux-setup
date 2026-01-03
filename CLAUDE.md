@@ -192,21 +192,21 @@ The installation script uses a **consolidated installation approach** for maximu
 **The Pattern**: Instead of installing plugins one at a time (30+ separate `llm install` calls), all plugins are installed in a single `uv tool install --with ... --with ...` command.
 
 **How It Works**:
-1. **ALL_PLUGINS array**: Defines all plugins upfront in Phase 2
-2. **Single command**: `uv tool install --force --with plugin1 --with plugin2 ... llm`
-3. **Hash-based detection**: Tracks plugin list changes (for logging purposes)
+1. **REMOTE_PLUGINS array**: External plugins (PyPI, git repositories)
+2. **LOCAL_PLUGINS array**: In-repo plugins that should always be rebuilt
+3. **ALL_PLUGINS**: Combined array used for `--with` flags
+4. **Single command**: `uv tool install --force --reinstall-package <local> --with <all> llm`
+
+**Local Plugin Handling**:
+- Local plugins (in this repository) use `--reinstall-package` flag
+- This forces uv to rebuild local packages even if version number is unchanged
+- Ensures source code changes are always picked up without manual cache clearing
+- Package names are extracted from paths and normalized (e.g., `llm-tools-core` → `llm_tools_core`)
 
 **Why Always `--force`**:
 - `uv tool upgrade` doesn't support `--with` flags
 - Without `--with`, local plugins (llm-assistant, llm-tools-context, etc.) get removed during upgrade
 - Always using `--force` with `--with` flags ensures local plugins are preserved
-
-**Hash-Based Detection** (for logging only):
-- Generates SHA256 hash of sorted ALL_PLUGINS array **plus git commit hash**
-- Stores hash in `~/.config/llm-tools/plugins-hash`
-- **Hash matches**: Logs "Plugin list unchanged, checking for updates..."
-- **Hash differs**: Logs "Plugin list changed, reinstalling..."
-- Both cases run the same `uv tool install --force` command
 
 **Performance**:
 | Scenario | Old Approach | New Approach |
@@ -215,7 +215,6 @@ The installation script uses a **consolidated installation approach** for maximu
 | Subsequent runs | ~60-90s (30+ installs) | ~20-40s (single install, git checks) |
 
 **Tracking Files**:
-- `~/.config/llm-tools/plugins-hash` - SHA256 hash of plugin list
 - `~/.config/io.datasette.llm/uv-tool-packages.json` - Plugin list for llm-uv-tool
 
 ### Plugin Persistence with llm-uv-tool
@@ -313,9 +312,6 @@ The installation script uses **helper functions** to eliminate code duplication 
   - Git URLs: `git+https://github.com/user/llm-foo` → `llm-foo`
   - Local paths: `/path/to/llm-foo` → `llm-foo`
   - PyPI names: `llm-foo` → `llm-foo` (passthrough)
-- **`install_or_upgrade_llm_plugin(plugin_source)`**: **DEPRECATED** - Smart LLM plugin installation (legacy, kept for backward compatibility)
-  - **Deprecated**: Plugins are now installed via consolidated `uv tool install --with` in Phase 2
-  - Logs deprecation warning and delegates to `llm install --upgrade`
 - **`cleanup_stale_local_plugin_paths()`**: Remove stale local plugin paths from tracking files (used in Phase 2)
   - Handles migration from local plugins to git repositories
   - Cleans **two files**: `uv-tool-packages.json` (llm-uv-tool) and `uv-receipt.toml` (uv internal)
@@ -991,7 +987,6 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 - `~/.profile` - Environment variables for providers (AZURE_OPENAI_API_KEY, AZURE_RESOURCE_NAME, GEMINI_API_KEY)
 - `~/.config/llm-tools/asciinema-commit` - Tracks asciinema version for update detection
 - `~/.config/llm-tools/template-checksums` - Tracks template and CCR config checksums for smart updates
-- `~/.config/llm-tools/plugins-hash` - SHA256 hash of ALL_PLUGINS array + git commit for smart reinstall detection
 - `~/.config/llm-tools/install-mode` - Persisted installation mode preference (`full` or `minimal`)
 - `~/.config/terminator/plugins/terminator_assistant.py` - Terminator assistant plugin (see [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md))
 - `~/.config/micro/plug/llm/` - Micro editor llm-micro plugin

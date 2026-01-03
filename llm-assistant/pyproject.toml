@@ -42,3 +42,4 @@ packages = ["llm_assistant"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "llm_assistant/static" = "llm_assistant/static"
+"llm_assistant/templates" = "llm_assistant/templates"

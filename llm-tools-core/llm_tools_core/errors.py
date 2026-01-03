@@ -60,8 +60,8 @@ class ToolError(DaemonError):
         super().__init__(ErrorCode.TOOL_ERROR, message)
 
 
-class TimeoutError(DaemonError):
-    """Raised when request times out."""
+class DaemonTimeoutError(DaemonError):
+    """Raised when daemon request times out."""
 
     def __init__(self, message: str = "Request timed out"):
         super().__init__(ErrorCode.TIMEOUT, message)

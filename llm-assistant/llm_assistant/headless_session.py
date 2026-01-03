@@ -129,6 +129,7 @@ def format_context_for_prompt(context: str) -> str:
 # External plugin tools to expose in headless mode
 HEADLESS_TOOL_NAMES = (
     'execute_python',    # Python in sandbox
+    'sandboxed_shell',   # Shell command in sandbox
     'fetch_url',         # Web content
     'search_google',     # Google search
     'load_github',       # GitHub content
@@ -268,6 +269,12 @@ class HeadlessSession(
         # Logging
         self.logging_enabled = logs_on()
 
+        # RAG state (RAGMixin)
+        self.active_rag_collection: Optional[str] = None
+        self.pending_rag_context: Optional[str] = None
+        self.rag_top_k = 5
+        self.rag_mode = "hybrid"
+
         # Initialize mixins that need it
         self._init_mixins()
 
@@ -320,7 +327,7 @@ class HeadlessSession(
             exec_active=False,
             watch_mode=False,  # Not available in headless mode
             watch_goal="",
-            rag_active=getattr(self, 'rag_active', False),
+            rag_active=bool(self.active_rag_collection),
             skills_active=skills_active,
             skills_xml=self._get_skills_xml() if skills_active else "",
             date=datetime.now().strftime("%Y-%m-%d"),
