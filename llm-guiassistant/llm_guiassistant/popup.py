@@ -117,6 +117,10 @@ class PopupWindow(Gtk.ApplicationWindow):
             WebKit2.HardwareAccelerationPolicy.NEVER
         )
 
+        # Disable caching to ensure fresh JS/CSS on each load
+        context = self.webview.get_context()
+        context.set_cache_model(WebKit2.CacheModel.DOCUMENT_VIEWER)
+
         # Enable developer tools in debug mode
         if self.debug:
             settings.set_enable_developer_extras(True)

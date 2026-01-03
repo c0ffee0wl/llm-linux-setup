@@ -39,7 +39,7 @@ class WebUIServer:
     def __init__(self, daemon: "AssistantDaemon", port: int = 8741):
         self.daemon = daemon
         self.port = port
-        self.app = web.Application()
+        self.app = web.Application(middlewares=[self._no_cache_middleware])
         self.runner: Optional[web.AppRunner] = None
         self.site: Optional[web.TCPSite] = None
 
@@ -50,6 +50,17 @@ class WebUIServer:
         self.static_dir = Path(__file__).parent / "static"
 
         self._setup_routes()
+
+    @web.middleware
+    async def _no_cache_middleware(self, request: web.Request, handler):
+        """Add no-cache headers to all responses to ensure fresh JS/CSS."""
+        response = await handler(request)
+        # Don't modify WebSocket responses
+        if not isinstance(response, web.WebSocketResponse):
+            response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+        return response
 
     def _setup_routes(self):
         """Configure HTTP routes."""
