@@ -194,22 +194,25 @@ The installation script uses a **consolidated installation approach** for maximu
 **How It Works**:
 1. **ALL_PLUGINS array**: Defines all plugins upfront in Phase 2
 2. **Single command**: `uv tool install --force --with plugin1 --with plugin2 ... llm`
-3. **Hash-based detection**: Only reinstalls when plugin list changes
+3. **Hash-based detection**: Tracks plugin list changes (for logging purposes)
 
-**Hash-Based Force Detection**:
+**Why Always `--force`**:
+- `uv tool upgrade` doesn't support `--with` flags
+- Without `--with`, local plugins (llm-assistant, llm-tools-context, etc.) get removed during upgrade
+- Always using `--force` with `--with` flags ensures local plugins are preserved
+
+**Hash-Based Detection** (for logging only):
 - Generates SHA256 hash of sorted ALL_PLUGINS array **plus git commit hash**
 - Stores hash in `~/.config/llm-tools/plugins-hash`
-- **Hash matches**: Uses fast `uv tool upgrade llm` (~2-5 seconds)
-- **Hash differs**: Uses full `uv tool install --force` (~60-90 seconds)
-- **First run**: Always uses `--force` for fresh installation
-- **Git commit included**: Ensures local plugin updates after `git pull` trigger reinstall
+- **Hash matches**: Logs "Plugin list unchanged, checking for updates..."
+- **Hash differs**: Logs "Plugin list changed, reinstalling..."
+- Both cases run the same `uv tool install --force` command
 
-**Performance Impact**:
+**Performance**:
 | Scenario | Old Approach | New Approach |
 |----------|-------------|--------------|
 | First run | ~90-120s (30+ installs) | ~60-90s (single install) |
-| Subsequent (unchanged) | ~60-90s | ~2-5s |
-| Plugin list changed | ~60-90s | ~60-90s |
+| Subsequent runs | ~60-90s (30+ installs) | ~20-40s (single install, git checks) |
 
 **Tracking Files**:
 - `~/.config/llm-tools/plugins-hash` - SHA256 hash of plugin list
@@ -232,7 +235,8 @@ The system uses **llm-uv-tool** (https://github.com/c0ffee0wl/llm-uv-tool) to ma
 
 **Installation**:
 - New installations: `uv tool install --with "git+https://github.com/c0ffee0wl/llm-uv-tool" "git+https://github.com/c0ffee0wl/llm"`
-- Upgrades: `uv tool upgrade llm` (llm-uv-tool persists automatically)
+- Upgrades: `uv tool install --force --with ...` (llm-uv-tool persists automatically)
+- Note: `uv tool upgrade` is NOT used because it doesn't support `--with` flags
 
 **Benefits**:
 - ✅ Plugins persist across LLM upgrades automatically

@@ -1188,19 +1188,20 @@ if uv tool list 2>/dev/null | grep -q "^llm "; then
     LLM_INSTALLED=true
 fi
 
-# Decide whether to use --force or upgrade
-# Force reinstall if: not installed, hash changed, or local plugins may have changed
+# Decide install action based on state
+# Always use --force with --with flags because:
+# 1. uv tool upgrade doesn't support --with flags
+# 2. Without --with, local plugins get removed during upgrade
 if [ "$LLM_INSTALLED" = "false" ]; then
     log "Installing llm with ${#ALL_PLUGINS[@]} plugins (fresh install)..."
-    eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
 elif [ "$CURRENT_HASH" != "$STORED_HASH" ]; then
     log "Plugin list changed, reinstalling llm with ${#ALL_PLUGINS[@]} plugins..."
-    eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
 else
     log "Plugin list unchanged, checking for updates..."
-    # Use upgrade for efficiency (only checks if newer commits available)
-    uv tool upgrade llm
 fi
+
+# Always use --force to preserve local plugins (uv tool upgrade doesn't support --with)
+eval "uv tool install --force $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
 
 # Store current hash for next run
 echo "$CURRENT_HASH" > "$PLUGINS_HASH_FILE"
