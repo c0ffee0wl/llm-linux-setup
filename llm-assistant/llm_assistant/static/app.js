@@ -1563,45 +1563,75 @@ function createActionIcons(role, messageId) {
     return container;
 }
 
-// Copy plain text using server-side stripMarkdown
-function copyPlainText(content) {
-    // Fallback: if not connected, just copy raw content
-    if (!isConnected()) {
-        navigator.clipboard.writeText(content).then(() => {
-            showToast('Copied (raw text)');
-        }).catch(err => {
-            console.error('Clipboard write failed:', err);
-            showToast('Failed to copy to clipboard');
-        });
-        return;
-    }
+// Strip markdown formatting from text (client-side)
+function stripMarkdown(text) {
+    if (!text) return '';
 
-    const requestId = crypto.randomUUID();
-
-    // Set timeout to prevent memory leak if server never responds
-    const timeout = setTimeout(() => {
-        if (pendingRequests.has(requestId)) {
-            pendingRequests.delete(requestId);
-            console.warn('stripMarkdown request timed out:', requestId);
-            // Fallback: copy raw content
-            navigator.clipboard.writeText(content).catch(err => {
-                console.error('Clipboard write failed:', err);
-            });
-            showToast('Copied (server timeout, raw text)');
-        }
-    }, 5000);
-
-    pendingRequests.set(requestId, (stripped) => {
-        clearTimeout(timeout);
-        navigator.clipboard.writeText(stripped).then(() => {
-            showToast('Copied plain text');
-        }).catch(err => {
-            console.error('Clipboard write failed:', err);
-            showToast('Failed to copy to clipboard');
-        });
+    // Remove code blocks (preserve content)
+    text = text.replace(/```[\s\S]*?```/g, match => {
+        const lines = match.split('\n');
+        // Remove first line (```lang) and last line (```)
+        return lines.slice(1, -1).join('\n');
     });
 
-    safeSend({ type: 'stripMarkdown', text: content, requestId });
+    // Remove inline code
+    text = text.replace(/`([^`]+)`/g, '$1');
+
+    // Remove bold/italic
+    text = text.replace(/\*\*\*(.+?)\*\*\*/g, '$1');
+    text = text.replace(/\*\*(.+?)\*\*/g, '$1');
+    text = text.replace(/\*(.+?)\*/g, '$1');
+    text = text.replace(/___(.+?)___/g, '$1');
+    text = text.replace(/__(.+?)__/g, '$1');
+    text = text.replace(/_(.+?)_/g, '$1');
+
+    // Remove headers
+    text = text.replace(/^#{1,6}\s+/gm, '');
+
+    // Remove blockquotes
+    text = text.replace(/^>\s+/gm, '');
+
+    // Remove horizontal rules
+    text = text.replace(/^[-*_]{3,}\s*$/gm, '');
+
+    // Remove links but keep text
+    text = text.replace(/\[([^\]]+)\]\([^)]+\)/g, '$1');
+
+    // Remove images
+    text = text.replace(/!\[([^\]]*)\]\([^)]+\)/g, '$1');
+
+    // Remove strikethrough
+    text = text.replace(/~~(.+?)~~/g, '$1');
+
+    // Clean up extra whitespace
+    text = text.replace(/\n{3,}/g, '\n\n');
+
+    return text.trim();
+}
+
+// Copy plain text (strip markdown client-side for immediate clipboard access)
+function copyPlainText(content) {
+    const stripped = stripMarkdown(content);
+
+    navigator.clipboard.writeText(stripped).then(() => {
+        showToast('Copied plain text');
+    }).catch(err => {
+        console.error('Clipboard write failed:', err);
+        // Fallback for older browsers or permission issues
+        try {
+            const textarea = document.createElement('textarea');
+            textarea.value = stripped;
+            textarea.style.position = 'fixed';
+            textarea.style.opacity = '0';
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand('copy');
+            document.body.removeChild(textarea);
+            showToast('Copied plain text');
+        } catch (e) {
+            showToast('Failed to copy to clipboard');
+        }
+    });
 }
 
 // ============================================================================
