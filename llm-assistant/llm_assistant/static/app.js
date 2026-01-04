@@ -79,6 +79,7 @@ let currentMessageId = null;
 let sessionId = null;
 let isStreaming = false;
 let currentToolCallId = null;
+let isHistoricalView = false;  // True when viewing a historical conversation (not the active session)
 
 // Pending requests for async responses (e.g., stripMarkdown)
 const pendingRequests = new Map();
@@ -312,9 +313,16 @@ const historySidebar = {
             if (!response.ok) throw new Error('Failed to load conversation');
             const data = await response.json();
 
+            // Mark as historical view (disables edit/regenerate)
+            isHistoricalView = true;
+            const conversation = document.getElementById('conversation');
+            if (conversation) {
+                conversation.classList.add('historical');
+            }
+
             // Load into main view
             loadHistory(data.messages || []);
-            showToast('Loaded conversation');
+            showToast('Loaded conversation (read-only)');
 
             // On mobile, collapse sidebar after selection
             if (window.innerWidth < 768) {
@@ -1060,6 +1068,12 @@ function handleMessage(msg) {
             break;
 
         case 'history':
+            // This is the active session's history, not a historical load
+            isHistoricalView = false;
+            const convEl = document.getElementById('conversation');
+            if (convEl) {
+                convEl.classList.remove('historical');
+            }
             loadHistory(msg.messages || []);
             break;
 
@@ -1403,6 +1417,9 @@ function clearConversation() {
             <p>Type a question below and press Enter to send.</p>
         </div>
     `;
+    // Clear historical view flag (this is now an active session)
+    isHistoricalView = false;
+    conversation.classList.remove('historical');
     currentMessageId = null;
     messageStore.clear();
     // Reset temp chat toggle for new conversation

@@ -505,6 +505,12 @@ pre code {
 .message.assistant .action-regenerate { display: none; }
 .message.assistant.last-assistant .action-regenerate { display: flex; }
 
+/* Hide edit/regenerate entirely in historical view (loaded conversations) */
+#conversation.historical .action-edit,
+#conversation.historical .action-regenerate {
+    display: none !important;
+}
+
 /* ============================================================================
    Inline Editor
    ============================================================================ */
