@@ -1632,11 +1632,8 @@ class WebUIServer:
                 elif session_id in self._rag_sessions:
                     del self._rag_sessions[session_id]
 
-            # Store sources preference
-            if collection:
-                self._rag_sources[session_id] = sources
-            elif session_id in self._rag_sources:
-                del self._rag_sources[session_id]
+            # Store sources preference (always, affects both RAG and web search)
+            self._rag_sources[session_id] = sources
 
             return web.json_response({"ok": True, "collection": collection})
         except Exception as e:

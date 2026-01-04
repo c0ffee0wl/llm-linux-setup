@@ -901,14 +901,13 @@ const ragPanel = {
      * Update the disabled state of RAG panel controls based on active collection.
      * - New collection input: disabled when a collection IS active
      * - Add document input: disabled when NO collection is active
-     * - Show sources checkbox: disabled when NO collection is active
+     * - Show sources checkbox: ALWAYS enabled (affects both RAG and web search)
      */
     updateAddSectionState() {
         const newNameInput = document.getElementById('rag-new-name');
         const createBtn = document.getElementById('rag-create-btn');
         const addInput = document.getElementById('rag-add-input');
         const addBtn = document.getElementById('rag-add-btn');
-        const showSourcesLabel = document.querySelector('.rag-show-sources');
         const hasActiveCollection = !!this.activeCollection;
 
         // New collection: disabled when a collection is already active
@@ -933,10 +932,7 @@ const ragPanel = {
             addBtn.disabled = !hasActiveCollection;
         }
 
-        // Show sources: disabled when no collection is active
-        if (showSourcesLabel) {
-            showSourcesLabel.classList.toggle('disabled', !hasActiveCollection);
-        }
+        // Note: Show sources checkbox is always enabled (affects RAG and web search)
     },
 
     async createCollection(name) {
@@ -1039,21 +1035,19 @@ const ragPanel = {
 
     async updateSources(value) {
         this.sources = value;
-        // If there's an active collection, update the server
-        if (this.activeCollection) {
-            try {
-                await fetch('/api/rag/activate', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        session: sessionId,
-                        collection: this.activeCollection,
-                        sources: this.sources
-                    })
-                });
-            } catch (err) {
-                console.error('Failed to update sources:', err);
-            }
+        // Always update the server (affects both RAG and web search)
+        try {
+            await fetch('/api/rag/activate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: sessionId,
+                    collection: this.activeCollection,  // May be null
+                    sources: this.sources
+                })
+            });
+        } catch (err) {
+            console.error('Failed to update sources:', err);
         }
     },
 
