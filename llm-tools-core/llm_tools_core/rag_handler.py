@@ -7,6 +7,23 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 
+# Citation rules appended to RAG context when sources is enabled
+RAG_CITATION_RULES = """
+---
+When using information from the retrieved documents above, you MUST:
+1. Add inline citations [1], [2], etc. in your response when referencing information
+2. Include a "#### Sources" section at the end of your response
+3. Format sources as: [n] /path/to/source
+
+Example output format:
+"This is how X works [1]. Another important aspect is Y [2].
+
+#### Sources
+[1] /path/to/file.md
+[2] /path/to/other.md"
+"""
+
+
 @dataclass
 class SearchResult:
     """A RAG search result."""
@@ -50,21 +67,14 @@ class RAGHandler:
         """List available RAG collections with metadata.
 
         Returns:
-            List of dicts with 'name' and 'count' keys
+            List of dicts with 'name', 'chunks', and 'documents' keys
         """
         if not self.available():
             return []
 
         try:
-            from llm_tools_rag.config import list_collections
-
-            names = list_collections()
-            result = []
-            for name in names:
-                info = self.get_collection_info(name)
-                count = info.get("document_count", 0) if info else 0
-                result.append({"name": name, "count": count})
-            return result
+            from llm_tools_rag import get_collection_list
+            return get_collection_list()  # Returns [{name, chunks, documents}]
         except Exception:
             return []
 
@@ -172,13 +182,16 @@ class RAGHandler:
     def format_context(
         self,
         results: List[SearchResult],
-        max_tokens: int = 4000
+        max_tokens: int = 4000,
+        sources: bool = True
     ) -> str:
         """Format search results for injection into prompt.
 
         Args:
             results: List of search results
             max_tokens: Approximate max tokens (4 chars per token)
+            sources: If True, include source headers and citation rules.
+                     If False, include only content without source references.
 
         Returns:
             Formatted context string
@@ -187,26 +200,53 @@ class RAGHandler:
             return ""
 
         max_chars = max_tokens * 4
-        lines = ["## Retrieved Context\n"]
+        lines = ["## Retrieved Context\n\n"]
         current_chars = len(lines[0])
 
-        for i, result in enumerate(results, 1):
-            source_line = f"### Source {i}: {result.source}\n"
-            content_preview = result.content
+        if sources:
+            # Build deduplicated source map: source_path -> citation_number
+            source_to_num: Dict[str, int] = {}
+            for result in results:
+                if result.source not in source_to_num:
+                    source_to_num[result.source] = len(source_to_num) + 1
 
-            # Truncate if needed
-            available = max_chars - current_chars - len(source_line) - 10
-            if available <= 0:
-                break
+            for result in results:
+                cite_num = source_to_num[result.source]
+                source_line = f"### [{cite_num}] {result.source}\n"
+                content_preview = result.content
 
-            if len(content_preview) > available:
-                content_preview = content_preview[:available] + "..."
+                # Truncate if needed
+                available = max_chars - current_chars - len(source_line) - 10
+                if available <= 0:
+                    break
 
-            lines.append(source_line)
-            lines.append(content_preview)
-            lines.append("\n\n")
+                if len(content_preview) > available:
+                    content_preview = content_preview[:available] + "..."
 
-            current_chars += len(source_line) + len(content_preview) + 2
+                lines.append(source_line)
+                lines.append(content_preview)
+                lines.append("\n\n")
+
+                current_chars += len(source_line) + len(content_preview) + 2
+
+            # Append citation rules
+            lines.append(RAG_CITATION_RULES)
+        else:
+            # No sources - just content
+            for result in results:
+                content_preview = result.content
+
+                available = max_chars - current_chars - 10
+                if available <= 0:
+                    break
+
+                if len(content_preview) > available:
+                    content_preview = content_preview[:available] + "..."
+
+                lines.append(content_preview)
+                lines.append("\n\n")
+
+                current_chars += len(content_preview) + 2
 
         return "".join(lines)
 

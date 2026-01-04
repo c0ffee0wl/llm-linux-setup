@@ -31,6 +31,7 @@ async def execute_tool_call(
     tool_call,
     implementations: Dict[str, Callable],
     emit: EventEmitter,
+    arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> ToolResult:
     """Execute a single tool call and return the result.
 
@@ -38,6 +39,8 @@ async def execute_tool_call(
         tool_call: The tool call object with name, arguments, tool_call_id
         implementations: Dict mapping tool names to implementation functions
         emit: Async callback to emit events (tool_start, tool_done)
+        arg_overrides: Optional dict mapping tool names to argument overrides.
+                       Example: {"search_google": {"sources": False}}
 
     Returns:
         ToolResult with the execution output
@@ -45,6 +48,10 @@ async def execute_tool_call(
     tool_name = (tool_call.name or "").lower().strip()
     tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
     tool_call_id = tool_call.tool_call_id
+
+    # Apply argument overrides if specified for this tool
+    if arg_overrides and tool_name in arg_overrides:
+        tool_args = {**tool_args, **arg_overrides[tool_name]}
 
     # Emit tool start event
     await emit({

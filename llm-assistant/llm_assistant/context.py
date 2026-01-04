@@ -265,11 +265,15 @@ class ContextMixin:
             self.pending_summary = summary
             self._update_system_prompt()
 
-            # Save old conversation ID before creating new one
+            # Save old conversation ID and source before creating new one
             old_conversation_id = self.conversation.id
+            old_source = getattr(self.conversation, 'source', None)
 
             # Create completely fresh conversation
             self.conversation = llm.Conversation(model=self.model)
+            # Preserve source for origin tracking (not a constructor parameter)
+            if old_source:
+                self.conversation.source = old_source
             new_conversation_id = self.conversation.id
 
             # Record link between old and new conversation for --continue tracking

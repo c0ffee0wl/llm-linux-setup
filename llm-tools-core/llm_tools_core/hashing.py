@@ -102,27 +102,24 @@ def hash_window(win: Dict) -> str:
     return hashlib.sha256(key.encode()).hexdigest()[:16]
 
 
-def hash_gui_context(ctx: Dict) -> Tuple[str, Set[str]]:
+def hash_gui_context(ctx: Dict) -> Set[str]:
     """Hash full GUI context for deduplication.
 
-    Generates hashes for the focused window and all visible windows,
-    enabling detection of desktop state changes between queries.
+    Generates hashes for all visible windows, enabling detection of
+    desktop state changes between queries. All windows are treated
+    equally (focused window is not special-cased since the chat window
+    is always focused).
 
     Args:
-        ctx: Context dict from gather_context() with 'focused' and 'visible_windows' keys
+        ctx: Context dict from gather_context() with 'visible_windows' key
 
     Returns:
-        Tuple of (focused_hash, set_of_window_hashes)
+        Set of window hashes for all visible windows
 
     Example:
         >>> ctx = gather_context()
-        >>> focused_hash, window_hashes = hash_gui_context(ctx)
-        >>> focused_hash
-        'a1b2c3d4e5f67890'
+        >>> window_hashes = hash_gui_context(ctx)
         >>> len(window_hashes)
         5
     """
-    focused = ctx.get('focused', {})
-    focused_hash = hash_window(focused) if focused else ""
-    window_hashes = {hash_window(w) for w in ctx.get('visible_windows', [])}
-    return focused_hash, window_hashes
+    return {hash_window(w) for w in ctx.get('visible_windows', [])}

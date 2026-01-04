@@ -519,9 +519,9 @@ def format_gui_context(
 ) -> str:
     """Format GUI context as plain text with deduplication support.
 
-    Generates context formatted for LLM consumption with window IDs for
-    targeted capture. Shows full context on first message, incremental
-    updates thereafter.
+    Shows all visible windows equally (chat window is always focused, so
+    treating it specially is not useful). Uses concise format with
+    deduplication for incremental updates.
 
     Args:
         ctx: Context dictionary from gather_context()
@@ -536,68 +536,62 @@ def format_gui_context(
         >>> ctx = gather_context()
         >>> print(format_gui_context(ctx, set(), is_first=True))
         <gui_context>
-        Focused: firefox - "GitHub - Mozilla Firefox" [0x2a00003]
-          Working directory: /home/user
-
-        Visible windows:
+        Desktop windows:
+        - firefox: "GitHub" [0x2a00003] cwd:/home/user
         - Terminator: "~/projects" [0x1800005] cwd:/home/user/projects
         - Code: "project - VSCode" [0x2200007] cwd:/home/user/projects/myapp
 
         Selection: "selected text"
         </gui_context>
     """
+    from .hashing import hash_window  # Import here to avoid circular import
+
     lines = []
-    focused = ctx.get('focused', {})
+    visible = ctx.get('visible_windows', [])
+
+    def format_window(win: dict) -> str:
+        """Format a single window concisely."""
+        app = win.get('app_class') or 'unknown'
+        title = win.get('window_title') or ''
+        wid = win.get('window_id', '')
+        # Truncate long titles
+        if len(title) > 60:
+            title = title[:57] + '...'
+        cwd = win.get('cwd')
+        cwd_suffix = f" cwd:{cwd}" if cwd else ""
+        return f"- {app}: \"{title}\" [{wid}]{cwd_suffix}"
 
     if is_first:
-        # Full context on first message
-        if focused and focused.get('app_class'):
-            wid = focused.get('window_id', '')
-            lines.append(f"Focused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
-            if focused.get('cwd'):
-                lines.append(f"  Working directory: {focused['cwd']}")
-
-        visible = ctx.get('visible_windows', [])
+        # Full context on first message - all visible windows
         if visible:
-            lines.append("")
-            lines.append("Visible windows:")
+            lines.append("Desktop windows:")
             for win in visible:
-                wid = win.get('window_id', '')
-                app = win.get('app_class') or 'unknown'
-                title = win.get('window_title') or ''
-                cwd = win.get('cwd')
-                cwd_suffix = f" cwd:{cwd}" if cwd else ""
-                lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
-
-        if include_selection and ctx.get('selection'):
-            lines.append("")
-            selection = ctx['selection']
-            truncated = " (truncated)" if ctx.get('selection_truncated') else ""
-            lines.append(f"Selection{truncated}: \"{selection[:200]}{'...' if len(selection) > 200 else ''}\"")
+                lines.append(format_window(win))
+        else:
+            lines.append("No visible windows detected")
 
     else:
-        # Incremental update: show new windows (if any) and current focus
-        # This branch is reached when something changed (focus or windows)
+        # Incremental update: only show new/changed windows
         if new_window_hashes:
-            lines.append("[New windows appeared]:")
-            visible = ctx.get('visible_windows', [])
-            from .hashing import hash_window  # Import here to avoid circular import
+            lines.append("New/changed windows:")
             for win in visible:
                 if hash_window(win) in new_window_hashes:
-                    wid = win.get('window_id', '')
-                    app = win.get('app_class') or 'unknown'
-                    title = win.get('window_title') or ''
-                    cwd = win.get('cwd')
-                    cwd_suffix = f" cwd:{cwd}" if cwd else ""
-                    lines.append(f"- {app}: \"{title}\" [{wid}]{cwd_suffix}")
-            lines.append("")
+                    lines.append(format_window(win))
+        # If no new windows but something changed (e.g., window closed),
+        # caller handles "[Desktop context unchanged]" case
 
-        # Always show current focus (caller ensures something changed)
-        if focused and focused.get('app_class'):
-            wid = focused.get('window_id', '')
-            lines.append(f"Focused: {focused.get('app_class')} - \"{focused.get('window_title')}\" [{wid}]")
-            if focused.get('cwd'):
-                lines.append(f"  Working directory: {focused['cwd']}")
+    # Add selection if present
+    if include_selection and ctx.get('selection'):
+        if lines:
+            lines.append("")
+        selection = ctx['selection']
+        truncated = " (truncated)" if ctx.get('selection_truncated') else ""
+        # Show first 200 chars of selection
+        preview = selection[:200] + ('...' if len(selection) > 200 else '')
+        lines.append(f"Selection{truncated}: \"{preview}\"")
+
+    if not lines:
+        return "<gui_context>[No desktop context]</gui_context>"
 
     content = '\n'.join(lines)
     return f"<gui_context>\n{content}\n</gui_context>"

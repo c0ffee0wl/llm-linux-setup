@@ -221,25 +221,76 @@ class MCPMixin:
                 count += 1
         return count
 
+    def _add_dynamic_tools(self, tools: list, existing_names: set) -> list:
+        """Add dynamic tools (MCP, optional, Gemini-only, skills) to a base tool list.
+
+        This is a shared helper used by both TUI (_get_active_tools) and
+        Headless (get_tools) to avoid code duplication.
+
+        Args:
+            tools: Base tool list to extend (modified in place)
+            existing_names: Set of tool names already in the list (modified in place)
+
+        Returns:
+            The extended tools list
+        """
+        # Ensure MCP tools are loaded
+        _ensure_mcp_loaded()
+
+        # Add MCP tools from active servers
+        for tool in _all_tools.values():
+            if not isinstance(tool, Tool):
+                continue
+            server = getattr(tool, 'server_name', None)
+            if server and server in self.active_mcp_servers:
+                if tool.name not in existing_names:
+                    tools.append(tool)
+                    existing_names.add(tool.name)
+
+        # Add optional tools if manually loaded (e.g., /imagemage)
+        for plugin_name in getattr(self, 'loaded_optional_tools', set()):
+            for tool in _all_tools.values():
+                if isinstance(tool, Tool) and getattr(tool, 'plugin', None) == plugin_name:
+                    if tool.name not in existing_names:
+                        tools.append(tool)
+                        existing_names.add(tool.name)
+
+        # Add Gemini-only tools if using Gemini/Vertex model
+        if hasattr(self, '_is_gemini_model') and self._is_gemini_model():
+            for tool in _all_tools.values():
+                if isinstance(tool, Tool) and tool.name in GEMINI_ONLY_TOOL_NAMES:
+                    if tool.name not in existing_names:
+                        tools.append(tool)
+                        existing_names.add(tool.name)
+
+        # Add skill tools if any skills loaded
+        if getattr(self, '_skill_invoke_tool', None):
+            if self._skill_invoke_tool.name not in existing_names:
+                tools.append(self._skill_invoke_tool)
+                existing_names.add(self._skill_invoke_tool.name)
+        if getattr(self, '_skill_load_file_tool', None):
+            if self._skill_load_file_tool.name not in existing_names:
+                tools.append(self._skill_load_file_tool)
+                existing_names.add(self._skill_load_file_tool.name)
+
+        return tools
+
     def _get_active_tools(self) -> list:
         """Get currently active tools based on mode, model, and loaded state.
 
         Returns tools that should be offered to the model. Includes:
         - Base ASSISTANT_TOOLS (always available, includes capture_screen)
         - Agent-mode tools when in /agent mode (currently none)
+        - MCP tools from active servers
         - Optional tools (imagemage) when manually loaded via /imagemage
         - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
-
-        MCP tools are filtered by active_mcp_servers set - only tools from
-        active servers are included.
+        - Skill tools when skills are loaded
         """
         # Ensure MCP tools are loaded (waits for background load on first call)
         _ensure_mcp_loaded()
 
-        tools = list(ASSISTANT_TOOLS)  # Base tools (always available)
-
-        # Filter MCP tools by active server set (handles both default and optional servers)
-        tools = [t for t in tools if (
+        # Start with base ASSISTANT_TOOLS, filtering out inactive MCP servers
+        tools = [t for t in ASSISTANT_TOOLS if (
             getattr(t, 'server_name', None) is None or  # Not an MCP tool
             getattr(t, 'server_name', None) in self.active_mcp_servers  # MCP server is active
         )]
@@ -248,38 +299,26 @@ class MCPMixin:
         if self.no_exec_mode:
             tools = [t for t in tools if t.name not in EXEC_DEPENDENT_TOOLS]
 
-        # Add agent-mode tools if in agent mode
-        if self.mode == "agent":
+        existing_names = {t.name for t in tools}
+
+        # Add agent-mode tools if in agent mode (TUI-specific)
+        if getattr(self, 'mode', None) == "agent":
             for plugin_name in AGENT_MODE_TOOLS:
                 for tool in _all_tools.values():
-                    if getattr(tool, 'plugin', None) == plugin_name:
-                        tools.append(tool)
+                    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) == plugin_name:
+                        if tool.name not in existing_names:
+                            tools.append(tool)
+                            existing_names.add(tool.name)
 
-        # Add optional tools if manually loaded via /imagemage etc.
-        for plugin_name in self.loaded_optional_tools:
-            for tool in _all_tools.values():
-                if getattr(tool, 'plugin', None) == plugin_name:
-                    tools.append(tool)
-
-        # Add Gemini-only tools if using Gemini/Vertex model
-        if self._is_gemini_model():
-            for tool in _all_tools.values():
-                if tool.name in GEMINI_ONLY_TOOL_NAMES:
-                    tools.append(tool)
-
-        # Add skill tools if any skills loaded
-        if self._skill_invoke_tool:
-            tools.append(self._skill_invoke_tool)
-        if self._skill_load_file_tool:
-            tools.append(self._skill_load_file_tool)
-
-        return tools
+        # Add dynamic tools (MCP, optional, Gemini-only, skills) via shared helper
+        return self._add_dynamic_tools(tools, existing_names)
 
     def _get_active_external_tools(self) -> dict:
         """Get dispatch dict for currently active external tools.
 
         Returns tool implementations for auto-dispatch. Includes:
         - Base EXTERNAL_TOOLS (always available)
+        - MCP tools from active servers
         - Agent-mode tools when in /agent mode
         - Optional tools when manually loaded
 
@@ -291,13 +330,14 @@ class MCPMixin:
 
         tools = dict(EXTERNAL_TOOLS)  # Base dispatch (always available)
 
-        # Filter out MCP tools from inactive servers
-        def is_active_tool(name):
-            tool = _all_tools.get(name)
-            server = getattr(tool, 'server_name', None) if tool else None
-            return server is None or server in self.active_mcp_servers
-
-        tools = {name: impl for name, impl in tools.items() if is_active_tool(name)}
+        # Add MCP tools from active servers
+        for name, tool in _all_tools.items():
+            if not isinstance(tool, Tool):
+                continue
+            server = getattr(tool, 'server_name', None)
+            if server and server in self.active_mcp_servers:
+                if hasattr(tool, 'implementation') and tool.implementation:
+                    tools[name] = tool.implementation
 
         # Filter out exec-dependent tools in no-exec mode
         if self.no_exec_mode:

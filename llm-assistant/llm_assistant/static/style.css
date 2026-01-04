@@ -511,6 +511,18 @@ pre code {
     display: none !important;
 }
 
+/* Non-GUI origin conversations (CLI, TUI, API) are completely read-only */
+#conversation.non-gui-origin ~ #input-area #input {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+#conversation.non-gui-origin ~ #input-area .control-btn,
+#conversation.non-gui-origin ~ #input-area #send-btn {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
 /* ============================================================================
    Inline Editor
    ============================================================================ */
@@ -947,19 +959,16 @@ pre code {
 }
 
 #rag-collections {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    margin-bottom: 12px;
+    padding: 4px;
 }
 
 .rag-collection {
+    padding: 8px 10px;
+    border-radius: 4px;
+    cursor: pointer;
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 8px;
-    border-radius: 4px;
-    cursor: pointer;
     transition: background 0.2s;
 }
 
@@ -975,21 +984,35 @@ pre code {
     margin: 0;
 }
 
-.rag-collection-name {
+.rag-collection-content {
     flex: 1;
-    font-size: 13px;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    cursor: pointer;
 }
 
-.rag-collection-count {
+.rag-collection-name {
+    font-size: 13px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.rag-collection-info {
     font-size: 11px;
     color: var(--text-color);
     opacity: 0.6;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .rag-add-section {
     display: flex;
     gap: 4px;
-    margin-bottom: 8px;
+    margin-bottom: 4px;
 }
 
 #rag-add-input {
@@ -1013,14 +1036,206 @@ pre code {
     font-weight: 500;
 }
 
-#rag-add-btn:hover {
+#rag-add-btn:hover:not(:disabled) {
     background: var(--button-hover);
+}
+
+/* Disabled state for add section when no collection is selected */
+#rag-add-input:disabled,
+#rag-add-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.rag-new-collection {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 18px;
+}
+
+#rag-new-name {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--input-bg);
+    color: var(--text-color);
+    font-size: 12px;
+}
+
+#rag-create-btn {
+    padding: 6px 10px;
+    border: 1px solid var(--border-color);
+    border-radius: 4px;
+    background: var(--button-bg);
+    color: var(--text-color);
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+}
+
+#rag-create-btn:hover {
+    background: var(--button-hover);
+}
+
+.rag-collection-delete {
+    opacity: 0;
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--text-color);
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s, background 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.rag-collection:hover .rag-collection-delete {
+    opacity: 0.6;
+}
+
+.rag-collection-delete:hover {
+    opacity: 1 !important;
+    background: rgba(255, 100, 100, 0.2);
+    color: #ff6b6b;
 }
 
 .rag-hint {
     font-size: 11px;
     color: var(--text-color);
-    opacity: 0.5;
+    opacity: 0.6;
+    line-height: 1.6;
+    margin-bottom: 4px;
+}
+
+.rag-hint strong {
+    opacity: 0.8;
+}
+
+.rag-show-sources {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-color);
+    opacity: 0.8;
+    user-select: none;
+    padding: 4px 0;
+    border-top: 1px solid var(--border-color);
+    margin-top: 4px;
+}
+
+.rag-show-sources:hover {
+    opacity: 1;
+}
+
+.rag-show-sources input[type="checkbox"] {
+    width: 14px;
+    height: 14px;
+    cursor: pointer;
+    accent-color: #1976d2;
+}
+
+
+/* ============================================================================
+   Attachment Panel
+   ============================================================================ */
+
+#attachment-wrapper {
+    position: relative;
+}
+
+#attachment-btn {
+    position: relative;
+}
+
+#attachment-btn .badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    background: #1976d2;
+    color: white;
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+@media (prefers-color-scheme: dark) {
+    #attachment-btn .badge {
+        background: #2196f3;
+    }
+}
+
+#attachment-panel {
+    padding: 8px;
+    min-width: 220px;
+    max-width: 300px;
+}
+
+#attachment-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.attachment-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px;
+    background: var(--code-bg);
+    border-radius: 4px;
+}
+
+.attachment-thumb {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 4px;
+    background: var(--border-color);
+    flex-shrink: 0;
+}
+
+.attachment-info {
+    flex: 1;
+    min-width: 0;
+    font-size: 11px;
+    color: var(--text-color);
+    opacity: 0.8;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.attachment-delete {
+    background: none;
+    border: none;
+    padding: 4px;
+    cursor: pointer;
+    color: var(--text-color);
+    opacity: 0.6;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: opacity 0.2s, background 0.2s, color 0.2s;
+    flex-shrink: 0;
+}
+
+.attachment-delete:hover {
+    opacity: 1;
+    background: rgba(255, 100, 100, 0.2);
+    color: #ff6b6b;
 }
 
 /* ============================================================================

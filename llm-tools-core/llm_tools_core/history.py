@@ -58,6 +58,7 @@ class FullConversation:
     name: Optional[str]
     model: str
     messages: List[Message]
+    source: Optional[str] = None  # Origin: "gui", "tui", "cli", "api", or None
 
 
 class ConversationHistory:
@@ -156,11 +157,22 @@ class ConversationHistory:
             return None
 
         try:
+            # Check if source column exists (for backward compatibility)
+            cursor = logs_conn.execute("PRAGMA table_info(conversations)")
+            columns = {row[1] for row in cursor.fetchall()}
+            has_source = "source" in columns
+
             # Get conversation metadata
-            conv_row = logs_conn.execute(
-                "SELECT id, name, model FROM conversations WHERE id = ?",
-                (conversation_id,)
-            ).fetchone()
+            if has_source:
+                conv_row = logs_conn.execute(
+                    "SELECT id, name, model, source FROM conversations WHERE id = ?",
+                    (conversation_id,)
+                ).fetchone()
+            else:
+                conv_row = logs_conn.execute(
+                    "SELECT id, name, model FROM conversations WHERE id = ?",
+                    (conversation_id,)
+                ).fetchone()
 
             if conv_row is None:
                 return None
@@ -198,7 +210,8 @@ class ConversationHistory:
                 id=conv_row["id"],
                 name=conv_row["name"],
                 model=conv_row["model"] or "unknown",
-                messages=messages
+                messages=messages,
+                source=conv_row["source"] if has_source else None,
             )
         finally:
             logs_conn.close()

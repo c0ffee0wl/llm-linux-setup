@@ -5,7 +5,7 @@ D-Bus/Terminator, suitable for use via Unix socket daemon.
 
 Unlike TerminatorAssistantSession, HeadlessSession:
 - Captures context from asciinema logs (not VTE terminals)
-- Cannot execute commands directly (only suggest_command)
+- Cannot execute commands directly (suggest_command for CLI tools, excluded for GUI)
 - Does not support watch mode (requires D-Bus monitoring)
 - Does not support agent mode (requires execute_in_terminal)
 """
@@ -34,7 +34,7 @@ from .web import WebMixin
 from .context import ContextMixin
 from .mcp import MCPMixin
 from .templates import render
-from .utils import get_config_dir, logs_on, ConsoleHelper
+from .utils import get_config_dir, get_logs_db_path, logs_on, ConsoleHelper
 
 
 # Try to import context capture from llm_tools_context
@@ -242,11 +242,13 @@ class HeadlessSession(
         debug: bool = False,
         session_log: Optional[str] = None,
         terminal_id: Optional[str] = None,
+        source: Optional[str] = None,
     ):
         self.console = Console()
         self.debug = debug
         self.session_log = session_log
         self.terminal_id = terminal_id
+        self.source = source  # Origin: "gui", "tui", "cli", "api", or None
 
         # Context tracking
         self.context_hashes: Set[str] = set()
@@ -263,8 +265,8 @@ class HeadlessSession(
 
         # Template variables
         self.headless = True
-        self.exec_active = False
-        self.watch_active = False
+        self.exec = False
+        self.watch = False
 
         # Logging
         self.logging_enabled = logs_on()
@@ -317,19 +319,24 @@ class HeadlessSession(
         if self.debug:
             ConsoleHelper.debug(self.console, msg)
 
-    def get_system_prompt(self) -> str:
-        """Render the system prompt for headless mode."""
-        skills_active = bool(getattr(self, 'loaded_skills', None))
+    def get_system_prompt(self, gui: bool = False) -> str:
+        """Render the system prompt for headless mode.
+
+        Args:
+            gui: If True, include GUI-specific sections (Mermaid diagrams)
+        """
+        skills = bool(getattr(self, 'loaded_skills', None))
         return render(
             'system_prompt.j2',
             headless=True,
             mode=self.mode,
-            exec_active=False,
+            exec=False,
             watch_mode=False,  # Not available in headless mode
             watch_goal="",
-            rag_active=bool(self.active_rag_collection),
-            skills_active=skills_active,
-            skills_xml=self._get_skills_xml() if skills_active else "",
+            rag=bool(self.active_rag_collection),
+            gui=gui,
+            skills=skills,
+            skills_xml=self._get_skills_xml() if skills else "",
             date=datetime.now().strftime("%Y-%m-%d"),
             platform=platform.system(),
             shell=os.environ.get("SHELL", "/bin/bash"),
@@ -359,24 +366,24 @@ class HeadlessSession(
         return format_context_for_prompt(context)
 
     def get_tools(self) -> List[Tool]:
-        """Get tools available in this session."""
+        """Get tools available in this session.
+
+        Uses shared _add_dynamic_tools() helper from MCPMixin for:
+        - MCP tools from active servers
+        - Optional tools (imagemage) when loaded
+        - Gemini-only tools when using Gemini/Vertex model
+        - Skill tools when skills are loaded
+        """
         tools = get_headless_tools()
+
+        # Exclude suggest_command for GUI (it's for terminal-based sessions)
+        if self.source == "gui":
+            tools = [t for t in tools if t.name != "suggest_command"]
+
         existing_names = {t.name for t in tools}
 
-        # Add MCP tools from active servers
-        if hasattr(self, 'active_mcp_servers'):
-            all_tools = llm.get_tools()
-            for tool in all_tools.values():
-                if not isinstance(tool, Tool):
-                    continue
-                # Check if this is an MCP tool (has server_name attribute)
-                server = getattr(tool, 'server_name', None)
-                if server and server in self.active_mcp_servers:
-                    if tool.name not in existing_names:
-                        tools.append(tool)
-                        existing_names.add(tool.name)
-
-        return tools
+        # Add dynamic tools via shared helper (MCP, optional, Gemini-only, skills)
+        return self._add_dynamic_tools(tools, existing_names)
 
     def get_or_create_conversation(self) -> llm.Conversation:
         """Get existing conversation or create new one.
@@ -392,7 +399,7 @@ class HeadlessSession(
                 if saved_cid:
                     try:
                         from llm.cli import load_conversation
-                        loaded = load_conversation(saved_cid, database=str(self._get_logs_db_path()))
+                        loaded = load_conversation(saved_cid, database=str(get_logs_db_path()))
                         if loaded:
                             self.conversation = loaded
                             # Update model reference if conversation was loaded
@@ -405,6 +412,8 @@ class HeadlessSession(
             # Create new conversation if none loaded
             if self.conversation is None:
                 self.conversation = self.model.conversation()
+                # Set source after creation (not a constructor parameter)
+                self.conversation.source = self.source
 
             # Save conversation ID for resume
             if self.terminal_id and self.conversation.id:
@@ -415,6 +424,8 @@ class HeadlessSession(
     def reset_conversation(self):
         """Start a fresh conversation."""
         self.conversation = self.model.conversation()
+        # Set source after creation (not a constructor parameter)
+        self.conversation.source = self.source
         self.context_hashes = set()
 
         # Save new conversation ID
@@ -426,10 +437,6 @@ class HeadlessSession(
         sessions_dir = get_config_dir() / 'daemon-sessions'
         sessions_dir.mkdir(parents=True, exist_ok=True)
         return sessions_dir
-
-    def _get_logs_db_path(self) -> Path:
-        """Get path to conversation database."""
-        return get_config_dir() / 'logs-daemon.db'
 
     def _get_active_conversation(self) -> Optional[str]:
         """Get saved conversation ID for this terminal."""

@@ -856,10 +856,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             environment=env_type,
             watch_mode=self.watch_mode,
             watch_goal=self.watch_goal,
-            rag_active=bool(self.active_rag_collection),
-            skills_active=bool(self.loaded_skills),
+            rag=bool(self.active_rag_collection),
+            skills=bool(self.loaded_skills),
             skills_xml=self._get_skills_xml() if self.loaded_skills else "",
-            exec_active=not self.no_exec_mode,
+            exec=not self.no_exec_mode,
         )
 
     def _build_system_prompt(self) -> str:
@@ -1692,6 +1692,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         # Create new conversation
         self.conversation = llm.Conversation(model=self.model)
+        # Set source for origin tracking (not a constructor parameter)
+        self.conversation.source = "tui"
         if self.logging_enabled:
             self.console.print(f"Session: [cyan]{self.conversation.id}[/]")
 
@@ -2291,6 +2293,8 @@ Screenshot size: {file_size} bytes"""
             # Reset conversation (system prompt will be passed on next interaction)
             try:
                 self.conversation = llm.Conversation(model=self.model)
+                # Set source for origin tracking (not a constructor parameter)
+                self.conversation.source = "tui"
                 # Clear per-terminal content hashes (AI needs fresh context)
                 self.terminal_content_hashes.clear()
                 self.toolresult_hash_updated.clear()
@@ -2310,6 +2314,8 @@ Screenshot size: {file_size} bytes"""
             try:
                 # Clear conversation
                 self.conversation = llm.Conversation(model=self.model)
+                # Set source for origin tracking (not a constructor parameter)
+                self.conversation.source = "tui"
 
                 # Disable watch mode if active
                 if self.watch_mode:

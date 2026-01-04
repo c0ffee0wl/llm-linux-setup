@@ -44,6 +44,7 @@ from llm_tools_core import (
 from llm_tools_core.hashing import hash_gui_context
 
 from .headless_session import get_tool_implementations
+from .utils import get_logs_db_path
 
 if TYPE_CHECKING:
     from .daemon import AssistantDaemon
@@ -66,8 +67,9 @@ class WebUIServer:
         self._llm_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm")
 
         # Session state tracking (initialized upfront to avoid race conditions)
-        self._gui_context_state: Dict[str, tuple] = {}  # session_id -> (focused_hash, window_hashes)
+        self._gui_context_state: Dict[str, set] = {}  # session_id -> window_hashes (set)
         self._rag_sessions: Dict[str, str] = {}  # session_id -> collection_name
+        self._rag_sources: Dict[str, bool] = {}  # session_id -> sources flag
         self._session_no_log: Dict[str, bool] = {}  # session_id -> no_log flag
 
         # Cached database connection (created lazily, closed on stop)
@@ -110,10 +112,13 @@ class WebUIServer:
         self.app.router.add_delete("/api/history/{id}", self.handle_api_history_delete)
         self.app.router.add_get("/api/completions", self.handle_api_completions)
         self.app.router.add_post("/api/capture", self.handle_api_capture)
+        self.app.router.add_get("/api/thumbnail", self.handle_api_thumbnail)
         self.app.router.add_get("/api/rag/collections", self.handle_api_rag_collections)
         self.app.router.add_post("/api/rag/search", self.handle_api_rag_search)
         self.app.router.add_post("/api/rag/activate", self.handle_api_rag_activate)
         self.app.router.add_post("/api/rag/add", self.handle_api_rag_add)
+        self.app.router.add_post("/api/rag/create", self.handle_api_rag_create)
+        self.app.router.add_delete("/api/rag/delete/{name}", self.handle_api_rag_delete)
 
         # Static file serving
         if self.static_dir.exists():
@@ -123,7 +128,7 @@ class WebUIServer:
         """Get the conversation logs database (cached for server lifetime)."""
         if self._logs_db is None:
             from llm import migrations
-            db_path = get_config_dir("llm-assistant") / "logs.db"
+            db_path = get_logs_db_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
             self._logs_db = sqlite_utils.Database(db_path)
             # Enable WAL mode for better concurrent access
@@ -290,8 +295,9 @@ class WebUIServer:
             try:
                 # Get tools if in assistant mode
                 tools = session.get_tools() if hasattr(session, "get_tools") else []
+                # Get system prompt with GUI-specific sections (Mermaid diagrams)
                 system_prompt = (
-                    session.get_system_prompt()
+                    session.get_system_prompt(gui=True)
                     if hasattr(session, "get_system_prompt")
                     else None
                 )
@@ -346,6 +352,7 @@ class WebUIServer:
         tool_call,
         implementations: Dict[str, callable],
         ws: web.WebSocketResponse,
+        arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> ToolResult:
         """Execute a single tool call and return the result.
 
@@ -354,7 +361,7 @@ class WebUIServer:
         async def emit(event: dict) -> None:
             await ws.send_json(event)
 
-        return await execute_tool_call(tool_call, implementations, emit)
+        return await execute_tool_call(tool_call, implementations, emit, arg_overrides)
 
     async def _handle_query(
         self,
@@ -386,7 +393,7 @@ class WebUIServer:
                     pass  # Skip invalid attachments
 
         # Get or create session in daemon
-        state = self.daemon.get_session_state(session_id)
+        state = self.daemon.get_session_state(session_id, source="gui")
         state.touch()
         session = state.session
 
@@ -414,12 +421,12 @@ class WebUIServer:
                 gui_context = None  # Skip context on timeout
 
             if gui_context and gui_context.get('session_type') == 'x11':
-                focused_hash, window_hashes = hash_gui_context(gui_context)
-                prev_focused, prev_windows = self._gui_context_state.get(session_id, ("", set()))
+                window_hashes = hash_gui_context(gui_context)
+                prev_windows = self._gui_context_state.get(session_id, set())
 
                 # Determine what changed
-                is_first = not prev_focused
-                if focused_hash == prev_focused and window_hashes == prev_windows:
+                is_first = not prev_windows  # First message if no previous state
+                if window_hashes == prev_windows:
                     # No changes - use compact message
                     context_block = "<gui_context>[Desktop context unchanged]</gui_context>"
                 else:
@@ -432,7 +439,7 @@ class WebUIServer:
                         include_selection=is_first  # Selection only on first message
                     )
                     # Update state
-                    self._gui_context_state[session_id] = (focused_hash, window_hashes)
+                    self._gui_context_state[session_id] = window_hashes
 
                 full_query = f"{context_block}\n\n{query}"
 
@@ -453,8 +460,10 @@ class WebUIServer:
                         None, lambda: handler.search(rag_collection, query, top_k=5)
                     )
                     if results:
+                        # Get sources setting for this session (default True)
+                        sources = self._rag_sources.get(session_id, True)
                         rag_context = await loop.run_in_executor(
-                            None, lambda: handler.format_context(results)
+                            None, lambda: handler.format_context(results, sources=sources)
                         )
                         # Wrap in tags for filtering in display (same format as TUI)
                         full_query = f"<retrieved_documents>\n{rag_context}\n</retrieved_documents>\n\n{full_query}"
@@ -489,6 +498,10 @@ class WebUIServer:
 
             # Tool execution loop
             iteration = 0
+            # Build arg overrides based on session settings
+            sources = self._rag_sources.get(session_id, True)
+            arg_overrides = None if sources else {"search_google": {"sources": False}}
+
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
@@ -496,7 +509,7 @@ class WebUIServer:
                 tool_results = []
                 for tool_call in tool_calls:
                     result = await self._execute_tool_call(
-                        tool_call, implementations, ws
+                        tool_call, implementations, ws, arg_overrides
                     )
                     tool_results.append(result)
 
@@ -580,7 +593,7 @@ class WebUIServer:
             await ws.send_json({"type": "error", "message": "No content"})
             return
 
-        state = self.daemon.get_session_state(session_id)
+        state = self.daemon.get_session_state(session_id, source="gui")
         if not state.session.conversation:
             await ws.send_json({"type": "error", "message": "No active conversation"})
             return
@@ -606,7 +619,7 @@ class WebUIServer:
             await ws.send_json({"type": "error", "message": "No user content"})
             return
 
-        state = self.daemon.get_session_state(session_id)
+        state = self.daemon.get_session_state(session_id, source="gui")
         if state.session.conversation:
             responses = state.session.conversation.responses
             if responses:
@@ -638,7 +651,7 @@ class WebUIServer:
         ws: web.WebSocketResponse,
     ):
         """Handle getHistory request - return conversation history."""
-        state = self.daemon.get_session_state(session_id)
+        state = self.daemon.get_session_state(session_id, source="gui")
         messages = []
 
         if state.session.conversation:
@@ -671,7 +684,7 @@ class WebUIServer:
         args = msg.get("args", "")
 
         if command == "new":
-            state = self.daemon.get_session_state(session_id)
+            state = self.daemon.get_session_state(session_id, source="gui")
             state.session.reset_conversation()
             if hasattr(state.session, 'context_hashes'):
                 state.session.context_hashes = set()
@@ -688,7 +701,7 @@ class WebUIServer:
             })
 
         elif command == "status":
-            state = self.daemon.get_session_state(session_id)
+            state = self.daemon.get_session_state(session_id, source="gui")
             status = {
                 "sessionId": session_id,
                 "model": self.daemon.model_id or "default",
@@ -712,7 +725,7 @@ class WebUIServer:
                     loop = asyncio.get_running_loop()
                     new_model = await loop.run_in_executor(None, llm.get_model, args)
                     self.daemon.model_id = args
-                    state = self.daemon.get_session_state(session_id)
+                    state = self.daemon.get_session_state(session_id, source="gui")
                     state.session.model = new_model
                     state.session.model_name = args
                     if state.session.conversation:
@@ -846,6 +859,7 @@ class WebUIServer:
             return web.json_response({
                 "id": conversation.id,
                 "name": conversation.name,
+                "source": conversation.source,
                 "messages": [
                     {
                         "id": m.id,
@@ -1001,6 +1015,66 @@ class WebUIServer:
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def handle_api_thumbnail(self, request: web.Request) -> web.Response:
+        """Serve a thumbnail for an image file.
+
+        GET /api/thumbnail?path=/path/to/image.png
+        Returns: JPEG thumbnail image
+        """
+        try:
+            import os
+            from io import BytesIO
+
+            path = request.query.get("path")
+            if not path:
+                return web.Response(status=400, text="Missing path parameter")
+
+            # Security: only allow files from temp directories
+            path = os.path.abspath(path)
+            if not (path.startswith("/tmp/") or path.startswith(os.path.expanduser("~/.cache/"))):
+                return web.Response(status=403, text="Access denied")
+
+            if not os.path.isfile(path):
+                return web.Response(status=404, text="File not found")
+
+            # Try to use PIL for thumbnail generation
+            try:
+                from PIL import Image
+
+                loop = asyncio.get_running_loop()
+
+                def generate_thumbnail():
+                    with Image.open(path) as img:
+                        # Convert to RGB if necessary (for PNG with alpha)
+                        if img.mode in ("RGBA", "P"):
+                            img = img.convert("RGB")
+                        # Create thumbnail
+                        img.thumbnail((96, 96), Image.Resampling.LANCZOS)
+                        buffer = BytesIO()
+                        img.save(buffer, format="JPEG", quality=70)
+                        return buffer.getvalue()
+
+                thumbnail_data = await loop.run_in_executor(None, generate_thumbnail)
+                return web.Response(
+                    body=thumbnail_data,
+                    content_type="image/jpeg"
+                )
+            except ImportError:
+                # Fallback: serve original file (async to avoid blocking)
+                loop = asyncio.get_running_loop()
+
+                def read_file():
+                    with open(path, "rb") as f:
+                        return f.read()
+
+                file_data = await loop.run_in_executor(None, read_file)
+                return web.Response(
+                    body=file_data,
+                    content_type="image/png"
+                )
+        except Exception as e:
+            return web.Response(status=500, text=str(e))
+
     async def handle_api_rag_collections(self, request: web.Request) -> web.Response:
         """List RAG collections.
 
@@ -1067,29 +1141,40 @@ class WebUIServer:
             return web.json_response({"error": str(e)}, status=500)
 
     async def handle_api_rag_activate(self, request: web.Request) -> web.Response:
-        """Activate a RAG collection for the session.
+        """Activate or deactivate a RAG collection for the session.
 
         POST /api/rag/activate
-        Body: {"session": "session_id", "collection": "name"}
+        Body: {"session": "session_id", "collection": "name", "sources": true}
+        Body: {"session": "session_id", "collection": null}  # to deactivate
         """
         try:
             data = await request.json()
             session_id = data.get("session")
-            collection = data.get("collection")
+            collection = data.get("collection")  # Can be None to deactivate
+            sources = data.get("sources", True)
 
-            if not session_id or not collection:
+            if not session_id:
                 return web.json_response(
-                    {"error": "Missing session or collection"},
+                    {"error": "Missing session"},
                     status=400
                 )
 
-            # Store active collection for this session
-            state = self.daemon.get_session_state(session_id)
+            # Store active collection for this session (None = deactivate)
+            state = self.daemon.get_session_state(session_id, source="gui")
             if hasattr(state.session, "active_rag_collection"):
                 state.session.active_rag_collection = collection
             else:
                 # Store on server if session doesn't have the attribute
-                self._rag_sessions[session_id] = collection
+                if collection:
+                    self._rag_sessions[session_id] = collection
+                elif session_id in self._rag_sessions:
+                    del self._rag_sessions[session_id]
+
+            # Store sources preference
+            if collection:
+                self._rag_sources[session_id] = sources
+            elif session_id in self._rag_sources:
+                del self._rag_sources[session_id]
 
             return web.json_response({"ok": True, "collection": collection})
         except Exception as e:
@@ -1142,6 +1227,77 @@ class WebUIServer:
                 "reason": getattr(result, 'reason', None),
                 "error": getattr(result, 'error', None),
             })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_create(self, request: web.Request) -> web.Response:
+        """Create a new empty RAG collection.
+
+        POST /api/rag/create
+        Body: {"name": "collection-name"}
+        """
+        try:
+            data = await request.json()
+            name = data.get("name", "").strip()
+
+            if not name:
+                return web.json_response(
+                    {"error": "Collection name is required"},
+                    status=400
+                )
+
+            handler = RAGHandler()
+            if not handler.available():
+                return web.json_response(
+                    {"error": "llm-tools-rag not installed"},
+                    status=500
+                )
+
+            # Create empty collection by getting/creating the engine
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(
+                None,
+                lambda: __import__('llm_tools_rag.engine', fromlist=['get_or_create_engine']).get_or_create_engine(name)
+            )
+
+            return web.json_response({"status": "created", "name": name})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_rag_delete(self, request: web.Request) -> web.Response:
+        """Delete a RAG collection.
+
+        DELETE /api/rag/delete/{name}
+        """
+        try:
+            name = request.match_info.get("name", "").strip()
+
+            if not name:
+                return web.json_response(
+                    {"error": "Collection name is required"},
+                    status=400
+                )
+
+            handler = RAGHandler()
+            if not handler.available():
+                return web.json_response(
+                    {"error": "llm-tools-rag not installed"},
+                    status=500
+                )
+
+            # Delete collection
+            loop = asyncio.get_running_loop()
+            success = await loop.run_in_executor(
+                None, lambda: handler.delete_collection(name)
+            )
+
+            if success:
+                return web.json_response({"status": "deleted", "name": name})
+            else:
+                return web.json_response(
+                    {"error": f"Failed to delete collection '{name}'"},
+                    status=500
+                )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 

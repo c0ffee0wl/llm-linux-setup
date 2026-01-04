@@ -44,15 +44,10 @@ from .headless_session import (
     get_headless_tools,
     get_tool_implementations,
 )
-from .utils import get_config_dir, logs_on
+from .utils import get_config_dir, get_logs_db_path, logs_on
 
 # GUI server (aiohttp - always available)
 from .web_ui_server import WebUIServer
-
-
-def get_logs_db_path() -> Path:
-    """Get the database path for conversation logs."""
-    return get_config_dir() / "logs-daemon.db"
 
 
 class SessionState:
@@ -109,14 +104,26 @@ class AssistantDaemon:
         else:
             self.console.print(f"[dim]{timestamp}[/] {tid} {arrow} {info}")
 
-    def get_session_state(self, terminal_id: str, session_log: Optional[str] = None) -> SessionState:
-        """Get or create session state for terminal."""
+    def get_session_state(
+        self,
+        terminal_id: str,
+        session_log: Optional[str] = None,
+        source: Optional[str] = None
+    ) -> SessionState:
+        """Get or create session state for terminal.
+
+        Args:
+            terminal_id: Unique identifier for the terminal/session
+            session_log: Path to asciinema session log (optional)
+            source: Origin of the session ("gui", "tui", "cli", "api", or None)
+        """
         if terminal_id not in self.sessions:
             session = HeadlessSession(
                 model_name=self.model_id,
                 debug=self.debug,
                 session_log=session_log,
                 terminal_id=terminal_id,
+                source=source,
             )
             self.sessions[terminal_id] = SessionState(terminal_id, session)
         return self.sessions[terminal_id]

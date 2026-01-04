@@ -80,12 +80,140 @@ let sessionId = null;
 let isStreaming = false;
 let currentToolCallId = null;
 let isHistoricalView = false;  // True when viewing a historical conversation (not the active session)
+let viewedConversationId = null;  // ID of the currently viewed historical conversation
+
+/**
+ * Reset input area to active state (removes read-only restrictions).
+ * Called when starting new conversation or loading active/GUI-origin conversation.
+ */
+function resetInputToActive() {
+    const conversation = document.getElementById('conversation');
+    if (conversation) {
+        conversation.classList.remove('historical');
+        conversation.classList.remove('non-gui-origin');
+    }
+    const input = document.getElementById('input');
+    if (input) {
+        input.placeholder = 'Ask a question...';
+    }
+}
 
 // Pending requests for async responses (e.g., stripMarkdown)
 const pendingRequests = new Map();
 
 // Pending images for capture/upload
 window.pendingImages = [];
+
+// Attachment panel state
+const attachmentPanel = {
+    items: [],  // {path, type, thumbnail}
+    visible: false,
+
+    add(path, type) {
+        // Generate thumbnail data URL for image files
+        const item = { path, type: type || 'image', thumbnail: null };
+
+        // For server screenshots, we can fetch a thumbnail
+        // For pasted images, thumbnail is provided by caller
+        this.items.push(item);
+        this.render();
+    },
+
+    addWithThumbnail(path, type, thumbnail) {
+        this.items.push({ path, type: type || 'image', thumbnail });
+        this.render();
+    },
+
+    remove(index) {
+        this.items.splice(index, 1);
+        this.render();
+    },
+
+    clear() {
+        this.items = [];
+        this.render();
+    },
+
+    toggle() {
+        this.visible = !this.visible;
+        const panel = document.getElementById('attachment-panel');
+        if (panel) {
+            panel.classList.toggle('hidden', !this.visible);
+        }
+    },
+
+    hide() {
+        this.visible = false;
+        const panel = document.getElementById('attachment-panel');
+        if (panel) {
+            panel.classList.add('hidden');
+        }
+    },
+
+    render() {
+        const btn = document.getElementById('attachment-btn');
+        const count = document.getElementById('attachment-count');
+        const list = document.getElementById('attachment-list');
+
+        if (!btn || !count || !list) return;
+
+        // Show/hide button based on item count
+        if (this.items.length === 0) {
+            btn.classList.add('hidden');
+            this.hide();
+        } else {
+            btn.classList.remove('hidden');
+            count.textContent = this.items.length;
+        }
+
+        // Clear and rebuild list
+        list.textContent = '';
+
+        for (let i = 0; i < this.items.length; i++) {
+            const item = this.items[i];
+            const div = document.createElement('div');
+            div.className = 'attachment-item';
+
+            // Thumbnail
+            const thumb = document.createElement('img');
+            thumb.className = 'attachment-thumb';
+            if (item.thumbnail) {
+                thumb.src = item.thumbnail;
+            } else {
+                // Placeholder or fetch from server
+                thumb.src = '/api/thumbnail?path=' + encodeURIComponent(item.path);
+            }
+            thumb.alt = 'Attachment';
+            div.appendChild(thumb);
+
+            // Info (filename)
+            const info = document.createElement('span');
+            info.className = 'attachment-info';
+            const filename = item.path.split('/').pop() || item.path;
+            info.textContent = filename;
+            info.title = item.path;
+            div.appendChild(info);
+
+            // Delete button
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'attachment-delete';
+            deleteBtn.title = 'Remove';
+            deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.remove(i);
+            };
+            div.appendChild(deleteBtn);
+
+            list.appendChild(div);
+        }
+    },
+
+    // Get paths for sending
+    getPaths() {
+        return this.items.map(item => item.path);
+    }
+};
 
 // Helper to check WebSocket connection state
 function isConnected() {
@@ -200,7 +328,6 @@ const TOOL_CONFIG = {
     sandboxed_shell: { name: 'Shell', icon: 'shell' },
     search_google: { name: 'Google Search', icon: 'search' },
     fetch_url: { name: 'Fetch URL', icon: 'web' },
-    suggest_command: { name: 'Command', icon: 'shell' },
     capture_screen: { name: 'Screenshot', icon: 'tool' }
 };
 
@@ -315,14 +442,34 @@ const historySidebar = {
 
             // Mark as historical view (disables edit/regenerate)
             isHistoricalView = true;
+            viewedConversationId = id;
             const conversation = document.getElementById('conversation');
             if (conversation) {
                 conversation.classList.add('historical');
+                // Check if conversation originated from GUI
+                // Non-GUI conversations (cli, tui, api) are read-only
+                if (data.source !== 'gui') {
+                    conversation.classList.add('non-gui-origin');
+                } else {
+                    conversation.classList.remove('non-gui-origin');
+                }
             }
 
             // Load into main view
             loadHistory(data.messages || []);
-            showToast('Loaded conversation (read-only)');
+
+            // Update input placeholder based on origin
+            const inputEl = document.getElementById('input');
+            if (inputEl) {
+                inputEl.placeholder = data.source === 'gui'
+                    ? 'Ask a question...'
+                    : 'Read-only: conversation from CLI';
+            }
+
+            const toastMsg = data.source === 'gui'
+                ? 'Loaded conversation'
+                : 'Loaded conversation (read-only)';
+            showToast(toastMsg);
 
             // On mobile, collapse sidebar after selection
             if (window.innerWidth < 768) {
@@ -376,6 +523,12 @@ const historySidebar = {
             if (!response.ok) throw new Error('Failed to delete conversation');
 
             showToast('Conversation deleted');
+
+            // If the deleted conversation was being viewed, reset the chat display
+            if (viewedConversationId === id) {
+                clearConversation();
+            }
+
             // Reload history to reflect the change
             await this.load();
         } catch (err) {
@@ -645,6 +798,7 @@ const captureControls = {
             const data = await response.json();
             if (data.path) {
                 window.pendingImages.push(data.path);
+                attachmentPanel.add(data.path, 'screenshot');
                 showToast('Screenshot captured');
             } else {
                 showToast('Capture failed: no path returned');
@@ -663,6 +817,7 @@ const captureControls = {
 const ragPanel = {
     collections: [],
     activeCollection: null,
+    sources: true,
 
     async load() {
         try {
@@ -685,7 +840,7 @@ const ragPanel = {
         if (this.collections.length === 0) {
             const empty = document.createElement('div');
             empty.className = 'rag-empty';
-            empty.textContent = 'No collections. Add documents below.';
+            empty.textContent = 'No collections. Create one above or add documents.';
             container.appendChild(empty);
             return;
         }
@@ -693,52 +848,177 @@ const ragPanel = {
         for (const coll of this.collections) {
             const div = document.createElement('div');
             div.className = 'rag-collection' + (coll.name === this.activeCollection ? ' active' : '');
-            div.onclick = () => this.activate(coll.name);
+
+            // Content area (clickable to activate)
+            const content = document.createElement('div');
+            content.className = 'rag-collection-content';
+            content.onclick = () => this.activate(coll.name);
 
             const name = document.createElement('span');
             name.className = 'rag-collection-name';
             name.textContent = coll.name;
-            div.appendChild(name);
+            content.appendChild(name);
 
-            const count = document.createElement('span');
-            count.className = 'rag-collection-count';
-            count.textContent = (coll.count || 0) + ' docs';
-            div.appendChild(count);
+            const info = document.createElement('span');
+            info.className = 'rag-collection-info';
+            // Now shows "X docs, Y chunks" format
+            const docs = coll.documents || 0;
+            const chunks = coll.chunks || 0;
+            info.textContent = docs + ' docs, ' + chunks + ' chunks';
+            content.appendChild(info);
+
+            div.appendChild(content);
+
+            // Delete button (hover visibility)
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'rag-collection-delete';
+            deleteBtn.title = 'Delete collection';
+            deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>';
+            deleteBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.deleteCollection(coll.name);
+            };
+            div.appendChild(deleteBtn);
 
             container.appendChild(div);
+        }
+
+        // Update add section disabled state
+        this.updateAddSectionState();
+    },
+
+    /**
+     * Update the disabled state of the add document section.
+     * Disabled when no collection is selected.
+     */
+    updateAddSectionState() {
+        const addInput = document.getElementById('rag-add-input');
+        const addBtn = document.getElementById('rag-add-btn');
+        const hasActiveCollection = !!this.activeCollection;
+
+        if (addInput) {
+            addInput.disabled = !hasActiveCollection;
+            addInput.placeholder = hasActiveCollection
+                ? 'Path, URL, or git:...'
+                : 'Select or create a collection first';
+        }
+        if (addBtn) {
+            addBtn.disabled = !hasActiveCollection;
+        }
+    },
+
+    async createCollection(name) {
+        if (!name.trim()) return;
+
+        try {
+            const response = await fetch('/api/rag/create', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: name.trim() })
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to create collection');
+            }
+
+            showToast('Collection "' + name + '" created');
+            await this.load(); // Refresh collections
+        } catch (err) {
+            console.error('RAG create error:', err);
+            showToast('Failed to create: ' + err.message);
+        }
+    },
+
+    async deleteCollection(name) {
+        if (!confirm('Delete collection "' + name + '"? This will remove all documents and cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/rag/delete/' + encodeURIComponent(name), {
+                method: 'DELETE'
+            });
+
+            if (!response.ok) {
+                const err = await response.json();
+                throw new Error(err.error || 'Failed to delete collection');
+            }
+
+            // If this was the active collection, clear it
+            if (this.activeCollection === name) {
+                this.activeCollection = null;
+            }
+
+            showToast('Collection "' + name + '" deleted');
+            await this.load(); // Refresh collections
+        } catch (err) {
+            console.error('RAG delete error:', err);
+            showToast('Failed to delete: ' + err.message);
         }
     },
 
     async activate(name) {
+        // Toggle: if clicking on already active collection, deactivate it
+        const isDeactivating = this.activeCollection === name;
+        const newCollection = isDeactivating ? null : name;
+
         try {
             const response = await fetch('/api/rag/activate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ session: sessionId, collection: name })
+                body: JSON.stringify({
+                    session: sessionId,
+                    collection: newCollection,
+                    sources: this.sources
+                })
             });
 
-            if (!response.ok) throw new Error('Failed to activate collection');
+            if (!response.ok) throw new Error('Failed to update collection');
 
-            this.activeCollection = name;
+            this.activeCollection = newCollection;
             this.render();
-            showToast('RAG: ' + name + ' activated');
+            showToast(isDeactivating ? 'RAG deactivated' : 'RAG: ' + name + ' activated');
         } catch (err) {
             console.error('RAG activate error:', err);
-            showToast('Failed to activate collection');
+            showToast('Failed to update collection');
+        }
+    },
+
+    async updateSources(value) {
+        this.sources = value;
+        // If there's an active collection, update the server
+        if (this.activeCollection) {
+            try {
+                await fetch('/api/rag/activate', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        session: sessionId,
+                        collection: this.activeCollection,
+                        sources: this.sources
+                    })
+                });
+            } catch (err) {
+                console.error('Failed to update sources:', err);
+            }
         }
     },
 
     async addDocument(path) {
         if (!path.trim()) return;
 
-        try {
-            // Use default collection if none active
-            const collection = this.activeCollection || 'default';
+        // Require an active collection
+        if (!this.activeCollection) {
+            showToast('Select or create a collection first');
+            return;
+        }
 
+        try {
             const response = await fetch('/api/rag/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ collection: collection, path: path })
+                body: JSON.stringify({ collection: this.activeCollection, path: path })
             });
 
             if (!response.ok) {
@@ -746,7 +1026,7 @@ const ragPanel = {
                 throw new Error(err.error || 'Failed to add document');
             }
 
-            showToast('Document added to ' + collection);
+            showToast('Document added to ' + this.activeCollection);
             await this.load(); // Refresh collections
         } catch (err) {
             console.error('RAG add error:', err);
@@ -1070,10 +1350,7 @@ function handleMessage(msg) {
         case 'history':
             // This is the active session's history, not a historical load
             isHistoricalView = false;
-            const convEl = document.getElementById('conversation');
-            if (convEl) {
-                convEl.classList.remove('historical');
-            }
+            resetInputToActive();
             loadHistory(msg.messages || []);
             break;
 
@@ -1417,9 +1694,10 @@ function clearConversation() {
             <p>Type a question below and press Enter to send.</p>
         </div>
     `;
-    // Clear historical view flag (this is now an active session)
+    // Clear historical view flags (this is now an active session)
     isHistoricalView = false;
-    conversation.classList.remove('historical');
+    viewedConversationId = null;
+    resetInputToActive();
     currentMessageId = null;
     messageStore.clear();
     // Reset temp chat toggle for new conversation
@@ -1800,9 +2078,10 @@ function sendMessage() {
     // Add user message to UI
     appendMessage('user', query);
 
-    // Collect any pending images from drag-drop
+    // Collect any pending images from drag-drop and attachment panel
     const images = window.pendingImages || [];
     window.pendingImages = [];
+    attachmentPanel.clear();
 
     // Build query message
     const queryMsg = {
@@ -2111,6 +2390,22 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     });
 
+    // RAG create collection button
+    const ragCreateBtn = document.getElementById('rag-create-btn');
+    const ragNewName = document.getElementById('rag-new-name');
+    if (ragCreateBtn && ragNewName) {
+        ragCreateBtn.addEventListener('click', function() {
+            ragPanel.createCollection(ragNewName.value);
+            ragNewName.value = '';
+        });
+        ragNewName.addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') {
+                ragPanel.createCollection(ragNewName.value);
+                ragNewName.value = '';
+            }
+        });
+    }
+
     // RAG add button
     const ragAddBtn = document.getElementById('rag-add-btn');
     const ragAddInput = document.getElementById('rag-add-input');
@@ -2124,6 +2419,23 @@ document.addEventListener('DOMContentLoaded', function() {
                 ragPanel.addDocument(ragAddInput.value);
                 ragAddInput.value = '';
             }
+        });
+    }
+
+    // RAG show sources checkbox
+    const ragShowSourcesCheckbox = document.getElementById('rag-show-sources-checkbox');
+    if (ragShowSourcesCheckbox) {
+        ragShowSourcesCheckbox.addEventListener('change', function(e) {
+            ragPanel.updateSources(e.target.checked);
+        });
+    }
+
+    // Attachment panel button
+    const attachmentBtn = document.getElementById('attachment-btn');
+    if (attachmentBtn) {
+        attachmentBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            attachmentPanel.toggle();
         });
     }
 
@@ -2147,6 +2459,10 @@ document.addEventListener('DOMContentLoaded', function() {
         // Close capture dropdown
         if (!e.target.closest('#capture-wrapper')) {
             captureControls.hideDropdown();
+        }
+        // Close attachment panel
+        if (!e.target.closest('#attachment-wrapper')) {
+            attachmentPanel.hide();
         }
         // Close @ autocomplete
         if (!e.target.closest('#at-autocomplete') && !e.target.closest('#input')) {
