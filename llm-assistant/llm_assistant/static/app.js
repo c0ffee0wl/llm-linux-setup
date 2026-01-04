@@ -267,7 +267,10 @@ const historySidebar = {
                 const item = document.createElement('div');
                 item.className = 'history-item';
                 item.dataset.id = conv.id;
-                item.onclick = () => this.loadConversation(conv.id);
+
+                const itemContent = document.createElement('div');
+                itemContent.className = 'history-item-content';
+                itemContent.onclick = () => this.loadConversation(conv.id);
 
                 const itemHeader = document.createElement('div');
                 itemHeader.className = 'history-item-header';
@@ -277,12 +280,25 @@ const historySidebar = {
                 preview.textContent = conv.preview || 'Empty conversation';
                 itemHeader.appendChild(preview);
 
-                item.appendChild(itemHeader);
+                itemContent.appendChild(itemHeader);
 
                 const meta = document.createElement('div');
                 meta.className = 'history-meta';
                 meta.textContent = (conv.message_count || 0) + ' msgs';
-                item.appendChild(meta);
+                itemContent.appendChild(meta);
+
+                item.appendChild(itemContent);
+
+                // Delete button
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'history-delete-btn';
+                deleteBtn.title = 'Delete conversation';
+                deleteBtn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>';
+                deleteBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    this.deleteConversation(conv.id);
+                };
+                item.appendChild(deleteBtn);
 
                 group.appendChild(item);
             }
@@ -338,6 +354,26 @@ const historySidebar = {
             sidebar.classList.toggle('collapsed');
             // Save state
             localStorage.setItem('sidebar_collapsed', sidebar.classList.contains('collapsed'));
+        }
+    },
+
+    async deleteConversation(id) {
+        if (!confirm('Delete this conversation? This cannot be undone.')) {
+            return;
+        }
+
+        try {
+            const response = await fetch('/api/history/' + id, {
+                method: 'DELETE'
+            });
+            if (!response.ok) throw new Error('Failed to delete conversation');
+
+            showToast('Conversation deleted');
+            // Reload history to reflect the change
+            await this.load();
+        } catch (err) {
+            console.error('Delete conversation error:', err);
+            showToast('Failed to delete conversation');
         }
     },
 
@@ -1029,7 +1065,25 @@ function handleMessage(msg) {
             break;
 
         case 'branched':
-            showToast('Branched to new session: ' + msg.newSessionId);
+            // Try to open new tab with branched session
+            const branchUrl = window.location.pathname + '?session=' + encodeURIComponent(msg.newSessionId);
+            const newWindow = window.open(branchUrl, '_blank');
+
+            if (newWindow) {
+                showToast('Opened branch in new tab');
+            } else {
+                // Popup blocked or GTK WebView - switch current session
+                // Close current WebSocket and reconnect with new session
+                sessionId = msg.newSessionId;
+                if (ws) {
+                    ws.close();
+                }
+                // Clear UI and update URL
+                clearConversation();
+                history.replaceState(null, '', branchUrl);
+                // Reconnect will happen automatically via onclose handler
+                showToast('Switched to branched session');
+            }
             break;
 
         case 'commandResult':

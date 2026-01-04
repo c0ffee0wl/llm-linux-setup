@@ -107,6 +107,7 @@ class WebUIServer:
         self.app.router.add_get("/api/history", self.handle_api_history)
         self.app.router.add_get("/api/history/search", self.handle_api_history_search)
         self.app.router.add_get("/api/history/{id}", self.handle_api_history_item)
+        self.app.router.add_delete("/api/history/{id}", self.handle_api_history_delete)
         self.app.router.add_get("/api/completions", self.handle_api_completions)
         self.app.router.add_post("/api/capture", self.handle_api_capture)
         self.app.router.add_get("/api/rag/collections", self.handle_api_rag_collections)
@@ -901,6 +902,27 @@ class WebUIServer:
                     for m in conversation.messages
                 ],
             })
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def handle_api_history_delete(self, request: web.Request) -> web.Response:
+        """Delete a conversation by ID.
+
+        DELETE /api/history/{id}
+        """
+        try:
+            conversation_id = request.match_info["id"]
+            history = ConversationHistory()
+            # Run in executor to avoid blocking event loop (DB operation)
+            loop = asyncio.get_running_loop()
+            success = await loop.run_in_executor(
+                None, lambda: history.delete_conversation(conversation_id)
+            )
+
+            if success:
+                return web.json_response({"success": True})
+            else:
+                return web.json_response({"error": "Failed to delete conversation"}, status=500)
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 

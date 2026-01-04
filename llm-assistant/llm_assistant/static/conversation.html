@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="/static/style.css?v=19">
+    <link rel="stylesheet" href="/static/style.css?v=23">
     <script src="/static/marked.min.js"></script>
     <script src="/static/highlight.min.js"></script>
     <script src="/static/purify.min.js"></script>
@@ -22,7 +22,7 @@
                 <button class="sidebar-tab" data-tab="rag">RAG</button>
             </div>
             <div id="history-panel" class="sidebar-panel active">
-                <input type="text" id="history-search" placeholder="Search responses..." class="sidebar-search">
+                <input type="text" id="history-search" placeholder="Search assistant responses..." class="sidebar-search">
                 <div id="history-list"></div>
             </div>
             <div id="rag-panel" class="sidebar-panel">
@@ -115,10 +115,9 @@
             <div id="at-autocomplete" class="dropdown hidden">
                 <div id="at-autocomplete-list"></div>
             </div>
+            <div id="toast"></div>
         </main>
     </div>
-
-    <div id="toast"></div>
 
     <!-- Action Panel (Ctrl+K) -->
     <div id="action-panel" class="hidden">
@@ -129,6 +128,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=25"></script>
+    <script src="/static/app.js?v=28"></script>
 </body>
 </html>

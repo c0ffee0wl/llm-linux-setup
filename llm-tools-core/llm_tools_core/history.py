@@ -314,7 +314,12 @@ class ConversationHistory:
         return grouped
 
     def delete_conversation(self, conversation_id: str) -> bool:
-        """Delete a conversation.
+        """Delete a conversation and all related records.
+
+        Handles all foreign key relationships including:
+        - responses (triggers auto-update FTS)
+        - tool_results_attachments, tool_results, tool_calls, tool_responses
+        - prompt_attachments, prompt_fragments, system_fragments
 
         Args:
             conversation_id: The conversation ID to delete
@@ -327,19 +332,55 @@ class ConversationHistory:
             return False
 
         try:
-            # Delete from logs database
+            # Get all response IDs for this conversation
+            response_ids = [
+                row[0] for row in logs_conn.execute(
+                    "SELECT id FROM responses WHERE conversation_id = ?",
+                    (conversation_id,)
+                ).fetchall()
+            ]
+
+            if response_ids:
+                placeholders = ",".join("?" * len(response_ids))
+
+                # Delete tool_results_attachments (via tool_results)
+                logs_conn.execute(f"""
+                    DELETE FROM tool_results_attachments
+                    WHERE tool_result_id IN (
+                        SELECT id FROM tool_results WHERE response_id IN ({placeholders})
+                    )
+                """, response_ids)
+
+                # Delete from tables with response_id foreign key
+                for table in [
+                    "tool_results",
+                    "tool_calls",
+                    "tool_responses",
+                    "prompt_attachments",
+                    "prompt_fragments",
+                    "system_fragments",
+                ]:
+                    logs_conn.execute(
+                        f"DELETE FROM {table} WHERE response_id IN ({placeholders})",
+                        response_ids
+                    )
+
+            # Delete responses (FTS triggers handle responses_fts)
             logs_conn.execute(
                 "DELETE FROM responses WHERE conversation_id = ?",
                 (conversation_id,)
             )
+
+            # Delete conversation
             logs_conn.execute(
                 "DELETE FROM conversations WHERE id = ?",
                 (conversation_id,)
             )
-            logs_conn.commit()
 
+            logs_conn.commit()
             return True
-        except sqlite3.Error:
+        except sqlite3.Error as e:
+            logs_conn.rollback()
             return False
         finally:
             logs_conn.close()
