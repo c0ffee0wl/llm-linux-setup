@@ -14,8 +14,11 @@ from typing import Dict, List, Optional
 from .xdg import get_config_dir
 
 
-def _strip_context_tags(text: str) -> str:
-    """Strip injected context tags from text for display."""
+def strip_context_tags(text: str) -> str:
+    """Strip injected context tags from text for display.
+
+    Removes: <gui_context>, <terminal_context>, <retrieved_documents>, <context>
+    """
     if not text:
         return text
     # Strip all context tag types
@@ -122,7 +125,7 @@ class ConversationHistory:
             summaries = []
             for row in rows:
                 # Create preview from first prompt, stripping context tags
-                preview = _strip_context_tags(row["first_prompt"] or "")
+                preview = strip_context_tags(row["first_prompt"] or "")
                 if len(preview) > 100:
                     preview = preview[:100] + "..."
 
@@ -241,7 +244,7 @@ class ConversationHistory:
             summaries = []
             for row in rows:
                 # Create preview from first prompt, stripping context tags
-                preview = _strip_context_tags(row["first_prompt"] or "")
+                preview = strip_context_tags(row["first_prompt"] or "")
                 if len(preview) > 100:
                     preview = preview[:100] + "..."
 

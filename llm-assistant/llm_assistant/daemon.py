@@ -37,6 +37,7 @@ from llm_tools_core import (
     WORKER_IDLE_MINUTES,
     MAX_TOOL_ITERATIONS,
 )
+from llm_tools_core.tool_execution import execute_tool_call
 
 from .headless_session import (
     HeadlessSession,
@@ -566,72 +567,14 @@ class AssistantDaemon:
         implementations: Dict[str, callable],
         writer: asyncio.StreamWriter
     ) -> ToolResult:
-        """Execute a single tool call and return the result."""
-        tool_name = (tool_call.name or "").lower().strip()
-        tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        tool_call_id = tool_call.tool_call_id
+        """Execute a single tool call and return the result.
 
-        # Emit tool start event
-        await self._emit(writer, {
-            "type": "tool_start",
-            "tool": tool_name,
-            "args": tool_args
-        })
+        Uses shared execute_tool_call from llm_tools_core.
+        """
+        async def emit(event: dict) -> None:
+            await self._emit(writer, event)
 
-        # Check if we have an implementation
-        if tool_name not in implementations:
-            await self._emit(writer, {
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": f"Error: Tool '{tool_name}' not available"
-            })
-            return ToolResult(
-                name=tool_call.name,
-                output=f"Error: Tool '{tool_name}' not available",
-                tool_call_id=tool_call_id
-            )
-
-        try:
-            impl = implementations[tool_name]
-            # Run tool in executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, lambda: impl(**tool_args)
-            )
-
-            # Handle different result types (consistent with web_ui_server.py)
-            if hasattr(result, "output"):
-                output = result.output
-            elif isinstance(result, str):
-                output = result
-            else:
-                output = str(result)
-
-            await self._emit(writer, {
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": output[:500] if len(output) > 500 else output  # Truncate for event
-            })
-
-            return ToolResult(
-                name=tool_call.name,
-                output=output,
-                tool_call_id=tool_call_id
-            )
-
-        except Exception as e:
-            error_msg = f"Error executing {tool_name}: {e}"
-            await self._emit(writer, {
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": error_msg
-            })
-
-            return ToolResult(
-                name=tool_call.name,
-                output=error_msg,
-                tool_call_id=tool_call_id
-            )
+        return await execute_tool_call(tool_call, implementations, emit)
 
     async def handle_complete(self, request: dict, writer: asyncio.StreamWriter):
         """Handle completion request for slash commands and fragments."""

@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="/static/style.css?v=16">
+    <link rel="stylesheet" href="/static/style.css?v=19">
     <script src="/static/marked.min.js"></script>
     <script src="/static/highlight.min.js"></script>
     <script src="/static/purify.min.js"></script>
@@ -35,44 +35,46 @@
                     Supports: files, directories, git repos, URLs
                 </div>
             </div>
-            <div class="sidebar-footer">
-                <button id="new-conversation-btn" title="New conversation">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <!-- Chat bubble with plus -->
-                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                        <line x1="12" y1="8" x2="12" y2="14"></line>
-                        <line x1="9" y1="11" x2="15" y2="11"></line>
-                    </svg>
-                    <span>New</span>
-                </button>
-            </div>
         </aside>
 
         <!-- Main Content -->
         <main id="main-content">
+            <!-- Header Bar -->
+            <header id="header-bar">
+                <button id="sidebar-toggle" class="header-btn" title="Toggle sidebar">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+                        <line x1="9" y1="3" x2="9" y2="21"></line>
+                    </svg>
+                </button>
+                <button id="new-conversation-btn-header" class="header-btn" title="New conversation">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        <line x1="12" y1="8" x2="12" y2="14"></line>
+                        <line x1="9" y1="11" x2="15" y2="11"></line>
+                    </svg>
+                </button>
+                <div id="model-picker">
+                    <select id="model-select" title="Select model">
+                        <option value="">Loading...</option>
+                    </select>
+                </div>
+                <label id="temp-chat-toggle" class="toggle-label" title="Disable logging for this conversation (only available before first message)">
+                    <input type="checkbox" id="temp-chat-checkbox">
+                    <span class="toggle-text">Temporary chat</span>
+                </label>
+                <div class="header-spacer"></div>
+            </header>
+
             <div id="conversation">
                 <div class="empty-state" id="empty-state">
                     <h2>How can I help you today?</h2>
-                    <p>Type a question below and press Ctrl+Enter to send.</p>
+                    <p>Type a question below and press Enter to send.</p>
                 </div>
             </div>
 
             <div id="input-area">
                 <div id="input-controls">
-                    <button id="sidebar-toggle-input" class="control-btn" title="Toggle sidebar">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                            <line x1="9" y1="3" x2="9" y2="21"></line>
-                        </svg>
-                    </button>
-                    <button id="new-conversation-btn-input" class="control-btn" title="New conversation">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <!-- Chat bubble with plus -->
-                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
-                            <line x1="12" y1="8" x2="12" y2="14"></line>
-                            <line x1="9" y1="11" x2="15" y2="11"></line>
-                        </svg>
-                    </button>
                     <div id="capture-wrapper">
                         <button id="capture-btn" class="control-btn" title="Capture screenshot">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -127,6 +129,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=15"></script>
+    <script src="/static/app.js?v=25"></script>
 </body>
 </html>

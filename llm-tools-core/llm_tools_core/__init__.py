@@ -130,6 +130,7 @@ from .history import (
     ConversationSummary,
     FullConversation,
     Message,
+    strip_context_tags,
 )
 
 # @ reference handling
@@ -152,6 +153,12 @@ from .tool_display import (
     get_action_verb,
     get_tool_info,
     get_action_verb_map,
+)
+
+# Tool execution
+from .tool_execution import (
+    execute_tool_call,
+    ToolEvent,
 )
 
 __all__ = [
@@ -251,6 +258,7 @@ __all__ = [
     "ConversationSummary",
     "FullConversation",
     "Message",
+    "strip_context_tags",
     # @ reference handling
     "AtHandler",
     "Completion",
@@ -264,6 +272,9 @@ __all__ = [
     "get_action_verb",
     "get_tool_info",
     "get_action_verb_map",
+    # Tool execution
+    "execute_tool_call",
+    "ToolEvent",
 ]
 
 __version__ = "1.3.0"

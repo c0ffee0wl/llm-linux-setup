@@ -11,20 +11,27 @@ Architecture:
 """
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 import os
 import re
 import tempfile
 import threading
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Set
 
 from aiohttp import web
 import llm
+import sqlite_utils
 from llm import ToolResult
 
 from llm_tools_core.markdown import strip_markdown
+from llm_tools_core.xdg import get_config_dir
+from llm_tools_core.tool_execution import execute_tool_call
 from llm_tools_core import (
     MAX_TOOL_ITERATIONS,
     ConversationHistory,
@@ -32,6 +39,7 @@ from llm_tools_core import (
     RAGHandler,
     gather_context,
     format_gui_context,
+    strip_context_tags,
 )
 from llm_tools_core.hashing import hash_gui_context
 
@@ -53,6 +61,17 @@ class WebUIServer:
 
         # Track WebSocket clients per session
         self.ws_clients: Dict[str, Set[web.WebSocketResponse]] = {}
+
+        # Dedicated executor for LLM operations to avoid starving other async tasks
+        self._llm_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="llm")
+
+        # Session state tracking (initialized upfront to avoid race conditions)
+        self._gui_context_state: Dict[str, tuple] = {}  # session_id -> (focused_hash, window_hashes)
+        self._rag_sessions: Dict[str, str] = {}  # session_id -> collection_name
+        self._session_no_log: Dict[str, bool] = {}  # session_id -> no_log flag
+
+        # Cached database connection (created lazily, closed on stop)
+        self._logs_db: Optional[sqlite_utils.Database] = None
 
         # Static assets directory - prefer development source if available
         # Check for LLM_DEV_STATIC env var first (explicit override)
@@ -83,7 +102,8 @@ class WebUIServer:
         self.app.router.add_post("/upload", self.handle_upload)
         # Note: /context endpoint removed - daemon captures context directly for guiassistant sessions
 
-        # API routes for history, completions, capture, and RAG
+        # API routes for history, completions, capture, models, and RAG
+        self.app.router.add_get("/api/models", self.handle_api_models)
         self.app.router.add_get("/api/history", self.handle_api_history)
         self.app.router.add_get("/api/history/search", self.handle_api_history_search)
         self.app.router.add_get("/api/history/{id}", self.handle_api_history_item)
@@ -97,6 +117,26 @@ class WebUIServer:
         # Static file serving
         if self.static_dir.exists():
             self.app.router.add_static("/static/", self.static_dir)
+
+    def _get_logs_db(self) -> sqlite_utils.Database:
+        """Get the conversation logs database (cached for server lifetime)."""
+        if self._logs_db is None:
+            from llm import migrations
+            db_path = get_config_dir("llm-assistant") / "logs.db"
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._logs_db = sqlite_utils.Database(db_path)
+            # Enable WAL mode for better concurrent access
+            self._logs_db.execute("PRAGMA journal_mode=WAL")
+            migrations.migrate(self._logs_db)
+        return self._logs_db
+
+    def _should_log(self, session_id: str) -> bool:
+        """Check if logging is enabled for this session."""
+        return not self._session_no_log.get(session_id, False)
+
+    def _set_no_log(self, session_id: str, no_log: bool):
+        """Set no-log flag for a session."""
+        self._session_no_log[session_id] = no_log
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """Serve the main conversation HTML."""
@@ -153,8 +193,8 @@ class WebUIServer:
             self.ws_clients[session_id] = set()
         self.ws_clients[session_id].add(ws)
 
-        # Send connection confirmation
-        model_id = self.daemon.model_id or "default"
+        # Send connection confirmation with actual current model
+        model_id = self.daemon.model_id or llm.get_model().model_id
         await ws.send_json({
             "type": "connected",
             "sessionId": session_id,
@@ -180,12 +220,15 @@ class WebUIServer:
             if session_id in self.ws_clients:
                 self.ws_clients[session_id].discard(ws)
                 if not self.ws_clients[session_id]:
+                    # Last client disconnected - clean up all session state
                     del self.ws_clients[session_id]
-            # Clean up session state to prevent memory leaks
-            if hasattr(self, '_gui_context_state') and session_id in self._gui_context_state:
-                del self._gui_context_state[session_id]
-            if hasattr(self, '_rag_sessions') and session_id in self._rag_sessions:
-                del self._rag_sessions[session_id]
+                    # Clean up session state to prevent memory leaks
+                    if session_id in self._gui_context_state:
+                        del self._gui_context_state[session_id]
+                    if session_id in self._rag_sessions:
+                        del self._rag_sessions[session_id]
+                    if session_id in self._session_no_log:
+                        del self._session_no_log[session_id]
 
         return ws
 
@@ -282,8 +325,8 @@ class WebUIServer:
             finally:
                 asyncio.run_coroutine_threadsafe(queue.put(None), loop)
 
-        # Start producer in thread pool
-        loop.run_in_executor(None, sync_producer)
+        # Start producer in dedicated LLM thread pool
+        loop.run_in_executor(self._llm_executor, sync_producer)
 
         # Yield chunks as they arrive
         try:
@@ -305,71 +348,14 @@ class WebUIServer:
         implementations: Dict[str, callable],
         ws: web.WebSocketResponse,
     ) -> ToolResult:
-        """Execute a single tool call and return the result."""
-        tool_name = (tool_call.name or "").lower().strip()
-        tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-        tool_call_id = tool_call.tool_call_id
+        """Execute a single tool call and return the result.
 
-        # Emit tool start event
-        await ws.send_json({
-            "type": "tool_start",
-            "tool": tool_name,
-            "args": tool_args,
-        })
+        Uses shared execute_tool_call from llm_tools_core.
+        """
+        async def emit(event: dict) -> None:
+            await ws.send_json(event)
 
-        if tool_name not in implementations:
-            await ws.send_json({
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": f"Error: Tool '{tool_name}' not available",
-            })
-            return ToolResult(
-                name=tool_call.name,
-                output=f"Error: Tool '{tool_name}' not available",
-                tool_call_id=tool_call_id,
-            )
-
-        try:
-            impl = implementations[tool_name]
-            # Run tool in executor to avoid blocking event loop
-            loop = asyncio.get_running_loop()
-            result = await loop.run_in_executor(
-                None, lambda: impl(**tool_args)
-            )
-
-            # Handle different result types
-            if hasattr(result, "output"):
-                output = result.output
-            elif isinstance(result, str):
-                output = result
-            else:
-                output = str(result)
-
-            await ws.send_json({
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": output[:500] if len(output) > 500 else output,
-            })
-
-            return ToolResult(
-                name=tool_call.name,
-                output=output,
-                tool_call_id=tool_call_id,
-            )
-
-        except Exception as e:
-            error_msg = f"Error executing {tool_name}: {e}"
-            await ws.send_json({
-                "type": "tool_done",
-                "tool": tool_name,
-                "result": error_msg,
-            })
-
-            return ToolResult(
-                name=tool_call.name,
-                output=error_msg,
-                tool_call_id=tool_call_id,
-            )
+        return await execute_tool_call(tool_call, implementations, emit)
 
     async def _handle_query(
         self,
@@ -381,6 +367,11 @@ class WebUIServer:
         query = msg.get("query", "").strip()
         mode = msg.get("mode", "assistant")
         image_paths = msg.get("images", [])
+        no_log = msg.get("noLog", False)
+
+        # Set no-log flag for this session if requested
+        if no_log:
+            self._set_no_log(session_id, True)
 
         if not query:
             await ws.send_json({"type": "error", "message": "Empty query"})
@@ -413,13 +404,15 @@ class WebUIServer:
 
         # For guiassistant sessions: Capture fresh GUI context with deduplication
         if session_id.startswith("guiassistant:"):
-            # Lazy-init state dict for GUI context deduplication
-            if not hasattr(self, "_gui_context_state"):
-                self._gui_context_state: Dict[str, tuple] = {}
-
-            # Capture fresh context from X11 (run in executor to avoid blocking)
+            # Capture fresh context from X11 (run in executor with timeout)
             loop = asyncio.get_running_loop()
-            gui_context = await loop.run_in_executor(None, gather_context)
+            try:
+                gui_context = await asyncio.wait_for(
+                    loop.run_in_executor(None, gather_context),
+                    timeout=3.0  # 3 second timeout for X11 calls
+                )
+            except asyncio.TimeoutError:
+                gui_context = None  # Skip context on timeout
 
             if gui_context and gui_context.get('session_type') == 'x11':
                 focused_hash, window_hashes = hash_gui_context(gui_context)
@@ -558,6 +551,16 @@ class WebUIServer:
                 except Exception:
                     pass  # Continue without thinking trace on error
 
+            # Log conversation to database (unless no_log is set)
+            if self._should_log(session_id) and response_holder[0]:
+                try:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None, lambda: response_holder[0].log_to_db(self._get_logs_db())
+                    )
+                except Exception:
+                    pass  # Continue without logging on error
+
             await ws.send_json({"type": "done"})
 
         except Exception as e:
@@ -691,36 +694,8 @@ class WebUIServer:
 
                 if hasattr(r, "prompt") and r.prompt:
                     prompt_text = r.prompt.prompt or ""
-                    # Strip context from prompt (all formats)
-                    if "<gui_context>" in prompt_text:
-                        prompt_text = re.sub(
-                            r"<gui_context>.*?</gui_context>\s*",
-                            "",
-                            prompt_text,
-                            flags=re.DOTALL,
-                        )
-                    # Legacy <context> tag (for backward compat)
-                    if "<context>" in prompt_text:
-                        prompt_text = re.sub(
-                            r"<context>.*?</context>\s*",
-                            "",
-                            prompt_text,
-                            flags=re.DOTALL,
-                        )
-                    if "<terminal_context>" in prompt_text:
-                        prompt_text = re.sub(
-                            r"<terminal_context>.*?</terminal_context>\s*",
-                            "",
-                            prompt_text,
-                            flags=re.DOTALL,
-                        )
-                    if "<retrieved_documents>" in prompt_text:
-                        prompt_text = re.sub(
-                            r"<retrieved_documents>.*?</retrieved_documents>\s*",
-                            "",
-                            prompt_text,
-                            flags=re.DOTALL,
-                        )
+                    # Strip all context tags from prompt using shared function
+                    prompt_text = strip_context_tags(prompt_text)
                     if prompt_text.strip():
                         messages.append({"role": "user", "content": prompt_text.strip()})
 
@@ -746,8 +721,11 @@ class WebUIServer:
             if hasattr(state.session, 'context_hashes'):
                 state.session.context_hashes = set()
             # Reset GUI context state so next message shows full context
-            if hasattr(self, '_gui_context_state') and session_id in self._gui_context_state:
+            if session_id in self._gui_context_state:
                 del self._gui_context_state[session_id]
+            # Reset no-log flag for new conversation
+            if session_id in self._session_no_log:
+                del self._session_no_log[session_id]
             await ws.send_json({
                 "type": "commandResult",
                 "command": "new",
@@ -809,6 +787,56 @@ class WebUIServer:
             })
 
     # --- API Handlers ---
+
+    async def handle_api_models(self, request: web.Request) -> web.Response:
+        """Get available models.
+
+        GET /api/models?provider=azure
+        Optional provider filter to match only models from that provider.
+        """
+        try:
+            provider_filter = request.query.get("provider", None)
+            current_model = self.daemon.model_id or llm.get_model().model_id
+
+            # Run in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+
+            def get_models():
+                models = []
+                for model in llm.get_models():
+                    model_id = model.model_id
+                    # Determine provider from model_id
+                    if "/" in model_id:
+                        provider = model_id.split("/")[0]
+                    elif model_id.startswith("gpt-"):
+                        provider = "openai"
+                    elif model_id.startswith("gemini"):
+                        provider = "gemini"
+                    elif model_id.startswith("claude"):
+                        provider = "anthropic"
+                    else:
+                        provider = None
+
+                    # Apply provider filter if specified
+                    if provider_filter and provider != provider_filter:
+                        continue
+
+                    models.append({
+                        "id": model_id,
+                        "provider": provider,
+                        "current": model_id == current_model,
+                    })
+                return models
+
+            models = await loop.run_in_executor(None, get_models)
+
+            return web.json_response({
+                "models": models,
+                "current": current_model,
+            })
+        except Exception as e:
+            logger.error(f"Error getting models: {e}")
+            return web.json_response({"error": str(e)}, status=500)
 
     async def handle_api_history(self, request: web.Request) -> web.Response:
         """Get conversation history grouped by date.
@@ -1084,9 +1112,7 @@ class WebUIServer:
             if hasattr(state.session, "active_rag_collection"):
                 state.session.active_rag_collection = collection
             else:
-                # Store on daemon if session doesn't have the attribute
-                if not hasattr(self, "_rag_sessions"):
-                    self._rag_sessions: Dict[str, str] = {}
+                # Store on server if session doesn't have the attribute
                 self._rag_sessions[session_id] = collection
 
             return web.json_response({"ok": True, "collection": collection})
@@ -1130,12 +1156,15 @@ class WebUIServer:
             result = await loop.run_in_executor(
                 None, lambda: handler.add_documents(collection, path, refresh=refresh)
             )
+            # Handle result defensively in case of unexpected return
+            if result is None:
+                return web.json_response({"error": "No result from add_documents"}, status=500)
             return web.json_response({
-                "status": result.status,
-                "path": result.path,
-                "chunks": result.chunks,
-                "reason": result.reason,
-                "error": result.error,
+                "status": getattr(result, 'status', 'unknown'),
+                "path": getattr(result, 'path', path),
+                "chunks": getattr(result, 'chunks', 0),
+                "reason": getattr(result, 'reason', None),
+                "error": getattr(result, 'error', None),
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
@@ -1165,6 +1194,12 @@ class WebUIServer:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
+        # Shutdown the dedicated LLM executor
+        self._llm_executor.shutdown(wait=False)
+        # Close the database connection
+        if self._logs_db is not None:
+            self._logs_db.close()
+            self._logs_db = None
 
     def get_url(self) -> str:
         """Get the server URL."""

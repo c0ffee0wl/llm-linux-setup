@@ -24,12 +24,13 @@ if (typeof marked === 'undefined' || typeof hljs === 'undefined' || typeof DOMPu
     throw new Error('Required JavaScript libraries not loaded');
 }
 
-// Initialize Mermaid with dark theme
+// Initialize Mermaid
 mermaid.initialize({
     startOnLoad: false,
-    theme: 'dark',
+    theme: 'default',
     securityLevel: 'strict',
-    fontFamily: 'monospace'
+    fontFamily: 'monospace',
+    suppressErrorRendering: true  // Don't show error overlay in DOM
 });
 
 // Helper function to safely render markdown with DOMPurify sanitization
@@ -88,6 +89,22 @@ window.pendingImages = [];
 // Helper to check WebSocket connection state
 function isConnected() {
     return ws && ws.readyState === WebSocket.OPEN;
+}
+
+// Safe WebSocket send with error handling
+function safeSend(data) {
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return false;
+    }
+    try {
+        ws.send(JSON.stringify(data));
+        return true;
+    } catch (e) {
+        console.error('WebSocket send failed:', e);
+        showToast('Connection lost');
+        return false;
+    }
 }
 
 // Helper to scroll conversation to bottom
@@ -717,6 +734,199 @@ const ragPanel = {
 };
 
 // ============================================================================
+// Model Picker
+// ============================================================================
+
+const modelPicker = {
+    models: [],
+    currentModel: null,
+    currentProvider: null,
+    STORAGE_KEY: 'llm-guiassistant-model',
+
+    init() {
+        const select = document.getElementById('model-select');
+        if (!select) return;
+
+        select.addEventListener('change', (e) => {
+            this.setModel(e.target.value);
+        });
+
+        // Try to restore saved model preference
+        const savedModel = localStorage.getItem(this.STORAGE_KEY);
+        if (savedModel) {
+            // Will be applied when connection is established
+            this._pendingModel = savedModel;
+        }
+    },
+
+    setModelsFromServer(modelId) {
+        // If we have a saved preference and it's different, try to restore it
+        if (this._pendingModel && this._pendingModel !== modelId) {
+            const savedModel = this._pendingModel;
+            delete this._pendingModel;
+            // Only restore if same provider (to respect provider restrictions)
+            if (this.getProvider(savedModel) === this.getProvider(modelId)) {
+                this.setModel(savedModel);
+                return;
+            }
+        }
+
+        this.currentModel = modelId;
+        this.currentProvider = this.getProvider(modelId);
+        // Fetch available models for the same provider
+        this.loadModels();
+    },
+
+    getProvider(modelId) {
+        if (!modelId) return null;
+        // Extract provider prefix (e.g., "azure/gpt-4.1" → "azure")
+        if (modelId.includes('/')) {
+            return modelId.split('/')[0];
+        }
+        // Default providers based on known prefixes
+        if (modelId.startsWith('gpt-')) return 'openai';
+        if (modelId.startsWith('gemini')) return 'gemini';
+        if (modelId.startsWith('claude')) return 'anthropic';
+        return null;
+    },
+
+    async loadModels() {
+        const select = document.getElementById('model-select');
+        if (!select) return;
+
+        try {
+            // Fetch models filtered by current provider
+            let url = '/api/models';
+            if (this.currentProvider) {
+                url += `?provider=${encodeURIComponent(this.currentProvider)}`;
+            }
+
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Failed to fetch models');
+
+            const data = await response.json();
+            this.models = data.models || [];
+
+            select.innerHTML = '';
+
+            // Sort models: current model first, then alphabetically
+            const sorted = [...this.models].sort((a, b) => {
+                if (a.id === this.currentModel) return -1;
+                if (b.id === this.currentModel) return 1;
+                return a.id.localeCompare(b.id);
+            });
+
+            for (const model of sorted) {
+                const option = document.createElement('option');
+                option.value = model.id;
+                option.textContent = model.id;
+                option.selected = model.id === this.currentModel;
+                select.appendChild(option);
+            }
+
+            // If current model not in list, add it at the top
+            if (this.currentModel && !sorted.find(m => m.id === this.currentModel)) {
+                const option = document.createElement('option');
+                option.value = this.currentModel;
+                option.textContent = this.currentModel;
+                option.selected = true;
+                select.insertBefore(option, select.firstChild);
+            }
+        } catch (error) {
+            console.error('Error loading models:', error);
+            // Fallback: just show current model
+            select.innerHTML = '';
+            if (this.currentModel) {
+                const option = document.createElement('option');
+                option.value = this.currentModel;
+                option.textContent = this.currentModel;
+                option.selected = true;
+                select.appendChild(option);
+            }
+        }
+    },
+
+    setModel(modelId) {
+        if (!modelId || modelId === this.currentModel) return;
+
+        safeSend({
+            type: 'command',
+            command: 'model',
+            args: modelId
+        });
+    },
+
+    handleModelChange(modelId) {
+        this.currentModel = modelId;
+        this.currentProvider = this.getProvider(modelId);
+        // Persist selection to localStorage
+        localStorage.setItem(this.STORAGE_KEY, modelId);
+        this.loadModels();
+    }
+};
+
+// ============================================================================
+// Temporary Chat Toggle
+// ============================================================================
+
+const tempChatToggle = {
+    enabled: false,
+    conversationStarted: false,
+
+    init() {
+        const checkbox = document.getElementById('temp-chat-checkbox');
+        const label = document.getElementById('temp-chat-toggle');
+        if (!checkbox || !label) return;
+
+        checkbox.addEventListener('change', (e) => {
+            if (!this.conversationStarted) {
+                this.enabled = e.target.checked;
+            } else {
+                // Revert if conversation already started
+                e.target.checked = this.enabled;
+            }
+        });
+
+        this.updateUI();
+    },
+
+    markConversationStarted() {
+        this.conversationStarted = true;
+        this.updateUI();
+    },
+
+    reset() {
+        this.conversationStarted = false;
+        this.enabled = false;
+        const checkbox = document.getElementById('temp-chat-checkbox');
+        if (checkbox) {
+            checkbox.checked = false;
+        }
+        this.updateUI();
+    },
+
+    updateUI() {
+        const checkbox = document.getElementById('temp-chat-checkbox');
+        const label = document.getElementById('temp-chat-toggle');
+        if (!checkbox || !label) return;
+
+        if (this.conversationStarted) {
+            checkbox.disabled = true;
+            label.classList.add('disabled');
+            label.title = 'Cannot change after conversation started';
+        } else {
+            checkbox.disabled = false;
+            label.classList.remove('disabled');
+            label.title = 'Disable logging for this conversation (only available before first message)';
+        }
+    },
+
+    isEnabled() {
+        return this.enabled;
+    }
+};
+
+// ============================================================================
 // WebSocket Connection
 // ============================================================================
 
@@ -731,7 +941,7 @@ function connect() {
         reconnectAttempts = 0;
         console.log('WebSocket connected');
         // Request history on connect
-        ws.send(JSON.stringify({ type: 'getHistory' }));
+        safeSend({ type: 'getHistory' });
     };
 
     ws.onmessage = (e) => {
@@ -773,6 +983,8 @@ function handleMessage(msg) {
         case 'connected':
             sessionId = msg.sessionId;
             console.log('Connected to session: ' + sessionId + ', model: ' + msg.model);
+            // Update model picker with server's model
+            modelPicker.setModelsFromServer(msg.model);
             break;
 
         case 'text':
@@ -805,9 +1017,9 @@ function handleMessage(msg) {
 
         case 'stripped':
             // Handle stripMarkdown response
-            var callback = pendingRequests.get(msg.requestId);
-            if (callback) {
-                callback(msg.text);
+            const strippedCallback = pendingRequests.get(msg.requestId);
+            if (strippedCallback) {
+                strippedCallback(msg.text);
                 pendingRequests.delete(msg.requestId);
             }
             break;
@@ -827,8 +1039,13 @@ function handleMessage(msg) {
                 // Refresh history to show the new session
                 historySidebar.load();
             } else if (msg.command === 'status' && msg.data) {
-                var status = msg.data;
-                showToast('Model: ' + status.model + ' | Messages: ' + status.messages);
+                const statusData = msg.data;
+                showToast('Model: ' + statusData.model + ' | Messages: ' + statusData.messages);
+            } else if (msg.command === 'model') {
+                if (msg.success && msg.model) {
+                    modelPicker.handleModelChange(msg.model);
+                    showToast('Switched to ' + msg.model);
+                }
             }
             break;
 
@@ -879,6 +1096,8 @@ function loadHistory(messages) {
                 </div>
             `;
         }
+        // Reset temp chat for empty conversation
+        tempChatToggle.reset();
         return;
     }
 
@@ -894,6 +1113,9 @@ function loadHistory(messages) {
     for (const msg of messages) {
         appendMessage(msg.role, msg.content);
     }
+
+    // Mark conversation as started (disables temp chat toggle for loaded conversations)
+    tempChatToggle.markConversationStarted();
 
     // Scroll to bottom after loading history
     scrollToBottom();
@@ -1147,11 +1369,13 @@ function clearConversation() {
     conversation.innerHTML = `
         <div class="empty-state" id="empty-state">
             <h2>How can I help you today?</h2>
-            <p>Type a question below and press Ctrl+Enter to send.</p>
+            <p>Type a question below and press Enter to send.</p>
         </div>
     `;
     currentMessageId = null;
     messageStore.clear();
+    // Reset temp chat toggle for new conversation
+    tempChatToggle.reset();
 }
 
 // ============================================================================
@@ -1311,8 +1535,14 @@ function createActionIcons(role, messageId) {
 
 // Copy plain text using server-side stripMarkdown
 function copyPlainText(content) {
+    // Fallback: if not connected, just copy raw content
     if (!isConnected()) {
-        showToast('Not connected to server');
+        navigator.clipboard.writeText(content).then(() => {
+            showToast('Copied (raw text)');
+        }).catch(err => {
+            console.error('Clipboard write failed:', err);
+            showToast('Failed to copy to clipboard');
+        });
         return;
     }
 
@@ -1341,7 +1571,7 @@ function copyPlainText(content) {
         });
     });
 
-    ws.send(JSON.stringify({ type: 'stripMarkdown', text: content, requestId }));
+    safeSend({ type: 'stripMarkdown', text: content, requestId });
 }
 
 // ============================================================================
@@ -1437,11 +1667,11 @@ function submitEditedMessage(messageId, newContent) {
         showToast('Not connected to server');
         return;
     }
-    ws.send(JSON.stringify({
+    safeSend({
         type: 'edit',
         keepTurns: turnCount,
         newContent: newContent
-    }));
+    });
 }
 
 function regenerateResponse(messageId) {
@@ -1466,18 +1696,13 @@ function regenerateResponse(messageId) {
     messageStore.removeMessage(messageId);
     updateLastMessageIndicators();
 
-    ws.send(JSON.stringify({
+    safeSend({
         type: 'regenerate',
         userContent: userMsg.content
-    }));
+    });
 }
 
 function branchConversation(messageId) {
-    if (!isConnected()) {
-        showToast('Not connected to server');
-        return;
-    }
-
     const messages = messageStore.getMessagesUpTo(messageId);
     if (messages.length === 0) return;
 
@@ -1486,10 +1711,10 @@ function branchConversation(messageId) {
         content: m.content
     }));
 
-    ws.send(JSON.stringify({
+    safeSend({
         type: 'branch',
         messages: conversationData
-    }));
+    });
 }
 
 // ============================================================================
@@ -1507,6 +1732,9 @@ function sendMessage() {
         return;
     }
 
+    // Mark conversation as started (disables temp chat toggle)
+    tempChatToggle.markConversationStarted();
+
     // Add user message to UI
     appendMessage('user', query);
 
@@ -1514,13 +1742,21 @@ function sendMessage() {
     const images = window.pendingImages || [];
     window.pendingImages = [];
 
-    // Send via WebSocket
-    ws.send(JSON.stringify({
+    // Build query message
+    const queryMsg = {
         type: 'query',
         query: query,
         mode: 'assistant',
         images: images
-    }));
+    };
+
+    // Include noLog flag if temp chat is enabled
+    if (tempChatToggle.isEnabled()) {
+        queryMsg.noLog = true;
+    }
+
+    // Send via WebSocket
+    safeSend(queryMsg);
 
     input.value = '';
     autoResizeInput();
@@ -1687,19 +1923,11 @@ function copyAllMessages() {
 }
 
 function startNewSession() {
-    if (!isConnected()) {
-        showToast('Not connected to server');
-        return;
-    }
-    ws.send(JSON.stringify({ type: 'command', command: 'new' }));
+    safeSend({ type: 'command', command: 'new' });
 }
 
 function showStatus() {
-    if (!isConnected()) {
-        showToast('Not connected to server');
-        return;
-    }
-    ws.send(JSON.stringify({ type: 'command', command: 'status' }));
+    safeSend({ type: 'command', command: 'status' });
 }
 
 // ============================================================================
@@ -1707,10 +1935,10 @@ function showStatus() {
 // ============================================================================
 
 document.addEventListener('DOMContentLoaded', function() {
-    var input = document.getElementById('input');
-    var sendBtn = document.getElementById('send-btn');
-    var actionSearch = document.getElementById('action-search');
-    var actionBackdrop = document.querySelector('.action-panel-backdrop');
+    const input = document.getElementById('input');
+    const sendBtn = document.getElementById('send-btn');
+    const actionSearch = document.getElementById('action-search');
+    const actionBackdrop = document.querySelector('.action-panel-backdrop');
 
     // Initialize modules
     historySidebar.init();
@@ -1747,8 +1975,8 @@ document.addEventListener('DOMContentLoaded', function() {
             }
         }
 
-        // Send message with Ctrl+Enter
-        if (e.key === 'Enter' && e.ctrlKey) {
+        // Send message with Enter (Shift+Enter for newline)
+        if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             sendMessage();
         }
@@ -1758,19 +1986,19 @@ document.addEventListener('DOMContentLoaded', function() {
     // Send button
     sendBtn.addEventListener('click', sendMessage);
 
-    // Sidebar toggle buttons
-    var sidebarToggle = document.getElementById('sidebar-toggle');
-    var sidebarToggleInput = document.getElementById('sidebar-toggle-input');
+    // Sidebar toggle button (header bar)
+    const sidebarToggle = document.getElementById('sidebar-toggle');
     if (sidebarToggle) {
         sidebarToggle.addEventListener('click', function() {
             historySidebar.toggle();
         });
     }
-    if (sidebarToggleInput) {
-        sidebarToggleInput.addEventListener('click', function() {
-            historySidebar.toggle();
-        });
-    }
+
+    // Model picker
+    modelPicker.init();
+
+    // Temporary chat toggle
+    tempChatToggle.init();
 
     // Sidebar tab switching
     document.querySelectorAll('.sidebar-tab').forEach(function(tab) {
@@ -1784,9 +2012,9 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // History search
-    var historySearch = document.getElementById('history-search');
+    const historySearch = document.getElementById('history-search');
     if (historySearch) {
-        var searchTimeout = null;
+        let searchTimeout = null;
         historySearch.addEventListener('input', function(e) {
             clearTimeout(searchTimeout);
             searchTimeout = setTimeout(function() {
@@ -1796,7 +2024,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // @ button
-    var atBtn = document.getElementById('at-btn');
+    const atBtn = document.getElementById('at-btn');
     if (atBtn) {
         atBtn.addEventListener('click', function() {
             input.value += '@';
@@ -1806,7 +2034,7 @@ document.addEventListener('DOMContentLoaded', function() {
     }
 
     // Capture button and dropdown
-    var captureBtn = document.getElementById('capture-btn');
+    const captureBtn = document.getElementById('capture-btn');
     if (captureBtn) {
         captureBtn.addEventListener('click', function(e) {
             e.stopPropagation();
@@ -1822,8 +2050,8 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 
     // RAG add button
-    var ragAddBtn = document.getElementById('rag-add-btn');
-    var ragAddInput = document.getElementById('rag-add-input');
+    const ragAddBtn = document.getElementById('rag-add-btn');
+    const ragAddInput = document.getElementById('rag-add-input');
     if (ragAddBtn && ragAddInput) {
         ragAddBtn.addEventListener('click', function() {
             ragPanel.addDocument(ragAddInput.value);
@@ -1837,16 +2065,15 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    // New conversation button (sidebar)
-    var newConvBtn = document.getElementById('new-conversation-btn');
-    if (newConvBtn) {
-        newConvBtn.addEventListener('click', function() {
+    // New conversation buttons (header and input controls)
+    const newConvBtnHeader = document.getElementById('new-conversation-btn-header');
+    if (newConvBtnHeader) {
+        newConvBtnHeader.addEventListener('click', function() {
             startNewSession();
         });
     }
 
-    // New conversation button (input controls)
-    var newConvBtnInput = document.getElementById('new-conversation-btn-input');
+    const newConvBtnInput = document.getElementById('new-conversation-btn-input');
     if (newConvBtnInput) {
         newConvBtnInput.addEventListener('click', function() {
             startNewSession();
@@ -1895,8 +2122,8 @@ document.addEventListener('DOMContentLoaded', function() {
         });
 
         actionSearch.addEventListener('keydown', function(e) {
-            var list = document.getElementById('action-list');
-            var items = list.querySelectorAll('.action-item');
+            const list = document.getElementById('action-list');
+            const items = list.querySelectorAll('.action-item');
 
             if (e.key === 'ArrowDown') {
                 e.preventDefault();
@@ -1908,7 +2135,7 @@ document.addEventListener('DOMContentLoaded', function() {
                 renderActionList(actionSearch.value);
             } else if (e.key === 'Enter') {
                 e.preventDefault();
-                var selected = items[selectedActionIndex];
+                const selected = items[selectedActionIndex];
                 if (selected) selected.click();
             } else if (e.key === 'Escape') {
                 hideActionPanel();
