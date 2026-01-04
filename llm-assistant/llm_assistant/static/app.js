@@ -183,7 +183,6 @@ const ICONS = {
     copyPlain: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/><path d="M12 13h7M15.5 13v6" stroke-width="1.5"/></svg>',
     edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
     regenerate: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>',
-    branch: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="6" y1="3" x2="6" y2="15"/><circle cx="18" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M18 9a9 9 0 01-9 9"/></svg>',
     python: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 5.8 2.8 5.8 2.8v2.9h6.3v.9H3.9S0 6.2 0 12.1s3.4 5.7 3.4 5.7h2v-2.8s-.1-3.4 3.3-3.4h5.7s3.2 0 3.2-3.1V3.4S18.1 0 12 0zm-3.1 2c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z"/><path d="M12 24c6.6 0 6.2-2.8 6.2-2.8v-2.9h-6.3v-.9h8.2s3.9.4 3.9-5.5-3.4-5.7-3.4-5.7h-2v2.8s.1 3.4-3.3 3.4H9.6s-3.2 0-3.2 3.1v5.1S5.9 24 12 24zm3.1-2c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z"/></svg>',
     shell: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
     search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
@@ -1064,28 +1063,6 @@ function handleMessage(msg) {
             loadHistory(msg.messages || []);
             break;
 
-        case 'branched':
-            // Try to open new tab with branched session
-            const branchUrl = window.location.pathname + '?session=' + encodeURIComponent(msg.newSessionId);
-            const newWindow = window.open(branchUrl, '_blank');
-
-            if (newWindow) {
-                showToast('Opened branch in new tab');
-            } else {
-                // Popup blocked or GTK WebView - switch current session
-                // Close current WebSocket and reconnect with new session
-                sessionId = msg.newSessionId;
-                if (ws) {
-                    ws.close();
-                }
-                // Clear UI and update URL
-                clearConversation();
-                history.replaceState(null, '', branchUrl);
-                // Reconnect will happen automatically via onclose handler
-                showToast('Switched to branched session');
-            }
-            break;
-
         case 'commandResult':
             if (msg.command === 'new') {
                 clearConversation();
@@ -1581,7 +1558,6 @@ function createActionIcons(role, messageId) {
         regenBtn.classList.add('action-regenerate');
         container.appendChild(regenBtn);
 
-        container.appendChild(createIconButton('branch', 'Branch', () => branchConversation(messageId)));
     }
 
     return container;
@@ -1753,21 +1729,6 @@ function regenerateResponse(messageId) {
     safeSend({
         type: 'regenerate',
         userContent: userMsg.content
-    });
-}
-
-function branchConversation(messageId) {
-    const messages = messageStore.getMessagesUpTo(messageId);
-    if (messages.length === 0) return;
-
-    const conversationData = messages.map(m => ({
-        role: m.role,
-        content: m.content
-    }));
-
-    safeSend({
-        type: 'branch',
-        messages: conversationData
     });
 }
 

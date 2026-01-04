@@ -248,8 +248,6 @@ class WebUIServer:
             await self._handle_edit(session_id, ws, msg)
         elif msg_type == "regenerate":
             await self._handle_regenerate(session_id, ws, msg)
-        elif msg_type == "branch":
-            await self._handle_branch(session_id, ws, msg)
         elif msg_type == "stripMarkdown":
             await self._handle_strip_markdown(ws, msg)
         elif msg_type == "getHistory":
@@ -616,50 +614,6 @@ class WebUIServer:
 
         # Re-query with the user content
         await self._handle_query(session_id, ws, {"query": user_content})
-
-    async def _handle_branch(
-        self,
-        session_id: str,
-        ws: web.WebSocketResponse,
-        msg: dict,
-    ):
-        """Handle branch conversation."""
-        messages = msg.get("messages", [])
-        new_session_id = f"{session_id}-branch-{int(time.time() * 1000)}"
-
-        # Fork uses the daemon's fork handler logic
-        source_state = self.daemon.get_session_state(session_id)
-        if not source_state.session.conversation:
-            await ws.send_json({"type": "error", "message": "No conversation to branch"})
-            return
-
-        from .headless_session import HeadlessSession
-
-        # Count turns to copy
-        turns_to_keep = sum(1 for m in messages if m.get("role") == "assistant")
-
-        # Create new session
-        new_session = HeadlessSession(
-            model_name=source_state.session.model_name,
-            debug=source_state.session.debug,
-            terminal_id=new_session_id,
-        )
-
-        if turns_to_keep > 0:
-            new_session.get_or_create_conversation()
-            source_responses = source_state.session.conversation.responses
-            new_session.conversation.responses = list(source_responses[:turns_to_keep])
-
-        # Register new session
-        from .daemon import SessionState
-
-        new_state = SessionState(new_session_id, new_session)
-        self.daemon.sessions[new_session_id] = new_state
-
-        await ws.send_json({
-            "type": "branched",
-            "newSessionId": new_session_id,
-        })
 
     async def _handle_strip_markdown(
         self,
