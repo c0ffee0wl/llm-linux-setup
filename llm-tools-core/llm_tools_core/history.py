@@ -162,6 +162,12 @@ class ConversationHistory:
             columns = {row[1] for row in cursor.fetchall()}
             has_source = "source" in columns
 
+            # Check if tool_calls table exists
+            table_cursor = logs_conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_calls'"
+            )
+            has_tool_calls_table = table_cursor.fetchone() is not None
+
             # Get conversation metadata
             if has_source:
                 conv_row = logs_conn.execute(
@@ -177,31 +183,71 @@ class ConversationHistory:
             if conv_row is None:
                 return None
 
-            # Get all responses (messages)
+            # Get all responses ordered by rowid (insertion order, more reliable than datetime)
             response_rows = logs_conn.execute("""
                 SELECT id, prompt, response, datetime_utc, input_tokens, output_tokens
                 FROM responses
                 WHERE conversation_id = ?
-                ORDER BY datetime_utc ASC
+                ORDER BY rowid ASC
             """, (conversation_id,)).fetchall()
+
+            # Pre-fetch tool calls for all responses if the table exists
+            tool_calls_by_response = {}
+            if has_tool_calls_table:
+                response_ids = [row["id"] for row in response_rows]
+                if response_ids:
+                    placeholders = ",".join("?" * len(response_ids))
+                    tc_rows = logs_conn.execute(f"""
+                        SELECT response_id, name, arguments
+                        FROM tool_calls
+                        WHERE response_id IN ({placeholders})
+                        ORDER BY response_id, tool_call_id
+                    """, response_ids).fetchall()
+                    for tc_row in tc_rows:
+                        resp_id = tc_row["response_id"]
+                        if resp_id not in tool_calls_by_response:
+                            tool_calls_by_response[resp_id] = []
+                        tool_calls_by_response[resp_id].append({
+                            "name": tc_row["name"],
+                            "arguments": tc_row["arguments"],
+                        })
 
             messages = []
             for row in response_rows:
-                # Add user message (prompt)
+                response_id = row["id"]
+
+                # Add user message (prompt) - skip if empty (tool result continuation)
                 if row["prompt"]:
                     messages.append(Message(
-                        id=f"{row['id']}_user",
+                        id=f"{response_id}_user",
                         role="user",
                         content=row["prompt"],
                         datetime_utc=row["datetime_utc"] or "",
                         input_tokens=row["input_tokens"]
                     ))
-                # Add assistant message (response)
+
+                # Build assistant message content (response text + tool calls)
+                content_parts = []
+
+                # Add response text first
                 if row["response"]:
+                    content_parts.append(row["response"])
+
+                # Add tool calls after the text (if any)
+                tool_calls = tool_calls_by_response.get(response_id, [])
+                if tool_calls:
+                    for tc in tool_calls:
+                        # Format tool call for display
+                        content_parts.append(f"\n\n**Tool Call:** `{tc['name']}`")
+                        if tc["arguments"]:
+                            content_parts.append(f"```json\n{tc['arguments']}\n```")
+
+                # Only add assistant message if there's content
+                if content_parts:
                     messages.append(Message(
-                        id=f"{row['id']}_assistant",
+                        id=f"{response_id}_assistant",
                         role="assistant",
-                        content=row["response"],
+                        content="".join(content_parts),
                         datetime_utc=row["datetime_utc"] or "",
                         output_tokens=row["output_tokens"]
                     ))
