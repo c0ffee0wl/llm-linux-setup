@@ -4,12 +4,16 @@ Provides shared access to conversation history stored in SQLite databases.
 Supports querying, searching, and grouping by date.
 """
 
+import json
 import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import llm
+import sqlite_utils
 
 from .xdg import get_config_dir
 
@@ -88,6 +92,16 @@ class ConversationHistory:
         conn.row_factory = sqlite3.Row
         return conn
 
+    def _get_sqlite_utils_db(self) -> Optional[sqlite_utils.Database]:
+        """Get a sqlite_utils Database if the database exists.
+
+        Used by get_conversation() to enable llm.Response.from_row() which
+        requires sqlite_utils.Database for proper row access.
+        """
+        if not self.logs_db_path.exists():
+            return None
+        return sqlite_utils.Database(self.logs_db_path)
+
     def get_conversations(
         self,
         limit: int = 50,
@@ -146,121 +160,128 @@ class ConversationHistory:
     def get_conversation(self, conversation_id: str) -> Optional[FullConversation]:
         """Load a full conversation by ID.
 
+        Uses llm.Response.from_row() to properly load all response data including
+        tool calls, attachments, and response_json. Falls back to manual extraction
+        if the model plugin isn't installed.
+
         Args:
             conversation_id: The conversation ID
 
         Returns:
             Full conversation with all messages, or None if not found
         """
-        logs_conn = self._get_connection(self.logs_db_path)
-        if logs_conn is None:
+        db = self._get_sqlite_utils_db()
+        if db is None:
             return None
 
-        try:
-            # Check if source column exists (for backward compatibility)
-            cursor = logs_conn.execute("PRAGMA table_info(conversations)")
-            columns = {row[1] for row in cursor.fetchall()}
-            has_source = "source" in columns
+        # Get conversation metadata
+        conv_rows = list(db["conversations"].rows_where(
+            "id = ?", [conversation_id]
+        ))
+        if not conv_rows:
+            return None
+        conv_row = conv_rows[0]
 
-            # Check if tool_calls table exists
-            table_cursor = logs_conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' AND name='tool_calls'"
-            )
-            has_tool_calls_table = table_cursor.fetchone() is not None
+        # Get response rows ordered by insertion (using sqlite_utils)
+        response_rows = list(db["responses"].rows_where(
+            "conversation_id = ?",
+            [conversation_id],
+            order_by="rowid",
+        ))
 
-            # Get conversation metadata
-            if has_source:
-                conv_row = logs_conn.execute(
-                    "SELECT id, name, model, source FROM conversations WHERE id = ?",
-                    (conversation_id,)
-                ).fetchone()
-            else:
-                conv_row = logs_conn.execute(
-                    "SELECT id, name, model FROM conversations WHERE id = ?",
-                    (conversation_id,)
-                ).fetchone()
+        # Lazy-loaded tool calls for fallback mode (only fetched if needed)
+        tool_calls_by_response: Optional[Dict[str, list]] = None
 
-            if conv_row is None:
-                return None
+        def _get_tool_calls_fallback() -> Dict[str, list]:
+            """Lazy-load tool calls from database for fallback mode."""
+            nonlocal tool_calls_by_response
+            if tool_calls_by_response is not None:
+                return tool_calls_by_response
 
-            # Get all responses ordered by rowid (insertion order, more reliable than datetime)
-            response_rows = logs_conn.execute("""
-                SELECT id, prompt, response, datetime_utc, input_tokens, output_tokens
-                FROM responses
-                WHERE conversation_id = ?
-                ORDER BY rowid ASC
-            """, (conversation_id,)).fetchall()
-
-            # Pre-fetch tool calls for all responses if the table exists
             tool_calls_by_response = {}
-            if has_tool_calls_table:
-                response_ids = [row["id"] for row in response_rows]
-                if response_ids:
-                    placeholders = ",".join("?" * len(response_ids))
-                    tc_rows = logs_conn.execute(f"""
-                        SELECT response_id, name, arguments
-                        FROM tool_calls
-                        WHERE response_id IN ({placeholders})
-                        ORDER BY response_id, tool_call_id
-                    """, response_ids).fetchall()
-                    for tc_row in tc_rows:
-                        resp_id = tc_row["response_id"]
-                        if resp_id not in tool_calls_by_response:
-                            tool_calls_by_response[resp_id] = []
-                        tool_calls_by_response[resp_id].append({
-                            "name": tc_row["name"],
-                            "arguments": tc_row["arguments"],
-                        })
+            try:
+                for tc_row in db["tool_calls"].rows_where(
+                    "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
+                    [conversation_id],
+                    order_by="response_id, tool_call_id",
+                ):
+                    resp_id = tc_row["response_id"]
+                    if resp_id not in tool_calls_by_response:
+                        tool_calls_by_response[resp_id] = []
+                    tool_calls_by_response[resp_id].append({
+                        "name": tc_row["name"],
+                        "arguments": tc_row["arguments"],
+                    })
+            except sqlite3.OperationalError:
+                # tool_calls table might not exist in older databases
+                pass
+            return tool_calls_by_response
 
-            messages = []
-            for row in response_rows:
-                response_id = row["id"]
+        messages = []
+        for row in response_rows:
+            response_id = row["id"]
 
-                # Add user message (prompt) - skip if empty (tool result continuation)
-                if row["prompt"]:
-                    messages.append(Message(
-                        id=f"{response_id}_user",
-                        role="user",
-                        content=row["prompt"],
-                        datetime_utc=row["datetime_utc"] or "",
-                        input_tokens=row["input_tokens"]
-                    ))
+            # Try using llm.Response.from_row() for proper reconstruction
+            try:
+                response = llm.Response.from_row(db, row)
+                prompt_text = response.prompt.prompt
+                response_text = response.text()
+                tool_calls = [
+                    {"name": tc.name, "arguments": tc.arguments}
+                    for tc in response.tool_calls()
+                ]
+                input_tokens = response.input_tokens
+                output_tokens = response.output_tokens
+            except llm.UnknownModelError:
+                # Fall back to manual extraction if model isn't installed
+                prompt_text = row.get("prompt")
+                response_text = row.get("response")
+                tool_calls = _get_tool_calls_fallback().get(response_id, [])
+                input_tokens = row.get("input_tokens")
+                output_tokens = row.get("output_tokens")
 
-                # Build assistant message content (response text + tool calls)
-                content_parts = []
+            # Convert to Message format for display
+            # User message (prompt)
+            if prompt_text:
+                messages.append(Message(
+                    id=f"{response_id}_user",
+                    role="user",
+                    content=prompt_text,
+                    datetime_utc=row.get("datetime_utc") or "",
+                    input_tokens=input_tokens,
+                ))
 
-                # Add response text first
-                if row["response"]:
-                    content_parts.append(row["response"])
+            # Assistant message (response + tool calls)
+            content_parts = []
+            if response_text:
+                content_parts.append(response_text)
 
-                # Add tool calls after the text (if any)
-                tool_calls = tool_calls_by_response.get(response_id, [])
-                if tool_calls:
-                    for tc in tool_calls:
-                        # Format tool call for display
-                        content_parts.append(f"\n\n**Tool Call:** `{tc['name']}`")
-                        if tc["arguments"]:
-                            content_parts.append(f"```json\n{tc['arguments']}\n```")
+            # Format tool calls
+            for tc in tool_calls:
+                content_parts.append(f"\n\n**Tool Call:** `{tc['name']}`")
+                if tc.get("arguments"):
+                    # arguments might be a dict or JSON string depending on source
+                    args = tc["arguments"]
+                    if isinstance(args, dict):
+                        args = json.dumps(args, indent=2)
+                    content_parts.append(f"```json\n{args}\n```")
 
-                # Only add assistant message if there's content
-                if content_parts:
-                    messages.append(Message(
-                        id=f"{response_id}_assistant",
-                        role="assistant",
-                        content="".join(content_parts),
-                        datetime_utc=row["datetime_utc"] or "",
-                        output_tokens=row["output_tokens"]
-                    ))
+            if content_parts:
+                messages.append(Message(
+                    id=f"{response_id}_assistant",
+                    role="assistant",
+                    content="".join(content_parts),
+                    datetime_utc=row.get("datetime_utc") or "",
+                    output_tokens=output_tokens,
+                ))
 
-            return FullConversation(
-                id=conv_row["id"],
-                name=conv_row["name"],
-                model=conv_row["model"] or "unknown",
-                messages=messages,
-                source=conv_row["source"] if has_source else None,
-            )
-        finally:
-            logs_conn.close()
+        return FullConversation(
+            id=conv_row["id"],
+            name=conv_row.get("name"),
+            model=conv_row.get("model") or "unknown",
+            messages=messages,
+            source=conv_row.get("source"),
+        )
 
     def search(self, query: str, limit: int = 20) -> List[ConversationSummary]:
         """Search conversations using full-text search.
