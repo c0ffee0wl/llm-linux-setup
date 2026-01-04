@@ -52,9 +52,19 @@ marked.setOptions({
 });
 
 // Security: Strip raw HTML to prevent XSS attacks from LLM responses
+// Also configure links to open in new tabs
 const renderer = new marked.Renderer();
 renderer.html = function(token) {
     return '';
+};
+renderer.link = function({ href, title, tokens }) {
+    const text = this.parser.parseInline(tokens);
+    const titleAttr = title ? ` title="${title}"` : '';
+    // Open external links in new tab with security attributes
+    if (href && (href.startsWith('http://') || href.startsWith('https://'))) {
+        return `<a href="${href}"${titleAttr} target="_blank" rel="noopener noreferrer">${text}</a>`;
+    }
+    return `<a href="${href}"${titleAttr}>${text}</a>`;
 };
 marked.use({ renderer });
 
@@ -78,6 +88,26 @@ window.pendingImages = [];
 // Helper to check WebSocket connection state
 function isConnected() {
     return ws && ws.readyState === WebSocket.OPEN;
+}
+
+// Helper to scroll conversation to bottom
+function scrollToBottom() {
+    const conversation = document.getElementById('conversation');
+    if (conversation) {
+        conversation.scrollTop = conversation.scrollHeight;
+    }
+}
+
+// Strip context tags from content for display (keeps original for model)
+function stripContextTags(content) {
+    if (!content) return content;
+    // Strip gui_context, terminal_context, retrieved_documents, context (legacy)
+    return content
+        .replace(/<gui_context>[\s\S]*?<\/gui_context>\s*/g, '')
+        .replace(/<terminal_context>[\s\S]*?<\/terminal_context>\s*/g, '')
+        .replace(/<retrieved_documents>[\s\S]*?<\/retrieved_documents>\s*/g, '')
+        .replace(/<context>[\s\S]*?<\/context>\s*/g, '')
+        .trim();
 }
 
 // Message store for tracking conversation history
@@ -230,15 +260,11 @@ const historySidebar = {
                 preview.textContent = conv.preview || 'Empty conversation';
                 itemHeader.appendChild(preview);
 
-                // Source badge
-                const badge = this.createSourceBadge(conv.source);
-                if (badge) itemHeader.appendChild(badge);
-
                 item.appendChild(itemHeader);
 
                 const meta = document.createElement('div');
                 meta.className = 'history-meta';
-                meta.textContent = (conv.model || '') + ' · ' + (conv.message_count || 0) + ' msgs';
+                meta.textContent = (conv.message_count || 0) + ' msgs';
                 item.appendChild(meta);
 
                 group.appendChild(item);
@@ -246,21 +272,6 @@ const historySidebar = {
 
             list.appendChild(group);
         }
-    },
-
-    createSourceBadge(source) {
-        const config = {
-            gui: { text: 'G', title: 'GUI', cls: 'badge-gui' },
-            tui: { text: 'T', title: 'TUI', cls: 'badge-tui' },
-            inline: { text: 'I', title: 'Inline', cls: 'badge-inline' },
-            cli: { text: 'C', title: 'CLI', cls: 'badge-cli' }
-        };
-        const cfg = config[source] || { text: '?', title: 'Unknown', cls: '' };
-        const badge = document.createElement('span');
-        badge.className = 'source-badge ' + cfg.cls;
-        badge.textContent = cfg.text;
-        badge.title = cfg.title;
-        return badge;
     },
 
     async loadConversation(id) {
@@ -442,6 +453,8 @@ const atAutocomplete = {
         this.render();
     },
 
+    _requestId: 0,
+
     async handleInput(input) {
         const text = input.value;
         const pos = input.selectionStart;
@@ -467,8 +480,14 @@ const atAutocomplete = {
         this.currentPrefix = prefix;
         this.triggerStart = atPos;
 
-        // Fetch suggestions
-        this.suggestions = await this.getSuggestions(prefix);
+        // Fetch suggestions with race condition protection
+        const requestId = ++this._requestId;
+        const suggestions = await this.getSuggestions(prefix);
+
+        // Ignore stale responses from earlier requests
+        if (requestId !== this._requestId) return;
+
+        this.suggestions = suggestions;
         this.selectedIndex = 0;
         this.render();
     }
@@ -838,7 +857,7 @@ function handleTextMessage(msg) {
             const msgId = container.dataset.messageId;
             const stored = messageStore.messages.find(m => m.id === msgId);
             if (stored) stored.content = msg.content;
-            window.scrollTo(0, document.body.scrollHeight);
+            scrollToBottom();
             return;
         }
     }
@@ -875,6 +894,9 @@ function loadHistory(messages) {
     for (const msg of messages) {
         appendMessage(msg.role, msg.content);
     }
+
+    // Scroll to bottom after loading history
+    scrollToBottom();
 }
 
 // ============================================================================
@@ -891,11 +913,15 @@ function appendMessage(role, content, streamingId) {
     const container = document.createElement('div');
     container.className = 'message ' + role;
 
+    // Strip context tags for display, but keep original in store
+    const displayContent = role === 'user' ? stripContextTags(content) : content;
+
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
-    contentDiv.innerHTML = safeMarkdown(content);
+    contentDiv.innerHTML = safeMarkdown(displayContent);
     container.appendChild(contentDiv);
 
+    // Store original content (with context) for model continuation
     const msgId = messageStore.add(role, content, container);
 
     const actions = createActionIcons(role, msgId);
@@ -910,7 +936,7 @@ function appendMessage(role, content, streamingId) {
     conversation.appendChild(container);
     applyCodeBlockEnhancements(contentDiv);
     updateLastMessageIndicators();
-    window.scrollTo(0, document.body.scrollHeight);
+    scrollToBottom();
 }
 
 function finalizeMessage() {
@@ -1036,7 +1062,7 @@ function addToolCall(toolName, args, toolCallId) {
     container.appendChild(body);
 
     conversation.appendChild(container);
-    window.scrollTo(0, document.body.scrollHeight);
+    scrollToBottom();
 }
 
 function completeToolCall(toolCallId, result) {
@@ -1104,7 +1130,7 @@ function addThinkingTrace(content) {
 
     wrapper.appendChild(details);
     conversation.appendChild(wrapper);
-    window.scrollTo(0, document.body.scrollHeight);
+    scrollToBottom();
 }
 
 function addError(message) {
@@ -1113,7 +1139,7 @@ function addError(message) {
     errorDiv.className = 'message error';
     errorDiv.textContent = message;
     conversation.appendChild(errorDiv);
-    window.scrollTo(0, document.body.scrollHeight);
+    scrollToBottom();
 }
 
 function clearConversation() {
@@ -1173,7 +1199,9 @@ function applyCodeBlockEnhancements(container) {
         } catch (err) {
             console.error('Mermaid render error:', err);
             // Keep original code block on error, apply normal enhancements
-            wrapper.remove();
+            if (wrapper && wrapper.parentNode) {
+                wrapper.remove();
+            }
         }
     });
 
@@ -1305,12 +1333,12 @@ function copyPlainText(content) {
 
     pendingRequests.set(requestId, (stripped) => {
         clearTimeout(timeout);
-        navigator.clipboard.writeText(stripped).catch(err => {
+        navigator.clipboard.writeText(stripped).then(() => {
+            showToast('Copied plain text');
+        }).catch(err => {
             console.error('Clipboard write failed:', err);
             showToast('Failed to copy to clipboard');
-            return;
         });
-        showToast('Copied plain text');
     });
 
     ws.send(JSON.stringify({ type: 'stripMarkdown', text: content, requestId }));
@@ -1645,9 +1673,11 @@ function copyLastResponse() {
 }
 
 function copyAllMessages() {
-    const text = messageStore.messages.map(m =>
-        `${m.role === 'user' ? 'You' : 'Assistant'}: ${m.content}`
-    ).join('\n\n');
+    const text = messageStore.messages.map(m => {
+        // Strip context from user messages for cleaner copy
+        const content = m.role === 'user' ? stripContextTags(m.content) : m.content;
+        return `${m.role === 'user' ? 'You' : 'Assistant'}: ${content}`;
+    }).join('\n\n');
     navigator.clipboard.writeText(text).then(() => {
         showToast('Copied conversation');
     }).catch(err => {

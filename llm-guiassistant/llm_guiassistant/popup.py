@@ -10,8 +10,6 @@ This module provides the main GTK application and window:
 
 import json
 import os
-import tempfile
-import time
 from pathlib import Path
 from typing import Optional
 
@@ -125,6 +123,9 @@ class PopupWindow(Gtk.ApplicationWindow):
         if self.debug:
             settings.set_enable_developer_extras(True)
 
+        # Open external links in default browser
+        self.webview.connect("decide-policy", self._on_decide_policy)
+
         # Load web UI from daemon
         self._load_web_ui()
 
@@ -181,6 +182,44 @@ class PopupWindow(Gtk.ApplicationWindow):
         """
         self.webview.load_html(html, None)
         return True
+
+    def _on_decide_policy(self, webview, decision, decision_type):
+        """Handle navigation decisions - open external links in default browser."""
+        # Handle new window requests (target="_blank" links)
+        if decision_type == WebKit2.PolicyDecisionType.NEW_WINDOW_ACTION:
+            nav_action = decision.get_navigation_action()
+            request = nav_action.get_request()
+            uri = request.get_uri()
+
+            if uri and (uri.startswith("http://") or uri.startswith("https://")):
+                if self.debug:
+                    print(f"[WebKit] Opening new window link in browser: {uri}")
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+            decision.ignore()
+            return True
+
+        # Handle regular navigation
+        if decision_type == WebKit2.PolicyDecisionType.NAVIGATION_ACTION:
+            nav_action = decision.get_navigation_action()
+            request = nav_action.get_request()
+            uri = request.get_uri()
+
+            # Allow navigation to our own daemon server
+            if uri and (uri.startswith(f"http://localhost:{self.web_port}") or
+                        uri.startswith(f"http://127.0.0.1:{self.web_port}")):
+                decision.use()
+                return False
+
+            # Open external links in default browser
+            if uri and (uri.startswith("http://") or uri.startswith("https://")):
+                if self.debug:
+                    print(f"[WebKit] Opening in browser: {uri}")
+                Gio.AppInfo.launch_default_for_uri(uri, None)
+                decision.ignore()
+                return True
+
+        decision.use()
+        return False
 
     def _setup_drag_drop(self):
         """Set up drag and drop for files and images."""

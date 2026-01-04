@@ -212,6 +212,7 @@ def stream_events(request: dict) -> Iterator[dict]:
         ...     elif event.get("type") == "done":
         ...         break
     """
+    sock = None
     try:
         sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(REQUEST_TIMEOUT)
@@ -239,7 +240,6 @@ def stream_events(request: dict) -> Iterator[dict]:
                         event = json.loads(line)
                         yield event
                         if event.get('type') == 'done':
-                            sock.close()
                             return
                     except json.JSONDecodeError:
                         continue
@@ -247,9 +247,7 @@ def stream_events(request: dict) -> Iterator[dict]:
             except socket.timeout:
                 yield {"type": "error", "message": "Request timed out"}
                 yield {"type": "done"}
-                break
-
-        sock.close()
+                return
 
     except socket.timeout:
         yield {"type": "error", "message": "Connection timed out"}
@@ -260,3 +258,9 @@ def stream_events(request: dict) -> Iterator[dict]:
     except Exception as e:
         yield {"type": "error", "message": str(e)}
         yield {"type": "done"}
+    finally:
+        if sock:
+            try:
+                sock.close()
+            except Exception:
+                pass

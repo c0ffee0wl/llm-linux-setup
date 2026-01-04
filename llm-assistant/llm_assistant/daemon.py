@@ -412,18 +412,22 @@ class AssistantDaemon:
 
         # Commands that need a session
         if cmd == "/model":
+            loop = asyncio.get_running_loop()
             if not args:
-                # List available models
-                lines = ["[bold]Available models:[/]"]
-                current = self.model_id or llm.get_model().model_id
-                for model in llm.get_models():
-                    marker = " [green](current)[/]" if model.model_id == current else ""
-                    lines.append(f"  - {model.model_id}{marker}")
-                await self._emit(writer, {"type": "text", "content": "\n".join(lines)})
+                # List available models (run in executor to avoid blocking)
+                def get_model_list():
+                    lines = ["[bold]Available models:[/]"]
+                    current = self.model_id or llm.get_model().model_id
+                    for model in llm.get_models():
+                        marker = " [green](current)[/]" if model.model_id == current else ""
+                        lines.append(f"  - {model.model_id}{marker}")
+                    return "\n".join(lines)
+                content = await loop.run_in_executor(None, get_model_list)
+                await self._emit(writer, {"type": "text", "content": content})
             else:
                 # Switch model
                 try:
-                    new_model = llm.get_model(args)
+                    new_model = await loop.run_in_executor(None, llm.get_model, args)
                     self.model_id = args
                     if session:
                         session.model = new_model
@@ -589,15 +593,19 @@ class AssistantDaemon:
 
         try:
             impl = implementations[tool_name]
-            result = impl(**tool_args)
+            # Run tool in executor to avoid blocking event loop
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None, lambda: impl(**tool_args)
+            )
 
-            # Handle different result types
-            if result is None:
-                output = "(no output)"
-            elif not isinstance(result, str):
-                output = json.dumps(result, default=repr)
-            else:
+            # Handle different result types (consistent with web_ui_server.py)
+            if hasattr(result, "output"):
+                output = result.output
+            elif isinstance(result, str):
                 output = result
+            else:
+                output = str(result)
 
             await self._emit(writer, {
                 "type": "tool_done",
@@ -768,9 +776,14 @@ class AssistantDaemon:
 
     async def _emit(self, writer: asyncio.StreamWriter, event: dict):
         """Emit a NDJSON event."""
-        line = json.dumps(event) + '\n'
-        writer.write(line.encode('utf-8'))
-        await writer.drain()
+        if writer.is_closing():
+            return
+        try:
+            line = json.dumps(event) + '\n'
+            writer.write(line.encode('utf-8'))
+            await writer.drain()
+        except (ConnectionResetError, BrokenPipeError, ConnectionAbortedError):
+            pass  # Client disconnected
 
     async def _emit_error(self, writer: asyncio.StreamWriter, code: str, message: str):
         """Emit an error event and done."""

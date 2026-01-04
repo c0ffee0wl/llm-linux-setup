@@ -4,7 +4,6 @@ Provides unified @ reference parsing, autocomplete, and resolution.
 Supports file paths, URLs, PDFs, YouTube videos, and directories.
 """
 
-import os
 import re
 from dataclasses import dataclass
 from pathlib import Path

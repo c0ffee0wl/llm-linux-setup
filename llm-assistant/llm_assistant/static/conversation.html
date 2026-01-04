@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="/static/style.css?v=12">
+    <link rel="stylesheet" href="/static/style.css?v=16">
     <script src="/static/marked.min.js"></script>
     <script src="/static/highlight.min.js"></script>
     <script src="/static/purify.min.js"></script>
@@ -17,14 +17,12 @@
     <div id="app-container">
         <!-- History Sidebar -->
         <aside id="history-sidebar" class="collapsed">
-            <div class="sidebar-header">
-                <input type="text" id="history-search" placeholder="Search..." class="sidebar-search">
-            </div>
             <div class="sidebar-tabs">
                 <button class="sidebar-tab active" data-tab="history">History</button>
                 <button class="sidebar-tab" data-tab="rag">RAG</button>
             </div>
             <div id="history-panel" class="sidebar-panel active">
+                <input type="text" id="history-search" placeholder="Search responses..." class="sidebar-search">
                 <div id="history-list"></div>
             </div>
             <div id="rag-panel" class="sidebar-panel">
@@ -40,8 +38,10 @@
             <div class="sidebar-footer">
                 <button id="new-conversation-btn" title="New conversation">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="12" y1="5" x2="12" y2="19"></line>
-                        <line x1="5" y1="12" x2="19" y2="12"></line>
+                        <!-- Chat bubble with plus -->
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        <line x1="12" y1="8" x2="12" y2="14"></line>
+                        <line x1="9" y1="11" x2="15" y2="11"></line>
                     </svg>
                     <span>New</span>
                 </button>
@@ -67,11 +67,12 @@
                     </button>
                     <button id="new-conversation-btn-input" class="control-btn" title="New conversation">
                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="12" y1="5" x2="12" y2="19"></line>
-                            <line x1="5" y1="12" x2="19" y2="12"></line>
+                            <!-- Chat bubble with plus -->
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                            <line x1="12" y1="8" x2="12" y2="14"></line>
+                            <line x1="9" y1="11" x2="15" y2="11"></line>
                         </svg>
                     </button>
-                    <button id="at-btn" class="control-btn" title="Insert @ reference">@</button>
                     <div id="capture-wrapper">
                         <button id="capture-btn" class="control-btn" title="Capture screenshot">
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -95,6 +96,7 @@
                             </div>
                         </div>
                     </div>
+                    <button id="at-btn" class="control-btn" title="Insert @ reference">@</button>
                 </div>
                 <div id="input-container">
                     <textarea id="input" placeholder="Ask a question..." rows="1"></textarea>
@@ -125,6 +127,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=12"></script>
+    <script src="/static/app.js?v=15"></script>
 </body>
 </html>

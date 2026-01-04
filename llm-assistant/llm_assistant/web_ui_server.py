@@ -172,7 +172,8 @@ class WebUIServer:
                             "type": "error",
                             "message": "Invalid JSON",
                         })
-                elif msg.type == web.WSMsgType.ERROR:
+                elif msg.type in (web.WSMsgType.ERROR, web.WSMsgType.CLOSE,
+                                  web.WSMsgType.CLOSED, web.WSMsgType.CLOSING):
                     break
         finally:
             # Remove client on disconnect
@@ -180,6 +181,11 @@ class WebUIServer:
                 self.ws_clients[session_id].discard(ws)
                 if not self.ws_clients[session_id]:
                     del self.ws_clients[session_id]
+            # Clean up session state to prevent memory leaks
+            if hasattr(self, '_gui_context_state') and session_id in self._gui_context_state:
+                del self._gui_context_state[session_id]
+            if hasattr(self, '_rag_sessions') and session_id in self._rag_sessions:
+                del self._rag_sessions[session_id]
 
         return ws
 
@@ -458,7 +464,8 @@ class WebUIServer:
                         rag_context = await loop.run_in_executor(
                             None, lambda: handler.format_context(results)
                         )
-                        full_query = f"{rag_context}\n\n{full_query}"
+                        # Wrap in tags for filtering in display (same format as TUI)
+                        full_query = f"<retrieved_documents>\n{rag_context}\n</retrieved_documents>\n\n{full_query}"
                 except Exception:
                     pass  # Continue without RAG context on error
 
@@ -707,6 +714,13 @@ class WebUIServer:
                             prompt_text,
                             flags=re.DOTALL,
                         )
+                    if "<retrieved_documents>" in prompt_text:
+                        prompt_text = re.sub(
+                            r"<retrieved_documents>.*?</retrieved_documents>\s*",
+                            "",
+                            prompt_text,
+                            flags=re.DOTALL,
+                        )
                     if prompt_text.strip():
                         messages.append({"role": "user", "content": prompt_text.strip()})
 
@@ -799,18 +813,16 @@ class WebUIServer:
     async def handle_api_history(self, request: web.Request) -> web.Response:
         """Get conversation history grouped by date.
 
-        GET /api/history?limit=50&source=gui
+        GET /api/history?limit=50
         """
         try:
             limit = int(request.query.get("limit", "50"))
-            source = request.query.get("source")
 
             history = ConversationHistory()
-            # Pass source to get_grouped_by_date for proper filtering before LIMIT
             # Run in executor to avoid blocking event loop (DB query)
             loop = asyncio.get_running_loop()
             grouped = await loop.run_in_executor(
-                None, lambda: history.get_grouped_by_date(limit=limit, source=source)
+                None, lambda: history.get_grouped_by_date(limit=limit)
             )
 
             # Convert to JSON-serializable format
@@ -820,8 +832,6 @@ class WebUIServer:
                     {
                         "id": c.id,
                         "name": c.name,
-                        "model": c.model,
-                        "source": c.source,
                         "datetime_utc": c.datetime_utc,
                         "message_count": c.message_count,
                         "preview": c.preview,
@@ -853,8 +863,6 @@ class WebUIServer:
             return web.json_response({
                 "id": conversation.id,
                 "name": conversation.name,
-                "model": conversation.model,
-                "source": conversation.source,
                 "messages": [
                     {
                         "id": m.id,
@@ -892,8 +900,6 @@ class WebUIServer:
                     {
                         "id": c.id,
                         "name": c.name,
-                        "model": c.model,
-                        "source": c.source,
                         "datetime_utc": c.datetime_utc,
                         "message_count": c.message_count,
                         "preview": c.preview,
