@@ -1012,6 +1012,7 @@ pre code {
 .rag-add-section {
     display: flex;
     gap: 4px;
+    margin-top: 12px;
     margin-bottom: 4px;
 }
 
@@ -1126,11 +1127,17 @@ pre code {
     user-select: none;
     padding: 4px 0;
     border-top: 1px solid var(--border-color);
-    margin-top: 4px;
+    margin-top: 12px;
 }
 
 .rag-show-sources:hover {
     opacity: 1;
+}
+
+.rag-show-sources.disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    pointer-events: none;
 }
 
 .rag-show-sources input[type="checkbox"] {

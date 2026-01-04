@@ -888,12 +888,13 @@ const ragPanel = {
     },
 
     /**
-     * Update the disabled state of the add document section.
+     * Update the disabled state of the add document section and sources checkbox.
      * Disabled when no collection is selected.
      */
     updateAddSectionState() {
         const addInput = document.getElementById('rag-add-input');
         const addBtn = document.getElementById('rag-add-btn');
+        const showSourcesLabel = document.querySelector('.rag-show-sources');
         const hasActiveCollection = !!this.activeCollection;
 
         if (addInput) {
@@ -904,6 +905,9 @@ const ragPanel = {
         }
         if (addBtn) {
             addBtn.disabled = !hasActiveCollection;
+        }
+        if (showSourcesLabel) {
+            showSourcesLabel.classList.toggle('disabled', !hasActiveCollection);
         }
     },
 
