@@ -36,7 +36,9 @@ class AtHandler:
     PREFIXES: Dict[str, str] = {
         "pdf": "Load PDF file",
         "yt": "Load YouTube transcript",
+        "arxiv": "Load arXiv paper",
         "dir": "List directory contents",
+        "file": "Load local file",
     }
 
     # URL prefixes (handled specially)
@@ -59,7 +61,7 @@ class AtHandler:
     # Regex to match @ references
     # Matches: @prefix:path, @url, @path/to/file, @file.ext
     REFERENCE_PATTERN = re.compile(
-        r'@((?:pdf|yt|dir):(?:[^\s]+)|'  # @prefix:path
+        r'@((?:pdf|yt|arxiv|dir|file):(?:[^\s]+)|'  # @prefix:path
         r'https?://[^\s]+|'  # @http(s)://url
         r'[^\s@]+)'  # @path or @file
     )
@@ -178,7 +180,7 @@ class AtHandler:
             prefix_name, path_part = prefix.split(":", 1)
 
             if prefix_name == "pdf":
-                return self._get_file_completions(path_part, working_dir, filter_ext=".pdf")
+                return self._get_file_completions(path_part, working_dir, filter_ext=".pdf", prefix_format="@pdf:")
             elif prefix_name == "yt":
                 # YouTube URLs - just show a hint
                 if not path_part:
@@ -188,8 +190,19 @@ class AtHandler:
                         type="hint"
                     )]
                 return []  # No autocomplete for YouTube URLs
+            elif prefix_name == "arxiv":
+                # arXiv paper IDs - just show a hint
+                if not path_part:
+                    return [Completion(
+                        text="@arxiv:2310.06825",
+                        description="Enter arXiv paper ID (e.g., 2310.06825)",
+                        type="hint"
+                    )]
+                return []  # No autocomplete for arXiv IDs
             elif prefix_name == "dir":
                 return self._get_directory_completions(path_part, working_dir)
+            elif prefix_name == "file":
+                return self._get_file_completions(path_part, working_dir, prefix_format="@file:")
 
         # Handle URL prefixes
         if prefix.startswith(("http://", "https://")):
@@ -203,7 +216,8 @@ class AtHandler:
         self,
         partial_path: str,
         working_dir: Path,
-        filter_ext: Optional[str] = None
+        filter_ext: Optional[str] = None,
+        prefix_format: str = "@"
     ) -> List[Completion]:
         """Get file completions for a partial path.
 
@@ -211,6 +225,7 @@ class AtHandler:
             partial_path: Partial path to complete
             working_dir: Base directory for relative paths
             filter_ext: Optional extension filter (e.g., ".pdf")
+            prefix_format: Prefix for completion text (e.g., "@" or "@file:")
 
         Returns:
             List of file completions
@@ -252,7 +267,7 @@ class AtHandler:
 
                 if item.is_dir():
                     completions.append(Completion(
-                        text=f"@{rel_path}/",
+                        text=f"{prefix_format}{rel_path}/",
                         description="Directory",
                         type="directory"
                     ))
@@ -272,7 +287,7 @@ class AtHandler:
                         file_type = "File"
 
                     completions.append(Completion(
-                        text=f"@{rel_path}",
+                        text=f"{prefix_format}{rel_path}",
                         description=file_type,
                         type="file"
                     ))
@@ -362,8 +377,12 @@ class AtHandler:
                 return self._resolve_pdf(path, working_dir)
             elif prefix_name == "yt":
                 return self._resolve_youtube(path)
+            elif prefix_name == "arxiv":
+                return self._resolve_arxiv(path)
             elif prefix_name == "dir":
                 return self._resolve_directory(path, working_dir)
+            elif prefix_name == "file":
+                return self._resolve_file(path, working_dir)
             else:
                 return ResolvedReference(
                     original=f"@{reference}",
@@ -482,6 +501,52 @@ class AtHandler:
                 content=None,
                 path=None,
                 loader="yt",
+                error=str(e)
+            )
+
+    def _resolve_arxiv(self, paper_id: str) -> ResolvedReference:
+        """Resolve an arXiv paper reference."""
+        try:
+            # Try to use llm-arxiv fragment loader
+            from llm_arxiv import ArxivFragmentLoader
+
+            loader = ArxivFragmentLoader()
+            fragments = list(loader.load(paper_id))
+            if fragments:
+                content = "\n\n".join(f.content for f in fragments if f.content)
+                return ResolvedReference(
+                    original=f"@arxiv:{paper_id}",
+                    type="fragment",
+                    content=content,
+                    path=None,
+                    loader="arxiv",
+                    error=None
+                )
+            else:
+                return ResolvedReference(
+                    original=f"@arxiv:{paper_id}",
+                    type="fragment",
+                    content=None,
+                    path=None,
+                    loader="arxiv",
+                    error="No content extracted from arXiv paper"
+                )
+        except ImportError:
+            return ResolvedReference(
+                original=f"@arxiv:{paper_id}",
+                type="fragment",
+                content=None,
+                path=None,
+                loader="arxiv",
+                error="arXiv loader not available (install llm-arxiv)"
+            )
+        except Exception as e:
+            return ResolvedReference(
+                original=f"@arxiv:{paper_id}",
+                type="fragment",
+                content=None,
+                path=None,
+                loader="arxiv",
                 error=str(e)
             )
 

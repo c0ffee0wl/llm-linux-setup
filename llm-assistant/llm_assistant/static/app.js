@@ -75,12 +75,14 @@ marked.use({ renderer });
 
 let ws = null;
 let reconnectAttempts = 0;
+let connectionState = 'disconnected'; // 'connected', 'connecting', 'disconnected', 'server_down'
 let currentMessageId = null;
 let sessionId = null;
 let isStreaming = false;
 let currentToolCallId = null;
 let isHistoricalView = false;  // True when viewing a historical conversation (not the active session)
 let viewedConversationId = null;  // ID of the currently viewed historical conversation
+let currentConversationId = null;  // ID of the active conversation (set when done message received)
 
 /**
  * Reset input area to active state (removes read-only restrictions).
@@ -312,6 +314,7 @@ const ICONS = {
     copyPlain: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/><path d="M12 13h7M15.5 13v6" stroke-width="1.5"/></svg>',
     edit: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>',
     regenerate: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/></svg>',
+    fork: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="18" r="3"/><circle cx="6" cy="6" r="3"/><circle cx="18" cy="6" r="3"/><path d="M18 9v1a2 2 0 01-2 2H8a2 2 0 01-2-2V9"/><line x1="12" y1="12" x2="12" y2="15"/></svg>',
     python: '<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.4 0 5.8 2.8 5.8 2.8v2.9h6.3v.9H3.9S0 6.2 0 12.1s3.4 5.7 3.4 5.7h2v-2.8s-.1-3.4 3.3-3.4h5.7s3.2 0 3.2-3.1V3.4S18.1 0 12 0zm-3.1 2c.6 0 1 .4 1 1s-.4 1-1 1-1-.4-1-1 .4-1 1-1z"/><path d="M12 24c6.6 0 6.2-2.8 6.2-2.8v-2.9h-6.3v-.9h8.2s3.9.4 3.9-5.5-3.4-5.7-3.4-5.7h-2v2.8s.1 3.4-3.3 3.4H9.6s-3.2 0-3.2 3.1v5.1S5.9 24 12 24zm3.1-2c-.6 0-1-.4-1-1s.4-1 1-1 1 .4 1 1-.4 1-1 1z"/></svg>',
     shell: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>',
     search: '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>',
@@ -440,7 +443,7 @@ const historySidebar = {
             if (!response.ok) throw new Error('Failed to load conversation');
             const data = await response.json();
 
-            // Mark as historical view (disables edit/regenerate)
+            // Track which conversation we're viewing
             isHistoricalView = true;
             viewedConversationId = id;
             const conversation = document.getElementById('conversation');
@@ -452,6 +455,13 @@ const historySidebar = {
                     conversation.classList.add('non-gui-origin');
                 } else {
                     conversation.classList.remove('non-gui-origin');
+                    // Resume GUI conversation on server for edit/regenerate support
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        safeSend({
+                            type: 'resumeConversation',
+                            conversationId: id
+                        });
+                    }
                 }
             }
 
@@ -467,7 +477,7 @@ const historySidebar = {
             }
 
             const toastMsg = data.source === 'gui'
-                ? 'Loaded conversation'
+                ? 'Resumed conversation'
                 : 'Loaded conversation (read-only)';
             showToast(toastMsg);
 
@@ -888,15 +898,31 @@ const ragPanel = {
     },
 
     /**
-     * Update the disabled state of the add document section and sources checkbox.
-     * Disabled when no collection is selected.
+     * Update the disabled state of RAG panel controls based on active collection.
+     * - New collection input: disabled when a collection IS active
+     * - Add document input: disabled when NO collection is active
+     * - Show sources checkbox: disabled when NO collection is active
      */
     updateAddSectionState() {
+        const newNameInput = document.getElementById('rag-new-name');
+        const createBtn = document.getElementById('rag-create-btn');
         const addInput = document.getElementById('rag-add-input');
         const addBtn = document.getElementById('rag-add-btn');
         const showSourcesLabel = document.querySelector('.rag-show-sources');
         const hasActiveCollection = !!this.activeCollection;
 
+        // New collection: disabled when a collection is already active
+        if (newNameInput) {
+            newNameInput.disabled = hasActiveCollection;
+            newNameInput.placeholder = hasActiveCollection
+                ? 'Deselect collection first'
+                : 'New collection name...';
+        }
+        if (createBtn) {
+            createBtn.disabled = hasActiveCollection;
+        }
+
+        // Add document: disabled when no collection is active
         if (addInput) {
             addInput.disabled = !hasActiveCollection;
             addInput.placeholder = hasActiveCollection
@@ -906,6 +932,8 @@ const ragPanel = {
         if (addBtn) {
             addBtn.disabled = !hasActiveCollection;
         }
+
+        // Show sources: disabled when no collection is active
         if (showSourcesLabel) {
             showSourcesLabel.classList.toggle('disabled', !hasActiveCollection);
         }
@@ -913,6 +941,16 @@ const ragPanel = {
 
     async createCollection(name) {
         if (!name.trim()) return;
+
+        // Show loading state
+        const createBtn = document.getElementById('rag-create-btn');
+        const nameInput = document.getElementById('rag-new-name');
+        const originalBtnText = createBtn ? createBtn.textContent : '+';
+        if (createBtn) {
+            createBtn.textContent = '...';
+            createBtn.disabled = true;
+        }
+        if (nameInput) nameInput.disabled = true;
 
         try {
             const response = await fetch('/api/rag/create', {
@@ -927,10 +965,18 @@ const ragPanel = {
             }
 
             showToast('Collection "' + name + '" created');
+            if (nameInput) nameInput.value = ''; // Clear input on success
             await this.load(); // Refresh collections
         } catch (err) {
             console.error('RAG create error:', err);
             showToast('Failed to create: ' + err.message);
+        } finally {
+            // Restore button state
+            if (createBtn) {
+                createBtn.textContent = originalBtnText;
+                createBtn.disabled = !!this.activeCollection;
+            }
+            if (nameInput) nameInput.disabled = !!this.activeCollection;
         }
     },
 
@@ -938,6 +984,8 @@ const ragPanel = {
         if (!confirm('Delete collection "' + name + '"? This will remove all documents and cannot be undone.')) {
             return;
         }
+
+        showToast('Deleting collection...');
 
         try {
             const response = await fetch('/api/rag/delete/' + encodeURIComponent(name), {
@@ -1018,23 +1066,54 @@ const ragPanel = {
             return;
         }
 
+        // Show loading state
+        const addBtn = document.getElementById('rag-add-btn');
+        const addInput = document.getElementById('rag-add-input');
+        const originalBtnText = addBtn ? addBtn.textContent : '+';
+        if (addBtn) {
+            addBtn.textContent = '...';
+            addBtn.disabled = true;
+        }
+        if (addInput) addInput.disabled = true;
+
         try {
+            showToast('Adding to ' + this.activeCollection + '...');
+
             const response = await fetch('/api/rag/add', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ collection: this.activeCollection, path: path })
             });
 
+            const result = await response.json();
+
             if (!response.ok) {
-                const err = await response.json();
-                throw new Error(err.error || 'Failed to add document');
+                throw new Error(result.error || 'Failed to add document');
             }
 
-            showToast('Document added to ' + this.activeCollection);
+            // Show detailed result based on status
+            if (result.status === 'success') {
+                const chunks = result.chunks || 0;
+                showToast(`Added ${chunks} chunk${chunks !== 1 ? 's' : ''} to ${this.activeCollection}`);
+            } else if (result.status === 'skipped') {
+                showToast('Already indexed: ' + (result.reason || path));
+            } else if (result.status === 'error') {
+                showToast('Error: ' + (result.error || 'Unknown error'));
+            } else {
+                showToast('Document processed');
+            }
+
             await this.load(); // Refresh collections
         } catch (err) {
             console.error('RAG add error:', err);
             showToast('Failed to add: ' + err.message);
+        } finally {
+            // Restore button state
+            if (addBtn) {
+                addBtn.textContent = originalBtnText;
+                addBtn.disabled = !this.activeCollection;
+            }
+            if (addInput) addInput.disabled = !this.activeCollection;
         }
     },
 
@@ -1257,15 +1336,121 @@ const tempChatToggle = {
 // WebSocket Connection
 // ============================================================================
 
+/**
+ * Check if the server is running via health endpoint.
+ * @returns {Promise<boolean>} True if server is healthy
+ */
+async function checkServerHealth() {
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 3000);
+        const response = await fetch('/api/health', { signal: controller.signal });
+        clearTimeout(timeout);
+        return response.ok;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Update connection state and UI.
+ * @param {string} state - 'connected', 'connecting', 'disconnected', 'server_down'
+ */
+function setConnectionState(state) {
+    connectionState = state;
+    updateConnectionUI();
+}
+
+/**
+ * Update UI based on connection state.
+ */
+function updateConnectionUI() {
+    // Remove any existing connection status element
+    let statusEl = document.getElementById('connection-status');
+
+    if (connectionState === 'connected') {
+        // Remove status element when connected
+        if (statusEl) statusEl.remove();
+        return;
+    }
+
+    // Create status element if not exists
+    if (!statusEl) {
+        statusEl = document.createElement('div');
+        statusEl.id = 'connection-status';
+        // Insert after header bar (second child of main-content)
+        const headerBar = document.getElementById('header-bar');
+        if (headerBar && headerBar.parentNode) {
+            headerBar.parentNode.insertBefore(statusEl, headerBar.nextSibling);
+        }
+    }
+
+    // Update content based on state
+    if (connectionState === 'connecting') {
+        statusEl.className = 'connection-status connecting';
+        statusEl.innerHTML = '<span class="status-icon">⟳</span> Connecting to server...';
+    } else if (connectionState === 'server_down') {
+        statusEl.className = 'connection-status server-down';
+        statusEl.innerHTML = `
+            <div class="status-content">
+                <span class="status-icon">⚠</span>
+                <span class="status-text">Server not running</span>
+            </div>
+            <div class="status-actions">
+                <button onclick="retryConnection()" class="retry-btn">Retry Connection</button>
+                <button onclick="copyRestartCommand()" class="copy-cmd-btn" title="Copy restart command">Copy Command</button>
+            </div>
+            <div class="status-hint">Run: <code>llm-assistant --daemon</code> to start the server</div>
+        `;
+    } else {
+        statusEl.className = 'connection-status disconnected';
+        statusEl.innerHTML = `
+            <span class="status-icon">○</span>
+            <span class="status-text">Disconnected - reconnecting (${reconnectAttempts}/10)...</span>
+        `;
+    }
+}
+
+/**
+ * Copy the restart command to clipboard.
+ */
+function copyRestartCommand() {
+    navigator.clipboard.writeText('llm-assistant --daemon').then(() => {
+        showToast('Restart command copied to clipboard');
+    }).catch(() => {
+        showToast('Failed to copy command');
+    });
+}
+
+/**
+ * Manually retry connection after server_down state.
+ */
+async function retryConnection() {
+    setConnectionState('connecting');
+    reconnectAttempts = 0;
+
+    // First check if server is back up
+    const healthy = await checkServerHealth();
+    if (healthy) {
+        connect();
+    } else {
+        setConnectionState('server_down');
+        showToast('Server still not responding. Start the daemon first.');
+    }
+}
+
 function connect() {
     const params = new URLSearchParams(window.location.search);
     sessionId = params.get('session') || `browser:${Date.now()}`;
+
+    setConnectionState('connecting');
 
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
     ws = new WebSocket(`${protocol}//${location.host}/ws?session=${sessionId}`);
 
     ws.onopen = () => {
         reconnectAttempts = 0;
+        setConnectionState('connected');
         console.log('WebSocket connected');
         // Request history on connect
         safeSend({ type: 'getHistory' });
@@ -1280,18 +1465,29 @@ function connect() {
         }
     };
 
-    ws.onclose = () => {
-        console.log('WebSocket closed, reconnecting...');
+    ws.onclose = async () => {
+        console.log('WebSocket closed');
         // Clear pending requests - their callbacks will never fire
         pendingRequests.clear();
 
-        // Max 10 retries with exponential backoff (caps at 30s)
-        if (reconnectAttempts >= 10) {
-            console.error('Max reconnection attempts exceeded');
-            showToast('Connection lost. Please refresh the page.');
+        // Check if server is still running
+        const healthy = await checkServerHealth();
+
+        if (!healthy) {
+            // Server is down - show helpful UI instead of retrying forever
+            console.error('Server appears to be down');
+            setConnectionState('server_down');
             return;
         }
 
+        // Server is up but WebSocket closed - reconnect with backoff
+        if (reconnectAttempts >= 10) {
+            console.error('Max reconnection attempts exceeded');
+            setConnectionState('server_down');
+            return;
+        }
+
+        setConnectionState('disconnected');
         const delay = Math.min(1000 * Math.pow(2, reconnectAttempts++), 30000);
         console.log(`Reconnecting in ${delay}ms (attempt ${reconnectAttempts}/10)`);
         setTimeout(connect, delay);
@@ -1300,8 +1496,6 @@ function connect() {
     ws.onerror = (err) => {
         console.error('WebSocket error:', err);
         // Note: onerror is always followed by onclose, which handles reconnection
-        // Show user feedback for the error
-        showToast('Connection error occurred');
     };
 }
 
@@ -1333,6 +1527,10 @@ function handleMessage(msg) {
         case 'done':
             finalizeMessage();
             isStreaming = false;
+            // Track conversation ID for forking (only if not viewing historical)
+            if (msg.conversationId && !isHistoricalView) {
+                currentConversationId = msg.conversationId;
+            }
             // Refresh history sidebar to show updated conversation
             historySidebar.load();
             break;
@@ -1361,6 +1559,7 @@ function handleMessage(msg) {
         case 'commandResult':
             if (msg.command === 'new') {
                 clearConversation();
+                currentConversationId = null;  // Reset conversation ID
                 showToast('New conversation started');
                 // Refresh history to show the new session
                 historySidebar.load();
@@ -1373,6 +1572,40 @@ function handleMessage(msg) {
                     showToast('Switched to ' + msg.model);
                 }
             }
+            break;
+
+        case 'conversationResumed':
+            // Server has loaded the historical conversation into session
+            console.log('Conversation resumed:', msg.conversationId, 'model:', msg.model);
+            // Update model picker if model changed
+            if (msg.model) {
+                modelPicker.handleModelChange(msg.model);
+            }
+            break;
+
+        case 'conversationForked':
+            // Server has created a forked conversation
+            console.log('Conversation forked:', msg.originalId, '->', msg.newId, 'with', msg.responseCount, 'responses');
+            // Update tracked conversation IDs
+            currentConversationId = msg.newId;  // This is now the active conversation
+            viewedConversationId = null;  // Clear historical view ID
+            // Reset historical view flags - this is now an active conversation
+            isHistoricalView = false;
+            resetInputToActive();
+            // Update model picker if provided
+            if (msg.model) {
+                modelPicker.handleModelChange(msg.model);
+            }
+            // Truncate messages to match fork point (remove messages after fork)
+            const forkMsgCount = msg.responseCount * 2;  // Each response = user + assistant
+            if (messageStore.messages.length > forkMsgCount) {
+                // Get truncated messages and re-render
+                const truncatedMsgs = messageStore.messages.slice(0, forkMsgCount);
+                loadHistory(truncatedMsgs);
+            }
+            showToast('Forked conversation created');
+            // Refresh history to show new conversation
+            historySidebar.load();
             break;
 
         default:
@@ -1472,7 +1705,7 @@ function appendMessage(role, content, streamingId) {
     // Store original content (with context) for model continuation
     const msgId = messageStore.add(role, content, container);
 
-    const actions = createActionIcons(role, msgId);
+    const actions = createActionIcons(role, msgId, displayContent);
     container.appendChild(actions);
 
     if (role === 'assistant' && streamingId) {
@@ -1821,31 +2054,37 @@ function createIconButton(iconName, tooltip, onClick) {
     return btn;
 }
 
-function createActionIcons(role, messageId) {
+function createActionIcons(role, messageId, content) {
     const container = document.createElement('div');
     container.className = 'message-actions';
 
-    // Copy markdown (always)
-    container.appendChild(createIconButton('copy', 'Copy markdown', () => {
-        const msg = messageStore.messages.find(m => m.id === messageId);
-        if (msg) {
-            navigator.clipboard.writeText(msg.content).then(() => {
-                showToast('Copied to clipboard');
-            }).catch(err => {
-                console.error('Clipboard write failed:', err);
-                showToast('Failed to copy to clipboard');
-            });
-        }
-    }));
+    // Check if there's actual content (not empty/whitespace-only)
+    const hasContent = content && content.trim().length > 0;
 
-    // Copy plain text (strip markdown) - for assistant only
-    if (role === 'assistant') {
-        container.appendChild(createIconButton('copyPlain', 'Copy plain text', () => {
+    // Copy buttons only for messages with content
+    if (hasContent) {
+        // Copy markdown
+        container.appendChild(createIconButton('copy', 'Copy markdown', () => {
             const msg = messageStore.messages.find(m => m.id === messageId);
             if (msg) {
-                copyPlainText(msg.content);
+                navigator.clipboard.writeText(msg.content).then(() => {
+                    showToast('Copied to clipboard');
+                }).catch(err => {
+                    console.error('Clipboard write failed:', err);
+                    showToast('Failed to copy to clipboard');
+                });
             }
         }));
+
+        // Copy plain text (strip markdown) - for assistant only
+        if (role === 'assistant') {
+            container.appendChild(createIconButton('copyPlain', 'Copy plain text', () => {
+                const msg = messageStore.messages.find(m => m.id === messageId);
+                if (msg) {
+                    copyPlainText(msg.content);
+                }
+            }));
+        }
     }
 
     if (role === 'user') {
@@ -1857,6 +2096,10 @@ function createActionIcons(role, messageId) {
         regenBtn.classList.add('action-regenerate');
         container.appendChild(regenBtn);
 
+        // Fork button - only visible for GUI-originated historical conversations
+        const forkBtn = createIconButton('fork', 'Fork from here', () => forkAtMessage(messageId));
+        forkBtn.classList.add('action-fork');
+        container.appendChild(forkBtn);
     }
 
     return container;
@@ -2058,6 +2301,48 @@ function regenerateResponse(messageId) {
     safeSend({
         type: 'regenerate',
         userContent: userMsg.content
+    });
+}
+
+/**
+ * Fork conversation at a specific message.
+ * Creates a new conversation by cloning everything up to this message.
+ * Only available for GUI-originated conversations.
+ */
+function forkAtMessage(messageId) {
+    const msg = messageStore.messages.find(m => m.id === messageId);
+    if (!msg) return;
+
+    // Get the message index (this is the fork point - include up to this message)
+    const msgIndex = messageStore.messages.findIndex(m => m.id === messageId);
+    if (msgIndex < 0) return;
+
+    // Get conversation ID from either historical view or current session
+    const convId = viewedConversationId || currentConversationId;
+    if (!convId) {
+        showToast('Cannot fork: no conversation available');
+        return;
+    }
+
+    if (!isConnected()) {
+        showToast('Not connected to server');
+        return;
+    }
+
+    // Convert UI message index to response index
+    // In the UI, we have alternating user/assistant messages
+    // In the database, each "response" is a user prompt + assistant response
+    // UI index 0 (user) + 1 (assistant) = response index 0
+    // UI index 2 (user) + 3 (assistant) = response index 1
+    // So response index = floor(msgIndex / 2)
+    const responseIndex = Math.floor(msgIndex / 2);
+
+    showToast('Creating fork...');
+
+    safeSend({
+        type: 'forkConversation',
+        conversationId: convId,
+        forkAtIndex: responseIndex
     });
 }
 

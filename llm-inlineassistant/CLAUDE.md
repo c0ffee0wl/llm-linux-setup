@@ -73,7 +73,7 @@ The daemon (llm-assistant --daemon) handles:
 
 In Zsh, pressing @ at the start of a line enters LLM mode:
 - Tab completion for `/slash-commands`
-- Tab completion for `@fragments` (@github:, @pdf:, @yt:)
+- Tab completion for `@fragments` (@pdf:, @yt:, @arxiv:, @dir:, @file:, @github:)
 - @ elsewhere in line inserts literal @
 
 ### Espanso (text expansion)

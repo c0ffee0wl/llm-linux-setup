@@ -7,7 +7,7 @@
     <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
-    <link rel="stylesheet" href="/static/style.css?v=24">
+    <link rel="stylesheet" href="/static/style.css?v=28">
     <script src="/static/marked.min.js"></script>
     <script src="/static/highlight.min.js"></script>
     <script src="/static/purify.min.js"></script>
@@ -26,28 +26,32 @@
                 <div id="history-list"></div>
             </div>
             <div id="rag-panel" class="sidebar-panel">
-                <div id="rag-collections"></div>
-                <div class="rag-new-collection">
-                    <input type="text" id="rag-new-name" placeholder="New collection name...">
-                    <button id="rag-create-btn" title="Create collection">+</button>
+                <div class="rag-panel-content">
+                    <div class="rag-new-collection">
+                        <input type="text" id="rag-new-name" placeholder="New collection name...">
+                        <button id="rag-create-btn" title="Create collection">+</button>
+                    </div>
+                    <div id="rag-collections"></div>
                 </div>
-                <div class="rag-add-section">
-                    <input type="text" id="rag-add-input" placeholder="Path, URL, or git:...">
-                    <button id="rag-add-btn" title="Add to collection">+</button>
+                <div class="rag-panel-bottom">
+                    <div class="rag-add-section">
+                        <input type="text" id="rag-add-input" placeholder="Path, URL, or git:...">
+                        <button id="rag-add-btn" title="Add to collection">+</button>
+                    </div>
+                    <div class="rag-hint">
+                        <strong>Supported formats:</strong><br>
+                        • Files: /path/to/file.pdf<br>
+                        • Directory: /path/to/dir/<br>
+                        • Glob: /path/**/*.md<br>
+                        • URL: https://example.com/doc<br>
+                        • Recursive: https://.../**<br>
+                        • Git: git:https://github.com/...
+                    </div>
+                    <label class="rag-show-sources">
+                        <input type="checkbox" id="rag-show-sources-checkbox" checked>
+                        <span>Show sources in responses</span>
+                    </label>
                 </div>
-                <div class="rag-hint">
-                    <strong>Supported formats:</strong><br>
-                    • Files: /path/to/file.pdf<br>
-                    • Directory: /path/to/dir/<br>
-                    • Glob: /path/**/*.md<br>
-                    • URL: https://example.com/doc<br>
-                    • Recursive: https://.../**<br>
-                    • Git: git:https://github.com/...
-                </div>
-                <label class="rag-show-sources">
-                    <input type="checkbox" id="rag-show-sources-checkbox" checked>
-                    <span>Show sources in responses</span>
-                </label>
             </div>
         </aside>
 
@@ -153,6 +157,6 @@
         </div>
     </div>
 
-    <script src="/static/app.js?v=31"></script>
+    <script src="/static/app.js?v=36"></script>
 </body>
 </html>

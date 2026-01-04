@@ -644,6 +644,7 @@ class AssistantDaemon:
                 ("@github:", "Load GitHub repository"),
                 ("@pdf:", "Load PDF document"),
                 ("@yt:", "Load YouTube transcript"),
+                ("@arxiv:", "Load arXiv paper"),
                 ("@url:", "Load web page"),
                 ("@file:", "Load local file"),
                 ("@dir:", "Load directory contents"),

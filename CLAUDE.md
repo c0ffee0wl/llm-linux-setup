@@ -1046,6 +1046,7 @@ Note that several packages use **forks** or specific sources:
 - **llm-tools-patch**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-tools-patch` (file manipulation tools: read, write, edit, multi_edit, info)
 - **llm-vertex**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-vertex` (Google Vertex AI Gemini models integration)
 - **llm-fragments-youtube-transcript**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript` (YouTube video transcript extraction with metadata)
+- **llm-arxiv**: Installed from git repository: `git+https://github.com/c0ffee0wl/llm-arxiv` (arXiv paper search, fetch, and image extraction with fragment loader support)
 - **llm-templates-fabric**: Uses Damon McMinn's fork: `git+https://github.com/c0ffee0wl/llm-templates-fabric`
 - **files-to-prompt**: Uses Dan Mackinlay's fork: `git+https://github.com/c0ffee0wl/files-to-prompt`
 - **llm-zsh-plugin**: Forked in-repository from eliyastein/llm-zsh-plugin with custom modifications for `code` and `rag` subcommands

@@ -908,6 +908,75 @@ if [ "$IS_VM" = "true" ] && [ "$PIPEWIRE_INSTALLED" = "true" ]; then
 fi
 
 #############################################################################
+# Stop Running Assistant Processes (for clean update)
+#############################################################################
+
+# Gracefully stop llm-assistant daemon and llm-guiassistant to allow updates
+stop_assistant_processes() {
+    local stopped=false
+
+    # Stop llm-assistant daemon (runs with --daemon flag)
+    if pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
+        log "Stopping llm-assistant daemon for update..."
+        pkill -TERM -f "llm-assistant.*--daemon" 2>/dev/null || true
+        # Wait up to 5 seconds for graceful shutdown
+        for i in {1..10}; do
+            if ! pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+        # Force kill if still running
+        if pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
+            pkill -KILL -f "llm-assistant.*--daemon" 2>/dev/null || true
+        fi
+        stopped=true
+    fi
+
+    # Stop llm-guiassistant (web UI server)
+    if pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
+        log "Stopping llm-guiassistant for update..."
+        pkill -TERM -f "llm-guiassistant" 2>/dev/null || true
+        # Wait up to 5 seconds for graceful shutdown
+        for i in {1..10}; do
+            if ! pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+        # Force kill if still running
+        if pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
+            pkill -KILL -f "llm-guiassistant" 2>/dev/null || true
+        fi
+        stopped=true
+    fi
+
+    # Also stop any llm_assistant.daemon or llm_guiassistant Python processes
+    if pgrep -f "python.*llm_assistant\.daemon" > /dev/null 2>&1; then
+        pkill -TERM -f "python.*llm_assistant\.daemon" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "python.*llm_assistant\.daemon" 2>/dev/null || true
+        stopped=true
+    fi
+
+    if pgrep -f "python.*llm_guiassistant" > /dev/null 2>&1; then
+        pkill -TERM -f "python.*llm_guiassistant" 2>/dev/null || true
+        sleep 1
+        pkill -KILL -f "python.*llm_guiassistant" 2>/dev/null || true
+        stopped=true
+    fi
+
+    if [ "$stopped" = "true" ]; then
+        log "Assistant processes stopped. They will use updated code when restarted."
+    fi
+}
+
+# Only stop processes in full mode (assistant components)
+if [ "$INSTALL_MODE" = "full" ]; then
+    stop_assistant_processes
+fi
+
+#############################################################################
 # PHASE 1: Install Prerequisites
 #############################################################################
 
@@ -1065,6 +1134,7 @@ REMOTE_PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-fragments-pdf"
     "llm-fragments-github"
     "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
+    "git+https://github.com/c0ffee0wl/llm-arxiv"
     "llm-fragments-dir"
 
     # Utility plugins
@@ -2198,6 +2268,11 @@ if [ "$INSTALL_MODE" = "full" ]; then
     log "  3. Test llm-inlineassistant: @ What date is it?"
     log "  4. Use Ctrl+N for AI command completion, Ctrl+G to apply suggested commands"
     log "  5. Test Claude Code Router: routed-claude"
+    log ""
+    log "Note: If llm-assistant daemon or llm-guiassistant were running,"
+    log "      they were stopped for the update. Restart them as needed:"
+    log "        llm-assistant --daemon   # Start daemon"
+    log "        llm-guiassistant         # Open GUI assistant"
 else
     log "Installed tools (minimal mode):"
     log ""

@@ -26,6 +26,7 @@ llm() {
         "openai" "gemini" "openrouter" "vertex"
         "cmd" "cmdcomp" "jq"
         "rag" "git-commit" "sort" "consortium" "classify"
+        "arxiv" "arxiv-search"
     )
 
     # Check if first argument is an excluded subcommand

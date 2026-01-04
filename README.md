@@ -326,6 +326,7 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[llm-fragments-pdf](https://github.com/daturkel/llm-fragments-pdf)** - PDF content extraction
 - **[llm-fragments-github](https://github.com/simonw/llm-fragments-github)** - GitHub repository integration
 - **[llm-fragments-youtube-transcript](https://github.com/c0ffee0wl/llm-fragments-youtube-transcript)** - YouTube video transcript extraction with metadata
+- **[llm-arxiv](https://github.com/c0ffee0wl/llm-arxiv)** - arXiv paper search, fetch, and image extraction
 - **[llm-fragments-dir](https://github.com/RKeelan/llm-fragments-dir)** - Load all text files from a local directory recursively
 - **[llm-templates-fabric](https://github.com/c0ffee0wl/llm-templates-fabric)** - Fabric prompt templates
 - **[llm-tools-llm-functions](https://github.com/c0ffee0wl/llm-tools-llm-functions)** - Bridge for optional [llm-functions](https://github.com/sigoden/llm-functions) integration (enables custom tools in Bash/JS/Python)
@@ -697,6 +698,36 @@ llm -f yt:https://www.youtube.com/watch?v=VIDEO_ID_1 \
 ```
 
 **Note**: The plugin uses yt-dlp for metadata extraction and youtube-transcript-api for transcript retrieval. Auto-generated captions are used if manual transcripts aren't available.
+
+**arXiv Paper Fragments**
+
+Access and analyze arXiv papers using the `arxiv:` fragment type or the `llm arxiv` command:
+
+```bash
+# Load an arXiv paper by ID
+llm -f arxiv:2310.06825 "Summarize the key findings"
+
+# Search for papers on a topic
+llm arxiv-search "transformer architecture" -n 5
+
+# Fetch and analyze a specific paper
+llm arxiv 2310.06825 "What methodology was used?"
+
+# Include figures from PDF (requires vision model)
+llm arxiv 2310.06825 -i all -m gemini-2.5-flash "Describe the architecture diagram"
+
+# Include specific pages' images
+llm arxiv 2310.06825 -i P:1,3-5 "What does Figure 1 show?"
+
+# Compare multiple papers
+llm -f arxiv:2310.06825 -f arxiv:2401.12345 "Compare the approaches in these papers"
+```
+
+**Features:**
+- Fragment loader for embedding paper content in prompts
+- Image extraction from PDFs with page control (`-i P:1,3-5` or `-i all`)
+- Search by keywords, author, or title
+- Resize images for token management (`-r 800` for max 800px dimension)
 
 **Directory Fragments**
 

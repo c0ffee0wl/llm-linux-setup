@@ -75,6 +75,9 @@ class WebUIServer:
         # Cached database connection (created lazily, closed on stop)
         self._logs_db: Optional[sqlite_utils.Database] = None
 
+        # Server start time for uptime tracking
+        self._start_time = time.time()
+
         # Static assets directory - prefer development source if available
         # Check for LLM_DEV_STATIC env var first (explicit override)
         dev_static = os.environ.get("LLM_DEV_STATIC")
@@ -104,7 +107,8 @@ class WebUIServer:
         self.app.router.add_post("/upload", self.handle_upload)
         # Note: /context endpoint removed - daemon captures context directly for guiassistant sessions
 
-        # API routes for history, completions, capture, models, and RAG
+        # API routes for health, history, completions, capture, models, and RAG
+        self.app.router.add_get("/api/health", self.handle_api_health)
         self.app.router.add_get("/api/models", self.handle_api_models)
         self.app.router.add_get("/api/history", self.handle_api_history)
         self.app.router.add_get("/api/history/search", self.handle_api_history_search)
@@ -124,8 +128,24 @@ class WebUIServer:
         if self.static_dir.exists():
             self.app.router.add_static("/static/", self.static_dir)
 
-    def _get_logs_db(self) -> sqlite_utils.Database:
-        """Get the conversation logs database (cached for server lifetime)."""
+    def _get_logs_db(self, for_executor: bool = False) -> sqlite_utils.Database:
+        """Get the conversation logs database.
+
+        Args:
+            for_executor: If True, create a new connection for use in executor threads.
+                         If False, use the cached main-thread connection.
+        """
+        if for_executor:
+            # Create a fresh connection for executor threads (SQLite thread safety)
+            from llm import migrations
+            db_path = get_logs_db_path()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite_utils.Database(db_path)
+            db.execute("PRAGMA journal_mode=WAL")
+            migrations.migrate(db)
+            return db
+
+        # Main thread: use cached connection
         if self._logs_db is None:
             from llm import migrations
             db_path = get_logs_db_path()
@@ -233,6 +253,8 @@ class WebUIServer:
                         del self._gui_context_state[session_id]
                     if session_id in self._rag_sessions:
                         del self._rag_sessions[session_id]
+                    if session_id in self._rag_sources:
+                        del self._rag_sources[session_id]
                     if session_id in self._session_no_log:
                         del self._session_no_log[session_id]
 
@@ -253,6 +275,10 @@ class WebUIServer:
             await self._handle_edit(session_id, ws, msg)
         elif msg_type == "regenerate":
             await self._handle_regenerate(session_id, ws, msg)
+        elif msg_type == "resumeConversation":
+            await self._handle_resume_conversation(session_id, ws, msg)
+        elif msg_type == "forkConversation":
+            await self._handle_fork_conversation(session_id, ws, msg)
         elif msg_type == "stripMarkdown":
             await self._handle_strip_markdown(ws, msg)
         elif msg_type == "getHistory":
@@ -326,6 +352,8 @@ class WebUIServer:
                     future.result(timeout=30)
 
             except Exception as e:
+                import traceback
+                logging.error(f"LLM streaming error: {e}\n{traceback.format_exc()}")
                 error[0] = e
             finally:
                 asyncio.run_coroutine_threadsafe(queue.put(None), loop)
@@ -498,9 +526,9 @@ class WebUIServer:
 
             # Tool execution loop
             iteration = 0
-            # Build arg overrides based on session settings
+            # Build arg overrides based on session settings (always explicit for search_google)
             sources = self._rag_sources.get(session_id, True)
-            arg_overrides = None if sources else {"search_google": {"sources": False}}
+            arg_overrides = {"search_google": {"sources": sources}}
 
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
@@ -568,12 +596,16 @@ class WebUIServer:
                 try:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
-                        None, lambda: response_holder[0].log_to_db(self._get_logs_db())
+                        None, lambda: response_holder[0].log_to_db(self._get_logs_db(for_executor=True))
                     )
                 except Exception:
                     pass  # Continue without logging on error
 
-            await ws.send_json({"type": "done"})
+            # Include conversation ID so frontend can track it for forking
+            conv_id = None
+            if session.conversation:
+                conv_id = session.conversation.id
+            await ws.send_json({"type": "done", "conversationId": conv_id})
 
         except Exception as e:
             cancel_flag.set()
@@ -627,6 +659,423 @@ class WebUIServer:
 
         # Re-query with the user content
         await self._handle_query(session_id, ws, {"query": user_content})
+
+    def _rebuild_conversation_responses(
+        self,
+        conversation: llm.Conversation,
+        responses: list,
+    ) -> None:
+        """Attach pre-built Response objects to a conversation.
+
+        This is a helper method used by both resume and fork operations
+        to avoid code duplication.
+
+        Args:
+            conversation: The Conversation object to attach responses to
+            responses: List of llm.Response objects (already built via from_row)
+        """
+        for response in responses:
+            conversation.responses.append(response)
+
+    def _load_conversation_from_db(
+        self,
+        conversation_id: str,
+        require_gui_source: bool = True,
+    ) -> dict:
+        """Load a conversation and its responses from the database.
+
+        This is a synchronous helper method that should be run in an executor.
+
+        Uses llm.Response.from_row() for proper reconstruction which handles:
+        - response_json (required by Vertex/Gemini for conversation continuation)
+        - tool_calls (for conversations with tool usage)
+        - attachments, fragments, and all other Response properties
+
+        Args:
+            conversation_id: The ID of the conversation to load
+            require_gui_source: If True, only allow GUI-originated conversations
+
+        Returns:
+            dict with keys:
+            - conversation_data: The conversation row data
+            - responses: List of llm.Response objects (properly reconstructed)
+            - error: Error message if failed (other keys will be missing)
+        """
+        db = self._get_logs_db(for_executor=True)
+
+        conv_rows = list(db["conversations"].rows_where(
+            "id = ?", [conversation_id]
+        ))
+        if not conv_rows:
+            return {"error": "Conversation not found"}
+
+        conv_data = conv_rows[0]
+
+        if require_gui_source and conv_data.get("source") != "gui":
+            return {"error": "Can only operate on GUI conversations"}
+
+        response_rows = list(db["responses"].rows_where(
+            "conversation_id = ?",
+            [conversation_id],
+            order_by="rowid",
+        ))
+
+        # Build full Response objects using the library's from_row() method
+        # This properly handles response_json, tool_calls, attachments, etc.
+        responses = [
+            llm.Response.from_row(db, row)
+            for row in response_rows
+        ]
+
+        return {
+            "conversation_data": conv_data,
+            "responses": responses,
+        }
+
+    async def _handle_resume_conversation(
+        self,
+        session_id: str,
+        ws: web.WebSocketResponse,
+        msg: dict,
+    ):
+        """Resume a historical conversation for editing.
+
+        This loads a conversation from the database into the session state,
+        allowing edit/regenerate operations on historical GUI conversations.
+        """
+        conversation_id = msg.get("conversationId")
+        if not conversation_id:
+            await ws.send_json({
+                "type": "error",
+                "message": "No conversationId provided",
+            })
+            return
+
+        try:
+            # Load conversation from database (in executor to avoid blocking)
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._load_conversation_from_db(conversation_id)
+            )
+
+            if "error" in result:
+                await ws.send_json({
+                    "type": "error",
+                    "message": result["error"],
+                })
+                return
+
+            conv_data = result["conversation_data"]
+            responses = result["responses"]
+
+            # Get the model for this conversation
+            model_id = conv_data.get("model", "")
+            model = llm.get_model(model_id) if model_id else self.daemon.model
+
+            # Create a new conversation with the historical ID
+            conversation = llm.Conversation(model=model, id=conversation_id)
+
+            # Attach the pre-built Response objects
+            self._rebuild_conversation_responses(conversation, responses)
+
+            # Update session state with resumed conversation
+            state = self.daemon.get_session_state(session_id, source="gui")
+            state.session.conversation = conversation
+
+            await ws.send_json({
+                "type": "conversationResumed",
+                "conversationId": conversation_id,
+                "model": model_id,
+            })
+
+        except Exception as e:
+            logging.exception("Failed to resume conversation")
+            await ws.send_json({
+                "type": "error",
+                "message": f"Failed to resume: {str(e)}",
+            })
+
+    async def _handle_fork_conversation(
+        self,
+        session_id: str,
+        ws: web.WebSocketResponse,
+        msg: dict,
+    ):
+        """Fork a conversation at a specific point.
+
+        Creates a new conversation by cloning everything up to and including
+        the specified message index. The new conversation has a new ID and
+        becomes the active session.
+
+        Only GUI-originated conversations can be forked.
+        """
+        conversation_id = msg.get("conversationId")
+        fork_at_index = msg.get("forkAtIndex")  # 0-based index into responses
+
+        if not conversation_id:
+            await ws.send_json({
+                "type": "error",
+                "message": "No conversationId provided",
+            })
+            return
+
+        if fork_at_index is None or fork_at_index < 0:
+            await ws.send_json({
+                "type": "error",
+                "message": "Invalid fork index",
+            })
+            return
+
+        try:
+            # Run all database operations in executor to avoid blocking
+            loop = asyncio.get_running_loop()
+            result = await loop.run_in_executor(
+                None,
+                lambda: self._clone_conversation(conversation_id, fork_at_index)
+            )
+
+            if "error" in result:
+                await ws.send_json({
+                    "type": "error",
+                    "message": result["error"],
+                })
+                return
+
+            new_conv_id = result["new_conversation_id"]
+            model_id = result["model"]
+            responses = result["responses"]
+
+            # Load the forked conversation into session
+            model = llm.get_model(model_id) if model_id else self.daemon.model
+            conversation = llm.Conversation(model=model, id=new_conv_id)
+
+            # Attach the pre-built Response objects
+            self._rebuild_conversation_responses(conversation, responses)
+
+            # Update session state with forked conversation
+            state = self.daemon.get_session_state(session_id, source="gui")
+            state.session.conversation = conversation
+
+            await ws.send_json({
+                "type": "conversationForked",
+                "originalId": conversation_id,
+                "newId": new_conv_id,
+                "model": model_id,
+                "responseCount": len(responses),
+            })
+
+        except Exception as e:
+            logging.exception("Failed to fork conversation")
+            await ws.send_json({
+                "type": "error",
+                "message": f"Failed to fork: {str(e)}",
+            })
+
+    def _clone_conversation(
+        self,
+        conversation_id: str,
+        fork_at_index: int,
+    ) -> dict:
+        """Clone a conversation up to and including fork_at_index.
+
+        This performs all database operations synchronously (called in executor).
+        Returns dict with new_conversation_id, model, and responses (for rebuilding),
+        or error.
+
+        Tables cloned:
+        - conversations (new ID, same model, source='gui')
+        - responses (up to fork_at_index, new IDs, new conversation_id)
+        - prompt_attachments (links to same attachment_id)
+        - prompt_fragments (links to same fragment_id)
+        - system_fragments (links to same fragment_id)
+        - tool_responses (links to same tool_id)
+        - tool_calls (new IDs)
+        - tool_results (new IDs)
+        - tool_results_attachments (links to same attachment_id)
+        """
+        from llm.utils import monotonic_ulid
+
+        db = self._get_logs_db(for_executor=True)
+
+        # Get original conversation
+        conv_rows = list(db["conversations"].rows_where(
+            "id = ?", [conversation_id]
+        ))
+        if not conv_rows:
+            return {"error": "Conversation not found"}
+
+        conv_data = conv_rows[0]
+
+        # Only allow forking GUI-originated conversations
+        if conv_data.get("source") != "gui":
+            return {"error": "Can only fork GUI conversations"}
+
+        # Get responses ordered by rowid (insertion order)
+        all_responses = list(db["responses"].rows_where(
+            "conversation_id = ?",
+            [conversation_id],
+            order_by="rowid",
+        ))
+
+        if fork_at_index >= len(all_responses):
+            return {"error": f"Fork index {fork_at_index} out of range (max {len(all_responses) - 1})"}
+
+        # Slice responses up to fork point
+        responses_to_clone = all_responses[:fork_at_index + 1]
+
+        # Cache table names for efficiency (avoid repeated calls)
+        existing_tables = set(db.table_names())
+
+        # Generate new conversation ID
+        new_conv_id = str(monotonic_ulid()).lower()
+
+        # Insert new conversation
+        db["conversations"].insert({
+            "id": new_conv_id,
+            "name": conv_data.get("name"),
+            "model": conv_data.get("model"),
+            "source": "gui",
+        })
+
+        # Clone responses and track ID mappings for junction tables
+        response_id_map = {}
+        cloned_responses = []
+
+        for resp in responses_to_clone:
+            old_resp_id = resp["id"]
+            new_resp_id = str(monotonic_ulid()).lower()
+            response_id_map[old_resp_id] = new_resp_id
+
+            # Build cloned response data
+            cloned_resp = {
+                "id": new_resp_id,
+                "conversation_id": new_conv_id,
+                "model": resp.get("model"),
+                "prompt": resp.get("prompt"),
+                "system": resp.get("system"),
+                "prompt_json": resp.get("prompt_json"),
+                "options_json": resp.get("options_json"),
+                "response": resp.get("response"),
+                "response_json": resp.get("response_json"),
+                "reply_to_id": resp.get("reply_to_id"),
+                "chat_id": resp.get("chat_id"),
+                "duration_ms": resp.get("duration_ms"),
+                "datetime_utc": resp.get("datetime_utc"),
+                "input_tokens": resp.get("input_tokens"),
+                "output_tokens": resp.get("output_tokens"),
+            }
+            db["responses"].insert(cloned_resp)
+            cloned_responses.append(cloned_resp)
+
+        # Clone junction tables for each response
+        for old_resp_id, new_resp_id in response_id_map.items():
+            # prompt_attachments (response_id, attachment_id)
+            if "prompt_attachments" in existing_tables:
+                for row in db["prompt_attachments"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    db["prompt_attachments"].insert({
+                        "response_id": new_resp_id,
+                        "attachment_id": row["attachment_id"],
+                    })
+
+            # prompt_fragments (response_id, fragment_id)
+            if "prompt_fragments" in existing_tables:
+                for row in db["prompt_fragments"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    db["prompt_fragments"].insert({
+                        "response_id": new_resp_id,
+                        "fragment_id": row["fragment_id"],
+                    })
+
+            # system_fragments (response_id, fragment_id)
+            if "system_fragments" in existing_tables:
+                for row in db["system_fragments"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    db["system_fragments"].insert({
+                        "response_id": new_resp_id,
+                        "fragment_id": row["fragment_id"],
+                    })
+
+            # tool_responses (response_id, tool_id)
+            if "tool_responses" in existing_tables:
+                for row in db["tool_responses"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    db["tool_responses"].insert({
+                        "response_id": new_resp_id,
+                        "tool_id": row["tool_id"],
+                    })
+
+            # tool_calls (response_id, tool_call_id, name, arguments)
+            tool_call_id_map = {}
+            if "tool_calls" in existing_tables:
+                for row in db["tool_calls"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    old_tc_id = row.get("id")
+                    new_tc_id = str(monotonic_ulid()).lower() if old_tc_id else None
+                    if old_tc_id:
+                        tool_call_id_map[old_tc_id] = new_tc_id
+
+                    db["tool_calls"].insert({
+                        "id": new_tc_id,
+                        "response_id": new_resp_id,
+                        "tool_call_id": row.get("tool_call_id"),
+                        "name": row.get("name"),
+                        "arguments": row.get("arguments"),
+                    })
+
+            # tool_results (response_id, tool_result_id, name, output, tool_call_id)
+            tool_result_id_map = {}
+            if "tool_results" in existing_tables:
+                for row in db["tool_results"].rows_where(
+                    "response_id = ?", [old_resp_id]
+                ):
+                    old_tr_id = row.get("id")
+                    new_tr_id = str(monotonic_ulid()).lower() if old_tr_id else None
+                    if old_tr_id:
+                        tool_result_id_map[old_tr_id] = new_tr_id
+
+                    # Map tool_call_id if it exists and was cloned
+                    old_tool_call_id = row.get("tool_call_id")
+                    new_tool_call_id = tool_call_id_map.get(old_tool_call_id, old_tool_call_id)
+
+                    db["tool_results"].insert({
+                        "id": new_tr_id,
+                        "response_id": new_resp_id,
+                        "tool_result_id": row.get("tool_result_id"),
+                        "name": row.get("name"),
+                        "output": row.get("output"),
+                        "tool_call_id": new_tool_call_id,
+                    })
+
+            # tool_results_attachments (tool_result_id, attachment_id)
+            if "tool_results_attachments" in existing_tables:
+                for old_tr_id, new_tr_id in tool_result_id_map.items():
+                    for row in db["tool_results_attachments"].rows_where(
+                        "tool_result_id = ?", [old_tr_id]
+                    ):
+                        db["tool_results_attachments"].insert({
+                            "tool_result_id": new_tr_id,
+                            "attachment_id": row["attachment_id"],
+                        })
+
+        # Build full Response objects for the cloned responses
+        # This properly handles response_json, tool_calls, attachments, etc.
+        responses = [
+            llm.Response.from_row(db, resp)
+            for resp in cloned_responses
+        ]
+
+        return {
+            "new_conversation_id": new_conv_id,
+            "model": conv_data.get("model"),
+            "responses": responses,
+        }
 
     async def _handle_strip_markdown(
         self,
@@ -755,6 +1204,19 @@ class WebUIServer:
             })
 
     # --- API Handlers ---
+
+    async def handle_api_health(self, request: web.Request) -> web.Response:
+        """Health check endpoint.
+
+        GET /api/health
+        Returns: {"status": "ok", "uptime": seconds}
+        """
+        uptime = int(time.time() - self._start_time) if hasattr(self, '_start_time') else 0
+        return web.json_response({
+            "status": "ok",
+            "uptime": uptime,
+            "sessions": len(self.ws_clients),
+        })
 
     async def handle_api_models(self, request: web.Request) -> web.Response:
         """Get available models.

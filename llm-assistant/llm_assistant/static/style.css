@@ -505,11 +505,16 @@ pre code {
 .message.assistant .action-regenerate { display: none; }
 .message.assistant.last-assistant .action-regenerate { display: flex; }
 
-/* Hide edit/regenerate entirely in historical view (loaded conversations) */
-#conversation.historical .action-edit,
-#conversation.historical .action-regenerate {
+/* Non-GUI origin conversations (CLI, TUI, API) - hide edit/regenerate/fork */
+#conversation.non-gui-origin .action-edit,
+#conversation.non-gui-origin .action-regenerate,
+#conversation.non-gui-origin .action-fork {
     display: none !important;
 }
+
+/* Fork button - visible on all assistant messages except the last one (fork creates branch from this point) */
+.message.assistant .action-fork { display: flex; }
+.message.assistant.last-assistant .action-fork { display: none; }
 
 /* Non-GUI origin conversations (CLI, TUI, API) are completely read-only */
 #conversation.non-gui-origin ~ #input-area #input {
@@ -955,11 +960,31 @@ pre code {
    ============================================================================ */
 
 #rag-panel {
+    display: none;
+    flex-direction: column;
+    height: 100%;
+    padding: 0;
+}
+
+#rag-panel.active {
+    display: flex;
+}
+
+.rag-panel-content {
+    flex: 1;
+    overflow-y: auto;
     padding: 8px;
 }
 
+.rag-panel-bottom {
+    flex-shrink: 0;
+    padding: 8px;
+    border-top: 1px solid var(--border-color);
+    background: var(--sidebar-bg);
+}
+
 #rag-collections {
-    padding: 4px;
+    padding: 4px 0;
 }
 
 .rag-collection {
@@ -1012,8 +1037,7 @@ pre code {
 .rag-add-section {
     display: flex;
     gap: 4px;
-    margin-top: 12px;
-    margin-bottom: 4px;
+    margin-bottom: 8px;
 }
 
 #rag-add-input {
@@ -1051,7 +1075,14 @@ pre code {
 .rag-new-collection {
     display: flex;
     gap: 4px;
-    margin-bottom: 18px;
+    margin-bottom: 12px;
+}
+
+/* Disabled state for new collection when another is active */
+#rag-new-name:disabled,
+#rag-create-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 #rag-new-name {
@@ -1126,8 +1157,7 @@ pre code {
     opacity: 0.8;
     user-select: none;
     padding: 4px 0;
-    border-top: 1px solid var(--border-color);
-    margin-top: 12px;
+    margin-top: 8px;
 }
 
 .rag-show-sources:hover {
@@ -1588,4 +1618,118 @@ pre code {
 .thinking-trace-preview {
     font-style: italic;
     opacity: 0.8;
+}
+
+/* ============================================================================
+   Connection Status Indicator
+   ============================================================================ */
+
+.connection-status {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 16px 24px;
+    margin: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    text-align: center;
+}
+
+.connection-status.connecting {
+    background: var(--tool-bg);
+    color: var(--text-color);
+}
+
+.connection-status.connecting .status-icon {
+    display: inline-block;
+    animation: spin 1s linear infinite;
+}
+
+.connection-status.disconnected {
+    background: var(--tool-bg);
+    color: var(--text-color);
+    opacity: 0.8;
+}
+
+.connection-status.server-down {
+    background: var(--error-bg);
+    border: 1px solid #f44336;
+}
+
+.connection-status .status-content {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 500;
+}
+
+.connection-status .status-icon {
+    font-size: 18px;
+}
+
+.connection-status.server-down .status-icon {
+    color: #f44336;
+}
+
+.connection-status .status-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+}
+
+.connection-status .retry-btn {
+    padding: 8px 16px;
+    background: #1976d2;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background 0.2s;
+}
+
+.connection-status .retry-btn:hover {
+    background: #1565c0;
+}
+
+@media (prefers-color-scheme: dark) {
+    .connection-status .retry-btn {
+        background: #2196f3;
+    }
+    .connection-status .retry-btn:hover {
+        background: #1976d2;
+    }
+}
+
+.connection-status .copy-cmd-btn {
+    padding: 8px 16px;
+    background: var(--button-bg);
+    color: var(--text-color);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+    transition: background 0.2s;
+}
+
+.connection-status .copy-cmd-btn:hover {
+    background: var(--button-hover);
+}
+
+.connection-status .status-hint {
+    font-size: 12px;
+    color: var(--text-color);
+    opacity: 0.7;
+    margin-top: 4px;
+}
+
+.connection-status .status-hint code {
+    background: var(--code-bg);
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-family: 'Fira Code', 'Consolas', monospace;
 }
