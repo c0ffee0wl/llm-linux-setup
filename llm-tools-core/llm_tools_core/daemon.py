@@ -104,3 +104,94 @@ def read_suggested_command() -> str | None:
         path.unlink()  # Clear after reading
         return command if command else None
     return None
+
+
+# PID file for single-instance daemon
+PID_FILENAME = "daemon.pid"
+
+
+def get_pid_path() -> Path:
+    """Get the daemon PID file path.
+
+    Returns:
+        Path to /tmp/llm-assistant-{UID}/daemon.pid
+    """
+    return get_socket_dir() / PID_FILENAME
+
+
+def is_daemon_process_alive() -> tuple[bool, int | None]:
+    """Check if a daemon process is alive using PID file.
+
+    This checks the PID file and verifies the process exists.
+    Use this for single-instance enforcement (before starting daemon).
+    Use is_daemon_running() from daemon_client for socket-based check.
+
+    Returns:
+        Tuple of (is_alive, pid).
+        - (True, pid) if daemon process exists with that PID
+        - (False, pid) if PID file exists but process is dead (stale)
+        - (False, None) if no PID file exists
+    """
+    pid_path = get_pid_path()
+
+    if not pid_path.exists():
+        return False, None
+
+    try:
+        pid = int(pid_path.read_text().strip())
+    except (ValueError, OSError):
+        # Corrupt PID file - treat as stale
+        return False, None
+
+    # Check if process is alive
+    try:
+        os.kill(pid, 0)  # Signal 0 just checks if process exists
+        return True, pid
+    except OSError:
+        # Process doesn't exist - stale PID file
+        return False, pid
+
+
+def write_pid_file() -> None:
+    """Write current process PID to the PID file."""
+    ensure_socket_dir()
+    get_pid_path().write_text(str(os.getpid()))
+
+
+def remove_pid_file() -> None:
+    """Remove the PID file."""
+    pid_path = get_pid_path()
+    if pid_path.exists():
+        try:
+            pid_path.unlink()
+        except OSError:
+            pass  # Ignore errors (might already be deleted)
+
+
+def cleanup_stale_daemon() -> None:
+    """Clean up stale daemon files (socket and PID) if daemon is not running.
+
+    Call this before starting a new daemon to handle cases where
+    a previous daemon crashed without cleanup.
+    """
+    running, pid = is_daemon_process_alive()
+
+    if running:
+        # Daemon is actually running - don't clean up
+        return
+
+    # Clean up stale files
+    socket_path = get_socket_path()
+    pid_path = get_pid_path()
+
+    if socket_path.exists():
+        try:
+            socket_path.unlink()
+        except OSError:
+            pass
+
+    if pid_path.exists():
+        try:
+            pid_path.unlink()
+        except OSError:
+            pass

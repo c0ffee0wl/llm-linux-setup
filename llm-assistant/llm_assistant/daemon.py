@@ -36,6 +36,10 @@ from llm_tools_core import (
     IDLE_TIMEOUT_MINUTES,
     WORKER_IDLE_MINUTES,
     MAX_TOOL_ITERATIONS,
+    is_daemon_process_alive,
+    write_pid_file,
+    remove_pid_file,
+    cleanup_stale_daemon,
 )
 from llm_tools_core.tool_execution import execute_tool_call
 
@@ -1018,12 +1022,27 @@ class AssistantDaemon:
 
     async def run(self):
         """Run the daemon server."""
-        # Clean up stale socket
-        if self.socket_path.exists():
-            self.socket_path.unlink()
+        # Check if daemon is already running
+        is_alive, existing_pid = is_daemon_process_alive()
+        if is_alive:
+            self.console.print(
+                f"[yellow]llm-assistant daemon is already running (PID {existing_pid})[/]",
+                highlight=False
+            )
+            self.console.print(
+                f"[dim]Socket: {self.socket_path}[/]",
+                highlight=False
+            )
+            return
+
+        # Clean up stale files from crashed daemon
+        cleanup_stale_daemon()
 
         # Ensure socket directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Write PID file
+        write_pid_file()
 
         # Start server with secure permissions from the start
         # Use umask to ensure socket is created with 0o600 permissions (no race condition)
@@ -1082,9 +1101,10 @@ class AssistantDaemon:
             self.server.close()
             await self.server.wait_closed()
 
-            # Clean up socket
+            # Clean up socket and PID file
             if self.socket_path.exists():
                 self.socket_path.unlink()
+            remove_pid_file()
 
             self.console.print("[dim]llm-assistant daemon stopped[/]", highlight=False)
 
