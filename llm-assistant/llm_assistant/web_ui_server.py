@@ -1211,9 +1211,27 @@ class WebUIServer:
                     if prompt_text.strip():
                         messages.append({"role": "user", "content": prompt_text.strip()})
 
+                # Build assistant content with tool calls (same format as history.py)
+                content_parts = []
                 assistant_text = r.text()
                 if assistant_text and assistant_text.strip():
-                    messages.append({"role": "assistant", "content": assistant_text})
+                    content_parts.append(assistant_text)
+
+                # Include tool calls in the same markdown format as history.py
+                try:
+                    tool_calls = list(r.tool_calls())
+                    for tc in tool_calls:
+                        content_parts.append(f"\n\n**Tool Call:** `{tc.name}`")
+                        if tc.arguments:
+                            args = tc.arguments
+                            if isinstance(args, dict):
+                                args = json.dumps(args, indent=2)
+                            content_parts.append(f"```json\n{args}\n```")
+                except Exception:
+                    pass  # No tool calls or error accessing them
+
+                if content_parts:
+                    messages.append({"role": "assistant", "content": "".join(content_parts)})
 
         await ws.send_json({"type": "history", "messages": messages})
 

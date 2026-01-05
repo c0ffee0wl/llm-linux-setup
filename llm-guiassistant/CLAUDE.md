@@ -111,12 +111,27 @@ llm-guiassistant
 # Context: app, window, working directory, AND selected text
 llm-guiassistant --with-selection
 
+# Start hidden (for autostart, window shown on next activation)
+llm-guiassistant --hidden
+
 # Debug mode
 llm-guiassistant --debug
 
 # Direct browser access (no GTK popup needed)
 # Open http://localhost:8741 in any browser
 ```
+
+## Autostart
+
+The installer creates an XDG autostart entry that runs `llm-guiassistant --hidden` on login:
+- **Location**: `~/.config/autostart/llm-guiassistant.desktop`
+- **Effect**: Pre-loads the GTK application and daemon so the hotkey shows the window instantly
+
+**Hidden mode behavior**:
+1. Window is created and shown minimized (to initialize WebKit)
+2. Window is immediately hidden
+3. D-Bus application remains running
+4. Next activation (via hotkey) shows the window instantly
 
 **Note:** Without `--with-selection`, the popup captures basic context (app, window title, working directory) but excludes any selected text. With `--with-selection`, the current X11 selection is captured at launch and included in the context sent with your query.
 
@@ -230,6 +245,7 @@ This captures a specific window without user interaction, using `maim -i <window
 |------|---------|
 | `~/.config/llm-guiassistant/state.json` | Window dimensions |
 | `~/.config/llm-guiassistant/input-history.json` | Input history |
+| `~/.config/autostart/llm-guiassistant.desktop` | XDG autostart entry |
 | `llm-assistant/llm_assistant/static/` | Web UI assets (HTML, JS, CSS) |
 | XFCE: `xfconf-query` | Keyboard shortcuts (stored in xfconf) |
 

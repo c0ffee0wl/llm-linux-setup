@@ -46,6 +46,11 @@ def main():
         help="Enable debug output"
     )
     parser.add_argument(
+        "--hidden",
+        action="store_true",
+        help="Start hidden (for autostart, window shown on next activation)"
+    )
+    parser.add_argument(
         "--version",
         action="version",
         version="%(prog)s 0.2.0"
@@ -58,7 +63,8 @@ def main():
 
     app = PopupApplication(
         with_selection=args.with_selection,
-        debug=args.debug
+        debug=args.debug,
+        hidden=args.hidden
     )
     try:
         return app.run(sys.argv[:1])  # Only pass program name to GTK

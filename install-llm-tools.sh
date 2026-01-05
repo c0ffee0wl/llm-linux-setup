@@ -1984,6 +1984,24 @@ EOF
         else
             log "llm-guiassistant installed (configure keyboard shortcut manually)"
         fi
+
+        # Create XDG autostart entry for hidden start on login
+        # This pre-loads the GUI and daemon for instant activation via hotkey
+        AUTOSTART_DIR="$HOME/.config/autostart"
+        mkdir -p "$AUTOSTART_DIR"
+        cat > "$AUTOSTART_DIR/llm-guiassistant.desktop" << EOF
+[Desktop Entry]
+Type=Application
+Name=LLM GUI Assistant
+Comment=Pre-load LLM GUI Assistant and daemon on login
+Exec=$HOME/.local/bin/llm-guiassistant --hidden
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+EOF
+        log "Installed llm-guiassistant autostart entry"
     else
         log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
     fi

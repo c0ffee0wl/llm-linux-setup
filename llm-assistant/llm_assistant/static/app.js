@@ -1636,6 +1636,94 @@ function handleTextMessage(msg) {
     appendMessage('assistant', msg.content, msg.messageId);
 }
 
+/**
+ * Parse tool calls from assistant message content.
+ * Tool calls are formatted as: **Tool Call:** `name` followed by ```json...```
+ * Returns array of {type: 'text'|'toolcall', content/name/args/result}
+ */
+function parseToolCallsFromContent(content) {
+    const parts = [];
+    // Pattern: **Tool Call:** `name` followed by optional ```json...``` block
+    const toolCallRegex = /\*\*Tool Call:\*\*\s*`([^`]+)`(?:\s*```json\n?([\s\S]*?)```)?/g;
+
+    // Use matchAll to find all tool call patterns
+    const matches = Array.from(content.matchAll(toolCallRegex));
+
+    if (matches.length === 0) {
+        // No tool calls, return content as-is
+        return [{ type: 'text', content: content }];
+    }
+
+    let lastIndex = 0;
+
+    for (const match of matches) {
+        // Add text before this tool call
+        if (match.index > lastIndex) {
+            const textBefore = content.slice(lastIndex, match.index).trim();
+            if (textBefore) {
+                parts.push({ type: 'text', content: textBefore });
+            }
+        }
+
+        // Parse tool call
+        const toolName = match[1];
+        let args = null;
+
+        if (match[2]) {
+            try {
+                args = JSON.parse(match[2].trim());
+            } catch (e) {
+                args = { raw: match[2].trim() };
+            }
+        }
+
+        parts.push({
+            type: 'toolcall',
+            name: toolName,
+            args: args,
+            result: null  // Results are not stored in this format
+        });
+
+        lastIndex = match.index + match[0].length;
+    }
+
+    // Add remaining text after last tool call
+    if (lastIndex < content.length) {
+        const textAfter = content.slice(lastIndex).trim();
+        if (textAfter) {
+            parts.push({ type: 'text', content: textAfter });
+        }
+    }
+
+    return parts;
+}
+
+/**
+ * Render an assistant message that may contain tool calls.
+ * Separates tool calls and renders them with proper UI.
+ */
+function appendAssistantMessageWithToolCalls(content) {
+    const parts = parseToolCallsFromContent(content);
+
+    // If no tool calls found, render as normal message
+    if (parts.length === 0 || (parts.length === 1 && parts[0].type === 'text')) {
+        appendMessage('assistant', content);
+        return;
+    }
+
+    // Render each part appropriately
+    for (const part of parts) {
+        if (part.type === 'text') {
+            appendMessage('assistant', part.content);
+        } else if (part.type === 'toolcall') {
+            const toolCallId = 'history-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
+            addToolCall(part.name, part.args, toolCallId);
+            // Immediately complete since this is from history
+            completeToolCall(toolCallId, part.result || '(completed)');
+        }
+    }
+}
+
 function loadHistory(messages) {
     const conversation = document.getElementById('conversation');
     const emptyState = document.getElementById('empty-state');
@@ -1664,7 +1752,12 @@ function loadHistory(messages) {
 
     // Rebuild from history
     for (const msg of messages) {
-        appendMessage(msg.role, msg.content);
+        if (msg.role === 'assistant' && msg.content.includes('**Tool Call:**')) {
+            // Parse and render tool calls properly
+            appendAssistantMessageWithToolCalls(msg.content);
+        } else {
+            appendMessage(msg.role, msg.content);
+        }
     }
 
     // Mark conversation as started (disables temp chat toggle for loaded conversations)

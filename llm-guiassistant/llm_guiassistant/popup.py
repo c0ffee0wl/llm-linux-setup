@@ -331,13 +331,14 @@ class PopupWindow(Gtk.ApplicationWindow):
 class PopupApplication(Gtk.Application):
     """Single-instance GTK application for llm-guiassistant."""
 
-    def __init__(self, with_selection: bool = False, debug: bool = False):
+    def __init__(self, with_selection: bool = False, debug: bool = False, hidden: bool = False):
         super().__init__(
             application_id="com.llm.guiassistant",
             flags=Gio.ApplicationFlags.FLAGS_NONE
         )
         self.with_selection = with_selection
         self.debug = debug
+        self.start_hidden = hidden
         self.window: Optional[PopupWindow] = None
 
     def do_activate(self):
@@ -348,8 +349,18 @@ class PopupApplication(Gtk.Application):
                 with_selection=self.with_selection,
                 debug=self.debug
             )
-        self.window.show_all()
-        self.window.present()
+
+        if self.start_hidden:
+            # First activation in hidden mode:
+            # Show the window minimized so WebKit fully initializes,
+            # then immediately hide it
+            self.window.show_all()
+            self.window.iconify()  # Minimize to taskbar
+            GLib.idle_add(self.window.hide)  # Hide after event loop processes
+            self.start_hidden = False  # Subsequent activations show normally
+        else:
+            self.window.show_all()
+            self.window.present()
 
     def do_startup(self):
         """Handle application startup."""
