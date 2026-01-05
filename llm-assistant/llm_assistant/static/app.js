@@ -2086,14 +2086,17 @@ function createActionIcons(role, messageId, content) {
         editBtn.classList.add('action-edit');
         container.appendChild(editBtn);
     } else if (role === 'assistant') {
-        const regenBtn = createIconButton('regenerate', 'Regenerate', () => regenerateResponse(messageId));
-        regenBtn.classList.add('action-regenerate');
-        container.appendChild(regenBtn);
+        // Only show regenerate button if there's actual content
+        if (hasContent) {
+            const regenBtn = createIconButton('regenerate', 'Regenerate', () => regenerateResponse(messageId));
+            regenBtn.classList.add('action-regenerate');
+            container.appendChild(regenBtn);
 
-        // Fork button - only visible for GUI-originated historical conversations
-        const forkBtn = createIconButton('fork', 'Fork from here', () => forkAtMessage(messageId));
-        forkBtn.classList.add('action-fork');
-        container.appendChild(forkBtn);
+            // Fork button - only visible for GUI-originated historical conversations
+            const forkBtn = createIconButton('fork', 'Fork from here', () => forkAtMessage(messageId));
+            forkBtn.classList.add('action-fork');
+            container.appendChild(forkBtn);
+        }
     }
 
     return container;

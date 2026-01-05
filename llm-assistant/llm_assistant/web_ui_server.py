@@ -164,6 +164,63 @@ class WebUIServer:
         """Set no-log flag for a session."""
         self._session_no_log[session_id] = no_log
 
+    def _delete_responses_from_db(
+        self,
+        response_ids: list,
+    ) -> None:
+        """Delete responses and all related records from the database.
+
+        Must be called in an executor to avoid blocking the event loop.
+        Follows the same pattern as ConversationHistory.delete_conversation.
+
+        Uses the underlying sqlite3 connection for proper transaction handling
+        (atomic: all deletions succeed or all fail).
+
+        Args:
+            response_ids: List of response ID strings to delete
+        """
+        if not response_ids:
+            return
+
+        db = self._get_logs_db(for_executor=True)
+        conn = db.conn  # Get underlying sqlite3 connection for transaction support
+        placeholders = ",".join("?" * len(response_ids))
+
+        try:
+            # Delete tool_results_attachments (via tool_results subquery)
+            conn.execute(f"""
+                DELETE FROM tool_results_attachments
+                WHERE tool_result_id IN (
+                    SELECT id FROM tool_results WHERE response_id IN ({placeholders})
+                )
+            """, response_ids)
+
+            # Delete from tables with response_id foreign key
+            for table in [
+                "tool_results",
+                "tool_calls",
+                "tool_responses",
+                "prompt_attachments",
+                "prompt_fragments",
+                "system_fragments",
+            ]:
+                conn.execute(
+                    f"DELETE FROM {table} WHERE response_id IN ({placeholders})",
+                    response_ids
+                )
+
+            # Delete responses (FTS triggers handle responses_fts automatically)
+            conn.execute(
+                f"DELETE FROM responses WHERE id IN ({placeholders})",
+                response_ids
+            )
+
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            logger.warning(f"Failed to delete responses from DB: {e}")
+            # Don't raise - we still want to continue with the edit/regenerate
+
     async def handle_index(self, request: web.Request) -> web.Response:
         """Serve the main conversation HTML."""
         html_path = self.static_dir / "conversation.html"
@@ -533,6 +590,17 @@ class WebUIServer:
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
+                # Log the CURRENT response BEFORE executing tools and resetting
+                # This ensures we capture the initial response with user's prompt
+                if self._should_log(session_id) and response_holder[0]:
+                    try:
+                        loop = asyncio.get_running_loop()
+                        await loop.run_in_executor(
+                            None, lambda r=response_holder[0]: r.log_to_db(self._get_logs_db(for_executor=True))
+                        )
+                    except Exception:
+                        pass  # Continue without logging on error
+
                 # Execute each tool call and collect results
                 tool_results = []
                 for tool_call in tool_calls:
@@ -630,8 +698,19 @@ class WebUIServer:
             await ws.send_json({"type": "error", "message": "No active conversation"})
             return
 
-        # Truncate conversation
         responses = state.session.conversation.responses
+
+        # Delete old responses from database (only if logging is enabled)
+        if self._should_log(session_id) and keep_turns < len(responses):
+            response_ids = [r.id for r in responses[keep_turns:] if hasattr(r, 'id') and r.id]
+            if response_ids:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(
+                    None,
+                    lambda ids=response_ids: self._delete_responses_from_db(ids)
+                )
+
+        # Truncate in-memory conversation
         if keep_turns < len(responses):
             state.session.conversation.responses = responses[:keep_turns]
 
@@ -654,6 +733,18 @@ class WebUIServer:
         state = self.daemon.get_session_state(session_id, source="gui")
         if state.session.conversation:
             responses = state.session.conversation.responses
+
+            # Delete last response from database (only if logging is enabled)
+            if self._should_log(session_id) and responses:
+                last_response = responses[-1]
+                if hasattr(last_response, 'id') and last_response.id:
+                    loop = asyncio.get_running_loop()
+                    await loop.run_in_executor(
+                        None,
+                        lambda rid=last_response.id: self._delete_responses_from_db([rid])
+                    )
+
+            # Pop from in-memory conversation
             if responses:
                 responses.pop()
 
@@ -775,6 +866,8 @@ class WebUIServer:
 
             # Create a new conversation with the historical ID
             conversation = llm.Conversation(model=model, id=conversation_id)
+            # Set source so future responses are tagged correctly
+            conversation.source = "gui"
 
             # Attach the pre-built Response objects
             self._rebuild_conversation_responses(conversation, responses)
@@ -849,6 +942,8 @@ class WebUIServer:
             # Load the forked conversation into session
             model = llm.get_model(model_id) if model_id else self.daemon.model
             conversation = llm.Conversation(model=model, id=new_conv_id)
+            # Set source so future responses are tagged correctly
+            conversation.source = "gui"
 
             # Attach the pre-built Response objects
             self._rebuild_conversation_responses(conversation, responses)

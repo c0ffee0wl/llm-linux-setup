@@ -512,6 +512,12 @@ pre code {
     display: none !important;
 }
 
+/* Historical conversations - hide edit/regenerate (fork is still allowed) */
+#conversation.historical .action-edit,
+#conversation.historical .action-regenerate {
+    display: none !important;
+}
+
 /* Fork button - visible on all assistant messages except the last one (fork creates branch from this point) */
 .message.assistant .action-fork { display: flex; }
 .message.assistant.last-assistant .action-fork { display: none; }
@@ -973,7 +979,7 @@ pre code {
 .rag-panel-content {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 12px;
 }
 
 .rag-panel-bottom {
@@ -1549,6 +1555,8 @@ pre code {
     display: none;
     padding: 0 12px 12px;
     font-size: 12px;
+    max-height: 400px;
+    overflow-y: auto;
 }
 
 .tool-call.expanded .tool-call-body {
@@ -1568,8 +1576,9 @@ pre code {
 .tool-call-section pre {
     margin: 0;
     font-size: 11px;
-    max-height: 150px;
-    overflow: auto;
+    max-height: 250px;
+    overflow-y: auto;
+    overflow-x: auto;
 }
 
 /* ============================================================================

@@ -195,6 +195,15 @@ class AssistantDaemon:
                 source=source,
             )
             self.sessions[terminal_id] = SessionState(terminal_id, session)
+        else:
+            # Update source on existing session if provided
+            # This ensures source is correct even if session was created earlier
+            if source:
+                state = self.sessions[terminal_id]
+                state.session.source = source
+                # Also update conversation source if one exists
+                if state.session.conversation:
+                    state.session.conversation.source = source
         return self.sessions[terminal_id]
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):

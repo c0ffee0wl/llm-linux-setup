@@ -405,6 +405,8 @@ class HeadlessSession(
                             # Update model reference if conversation was loaded
                             self.model = loaded.model
                             self.model_name = self.model.model_id
+                            # Set source for future responses (may differ from historical source)
+                            self.conversation.source = self.source
                     except Exception:
                         # Conversation not found or load failed, create new
                         pass
