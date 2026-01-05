@@ -1643,8 +1643,8 @@ function handleTextMessage(msg) {
  */
 function parseToolCallsFromContent(content) {
     const parts = [];
-    // Pattern: **Tool Call:** `name` followed by optional ```json...``` block
-    const toolCallRegex = /\*\*Tool Call:\*\*\s*`([^`]+)`(?:\s*```json\n?([\s\S]*?)```)?/g;
+    // Pattern: **Tool Call:** `name` + optional ```json...``` + optional **Result:** ```...```
+    const toolCallRegex = /\*\*Tool Call:\*\*\s*`([^`]+)`(?:\s*```json\n?([\s\S]*?)```)?(?:\s*\*\*Result:\*\*\s*```\n?([\s\S]*?)```)?/g;
 
     // Use matchAll to find all tool call patterns
     const matches = Array.from(content.matchAll(toolCallRegex));
@@ -1677,11 +1677,14 @@ function parseToolCallsFromContent(content) {
             }
         }
 
+        // Extract result from group 3 if present
+        const result = match[3] ? match[3].trim() : null;
+
         parts.push({
             type: 'toolcall',
             name: toolName,
             args: args,
-            result: null  // Results are not stored in this format
+            result: result
         });
 
         lastIndex = match.index + match[0].length;

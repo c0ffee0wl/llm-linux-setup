@@ -164,6 +164,42 @@ class WebUIServer:
         """Set no-log flag for a session."""
         self._session_no_log[session_id] = no_log
 
+    def _get_tool_results_for_responses(
+        self, response_ids: list
+    ) -> dict:
+        """Query tool results from DB for multiple responses.
+
+        Must be called in an executor to avoid blocking the event loop.
+
+        Args:
+            response_ids: List of response ID strings
+
+        Returns:
+            Dict mapping response_id -> {tool_call_id: output}
+        """
+        results: dict = {}
+        if not response_ids:
+            return results
+
+        try:
+            db = self._get_logs_db(for_executor=True)
+            placeholders = ",".join("?" * len(response_ids))
+            for tr_row in db["tool_results"].rows_where(
+                f"response_id IN ({placeholders})",
+                response_ids,
+            ):
+                resp_id = tr_row.get("response_id")
+                tc_id = tr_row.get("tool_call_id")
+                output = tr_row.get("output")
+                if resp_id not in results:
+                    results[resp_id] = {}
+                if tc_id:
+                    results[resp_id][tc_id] = output or ""
+        except Exception:
+            pass  # Table might not exist in older databases
+
+        return results
+
     def _delete_responses_from_db(
         self,
         response_ids: list,
@@ -1199,11 +1235,20 @@ class WebUIServer:
         messages = []
 
         if state.session.conversation:
-            for r in state.session.conversation.responses:
-                # Skip still-streaming responses
-                if not getattr(r, "_done", True):
-                    continue
+            # Filter to completed responses only
+            responses = [
+                r for r in state.session.conversation.responses
+                if getattr(r, "_done", True)
+            ]
 
+            # Query tool results from DB in batch (run in executor to avoid blocking)
+            response_ids = [r.id for r in responses if hasattr(r, "id") and r.id]
+            loop = asyncio.get_running_loop()
+            tool_results_by_response = await loop.run_in_executor(
+                None, lambda: self._get_tool_results_for_responses(response_ids)
+            )
+
+            for r in responses:
                 if hasattr(r, "prompt") and r.prompt:
                     prompt_text = r.prompt.prompt or ""
                     # Strip all context tags from prompt using shared function
@@ -1217,9 +1262,11 @@ class WebUIServer:
                 if assistant_text and assistant_text.strip():
                     content_parts.append(assistant_text)
 
-                # Include tool calls in the same markdown format as history.py
+                # Include tool calls with results in the same markdown format as history.py
                 try:
                     tool_calls = list(r.tool_calls())
+                    tool_results_map = tool_results_by_response.get(r.id, {})
+
                     for tc in tool_calls:
                         content_parts.append(f"\n\n**Tool Call:** `{tc.name}`")
                         if tc.arguments:
@@ -1227,6 +1274,14 @@ class WebUIServer:
                             if isinstance(args, dict):
                                 args = json.dumps(args, indent=2)
                             content_parts.append(f"```json\n{args}\n```")
+
+                        # Include tool result if available
+                        result = tool_results_map.get(tc.tool_call_id)
+                        if result:
+                            # Truncate long results
+                            if len(result) > 2000:
+                                result = result[:2000] + "\n... (truncated)"
+                            content_parts.append(f"\n\n**Result:**\n```\n{result}\n```")
                 except Exception:
                     pass  # No tool calls or error accessing them
 

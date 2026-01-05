@@ -211,11 +211,35 @@ class ConversationHistory:
                     tool_calls_by_response[resp_id].append({
                         "name": tc_row["name"],
                         "arguments": tc_row["arguments"],
+                        "tool_call_id": tc_row.get("tool_call_id"),
                     })
             except sqlite3.OperationalError:
                 # tool_calls table might not exist in older databases
                 pass
             return tool_calls_by_response
+
+        # Lazy-loaded tool results (only fetched if needed)
+        tool_results_by_tool_call_id: Optional[Dict[str, str]] = None
+
+        def _get_tool_results_fallback() -> Dict[str, str]:
+            """Lazy-load tool results from database, keyed by tool_call_id."""
+            nonlocal tool_results_by_tool_call_id
+            if tool_results_by_tool_call_id is not None:
+                return tool_results_by_tool_call_id
+
+            tool_results_by_tool_call_id = {}
+            try:
+                for tr_row in db["tool_results"].rows_where(
+                    "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
+                    [conversation_id],
+                ):
+                    tc_id = tr_row.get("tool_call_id")
+                    if tc_id:
+                        tool_results_by_tool_call_id[tc_id] = tr_row.get("output", "")
+            except sqlite3.OperationalError:
+                # tool_results table might not exist in older databases
+                pass
+            return tool_results_by_tool_call_id
 
         messages = []
         for row in response_rows:
@@ -227,7 +251,7 @@ class ConversationHistory:
                 prompt_text = response.prompt.prompt
                 response_text = response.text()
                 tool_calls = [
-                    {"name": tc.name, "arguments": tc.arguments}
+                    {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
                     for tc in response.tool_calls()
                 ]
                 input_tokens = response.input_tokens
@@ -256,7 +280,7 @@ class ConversationHistory:
             if response_text:
                 content_parts.append(response_text)
 
-            # Format tool calls
+            # Format tool calls with results
             for tc in tool_calls:
                 content_parts.append(f"\n\n**Tool Call:** `{tc['name']}`")
                 if tc.get("arguments"):
@@ -265,6 +289,17 @@ class ConversationHistory:
                     if isinstance(args, dict):
                         args = json.dumps(args, indent=2)
                     content_parts.append(f"```json\n{args}\n```")
+
+                # Include tool result if available
+                tc_id = tc.get("tool_call_id")
+                if tc_id:
+                    results = _get_tool_results_fallback()
+                    result_output = results.get(tc_id)
+                    if result_output:
+                        # Truncate long results
+                        if len(result_output) > 2000:
+                            result_output = result_output[:2000] + "\n... (truncated)"
+                        content_parts.append(f"\n\n**Result:**\n```\n{result_output}\n```")
 
             if content_parts:
                 messages.append(Message(
