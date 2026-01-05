@@ -16,10 +16,15 @@ import asyncio
 import json
 import os
 import signal
+import sys
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Dict, List, Optional
+
+import daemon
+from daemon import pidfile as daemon_pidfile
+from lockfile import AlreadyLocked, LockTimeout
 
 import click
 import llm
@@ -54,6 +59,59 @@ from .utils import get_config_dir, get_logs_db_path, logs_on
 from .web_ui_server import WebUIServer
 
 
+def _get_default_pidfile() -> str:
+    """Get default PID file path for daemon mode."""
+    return str(Path.home() / ".local" / "run" / "llm-assistant.pid")
+
+
+def _get_default_logfile() -> str:
+    """Get default log file path for daemon mode."""
+    return str(Path.home() / ".local" / "log" / "llm-assistant.log")
+
+
+def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
+    """Run the daemon using python-daemon (PEP 3143).
+
+    Must be called BEFORE any asyncio operations.
+    """
+    if sys.platform == "win32":
+        sys.stderr.write("Error: --daemon is not supported on Windows\n")
+        sys.exit(1)
+
+    # Ensure directories exist before opening files
+    if pidfile_path:
+        pidfile_dir = os.path.dirname(pidfile_path)
+        if pidfile_dir and not os.path.exists(pidfile_dir):
+            os.makedirs(pidfile_dir, exist_ok=True)
+    if logfile_path:
+        logfile_dir = os.path.dirname(logfile_path)
+        if logfile_dir and not os.path.exists(logfile_dir):
+            os.makedirs(logfile_dir, exist_ok=True)
+
+    # Prepare file handles (must be opened before daemonizing)
+    stdout_file = open(logfile_path, 'a+') if logfile_path else None
+    stderr_file = stdout_file  # Share the same file handle
+
+    # Create pidfile lock (TimeoutPIDLockFile with acquire_timeout=0 for immediate fail)
+    pidfile_lock = daemon_pidfile.TimeoutPIDLockFile(pidfile_path, acquire_timeout=0) if pidfile_path else None
+
+    context = daemon.DaemonContext(
+        working_directory='/',
+        umask=0,
+        pidfile=pidfile_lock,
+        stdout=stdout_file,
+        stderr=stderr_file,
+    )
+
+    try:
+        context.open()
+    except (AlreadyLocked, LockTimeout):
+        sys.stderr.write(f"Error: Daemon already running (pidfile locked: {pidfile_path})\n")
+        sys.exit(1)
+    # Note: Don't close context - daemon runs until terminated
+    # atexit handler is registered automatically by DaemonContext.open()
+
+
 class SessionState:
     """State wrapper for a HeadlessSession tied to a terminal."""
 
@@ -70,11 +128,18 @@ class SessionState:
 class AssistantDaemon:
     """Unix socket server for llm-assistant daemon mode."""
 
-    def __init__(self, model_id: Optional[str] = None, debug: bool = False, foreground: bool = False):
+    def __init__(
+        self,
+        model_id: Optional[str] = None,
+        debug: bool = False,
+        foreground: bool = False,
+        use_python_daemon: bool = False
+    ):
         self.socket_path = get_socket_path()
         self.model_id = model_id
         self.debug = debug
         self.foreground = foreground
+        self.use_python_daemon = use_python_daemon
         self.sessions: Dict[str, SessionState] = {}
         self.server: Optional[asyncio.AbstractServer] = None
         self.last_activity = datetime.now()
@@ -1022,27 +1087,31 @@ class AssistantDaemon:
 
     async def run(self):
         """Run the daemon server."""
-        # Check if daemon is already running
-        is_alive, existing_pid = is_daemon_process_alive()
-        if is_alive:
-            self.console.print(
-                f"[yellow]llm-assistant daemon is already running (PID {existing_pid})[/]",
-                highlight=False
-            )
-            self.console.print(
-                f"[dim]Socket: {self.socket_path}[/]",
-                highlight=False
-            )
-            return
+        # When using python-daemon, PID file management is handled by DaemonContext
+        # Only use llm_tools_core PID functions in foreground mode
+        if not self.use_python_daemon:
+            # Check if daemon is already running
+            is_alive, existing_pid = is_daemon_process_alive()
+            if is_alive:
+                self.console.print(
+                    f"[yellow]llm-assistant daemon is already running (PID {existing_pid})[/]",
+                    highlight=False
+                )
+                self.console.print(
+                    f"[dim]Socket: {self.socket_path}[/]",
+                    highlight=False
+                )
+                return
 
-        # Clean up stale files from crashed daemon
-        cleanup_stale_daemon()
+            # Clean up stale files from crashed daemon
+            cleanup_stale_daemon()
 
         # Ensure socket directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write PID file
-        write_pid_file()
+        # Write PID file (only in foreground mode, python-daemon handles it otherwise)
+        if not self.use_python_daemon:
+            write_pid_file()
 
         # Start server with secure permissions from the start
         # Use umask to ensure socket is created with 0o600 permissions (no race condition)
@@ -1104,30 +1173,56 @@ class AssistantDaemon:
             # Clean up socket and PID file
             if self.socket_path.exists():
                 self.socket_path.unlink()
-            remove_pid_file()
+            # Only remove PID file if not using python-daemon (it handles its own cleanup)
+            if not self.use_python_daemon:
+                remove_pid_file()
 
             self.console.print("[dim]llm-assistant daemon stopped[/]", highlight=False)
 
 
-def main(model_id: Optional[str] = None, debug: bool = False, foreground: bool = False):
+def main(
+    model_id: Optional[str] = None,
+    debug: bool = False,
+    foreground: bool = False,
+    pidfile: Optional[str] = None,
+    logfile: Optional[str] = None,
+):
     """Entry point for llm-assistant --daemon.
 
     Args:
         model_id: LLM model to use
         debug: Enable debug output
         foreground: Run in foreground with request logging (no idle timeout)
+        pidfile: PID file path (used with background daemon mode)
+        logfile: Log file path (used with background daemon mode)
     """
-    daemon = AssistantDaemon(model_id=model_id, debug=debug, foreground=foreground)
+    # Background daemon mode: use python-daemon for proper daemonization
+    use_python_daemon = not foreground
+
+    if use_python_daemon:
+        # Set defaults for pidfile and logfile if not provided
+        pidfile = pidfile or _get_default_pidfile()
+        logfile = logfile or _get_default_logfile()
+
+        # Daemonize BEFORE creating asyncio event loop
+        _run_as_daemon(pidfile, logfile)
+
+    daemon_instance = AssistantDaemon(
+        model_id=model_id,
+        debug=debug,
+        foreground=foreground,
+        use_python_daemon=use_python_daemon
+    )
 
     # Handle signals
     def signal_handler(sig, frame):
-        daemon.running = False
+        daemon_instance.running = False
 
     signal.signal(signal.SIGTERM, signal_handler)
     signal.signal(signal.SIGINT, signal_handler)
 
     try:
-        asyncio.run(daemon.run())
+        asyncio.run(daemon_instance.run())
     except KeyboardInterrupt:
         pass
 
@@ -1136,9 +1231,17 @@ def main(model_id: Optional[str] = None, debug: bool = False, foreground: bool =
 @click.option('-m', '--model', 'model_id', help='Model to use')
 @click.option('--debug', is_flag=True, help='Enable debug output')
 @click.option('--foreground', is_flag=True, help='Run in foreground with request logging')
-def daemon_cli(model_id: Optional[str], debug: bool, foreground: bool):
+@click.option('--pidfile', default=None, help='PID file path (default: ~/.local/run/llm-assistant.pid)')
+@click.option('--logfile', default=None, help='Log file path (default: ~/.local/log/llm-assistant.log)')
+def daemon_cli(
+    model_id: Optional[str],
+    debug: bool,
+    foreground: bool,
+    pidfile: Optional[str],
+    logfile: Optional[str]
+):
     """llm-assistant daemon server."""
-    main(model_id=model_id, debug=debug, foreground=foreground)
+    main(model_id=model_id, debug=debug, foreground=foreground, pidfile=pidfile, logfile=logfile)
 
 
 if __name__ == "__main__":
