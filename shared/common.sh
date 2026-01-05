@@ -240,6 +240,31 @@ is_x11() {
     return 1
 }
 
+# Check if a soundcard is available
+# Returns 0 if soundcard detected, 1 otherwise
+# Used to skip STT/TTS installations on headless servers
+has_soundcard() {
+    # Check ALSA sound cards (most reliable)
+    if [ -f /proc/asound/cards ] && [ -s /proc/asound/cards ]; then
+        # File exists and is non-empty (contains actual cards, not just "no soundcards")
+        if ! grep -q "no soundcards" /proc/asound/cards 2>/dev/null; then
+            return 0
+        fi
+    fi
+
+    # Check for sound devices in /dev/snd/
+    if [ -d /dev/snd ] && [ -n "$(ls -A /dev/snd 2>/dev/null)" ]; then
+        return 0
+    fi
+
+    # Check PulseAudio/PipeWire (if running)
+    if command -v pactl &>/dev/null && pactl info &>/dev/null 2>&1; then
+        return 0
+    fi
+
+    return 1
+}
+
 #############################################################################
 # File Management
 #############################################################################

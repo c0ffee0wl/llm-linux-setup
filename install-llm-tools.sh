@@ -1687,80 +1687,82 @@ fi
 mkdir -p "/tmp/llm-assistant-$(id -u)"
 
 if has_desktop_environment; then
-    # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
-    MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
-    HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
+    # Audio-related installations (STT/TTS) - only if soundcard available
+    if has_soundcard; then
+        # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
+        MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
+        HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
 
-    # Required model files
-    MODEL_FILES=(
-        "config.json"
-        "vocab.txt"
-        "nemo128.onnx"
-        "decoder_joint-model.int8.onnx"
-        "encoder-model.int8.onnx"
-    )
+        # Required model files
+        MODEL_FILES=(
+            "config.json"
+            "vocab.txt"
+            "nemo128.onnx"
+            "decoder_joint-model.int8.onnx"
+            "encoder-model.int8.onnx"
+        )
 
-    # Check if model already exists (encoder is largest file, use as marker)
-    if [ -f "$MODEL_DIR/encoder-model.int8.onnx" ] && \
-       [ "$(stat -c%s "$MODEL_DIR/encoder-model.int8.onnx" 2>/dev/null)" -gt 100000000 ]; then
-        log "Parakeet model already downloaded"
-    else
-        log "Downloading Parakeet speech model (this may take a few minutes)..."
-        mkdir -p "$MODEL_DIR"
-
-        # Download and verify each file
-        download_failed=false
-        for file in "${MODEL_FILES[@]}"; do
-            log "  Downloading $file..."
-            if ! curl -fL --progress-bar "$HF_BASE/$file" -o "$MODEL_DIR/$file"; then
-                warn "  Failed to download $file"
-                download_failed=true
-            elif [ ! -s "$MODEL_DIR/$file" ]; then
-                warn "  Downloaded $file is empty"
-                download_failed=true
-            fi
-        done
-
-        if [ "$download_failed" = "false" ]; then
-            log "Parakeet model downloaded to $MODEL_DIR"
+        # Check if model already exists (encoder is largest file, use as marker)
+        if [ -f "$MODEL_DIR/encoder-model.int8.onnx" ] && \
+           [ "$(stat -c%s "$MODEL_DIR/encoder-model.int8.onnx" 2>/dev/null)" -gt 100000000 ]; then
+            log "Parakeet model already downloaded"
         else
-            warn "Model download incomplete - run install-llm-tools.sh again"
-        fi
-    fi
+            log "Downloading Parakeet speech model (this may take a few minutes)..."
+            mkdir -p "$MODEL_DIR"
 
-    # Install Handy (system-wide STT) via .deb package
-    install_github_deb_package "handy" "0.6.9" \
-        "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
-        "handy" "x86_64"
-
-    # Configure Handy settings (Handy overwrites settings on first start, so we must let it create them first)
-    if command -v handy &>/dev/null; then
-        HANDY_SETTINGS="$HOME/.local/share/com.pais.handy/settings_store.json"
-
-        # Ensure settings file exists (Handy creates it on first run)
-        if [ ! -f "$HANDY_SETTINGS" ]; then
-            # Start Handy to create default settings
-            log "Starting Handy to create default settings..."
-            if ! pgrep -x handy >/dev/null 2>&1; then
-                nohup handy >/dev/null 2>&1 &
-                disown
-            fi
-
-            # Wait 5 seconds, then check for file (up to 10 more seconds)
-            sleep 5
-            for i in {1..10}; do
-                [ -f "$HANDY_SETTINGS" ] && break
-                sleep 1
+            # Download and verify each file
+            download_failed=false
+            for file in "${MODEL_FILES[@]}"; do
+                log "  Downloading $file..."
+                if ! curl -fL --progress-bar "$HF_BASE/$file" -o "$MODEL_DIR/$file"; then
+                    warn "  Failed to download $file"
+                    download_failed=true
+                elif [ ! -s "$MODEL_DIR/$file" ]; then
+                    warn "  Downloaded $file is empty"
+                    download_failed=true
+                fi
             done
 
-            # Kill Handy so we can modify settings
-            pkill -x handy || true
-            sleep 1
+            if [ "$download_failed" = "false" ]; then
+                log "Parakeet model downloaded to $MODEL_DIR"
+            else
+                warn "Model download incomplete - run install-llm-tools.sh again"
+            fi
         fi
 
-        # Modify settings if file exists
-        if [ -f "$HANDY_SETTINGS" ]; then
-            python3 -c "
+        # Install Handy (system-wide STT) via .deb package
+        install_github_deb_package "handy" "0.6.9" \
+            "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
+            "handy" "x86_64"
+
+        # Configure Handy settings (Handy overwrites settings on first start, so we must let it create them first)
+        if command -v handy &>/dev/null; then
+            HANDY_SETTINGS="$HOME/.local/share/com.pais.handy/settings_store.json"
+
+            # Ensure settings file exists (Handy creates it on first run)
+            if [ ! -f "$HANDY_SETTINGS" ]; then
+                # Start Handy to create default settings
+                log "Starting Handy to create default settings..."
+                if ! pgrep -x handy >/dev/null 2>&1; then
+                    nohup handy >/dev/null 2>&1 &
+                    disown
+                fi
+
+                # Wait 5 seconds, then check for file (up to 10 more seconds)
+                sleep 5
+                for i in {1..10}; do
+                    [ -f "$HANDY_SETTINGS" ] && break
+                    sleep 1
+                done
+
+                # Kill Handy so we can modify settings
+                pkill -x handy || true
+                sleep 1
+            fi
+
+            # Modify settings if file exists
+            if [ -f "$HANDY_SETTINGS" ]; then
+                python3 -c "
 import json
 from pathlib import Path
 
@@ -1792,16 +1794,19 @@ if settings_file.exists():
     else:
         print('Handy already configured, skipping')
 "
-        else
-            warn "Handy settings file not created - skipping configuration"
-        fi
+            else
+                warn "Handy settings file not created - skipping configuration"
+            fi
 
-        # Start Handy with configured settings
-        if ! pgrep -x handy >/dev/null 2>&1; then
-            log "Starting Handy..."
-            nohup handy >/dev/null 2>&1 &
-            disown
+            # Start Handy with configured settings
+            if ! pgrep -x handy >/dev/null 2>&1; then
+                log "Starting Handy..."
+                nohup handy >/dev/null 2>&1 &
+                disown
+            fi
         fi
+    else
+        log "No soundcard detected - skipping audio tools (Handy, Parakeet model)"
     fi
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
@@ -2064,16 +2069,18 @@ if [ "$INSTALL_MODE" = "full" ]; then
     # Install/update tldr (community-driven man pages with practical examples)
     install_or_upgrade_uv_tool tldr
 
-    # Install transcribe script (uses onnx-asr from llm environment)
-    log "Installing transcribe script..."
-    if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
-        # Copy script with modified shebang to use llm environment Python
-        echo "#!$HOME/.local/share/uv/tools/llm/bin/python3" > "$HOME/.local/bin/transcribe"
-        tail -n +2 "$SCRIPT_DIR/scripts/transcribe" >> "$HOME/.local/bin/transcribe"
-        chmod +x "$HOME/.local/bin/transcribe"
-        log "transcribe script installed to ~/.local/bin/transcribe"
-    else
-        warn "transcribe script not found at $SCRIPT_DIR/scripts/transcribe"
+    # Install transcribe script (uses onnx-asr from llm environment) - only if soundcard available
+    if has_soundcard; then
+        log "Installing transcribe script..."
+        if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
+            # Copy script with modified shebang to use llm environment Python
+            echo "#!$HOME/.local/share/uv/tools/llm/bin/python3" > "$HOME/.local/bin/transcribe"
+            tail -n +2 "$SCRIPT_DIR/scripts/transcribe" >> "$HOME/.local/bin/transcribe"
+            chmod +x "$HOME/.local/bin/transcribe"
+            log "transcribe script installed to ~/.local/bin/transcribe"
+        else
+            warn "transcribe script not found at $SCRIPT_DIR/scripts/transcribe"
+        fi
     fi
 
     # Install/update files-to-prompt (from fork)
