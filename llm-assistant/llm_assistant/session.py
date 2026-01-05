@@ -1539,12 +1539,90 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         ConsoleHelper.success(self.console, f"Rewound to turn {target_turn}. Use /rewind undo to restore.")
         return True
 
+    def _delete_responses_from_db(self, response_ids: list) -> None:
+        """Delete responses and all related records from the database.
+
+        Follows the same pattern as ConversationHistory.delete_conversation
+        in llm-tools-core/llm_tools_core/history.py.
+
+        Args:
+            response_ids: List of response ID strings to delete
+        """
+        if not response_ids or not self.logging_enabled:
+            return
+
+        db = sqlite_utils.Database(get_logs_db_path())
+        conn = db.conn  # Get underlying sqlite3 connection for transaction support
+        placeholders = ",".join("?" * len(response_ids))
+
+        try:
+            # Delete tool_results_attachments (via tool_results subquery)
+            conn.execute(f"""
+                DELETE FROM tool_results_attachments
+                WHERE tool_result_id IN (
+                    SELECT id FROM tool_results WHERE response_id IN ({placeholders})
+                )
+            """, response_ids)
+
+            # Delete from tables with response_id foreign key
+            for table in [
+                "tool_results",
+                "tool_calls",
+                "tool_responses",
+                "prompt_attachments",
+                "prompt_fragments",
+                "system_fragments",
+            ]:
+                conn.execute(
+                    f"DELETE FROM {table} WHERE response_id IN ({placeholders})",
+                    response_ids
+                )
+
+            # Delete responses (FTS triggers handle responses_fts automatically)
+            conn.execute(
+                f"DELETE FROM responses WHERE id IN ({placeholders})",
+                response_ids
+            )
+
+            conn.commit()
+        except Exception as e:
+            conn.rollback()
+            # Log but don't fail - rewind should still work
+            ConsoleHelper.warning(self.console, f"Failed to delete responses from DB: {e}")
+
+    def _restore_responses_to_db(self, responses: list) -> None:
+        """Re-log responses to database after undo.
+
+        Args:
+            responses: List of Response objects to re-log
+        """
+        if not responses or not self.logging_enabled:
+            return
+
+        db = sqlite_utils.Database(get_logs_db_path())
+        migrate(db)
+
+        for response in responses:
+            try:
+                response.log_to_db(db)
+            except Exception as e:
+                ConsoleHelper.warning(self.console, f"Failed to restore response to DB: {e}")
+
     def _perform_rewind(self, target_turn: int):
         """Truncate conversation and save undo buffer."""
         responses = self.conversation.responses
 
         # Save removed turns for undo (single undo only)
         self.rewind_undo_buffer = list(responses[target_turn:])
+
+        # Delete from database BEFORE truncating in-memory
+        if self.logging_enabled:
+            response_ids = [
+                r.id for r in self.rewind_undo_buffer
+                if hasattr(r, 'id') and r.id
+            ]
+            if response_ids:
+                self._delete_responses_from_db(response_ids)
 
         # Truncate
         self.conversation.responses = responses[:target_turn]
@@ -1571,7 +1649,11 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             ConsoleHelper.warning(self.console, "No rewind to undo.")
             return True
 
-        # Restore
+        # Restore to database first (before clearing buffer)
+        if self.logging_enabled:
+            self._restore_responses_to_db(self.rewind_undo_buffer)
+
+        # Restore to in-memory conversation
         restored_count = len(self.rewind_undo_buffer)
         self.conversation.responses.extend(self.rewind_undo_buffer)
         self.rewind_undo_buffer = None
