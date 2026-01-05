@@ -257,8 +257,8 @@ has_soundcard() {
         return 0
     fi
 
-    # Check PulseAudio/PipeWire (if running)
-    if command -v pactl &>/dev/null && pactl info &>/dev/null 2>&1; then
+    # Check PulseAudio/PipeWire (if running, with timeout to avoid hang)
+    if command -v pactl &>/dev/null && timeout 2 pactl info &>/dev/null 2>&1; then
         return 0
     fi
 

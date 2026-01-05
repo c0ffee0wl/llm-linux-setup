@@ -41,10 +41,15 @@ def get_web_port() -> int:
 def load_window_state() -> dict:
     """Load saved window dimensions, or return defaults."""
     defaults = {"width": 600, "height": 700}
+    min_size = {"width": 300, "height": 400}
     try:
         if STATE_FILE.exists():
             state = json.loads(STATE_FILE.read_text())
-            return {**defaults, **state}
+            result = {**defaults, **state}
+            # Enforce minimum dimensions to prevent unusable windows
+            result["width"] = max(result["width"], min_size["width"])
+            result["height"] = max(result["height"], min_size["height"])
+            return result
     except (json.JSONDecodeError, OSError):
         pass
     return defaults
@@ -72,10 +77,11 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.web_port = get_web_port()
         self._save_state_timeout_id = None
         self._temp_files = []
+        self._initializing = True  # Prevent state save during initialization
 
-        # Window setup
-        state = load_window_state()
-        self.set_default_size(state["width"], state["height"])
+        # Window setup - store state for later use
+        self._saved_state = load_window_state()
+        self.set_default_size(self._saved_state["width"], self._saved_state["height"])
         self.set_position(Gtk.WindowPosition.MOUSE)
         self.connect("configure-event", self._on_configure)
         self.connect("delete-event", self._on_delete)
@@ -241,6 +247,10 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_configure(self, widget, event):
         """Save window dimensions on resize (debounced)."""
+        # Skip state save during initialization (hidden mode)
+        if self._initializing:
+            return False
+
         if self._save_state_timeout_id is not None:
             GLib.source_remove(self._save_state_timeout_id)
 
@@ -256,19 +266,29 @@ class PopupWindow(Gtk.ApplicationWindow):
         """Actually save window state."""
         self._save_state_timeout_id = None
         save_window_state(width, height)
+        # Update cached state so subsequent shows use current size
+        self._saved_state = {"width": width, "height": height}
         return False
 
     def _on_delete(self, widget, event):
         """Handle window close - hide instead of destroy."""
-        if self._save_state_timeout_id is not None:
-            GLib.source_remove(self._save_state_timeout_id)
-            self._save_state_timeout_id = None
-            alloc = self.get_allocation()
-            save_window_state(alloc.width, alloc.height)
-
+        self._save_current_state()
         self._cleanup_temp_files()
         self.hide()
         return True
+
+    def _save_current_state(self):
+        """Save current window state immediately (cancels pending debounced save)."""
+        if self._initializing:
+            return  # Don't save during initialization
+        if self._save_state_timeout_id is not None:
+            GLib.source_remove(self._save_state_timeout_id)
+            self._save_state_timeout_id = None
+
+        alloc = self.get_allocation()
+        save_window_state(alloc.width, alloc.height)
+        # Update cached state so subsequent shows use current size
+        self._saved_state = {"width": alloc.width, "height": alloc.height}
 
     def _cleanup_temp_files(self):
         """Clean up temporary files created during session."""
@@ -282,8 +302,10 @@ class PopupWindow(Gtk.ApplicationWindow):
 
     def _on_key_press(self, widget, event):
         """Handle global key presses."""
-        # Escape: Close window
+        # Escape: Close window (same behavior as window close button)
         if event.keyval == Gdk.KEY_Escape:
+            self._save_current_state()
+            self._cleanup_temp_files()
             self.hide()
             return True
 
@@ -356,11 +378,25 @@ class PopupApplication(Gtk.Application):
             # then immediately hide it
             self.window.show_all()
             self.window.iconify()  # Minimize to taskbar
-            GLib.idle_add(self.window.hide)  # Hide after event loop processes
+            GLib.idle_add(self._finish_hidden_init)  # Hide after event loop processes
             self.start_hidden = False  # Subsequent activations show normally
         else:
+            # Enable state saving now that initialization is complete
+            self.window._initializing = False
+            # Restore saved window size before showing
+            # (set_default_size only works before first show)
+            self.window.resize(
+                self.window._saved_state["width"],
+                self.window._saved_state["height"]
+            )
             self.window.show_all()
             self.window.present()
+
+    def _finish_hidden_init(self):
+        """Complete hidden initialization - hide window and enable state saving."""
+        self.window.hide()
+        self.window._initializing = False
+        return False  # Don't repeat
 
     def do_startup(self):
         """Handle application startup."""
