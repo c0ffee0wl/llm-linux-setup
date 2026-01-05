@@ -61,12 +61,67 @@ from .web_ui_server import WebUIServer
 
 def _get_default_pidfile() -> str:
     """Get default PID file path for daemon mode."""
-    return str(Path.home() / ".local" / "run" / "llm-assistant.pid")
+    return str(get_config_dir() / "daemon.pid")
 
 
 def _get_default_logfile() -> str:
     """Get default log file path for daemon mode."""
-    return str(Path.home() / ".local" / "log" / "llm-assistant.log")
+    return str(get_config_dir() / "daemon.log")
+
+
+def _cleanup_stale_pidfile(pidfile_path: str) -> bool:
+    """Clean up stale PID file if the daemon process is no longer running.
+
+    python-daemon's TimeoutPIDLockFile creates both a PID file and a .lock file.
+    If the daemon crashes or is killed with SIGKILL, these files may be left behind.
+    This function checks if the PID in the file is still running and cleans up if not.
+
+    Args:
+        pidfile_path: Path to the PID file (e.g., ~/.local/run/llm-assistant.pid)
+
+    Returns:
+        True if stale files were cleaned up, False if daemon is still running or no files exist
+    """
+    lock_path = pidfile_path + ".lock"
+
+    # Check if PID file exists
+    if not os.path.exists(pidfile_path):
+        # No PID file, but lock file might exist from interrupted startup
+        if os.path.exists(lock_path):
+            try:
+                os.unlink(lock_path)
+            except OSError:
+                pass
+        return False
+
+    # Read PID from file
+    try:
+        with open(pidfile_path, 'r') as f:
+            pid = int(f.read().strip())
+    except (ValueError, OSError):
+        # Corrupt PID file - clean it up
+        pid = None
+
+    # Check if process is still running
+    if pid is not None:
+        try:
+            os.kill(pid, 0)  # Signal 0 just checks if process exists
+            # Process is running - don't clean up
+            return False
+        except OSError:
+            # Process doesn't exist - stale PID file
+            pass
+
+    # Clean up stale files
+    for path in [pidfile_path, lock_path]:
+        if os.path.exists(path):
+            try:
+                os.unlink(path)
+                sys.stderr.write(f"Cleaned up stale file: {path}\n")
+            except OSError as e:
+                sys.stderr.write(f"Warning: Could not remove {path}: {e}\n")
+
+    return True
 
 
 def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
@@ -77,6 +132,10 @@ def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
     if sys.platform == "win32":
         sys.stderr.write("Error: --daemon is not supported on Windows\n")
         sys.exit(1)
+
+    # Clean up stale PID/lock files from crashed daemon before trying to acquire
+    if pidfile_path:
+        _cleanup_stale_pidfile(pidfile_path)
 
     # Ensure directories exist before opening files
     if pidfile_path:
@@ -1240,8 +1299,8 @@ def main(
 @click.option('-m', '--model', 'model_id', help='Model to use')
 @click.option('--debug', is_flag=True, help='Enable debug output')
 @click.option('--foreground', is_flag=True, help='Run in foreground with request logging')
-@click.option('--pidfile', default=None, help='PID file path (default: ~/.local/run/llm-assistant.pid)')
-@click.option('--logfile', default=None, help='Log file path (default: ~/.local/log/llm-assistant.log)')
+@click.option('--pidfile', default=None, help='PID file path (default: ~/.config/llm-assistant/daemon.pid)')
+@click.option('--logfile', default=None, help='Log file path (default: ~/.config/llm-assistant/daemon.log)')
 def daemon_cli(
     model_id: Optional[str],
     debug: bool,
