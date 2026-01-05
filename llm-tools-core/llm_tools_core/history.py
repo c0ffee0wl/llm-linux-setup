@@ -33,6 +33,46 @@ def strip_context_tags(text: str) -> str:
     return text.strip()
 
 
+# Truncation limit for tool results in history display
+TOOL_RESULT_TRUNCATE_LIMIT = 2000
+
+
+def format_tool_call_markdown(
+    name: str,
+    arguments: Optional[dict] = None,
+    result: Optional[str] = None,
+) -> str:
+    """Format a tool call as markdown for history display.
+
+    Used by both history.py and web_ui_server.py to ensure consistent
+    formatting of tool calls in conversation history.
+
+    Args:
+        name: Tool name
+        arguments: Tool arguments (dict or JSON string)
+        result: Tool result output (optional)
+
+    Returns:
+        Markdown-formatted tool call string
+    """
+    parts = [f"\n\n**Tool Call:** `{name}`"]
+
+    if arguments:
+        # Handle both dict and string arguments
+        args_str = arguments
+        if isinstance(arguments, dict):
+            args_str = json.dumps(arguments, indent=2)
+        parts.append(f"```json\n{args_str}\n```")
+
+    if result:
+        # Truncate long results
+        if len(result) > TOOL_RESULT_TRUNCATE_LIMIT:
+            result = result[:TOOL_RESULT_TRUNCATE_LIMIT] + "\n... (truncated)"
+        parts.append(f"\n\n**Result:**\n```\n{result}\n```")
+
+    return "".join(parts)
+
+
 @dataclass
 class ConversationSummary:
     """Summary of a conversation for list display."""
@@ -280,26 +320,19 @@ class ConversationHistory:
             if response_text:
                 content_parts.append(response_text)
 
-            # Format tool calls with results
+            # Format tool calls with results using shared function
             for tc in tool_calls:
-                content_parts.append(f"\n\n**Tool Call:** `{tc['name']}`")
-                if tc.get("arguments"):
-                    # arguments might be a dict or JSON string depending on source
-                    args = tc["arguments"]
-                    if isinstance(args, dict):
-                        args = json.dumps(args, indent=2)
-                    content_parts.append(f"```json\n{args}\n```")
-
-                # Include tool result if available
                 tc_id = tc.get("tool_call_id")
+                result_output = None
                 if tc_id:
                     results = _get_tool_results_fallback()
                     result_output = results.get(tc_id)
-                    if result_output:
-                        # Truncate long results
-                        if len(result_output) > 2000:
-                            result_output = result_output[:2000] + "\n... (truncated)"
-                        content_parts.append(f"\n\n**Result:**\n```\n{result_output}\n```")
+
+                content_parts.append(format_tool_call_markdown(
+                    name=tc["name"],
+                    arguments=tc.get("arguments"),
+                    result=result_output,
+                ))
 
             if content_parts:
                 messages.append(Message(

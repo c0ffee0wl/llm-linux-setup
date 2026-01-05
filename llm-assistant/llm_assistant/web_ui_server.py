@@ -40,6 +40,7 @@ from llm_tools_core import (
     gather_context,
     format_gui_context,
     strip_context_tags,
+    format_tool_call_markdown,
 )
 from llm_tools_core.hashing import hash_gui_context
 
@@ -1262,26 +1263,18 @@ class WebUIServer:
                 if assistant_text and assistant_text.strip():
                     content_parts.append(assistant_text)
 
-                # Include tool calls with results in the same markdown format as history.py
+                # Include tool calls with results using shared formatting function
                 try:
                     tool_calls = list(r.tool_calls())
                     tool_results_map = tool_results_by_response.get(r.id, {})
 
                     for tc in tool_calls:
-                        content_parts.append(f"\n\n**Tool Call:** `{tc.name}`")
-                        if tc.arguments:
-                            args = tc.arguments
-                            if isinstance(args, dict):
-                                args = json.dumps(args, indent=2)
-                            content_parts.append(f"```json\n{args}\n```")
-
-                        # Include tool result if available
                         result = tool_results_map.get(tc.tool_call_id)
-                        if result:
-                            # Truncate long results
-                            if len(result) > 2000:
-                                result = result[:2000] + "\n... (truncated)"
-                            content_parts.append(f"\n\n**Result:**\n```\n{result}\n```")
+                        content_parts.append(format_tool_call_markdown(
+                            name=tc.name,
+                            arguments=tc.arguments,
+                            result=result,
+                        ))
                 except Exception:
                     pass  # No tool calls or error accessing them
 

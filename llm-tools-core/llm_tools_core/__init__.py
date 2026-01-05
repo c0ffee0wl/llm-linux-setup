@@ -136,6 +136,8 @@ from .history import (
     FullConversation,
     Message,
     strip_context_tags,
+    format_tool_call_markdown,
+    TOOL_RESULT_TRUNCATE_LIMIT,
 )
 
 # @ reference handling
@@ -264,6 +266,8 @@ __all__ = [
     "FullConversation",
     "Message",
     "strip_context_tags",
+    "format_tool_call_markdown",
+    "TOOL_RESULT_TRUNCATE_LIMIT",
     # @ reference handling
     "AtHandler",
     "Completion",
