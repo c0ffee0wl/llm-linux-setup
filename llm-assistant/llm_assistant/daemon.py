@@ -7,7 +7,7 @@ Architecture:
 - Listens on Unix socket at /tmp/llm-assistant-{UID}/daemon.sock
 - Maintains per-terminal HeadlessSession instances
 - Per-terminal request queues for concurrent handling
-- Auto-terminates after 30 minutes idle
+- Runs indefinitely until explicitly stopped (no idle timeout)
 - Streams responses as NDJSON events
 - Supports completion endpoint for slash commands and fragments
 """
@@ -18,7 +18,7 @@ import os
 import signal
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -38,7 +38,6 @@ from llm_tools_core import (
     get_socket_path,
     build_simple_system_prompt,
     ErrorCode,
-    IDLE_TIMEOUT_MINUTES,
     WORKER_IDLE_MINUTES,
     MAX_TOOL_ITERATIONS,
     is_daemon_process_alive,
@@ -77,7 +76,7 @@ def _cleanup_stale_pidfile(pidfile_path: str) -> bool:
     This function checks if the PID in the file is still running and cleans up if not.
 
     Args:
-        pidfile_path: Path to the PID file (e.g., ~/.local/run/llm-assistant.pid)
+        pidfile_path: Path to the PID file (e.g., ~/.config/llm-assistant/daemon.pid)
 
     Returns:
         True if stale files were cleaned up, False if daemon is still running or no files exist
@@ -1133,25 +1132,13 @@ class AssistantDaemon:
         await self._emit(writer, {"type": "done"})
 
     async def idle_checker(self):
-        """Check for idle timeout and shutdown if exceeded.
+        """Idle checker - currently disabled.
 
-        Disabled in foreground mode (user is watching, Ctrl+C to stop).
+        The daemon stays running indefinitely until explicitly stopped.
+        GUI clients (llm-guiassistant) depend on persistent daemon availability.
         """
-        if self.foreground:
-            # No idle timeout in foreground mode
-            return
-
-        while self.running:
-            await asyncio.sleep(60)  # Check every minute
-
-            idle_time = datetime.now() - self.last_activity
-            if idle_time > timedelta(minutes=IDLE_TIMEOUT_MINUTES):
-                self.console.print(
-                    f"[dim]llm-assistant daemon: idle timeout ({IDLE_TIMEOUT_MINUTES}m), shutting down[/]",
-                    highlight=False
-                )
-                self.running = False
-                break
+        # Idle timeout disabled - daemon stays running until stopped
+        return
 
     async def run(self):
         """Run the daemon server."""

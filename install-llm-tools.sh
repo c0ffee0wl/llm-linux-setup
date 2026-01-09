@@ -135,14 +135,25 @@ fi
 # Get llm config directory (cached for performance)
 # Usage: config_dir=$(get_llm_config_dir)
 # Note: Only caches successful results to avoid caching failures
+# Falls back to XDG default if llm command fails (e.g., not in PATH after fresh install)
 _LLM_CONFIG_DIR_CACHE=""
 get_llm_config_dir() {
     if [ -z "$_LLM_CONFIG_DIR_CACHE" ]; then
-        local result
-        result="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
-        if [ -n "$result" ]; then
-            _LLM_CONFIG_DIR_CACHE="$result"
+        local result=""
+        # Try llm command first (may need full path after fresh install)
+        local llm_bin="${HOME}/.local/bin/llm"
+        if [ -x "$llm_bin" ]; then
+            result="$("$llm_bin" logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
         fi
+        # Fallback: try command in PATH
+        if [ -z "$result" ]; then
+            result="$(command llm logs path 2>/dev/null | tail -n1 | xargs dirname 2>/dev/null || true)"
+        fi
+        # Final fallback: XDG default location
+        if [ -z "$result" ]; then
+            result="${HOME}/.config/io.datasette.llm"
+        fi
+        _LLM_CONFIG_DIR_CACHE="$result"
     fi
     echo "$_LLM_CONFIG_DIR_CACHE"
 }
@@ -1731,7 +1742,7 @@ if has_desktop_environment; then
         fi
 
         # Install Handy (system-wide STT) via .deb package
-        install_github_deb_package "handy" "0.6.9" \
+        install_github_deb_package "handy" "0.6.10" \
             "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
             "handy" "x86_64"
 

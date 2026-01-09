@@ -141,12 +141,21 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Set up drag and drop
         self._setup_drag_drop()
 
-    def _load_web_ui(self):
-        """Load the web UI from daemon's HTTP server."""
-        # Connect load handlers for debugging
-        if self.debug:
-            self.webview.connect("load-changed", self._on_load_changed)
+    def _load_web_ui(self, is_retry: bool = False):
+        """Load the web UI from daemon's HTTP server.
+
+        Args:
+            is_retry: True if this is a retry after daemon restart (don't reset counter)
+        """
+        # Connect handlers (only once)
+        if not hasattr(self, '_handlers_connected'):
             self.webview.connect("load-failed", self._on_load_failed)
+            self.webview.connect("load-changed", self._on_load_changed_internal)
+            self._handlers_connected = True
+
+        # Reset retry count on fresh load (not on retry)
+        if not is_retry:
+            self._load_retry_count = 0
 
         # Build URL with session ID
         url = f"http://localhost:{self.web_port}/?session={self.session_id}"
@@ -159,27 +168,47 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Note: Context is now captured directly by daemon on each query
         # (see web_ui_server.py _handle_query for guiassistant sessions)
 
-    def _on_load_changed(self, webview, load_event):
-        """Handle WebView load state changes."""
-        event_names = {
-            WebKit2.LoadEvent.STARTED: "STARTED",
-            WebKit2.LoadEvent.REDIRECTED: "REDIRECTED",
-            WebKit2.LoadEvent.COMMITTED: "COMMITTED",
-            WebKit2.LoadEvent.FINISHED: "FINISHED",
-        }
-        print(f"[WebKit] Load {event_names.get(load_event, load_event)}")
+    def _on_load_changed_internal(self, webview, load_event):
+        """Handle WebView load state changes - reset retry counter on success."""
+        # Debug logging
+        if self.debug:
+            event_names = {
+                WebKit2.LoadEvent.STARTED: "STARTED",
+                WebKit2.LoadEvent.REDIRECTED: "REDIRECTED",
+                WebKit2.LoadEvent.COMMITTED: "COMMITTED",
+                WebKit2.LoadEvent.FINISHED: "FINISHED",
+            }
+            print(f"[WebKit] Load {event_names.get(load_event, load_event)}")
+
+        # Reset retry counter on successful load completion
+        if load_event == WebKit2.LoadEvent.FINISHED:
+            self._load_retry_count = 0
 
     def _on_load_failed(self, webview, load_event, failing_uri, error):
-        """Handle WebView load failures."""
-        print(f"[WebKit ERROR] Failed to load {failing_uri}: {error.message}")
+        """Handle WebView load failures - try to restart daemon and retry."""
+        if self.debug:
+            print(f"[WebKit ERROR] Failed to load {failing_uri}: {error.message}")
 
-        # Show fallback content
+        # Track retry attempts to avoid infinite loops
+        self._load_retry_count += 1
+
+        if self._load_retry_count <= 2:
+            if self.debug:
+                print(f"[WebKit] Attempting to restart daemon (attempt {self._load_retry_count})")
+
+            # Try to restart daemon
+            if ensure_daemon():
+                # Give daemon a moment to fully start, then retry
+                GLib.timeout_add(500, self._retry_load_web_ui)
+                return True
+
+        # Show fallback content after retries exhausted
         html = f"""
         <html>
         <body style="font-family: sans-serif; padding: 20px; text-align: center;">
         <h2>Cannot connect to daemon</h2>
-        <p>The llm-assistant daemon may not be running.</p>
-        <p>Start it with: <code>llm-assistant --daemon</code></p>
+        <p>The llm-assistant daemon could not be started.</p>
+        <p>Try starting it manually: <code>llm-assistant --daemon</code></p>
         <p style="color: #666; font-size: 0.9em;">
             Expected URL: http://localhost:{self.web_port}/
         </p>
@@ -188,6 +217,13 @@ class PopupWindow(Gtk.ApplicationWindow):
         """
         self.webview.load_html(html, None)
         return True
+
+    def _retry_load_web_ui(self):
+        """Retry loading web UI after daemon restart."""
+        if self.debug:
+            print("[WebKit] Retrying web UI load...")
+        self._load_web_ui(is_retry=True)
+        return False  # Don't repeat
 
     def _on_decide_policy(self, webview, decision, decision_type):
         """Handle navigation decisions - open external links in default browser."""
@@ -389,6 +425,8 @@ class PopupApplication(Gtk.Application):
                 self.window._saved_state["width"],
                 self.window._saved_state["height"]
             )
+            # Ensure daemon is still running (may have died while hidden)
+            ensure_daemon()
             self.window.show_all()
             self.window.present()
 
