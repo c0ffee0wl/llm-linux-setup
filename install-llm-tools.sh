@@ -962,17 +962,29 @@ stop_assistant_processes() {
         stopped=true
     fi
 
-    # Also stop any llm_assistant.daemon or llm_guiassistant Python processes
-    if pgrep -f "python.*llm_assistant\.daemon" > /dev/null 2>&1; then
-        pkill -TERM -f "python.*llm_assistant\.daemon" 2>/dev/null || true
-        sleep 1
-        pkill -KILL -f "python.*llm_assistant\.daemon" 2>/dev/null || true
+    # Also stop any Python processes running llm_assistant or llm_guiassistant modules
+    # Pattern: python3 -m llm_assistant --daemon (after exec from wrapper script)
+    if pgrep -f "python.*llm_assistant.*--daemon" > /dev/null 2>&1; then
+        pkill -TERM -f "python.*llm_assistant.*--daemon" 2>/dev/null || true
+        for i in {1..10}; do
+            if ! pgrep -f "python.*llm_assistant.*--daemon" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
+        pkill -KILL -f "python.*llm_assistant.*--daemon" 2>/dev/null || true
         stopped=true
     fi
 
+    # Pattern: python3 -m llm_guiassistant (after exec from wrapper script)
     if pgrep -f "python.*llm_guiassistant" > /dev/null 2>&1; then
         pkill -TERM -f "python.*llm_guiassistant" 2>/dev/null || true
-        sleep 1
+        for i in {1..10}; do
+            if ! pgrep -f "python.*llm_guiassistant" > /dev/null 2>&1; then
+                break
+            fi
+            sleep 0.5
+        done
         pkill -KILL -f "python.*llm_guiassistant" 2>/dev/null || true
         stopped=true
     fi

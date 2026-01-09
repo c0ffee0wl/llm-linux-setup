@@ -1607,14 +1607,15 @@ function handleMessage(msg) {
     }
 }
 
+/**
+ * Handle streaming text messages from WebSocket.
+ * Strips tool call markdown since tool_start/tool_done events handle the UI.
+ */
 function handleTextMessage(msg) {
     const emptyState = document.getElementById('empty-state');
     if (emptyState) {
         emptyState.remove();
     }
-
-    const conversation = document.getElementById('conversation');
-    let container;
 
     // Strip tool call markdown from live display
     // (tool_start/tool_done events handle the tool execution UI)
@@ -1622,7 +1623,7 @@ function handleTextMessage(msg) {
 
     // For streaming: update existing container if same message ID
     if (msg.messageId && msg.messageId === currentMessageId) {
-        container = document.getElementById('current-message');
+        const container = document.getElementById('current-message');
         if (container) {
             const contentDiv = container.querySelector('.message-content');
             contentDiv.innerHTML = safeMarkdown(displayContent);
@@ -1721,8 +1722,8 @@ function stripToolCallMarkdown(text) {
 }
 
 /**
- * Render an assistant message that may contain tool calls.
- * Separates tool calls and renders them with proper UI.
+ * Render an assistant message that contains tool calls from history.
+ * Parses tool call markdown and renders text parts as messages, tool calls as UI blocks.
  */
 function appendAssistantMessageWithToolCalls(content) {
     const parts = parseToolCallsFromContent(content);
@@ -1774,11 +1775,11 @@ function loadHistory(messages) {
 
     // Rebuild from history
     for (const msg of messages) {
-        if (msg.role === 'assistant' && msg.content.includes('**Tool Call:**')) {
+        if (msg.role === 'assistant' && msg.content && msg.content.includes('**Tool Call:**')) {
             // Parse and render tool calls properly
             appendAssistantMessageWithToolCalls(msg.content);
         } else {
-            appendMessage(msg.role, msg.content);
+            appendMessage(msg.role, msg.content || '');
         }
     }
 
