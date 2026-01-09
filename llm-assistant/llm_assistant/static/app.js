@@ -1616,14 +1616,18 @@ function handleTextMessage(msg) {
     const conversation = document.getElementById('conversation');
     let container;
 
+    // Strip tool call markdown from live display
+    // (tool_start/tool_done events handle the tool execution UI)
+    const displayContent = stripToolCallMarkdown(msg.content);
+
     // For streaming: update existing container if same message ID
     if (msg.messageId && msg.messageId === currentMessageId) {
         container = document.getElementById('current-message');
         if (container) {
             const contentDiv = container.querySelector('.message-content');
-            contentDiv.innerHTML = safeMarkdown(msg.content);
+            contentDiv.innerHTML = safeMarkdown(displayContent);
             applyCodeBlockEnhancements(contentDiv);
-            // Update stored content
+            // Update stored content (keep original with tool markdown for database)
             const msgId = container.dataset.messageId;
             const stored = messageStore.messages.find(m => m.id === msgId);
             if (stored) stored.content = msg.content;
@@ -1632,8 +1636,8 @@ function handleTextMessage(msg) {
         }
     }
 
-    // Create new assistant message
-    appendMessage('assistant', msg.content, msg.messageId);
+    // Create new assistant message (pass display content separately)
+    appendMessage('assistant', msg.content, msg.messageId, displayContent);
 }
 
 /**
@@ -1699,6 +1703,21 @@ function parseToolCallsFromContent(content) {
     }
 
     return parts;
+}
+
+/**
+ * Strip tool call markdown from text during live streaming.
+ * Tool execution UI is handled by tool_start/tool_done events.
+ * Pattern matches format from format_tool_call_markdown() in llm-tools-core.
+ */
+function stripToolCallMarkdown(text) {
+    if (!text) return '';
+    // Remove complete tool call blocks (with optional args and result)
+    // Format: \n\n**Tool Call:** `name` + optional ```json...``` + optional \n\n**Result:** ```...```
+    return text.replace(
+        /\n*\*\*Tool Call:\*\*\s*`[^`]+`(?:\s*```json[\s\S]*?```)?(?:\s*\n*\*\*Result:\*\*\s*```[\s\S]*?```)?/g,
+        ''
+    ).trim();
 }
 
 /**
@@ -1774,7 +1793,7 @@ function loadHistory(messages) {
 // Message Display
 // ============================================================================
 
-function appendMessage(role, content, streamingId) {
+function appendMessage(role, content, streamingId, displayOverride) {
     const emptyState = document.getElementById('empty-state');
     if (emptyState) {
         emptyState.remove();
@@ -1785,7 +1804,13 @@ function appendMessage(role, content, streamingId) {
     container.className = 'message ' + role;
 
     // Strip context tags for display, but keep original in store
-    const displayContent = role === 'user' ? stripContextTags(content) : content;
+    // For assistant messages during live streaming, displayOverride provides pre-stripped content
+    let displayContent;
+    if (displayOverride !== undefined) {
+        displayContent = displayOverride;
+    } else {
+        displayContent = role === 'user' ? stripContextTags(content) : content;
+    }
 
     const contentDiv = document.createElement('div');
     contentDiv.className = 'message-content';
