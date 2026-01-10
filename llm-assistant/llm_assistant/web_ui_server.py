@@ -124,6 +124,8 @@ class WebUIServer:
         self.app.router.add_post("/api/rag/add", self.handle_api_rag_add)
         self.app.router.add_post("/api/rag/create", self.handle_api_rag_create)
         self.app.router.add_delete("/api/rag/delete/{name}", self.handle_api_rag_delete)
+        self.app.router.add_get("/api/tools", self.handle_api_tools)
+        self.app.router.add_post("/api/tools/toggle", self.handle_api_tools_toggle)
 
         # Static file serving
         if self.static_dir.exists():
@@ -1920,6 +1922,95 @@ class WebUIServer:
                 )
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
+
+    # =========================================================================
+    # Tools API endpoints
+    # =========================================================================
+
+    async def handle_api_tools(self, request: web.Request) -> web.Response:
+        """Return tool configuration for the UI.
+
+        GET /api/tools?session=xxx
+        Returns MCP servers and optional tools with their enabled status.
+        """
+        session_id = request.query.get("session", "")
+        if not session_id:
+            return web.json_response({"error": "session parameter required"}, status=400)
+
+        # Get session state from daemon (creates if not exists)
+        state = self.daemon.get_session_state(session_id, source="gui")
+        session = state.session
+
+        # Import MCP functions and config
+        from .mcp import _all_tools, _ensure_mcp_loaded
+        from .config import OPTIONAL_TOOL_PLUGINS
+        _ensure_mcp_loaded()
+
+        # Get MCP servers
+        mcp_servers = []
+        all_servers = session._get_all_mcp_servers()
+        active_servers = session.active_mcp_servers
+        default_servers = session._get_default_mcp_servers()
+
+        for server in sorted(all_servers):
+            tool_count = sum(1 for t in _all_tools.values()
+                            if getattr(t, 'server_name', None) == server)
+            mcp_servers.append({
+                'name': server,
+                'enabled': server in active_servers,
+                'optional': server not in default_servers,
+                'tool_count': tool_count
+            })
+
+        # Get optional tools (imagemage, etc.)
+        optional_tools = []
+        loaded = getattr(session, 'loaded_optional_tools', set())
+        for plugin in OPTIONAL_TOOL_PLUGINS:
+            optional_tools.append({
+                'name': plugin,
+                'enabled': plugin in loaded
+            })
+
+        return web.json_response({
+            'mcp_servers': mcp_servers,
+            'optional_tools': optional_tools
+        })
+
+    async def handle_api_tools_toggle(self, request: web.Request) -> web.Response:
+        """Toggle a tool or MCP server on/off.
+
+        POST /api/tools/toggle
+        Body: {"session": "xxx", "type": "mcp"|"optional", "name": "xxx", "enabled": true|false}
+        """
+        try:
+            data = await request.json()
+            session_id = data.get('session')
+            tool_type = data.get('type')  # 'mcp' or 'optional'
+            name = data.get('name')
+            enabled = data.get('enabled')
+
+            if not session_id:
+                return web.json_response({'error': 'session parameter required'}, status=400)
+
+            state = self.daemon.get_session_state(session_id, source="gui")
+            session = state.session
+
+            if tool_type == 'mcp':
+                if enabled:
+                    session.active_mcp_servers.add(name)
+                else:
+                    session.active_mcp_servers.discard(name)
+            elif tool_type == 'optional':
+                if not hasattr(session, 'loaded_optional_tools'):
+                    session.loaded_optional_tools = set()
+                if enabled:
+                    session.loaded_optional_tools.add(name)
+                else:
+                    session.loaded_optional_tools.discard(name)
+
+            return web.json_response({'success': True, 'name': name, 'enabled': enabled})
+        except Exception as e:
+            return web.json_response({'error': str(e)}, status=500)
 
     async def start(self):
         """Start the web server."""

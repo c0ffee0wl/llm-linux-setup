@@ -821,6 +821,171 @@ const captureControls = {
 };
 
 // ============================================================================
+// Tools Control (MCP Servers & Optional Tools)
+// ============================================================================
+
+const toolsControl = {
+    isOpen: false,
+    data: { mcp_servers: [], optional_tools: [] },
+
+    init() {
+        const btn = document.getElementById('tools-btn');
+
+        btn?.addEventListener('click', (e) => {
+            e.stopPropagation();
+            this.toggle();
+        });
+        // Note: Outside click handled by global handler in DOMContentLoaded
+    },
+
+    async toggle() {
+        if (this.isOpen) {
+            this.close();
+        } else {
+            await this.open();
+        }
+    },
+
+    async open() {
+        await this.refresh();
+        document.getElementById('tools-dropdown')?.classList.remove('hidden');
+        this.isOpen = true;
+    },
+
+    close() {
+        document.getElementById('tools-dropdown')?.classList.add('hidden');
+        this.isOpen = false;
+    },
+
+    async refresh() {
+        try {
+            const response = await fetch(`/api/tools?session=${sessionId}`);
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            this.data = await response.json();
+            this.render();
+        } catch (error) {
+            console.error('Failed to fetch tools:', error);
+            this.data = { mcp_servers: [], optional_tools: [] };
+            this.render();
+        }
+    },
+
+    render() {
+        const container = document.getElementById('tools-list');
+        if (!container) return;
+
+        let html = '';
+
+        // Check if we have any data
+        const hasOptional = this.data.optional_tools?.length > 0;
+        const hasMcp = this.data.mcp_servers?.length > 0;
+
+        if (!hasOptional && !hasMcp) {
+            html = '<div class="tool-empty">No tools available</div>';
+            container.innerHTML = html;
+            return;
+        }
+
+        // Optional Tools section
+        if (hasOptional) {
+            html += '<div class="tool-section">';
+            html += '<div class="tool-section-header">Optional Tools</div>';
+            for (const tool of this.data.optional_tools) {
+                html += `
+                    <label class="tool-item optional">
+                        <input type="checkbox"
+                               data-type="optional"
+                               data-name="${tool.name}"
+                               ${tool.enabled ? 'checked' : ''}>
+                        <span class="tool-item-label">${tool.name}</span>
+                    </label>`;
+            }
+            html += '</div>';
+        }
+
+        // MCP Servers section
+        if (hasMcp) {
+            // Default servers
+            const defaultServers = this.data.mcp_servers.filter(s => !s.optional);
+            const optionalServers = this.data.mcp_servers.filter(s => s.optional);
+
+            if (defaultServers.length > 0) {
+                html += '<div class="tool-section">';
+                html += '<div class="tool-section-header">MCP Servers</div>';
+                for (const server of defaultServers) {
+                    html += `
+                        <label class="tool-item">
+                            <input type="checkbox"
+                                   data-type="mcp"
+                                   data-name="${server.name}"
+                                   ${server.enabled ? 'checked' : ''}>
+                            <span class="tool-item-label">${server.name}</span>
+                            <span class="tool-item-badge">${server.tool_count} tools</span>
+                        </label>`;
+                }
+                html += '</div>';
+            }
+
+            if (optionalServers.length > 0) {
+                html += '<div class="tool-section">';
+                html += '<div class="tool-section-header">Optional MCP Servers</div>';
+                for (const server of optionalServers) {
+                    html += `
+                        <label class="tool-item optional">
+                            <input type="checkbox"
+                                   data-type="mcp"
+                                   data-name="${server.name}"
+                                   ${server.enabled ? 'checked' : ''}>
+                            <span class="tool-item-label">${server.name}</span>
+                            <span class="tool-item-badge">${server.tool_count} tools</span>
+                        </label>`;
+                }
+                html += '</div>';
+            }
+        }
+
+        container.innerHTML = html;
+
+        // Add event listeners to checkboxes
+        container.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+            cb.addEventListener('change', (e) => this.handleToggle(e));
+        });
+    },
+
+    async handleToggle(event) {
+        const checkbox = event.target;
+        const type = checkbox.dataset.type;
+        const name = checkbox.dataset.name;
+        const enabled = checkbox.checked;
+
+        try {
+            const response = await fetch('/api/tools/toggle', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session: sessionId,
+                    type: type,
+                    name: name,
+                    enabled: enabled
+                })
+            });
+
+            if (!response.ok) {
+                throw new Error('Toggle failed');
+            }
+
+            showToast(`${name} ${enabled ? 'enabled' : 'disabled'}`);
+        } catch (error) {
+            console.error('Failed to toggle tool:', error);
+            checkbox.checked = !enabled; // Revert
+            showToast(`Failed to toggle ${name}`);
+        }
+    }
+};
+
+// ============================================================================
 // RAG Panel
 // ============================================================================
 
@@ -2692,6 +2857,7 @@ document.addEventListener('DOMContentLoaded', function() {
     // Initialize modules
     historySidebar.init();
     captureControls.init();
+    toolsControl.init();
 
     // Input handling
     input.addEventListener('input', function() {
@@ -2868,6 +3034,10 @@ document.addEventListener('DOMContentLoaded', function() {
         if (!e.target.closest('#capture-wrapper')) {
             captureControls.hideDropdown();
         }
+        // Close tools dropdown
+        if (!e.target.closest('#tools-wrapper')) {
+            toolsControl.close();
+        }
         // Close attachment panel
         if (!e.target.closest('#attachment-wrapper')) {
             attachmentPanel.hide();
@@ -2897,6 +3067,7 @@ document.addEventListener('DOMContentLoaded', function() {
             }
             atAutocomplete.hide();
             captureControls.hideDropdown();
+            toolsControl.close();
         }
     });
 

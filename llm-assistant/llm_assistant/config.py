@@ -71,7 +71,9 @@ from llm_tools_core import TUI_COMMANDS, is_tui_command  # noqa: F401 (re-export
 
 
 # External tool plugins that are always available
-EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'llm-tools-mcp', 'sandboxed_python', 'capture_screen')
+# Note: 'llm-tools-mcp' is NOT included here - MCP tools are added dynamically
+# via _add_dynamic_tools() based on active_mcp_servers filtering
+EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'sandboxed_python', 'capture_screen')
 
 # Tools available only in agent mode (schema sent to model only in /agent)
 AGENT_MODE_TOOLS = ()
