@@ -1431,8 +1431,8 @@ elif [ -f "$EXTRA_MODELS_FILE" ]; then
     fi
     AZURE_CONFIGURED=true
 elif has_other_provider_configured; then
-    # User has another provider configured (Anthropic, OpenRouter, etc.) - don't prompt
-    local current_model=$(cat "$(get_llm_config_dir)/default_model.txt" 2>/dev/null || echo "unknown")
+    # User has another provider configured (Anthropic, OpenRouter, Vertex, etc.) - don't prompt
+    current_model=$(cat "$(get_llm_config_dir)/default_model.txt" 2>/dev/null || echo "unknown")
     log "Another provider already configured (default model: $current_model)"
     log "Skipping Azure OpenAI configuration (use --azure to configure)"
     AZURE_CONFIGURED=false
