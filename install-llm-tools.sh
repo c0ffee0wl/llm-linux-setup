@@ -639,6 +639,36 @@ set_or_migrate_default_model() {
     fi
 }
 
+# Check if a non-Azure/Gemini default model is already configured
+# Returns 0 (true) if another provider is configured, 1 (false) otherwise
+has_other_provider_configured() {
+    local DEFAULT_MODEL_FILE="$(get_llm_config_dir)/default_model.txt"
+
+    if [ ! -f "$DEFAULT_MODEL_FILE" ]; then
+        return 1  # No default model configured
+    fi
+
+    local current_default=$(cat "$DEFAULT_MODEL_FILE" 2>/dev/null || echo "")
+
+    if [ -z "$current_default" ]; then
+        return 1  # Empty or no default
+    fi
+
+    # Check if it's Azure or Gemini (models we configure)
+    case "$current_default" in
+        azure/*)
+            return 1  # Azure model - we handle this
+            ;;
+        gemini-*|vertex/*)
+            return 1  # Gemini model - we handle this
+            ;;
+        *)
+            # Another provider (Anthropic, OpenRouter, local, etc.)
+            return 0
+            ;;
+    esac
+}
+
 # Update template file with smart checksum-based update logic
 update_template_file() {
     local template_name="$1"
@@ -1385,18 +1415,8 @@ if [ "$FORCE_AZURE_CONFIG" = "true" ]; then
     configure_azure_openai
     # When forcing Azure, disable Gemini (mutually exclusive)
     GEMINI_CONFIGURED=false
-elif [ "$IS_FIRST_RUN" = "true" ]; then
-    # First run - ask if user wants to configure Azure OpenAI
-    log "Azure OpenAI Configuration"
-    echo ""
-    if ask_yes_no "Do you want to configure Azure OpenAI?" Y; then
-        configure_azure_openai
-    else
-        log "Skipping Azure OpenAI configuration"
-        AZURE_CONFIGURED=false
-    fi
 elif [ -f "$EXTRA_MODELS_FILE" ]; then
-    # Subsequent run - user previously configured Azure (YAML exists)
+    # Previously configured Azure (YAML exists) - preserve existing configuration
     log "Azure OpenAI was previously configured, preserving existing configuration"
 
     # Extract the api_base from the first model entry in the YAML
@@ -1409,6 +1429,22 @@ elif [ -f "$EXTRA_MODELS_FILE" ]; then
         warn "Could not read existing API base, using placeholder"
     fi
     AZURE_CONFIGURED=true
+elif has_other_provider_configured; then
+    # User has another provider configured (Anthropic, OpenRouter, etc.) - don't prompt
+    local current_model=$(cat "$(get_llm_config_dir)/default_model.txt" 2>/dev/null || echo "unknown")
+    log "Another provider already configured (default model: $current_model)"
+    log "Skipping Azure OpenAI configuration (use --azure to configure)"
+    AZURE_CONFIGURED=false
+elif [ "$IS_FIRST_RUN" = "true" ]; then
+    # First run with no provider - ask if user wants to configure Azure OpenAI
+    log "Azure OpenAI Configuration"
+    echo ""
+    if ask_yes_no "Do you want to configure Azure OpenAI?" Y; then
+        configure_azure_openai
+    else
+        log "Skipping Azure OpenAI configuration"
+        AZURE_CONFIGURED=false
+    fi
 else
     # Subsequent run - user declined Azure configuration on first run
     log "Azure OpenAI not configured (skipped during initial setup)"
@@ -1503,8 +1539,33 @@ if [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
     configure_gemini
     # When forcing Gemini, disable Azure (mutually exclusive)
     AZURE_CONFIGURED=false
-elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
-    # First run AND Azure was declined - ask if user wants to configure Gemini
+elif command llm keys get gemini &>/dev/null; then
+    # Gemini key already exists - preserve configuration
+    log "Google Gemini was previously configured, preserving existing configuration"
+    GEMINI_CONFIGURED=true
+elif [ "$AZURE_CONFIGURED" = "true" ]; then
+    # Azure configured but no Gemini - ask for Gemini as secondary
+    log "Google Gemini as Secondary Provider (Optional)"
+    echo ""
+    echo "Azure OpenAI is configured as your primary provider."
+    echo "Gemini can be added as a secondary provider for:"
+    echo "  - Claude Code Router web search (Azure doesn't support web search)"
+    echo "  - llm chat-google-search (or -o google_search 1)"
+    echo "  - imagemage (Gemini 'Nano Banana' Pro image generation CLI)"
+    echo ""
+    if ask_yes_no "Would you like to configure Gemini as a secondary provider?" N; then
+        configure_gemini
+        # Note: AZURE_CONFIGURED stays true - Gemini is secondary, not replacement
+    else
+        log "Skipping Gemini configuration (secondary provider declined)"
+        GEMINI_CONFIGURED=false
+    fi
+elif has_other_provider_configured; then
+    # User has another provider configured (Anthropic, OpenRouter, etc.) - don't prompt
+    log "Skipping Gemini configuration (another provider already configured)"
+    GEMINI_CONFIGURED=false
+elif [ "$IS_FIRST_RUN" = "true" ]; then
+    # First run with no provider - ask if user wants to configure Gemini
     log "Google Gemini Configuration"
     echo ""
     if ask_yes_no "Do you want to configure Google Gemini?" N; then
@@ -1513,38 +1574,10 @@ elif [ "$IS_FIRST_RUN" = "true" ] && [ "$AZURE_CONFIGURED" != "true" ]; then
         log "Skipping Google Gemini configuration"
         GEMINI_CONFIGURED=false
     fi
-elif [ "$AZURE_CONFIGURED" = "true" ]; then
-    # Azure is configured - check if Gemini is already configured
-    if command llm keys get gemini &>/dev/null; then
-        log "Google Gemini was previously configured, preserving existing configuration"
-        GEMINI_CONFIGURED=true
-    else
-        # Azure configured but no Gemini - always ask for Gemini as secondary
-        log "Google Gemini as Secondary Provider (Optional)"
-        echo ""
-        echo "Azure OpenAI is configured as your primary provider."
-        echo "Gemini can be added as a secondary provider for:"
-        echo "  - Claude Code Router web search (Azure doesn't support web search)"
-        echo "  - llm chat-google-search (or -o google_search 1)"
-        echo "  - imagemage (Gemini 'Nano Banana' Pro image generation CLI)"
-        echo ""
-        if ask_yes_no "Would you like to configure Gemini as a secondary provider?" N; then
-            configure_gemini
-            # Note: AZURE_CONFIGURED stays true - Gemini is secondary, not replacement
-        else
-            log "Skipping Gemini configuration (secondary provider declined)"
-            GEMINI_CONFIGURED=false
-        fi
-    fi
 else
-    # Azure not configured - check if Gemini key exists
-    if command llm keys get gemini &>/dev/null; then
-        log "Google Gemini was previously configured, preserving existing configuration"
-        GEMINI_CONFIGURED=true
-    else
-        log "Google Gemini not configured"
-        GEMINI_CONFIGURED=false
-    fi
+    # Subsequent run - no Gemini configured
+    log "Google Gemini not configured"
+    GEMINI_CONFIGURED=false
 fi
 
 #############################################################################
@@ -2055,6 +2088,12 @@ if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
     # Ensure libsystemd-dev is installed (required to build pystemd dependency)
     install_apt_package libsystemd-dev
 
+    # Stop llm-server service before updating (if running)
+    if systemctl --user is-active llm-server.service &>/dev/null; then
+        log "Stopping llm-server service for update..."
+        systemctl --user stop llm-server.service 2>/dev/null || true
+    fi
+
     install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-server"
 
     # Register llm-server as systemd socket-activated user service
@@ -2239,16 +2278,31 @@ else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
 
-# Update Gemini CLI if already installed (no automatic installation)
-upgrade_npm_global_if_installed @google/gemini-cli
-
-# Update OpenCode if already installed (no automatic installation)
-upgrade_npm_global_if_installed opencode-ai
-
 # Clean up package caches to reclaim disk space
 clear_package_caches
 
 fi  # End of INSTALL_MODE = "full" block for Phase 7
+
+#############################################################################
+# Update existing CLI tools (regardless of install mode)
+# This ensures tools installed previously get updates even in minimal mode
+#############################################################################
+
+# Update Claude Code if already installed (native version)
+NATIVE_CLAUDE="$HOME/.local/bin/claude"
+if [ "$INSTALL_MODE" != "full" ] && [ -x "$NATIVE_CLAUDE" ]; then
+    log "Updating Claude Code (native)..."
+    "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
+fi
+
+# Update npm-based tools if npm is available (skip silently if npm not installed)
+if command -v npm &>/dev/null; then
+    # Update Gemini CLI if already installed (no automatic installation)
+    upgrade_npm_global_if_installed @google/gemini-cli
+
+    # Update OpenCode if already installed (no automatic installation)
+    upgrade_npm_global_if_installed opencode-ai
+fi
 
 #############################################################################
 # COMPLETE
