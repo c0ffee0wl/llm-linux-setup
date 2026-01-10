@@ -196,38 +196,40 @@ class WebUIServer:
             if hasattr(db, 'conn') and db.conn:
                 db.conn.close()
 
-    def _get_tool_results_for_responses(
-        self, response_ids: list
+    def _get_tool_results_for_conversation(
+        self, conversation_id: str
     ) -> dict:
-        """Query tool results from DB for multiple responses.
+        """Query tool results from DB for a conversation.
 
         Must be called in an executor to avoid blocking the event loop.
 
+        NOTE: Tool results are stored with the response_id of the response that
+        USES them as input (the NEXT response), not the response that made the
+        tool calls. So we query all tool_results for the entire conversation
+        and key by tool_call_id for correct lookup.
+
         Args:
-            response_ids: List of response ID strings
+            conversation_id: Conversation ID string
 
         Returns:
-            Dict mapping response_id -> {tool_call_id: output}
+            Dict mapping tool_call_id -> output (flat dict, like history.py)
         """
         results: dict = {}
-        if not response_ids:
+        if not conversation_id:
             return results
 
         db = None
         try:
             db = self._get_logs_db(for_executor=True)
-            placeholders = ",".join("?" * len(response_ids))
+            # Query all tool_results for this conversation (same pattern as history.py)
             for tr_row in db["tool_results"].rows_where(
-                f"response_id IN ({placeholders})",
-                response_ids,
+                "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
+                [conversation_id],
             ):
-                resp_id = tr_row.get("response_id")
                 tc_id = tr_row.get("tool_call_id")
                 output = tr_row.get("output")
-                if resp_id not in results:
-                    results[resp_id] = {}
                 if tc_id:
-                    results[resp_id][tc_id] = output or ""
+                    results[tc_id] = output or ""
         except Exception:
             pass  # Table might not exist in older databases
         finally:
@@ -1366,10 +1368,12 @@ class WebUIServer:
             ]
 
             # Query tool results from DB in batch (run in executor to avoid blocking)
-            response_ids = [r.id for r in responses if hasattr(r, "id") and r.id]
+            # Note: Tool results are stored with the NEXT response's ID, so we query
+            # by conversation_id and key by tool_call_id (flat dict, like history.py)
+            conv_id = state.session.conversation.id
             loop = asyncio.get_running_loop()
-            tool_results_by_response = await loop.run_in_executor(
-                None, lambda: self._get_tool_results_for_responses(response_ids)
+            tool_results_by_call_id = await loop.run_in_executor(
+                None, lambda: self._get_tool_results_for_conversation(conv_id)
             )
 
             for r in responses:
@@ -1389,10 +1393,10 @@ class WebUIServer:
                 # Include tool calls with results using shared formatting function
                 try:
                     tool_calls = list(r.tool_calls())
-                    tool_results_map = tool_results_by_response.get(r.id, {})
 
                     for tc in tool_calls:
-                        result = tool_results_map.get(tc.tool_call_id)
+                        # Look up result by tool_call_id (flat dict keyed by tool_call_id)
+                        result = tool_results_by_call_id.get(tc.tool_call_id)
                         content_parts.append(format_tool_call_markdown(
                             name=tc.name,
                             arguments=tc.arguments,
