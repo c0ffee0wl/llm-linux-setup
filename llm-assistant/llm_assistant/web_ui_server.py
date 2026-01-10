@@ -70,8 +70,12 @@ class WebUIServer:
         # Session state tracking (initialized upfront to avoid race conditions)
         self._gui_context_state: Dict[str, set] = {}  # session_id -> window_hashes (set)
         self._rag_sessions: Dict[str, str] = {}  # session_id -> collection_name
+
+        # Lock for tool toggle operations (protects active_mcp_servers and loaded_optional_tools)
+        self._tool_toggle_lock = asyncio.Lock()
         self._rag_sources: Dict[str, bool] = {}  # session_id -> sources flag
         self._session_no_log: Dict[str, bool] = {}  # session_id -> no_log flag
+        self._session_temp_files: Dict[str, set] = {}  # session_id -> set of temp file paths
 
         # Cached database connection (created lazily, closed on stop)
         self._logs_db: Optional[sqlite_utils.Database] = None
@@ -137,6 +141,14 @@ class WebUIServer:
         Args:
             for_executor: If True, create a new connection for use in executor threads.
                          If False, use the cached main-thread connection.
+
+        IMPORTANT: When for_executor=True, caller MUST close the database connection
+        after use to prevent resource leaks:
+            db = self._get_logs_db(for_executor=True)
+            try:
+                # ... use db ...
+            finally:
+                db.conn.close()
         """
         if for_executor:
             # Create a fresh connection for executor threads (SQLite thread safety)
@@ -144,7 +156,10 @@ class WebUIServer:
             db_path = get_logs_db_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite_utils.Database(db_path)
+            # Configure for concurrent access
             db.execute("PRAGMA journal_mode=WAL")
+            db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe durability
+            db.execute("PRAGMA busy_timeout=5000")   # Wait 5s for locks
             migrations.migrate(db)
             return db
 
@@ -156,6 +171,8 @@ class WebUIServer:
             self._logs_db = sqlite_utils.Database(db_path)
             # Enable WAL mode for better concurrent access
             self._logs_db.execute("PRAGMA journal_mode=WAL")
+            self._logs_db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe durability
+            self._logs_db.execute("PRAGMA busy_timeout=5000")   # Wait 5s for locks
             migrations.migrate(self._logs_db)
         return self._logs_db
 
@@ -166,6 +183,18 @@ class WebUIServer:
     def _set_no_log(self, session_id: str, no_log: bool):
         """Set no-log flag for a session."""
         self._session_no_log[session_id] = no_log
+
+    def _log_response_to_db(self, response) -> None:
+        """Log a response to the database with proper connection cleanup.
+
+        Must be called in an executor to avoid blocking the event loop.
+        """
+        db = self._get_logs_db(for_executor=True)
+        try:
+            response.log_to_db(db)
+        finally:
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     def _get_tool_results_for_responses(
         self, response_ids: list
@@ -184,6 +213,7 @@ class WebUIServer:
         if not response_ids:
             return results
 
+        db = None
         try:
             db = self._get_logs_db(for_executor=True)
             placeholders = ",".join("?" * len(response_ids))
@@ -200,6 +230,9 @@ class WebUIServer:
                     results[resp_id][tc_id] = output or ""
         except Exception:
             pass  # Table might not exist in older databases
+        finally:
+            if db is not None and hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
         return results
 
@@ -259,6 +292,10 @@ class WebUIServer:
             conn.rollback()
             logger.warning(f"Failed to delete responses from DB: {e}")
             # Don't raise - we still want to continue with the edit/regenerate
+        finally:
+            # Always close the executor connection
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     async def handle_index(self, request: web.Request) -> web.Response:
         """Serve the main conversation HTML."""
@@ -274,8 +311,12 @@ class WebUIServer:
         """Handle image uploads via multipart/form-data.
 
         Saves uploaded file to temp directory and returns the path.
+        Session ID can be passed as query param for cleanup tracking.
         """
         try:
+            # Get optional session ID for temp file tracking
+            session_id = request.query.get("session", "")
+
             reader = await request.multipart()
             field = await reader.next()
 
@@ -286,7 +327,9 @@ class WebUIServer:
             filename = field.filename or "upload"
             ext = Path(filename).suffix or ".png"
 
-            # Save to temp file
+            # Save to temp file with size limit (50MB max)
+            MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB
+            total_size = 0
             with tempfile.NamedTemporaryFile(
                 delete=False, suffix=ext, prefix="llm-upload-"
             ) as f:
@@ -294,21 +337,58 @@ class WebUIServer:
                     chunk = await field.read_chunk()
                     if not chunk:
                         break
+                    total_size += len(chunk)
+                    if total_size > MAX_UPLOAD_SIZE:
+                        # Clean up partial file
+                        f.close()
+                        os.unlink(f.name)
+                        return web.json_response(
+                            {"error": f"File too large (max {MAX_UPLOAD_SIZE // 1024 // 1024}MB)"},
+                            status=413
+                        )
                     f.write(chunk)
                 temp_path = f.name
+
+            # Track temp file for cleanup when session ends
+            if session_id:
+                if session_id not in self._session_temp_files:
+                    self._session_temp_files[session_id] = set()
+                self._session_temp_files[session_id].add(temp_path)
 
             return web.json_response({"path": temp_path})
 
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
 
+    async def _safe_send_json(self, ws: web.WebSocketResponse, data: dict) -> bool:
+        """Safely send JSON to a WebSocket, handling connection errors.
+
+        Returns True if send succeeded, False if connection was closed.
+        """
+        try:
+            if ws.closed:
+                return False
+            await ws.send_json(data)
+            return True
+        except (ConnectionResetError, ConnectionAbortedError, RuntimeError):
+            # Connection was closed by client
+            return False
+        except Exception:
+            # Other unexpected errors
+            return False
+
     async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
         """Handle WebSocket connections for streaming and commands."""
         ws = web.WebSocketResponse()
         await ws.prepare(request)
 
-        # Get session ID from query params
-        session_id = request.query.get("session", f"browser:{int(time.time() * 1000)}")
+        # Get session ID from query params with validation
+        raw_session_id = request.query.get("session", "")
+        # Validate session ID: alphanumeric, colon, hyphen, underscore; max 256 chars
+        if raw_session_id and len(raw_session_id) <= 256 and re.match(r'^[\w:\-]+$', raw_session_id):
+            session_id = raw_session_id
+        else:
+            session_id = f"browser:{int(time.time() * 1000)}"
 
         # Track this client
         if session_id not in self.ws_clients:
@@ -353,6 +433,15 @@ class WebUIServer:
                         del self._rag_sources[session_id]
                     if session_id in self._session_no_log:
                         del self._session_no_log[session_id]
+                    # Clean up temp files for this session
+                    if session_id in self._session_temp_files:
+                        for temp_path in self._session_temp_files[session_id]:
+                            try:
+                                if os.path.exists(temp_path):
+                                    os.unlink(temp_path)
+                            except OSError:
+                                pass  # Ignore cleanup errors
+                        del self._session_temp_files[session_id]
 
         return ws
 
@@ -483,7 +572,7 @@ class WebUIServer:
         Uses shared execute_tool_call from llm_tools_core.
         """
         async def emit(event: dict) -> None:
-            await ws.send_json(event)
+            await self._safe_send_json(ws, event)
 
         return await execute_tool_call(tool_call, implementations, emit, arg_overrides)
 
@@ -504,7 +593,7 @@ class WebUIServer:
             self._set_no_log(session_id, True)
 
         if not query:
-            await ws.send_json({"type": "error", "message": "Empty query"})
+            await self._safe_send_json(ws, {"type": "error", "message": "Empty query"})
             return
 
         # Create attachments from image paths
@@ -605,11 +694,14 @@ class WebUIServer:
                 full_query, session, cancel_flag, response_holder, attachments
             ):
                 accumulated_text += chunk
-                await ws.send_json({
+                if not await self._safe_send_json(ws, {
                     "type": "text",
                     "content": accumulated_text,
                     "messageId": message_id,
-                })
+                }):
+                    # Client disconnected, stop streaming
+                    cancel_flag.set()
+                    return
 
             # Get tool calls from response
             response = response_holder[0]
@@ -635,7 +727,7 @@ class WebUIServer:
                     try:
                         loop = asyncio.get_running_loop()
                         await loop.run_in_executor(
-                            None, lambda r=response_holder[0]: r.log_to_db(self._get_logs_db(for_executor=True))
+                            None, lambda r=response_holder[0]: self._log_response_to_db(r)
                         )
                     except Exception:
                         pass  # Continue without logging on error
@@ -654,11 +746,14 @@ class WebUIServer:
                     "", session, cancel_flag, response_holder, tool_results=tool_results
                 ):
                     accumulated_text += chunk
-                    await ws.send_json({
+                    if not await self._safe_send_json(ws, {
                         "type": "text",
                         "content": accumulated_text,
                         "messageId": message_id,
-                    })
+                    }):
+                        # Client disconnected, stop streaming
+                        cancel_flag.set()
+                        return
 
                 # Check for more tool calls
                 response = response_holder[0]
@@ -691,7 +786,7 @@ class WebUIServer:
                                     if thinking_blocks:
                                         thinking = "\n\n".join(thinking_blocks)
                         if thinking:
-                            await ws.send_json({
+                            await self._safe_send_json(ws, {
                                 "type": "thinking",
                                 "content": thinking,
                             })
@@ -703,7 +798,7 @@ class WebUIServer:
                 try:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
-                        None, lambda: response_holder[0].log_to_db(self._get_logs_db(for_executor=True))
+                        None, lambda r=response_holder[0]: self._log_response_to_db(r)
                     )
                 except Exception:
                     pass  # Continue without logging on error
@@ -712,11 +807,11 @@ class WebUIServer:
             conv_id = None
             if session.conversation:
                 conv_id = session.conversation.id
-            await ws.send_json({"type": "done", "conversationId": conv_id})
+            await self._safe_send_json(ws, {"type": "done", "conversationId": conv_id})
 
         except Exception as e:
             cancel_flag.set()
-            await ws.send_json({"type": "error", "message": str(e)})
+            await self._safe_send_json(ws, {"type": "error", "message": str(e)})
 
     async def _handle_edit(
         self,
@@ -729,12 +824,12 @@ class WebUIServer:
         new_content = msg.get("newContent", "")
 
         if not new_content:
-            await ws.send_json({"type": "error", "message": "No content"})
+            await self._safe_send_json(ws, {"type": "error", "message": "No content"})
             return
 
         state = self.daemon.get_session_state(session_id, source="gui")
         if not state.session.conversation:
-            await ws.send_json({"type": "error", "message": "No active conversation"})
+            await self._safe_send_json(ws, {"type": "error", "message": "No active conversation"})
             return
 
         responses = state.session.conversation.responses
@@ -766,7 +861,7 @@ class WebUIServer:
         user_content = msg.get("userContent", "")
 
         if not user_content:
-            await ws.send_json({"type": "error", "message": "No user content"})
+            await self._safe_send_json(ws, {"type": "error", "message": "No user content"})
             return
 
         state = self.daemon.get_session_state(session_id, source="gui")
@@ -832,35 +927,41 @@ class WebUIServer:
             - error: Error message if failed (other keys will be missing)
         """
         db = self._get_logs_db(for_executor=True)
+        try:
+            conv_rows = list(db["conversations"].rows_where(
+                "id = ?", [conversation_id]
+            ))
+            if not conv_rows:
+                return {"error": "Conversation not found"}
 
-        conv_rows = list(db["conversations"].rows_where(
-            "id = ?", [conversation_id]
-        ))
-        if not conv_rows:
-            return {"error": "Conversation not found"}
+            conv_data = conv_rows[0]
 
-        conv_data = conv_rows[0]
+            if require_gui_source and conv_data.get("source") != "gui":
+                return {"error": "Can only operate on GUI conversations"}
 
-        if require_gui_source and conv_data.get("source") != "gui":
-            return {"error": "Can only operate on GUI conversations"}
+            response_rows = list(db["responses"].rows_where(
+                "conversation_id = ?",
+                [conversation_id],
+                order_by="rowid",
+            ))
 
-        response_rows = list(db["responses"].rows_where(
-            "conversation_id = ?",
-            [conversation_id],
-            order_by="rowid",
-        ))
+            # Build full Response objects using the library's from_row() method
+            # This properly handles response_json, tool_calls, attachments, etc.
+            try:
+                responses = [
+                    llm.Response.from_row(db, row)
+                    for row in response_rows
+                ]
+            except Exception as e:
+                return {"error": f"Failed to reconstruct responses: {e}"}
 
-        # Build full Response objects using the library's from_row() method
-        # This properly handles response_json, tool_calls, attachments, etc.
-        responses = [
-            llm.Response.from_row(db, row)
-            for row in response_rows
-        ]
-
-        return {
-            "conversation_data": conv_data,
-            "responses": responses,
-        }
+            return {
+                "conversation_data": conv_data,
+                "responses": responses,
+            }
+        finally:
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     async def _handle_resume_conversation(
         self,
@@ -1031,185 +1132,205 @@ class WebUIServer:
         from llm.utils import monotonic_ulid
 
         db = self._get_logs_db(for_executor=True)
+        conn = db.conn  # Get underlying sqlite3 connection for transaction support
 
-        # Get original conversation
-        conv_rows = list(db["conversations"].rows_where(
-            "id = ?", [conversation_id]
-        ))
-        if not conv_rows:
-            return {"error": "Conversation not found"}
+        try:
+            # Get original conversation
+            conv_rows = list(db["conversations"].rows_where(
+                "id = ?", [conversation_id]
+            ))
+            if not conv_rows:
+                return {"error": "Conversation not found"}
 
-        conv_data = conv_rows[0]
+            conv_data = conv_rows[0]
 
-        # Only allow forking GUI-originated conversations
-        if conv_data.get("source") != "gui":
-            return {"error": "Can only fork GUI conversations"}
+            # Only allow forking GUI-originated conversations
+            if conv_data.get("source") != "gui":
+                return {"error": "Can only fork GUI conversations"}
 
-        # Get responses ordered by rowid (insertion order)
-        all_responses = list(db["responses"].rows_where(
-            "conversation_id = ?",
-            [conversation_id],
-            order_by="rowid",
-        ))
+            # Get responses ordered by rowid (insertion order)
+            all_responses = list(db["responses"].rows_where(
+                "conversation_id = ?",
+                [conversation_id],
+                order_by="rowid",
+            ))
 
-        if fork_at_index >= len(all_responses):
-            return {"error": f"Fork index {fork_at_index} out of range (max {len(all_responses) - 1})"}
+            if fork_at_index >= len(all_responses):
+                return {"error": f"Fork index {fork_at_index} out of range (max {len(all_responses) - 1})"}
 
-        # Slice responses up to fork point
-        responses_to_clone = all_responses[:fork_at_index + 1]
+            # Slice responses up to fork point
+            responses_to_clone = all_responses[:fork_at_index + 1]
 
-        # Cache table names for efficiency (avoid repeated calls)
-        existing_tables = set(db.table_names())
+            # Cache table names for efficiency (avoid repeated calls)
+            existing_tables = set(db.table_names())
 
-        # Generate new conversation ID
-        new_conv_id = str(monotonic_ulid()).lower()
+            # Generate new conversation ID
+            new_conv_id = str(monotonic_ulid()).lower()
 
-        # Insert new conversation
-        db["conversations"].insert({
-            "id": new_conv_id,
-            "name": conv_data.get("name"),
-            "model": conv_data.get("model"),
-            "source": "gui",
-        })
+            # Start transaction for all insertions
+            # Insert new conversation
+            db["conversations"].insert({
+                "id": new_conv_id,
+                "name": conv_data.get("name"),
+                "model": conv_data.get("model"),
+                "source": "gui",
+            })
 
-        # Clone responses and track ID mappings for junction tables
-        response_id_map = {}
-        cloned_responses = []
+            # Clone responses and track ID mappings for junction tables
+            response_id_map = {}
+            cloned_responses = []
 
-        for resp in responses_to_clone:
-            old_resp_id = resp["id"]
-            new_resp_id = str(monotonic_ulid()).lower()
-            response_id_map[old_resp_id] = new_resp_id
+            for resp in responses_to_clone:
+                old_resp_id = resp["id"]
+                new_resp_id = str(monotonic_ulid()).lower()
+                response_id_map[old_resp_id] = new_resp_id
 
-            # Build cloned response data
-            cloned_resp = {
-                "id": new_resp_id,
-                "conversation_id": new_conv_id,
-                "model": resp.get("model"),
-                "prompt": resp.get("prompt"),
-                "system": resp.get("system"),
-                "prompt_json": resp.get("prompt_json"),
-                "options_json": resp.get("options_json"),
-                "response": resp.get("response"),
-                "response_json": resp.get("response_json"),
-                "reply_to_id": resp.get("reply_to_id"),
-                "chat_id": resp.get("chat_id"),
-                "duration_ms": resp.get("duration_ms"),
-                "datetime_utc": resp.get("datetime_utc"),
-                "input_tokens": resp.get("input_tokens"),
-                "output_tokens": resp.get("output_tokens"),
-            }
-            db["responses"].insert(cloned_resp)
-            cloned_responses.append(cloned_resp)
+                # Build cloned response data
+                cloned_resp = {
+                    "id": new_resp_id,
+                    "conversation_id": new_conv_id,
+                    "model": resp.get("model"),
+                    "prompt": resp.get("prompt"),
+                    "system": resp.get("system"),
+                    "prompt_json": resp.get("prompt_json"),
+                    "options_json": resp.get("options_json"),
+                    "response": resp.get("response"),
+                    "response_json": resp.get("response_json"),
+                    "reply_to_id": resp.get("reply_to_id"),
+                    "chat_id": resp.get("chat_id"),
+                    "duration_ms": resp.get("duration_ms"),
+                    "datetime_utc": resp.get("datetime_utc"),
+                    "input_tokens": resp.get("input_tokens"),
+                    "output_tokens": resp.get("output_tokens"),
+                }
+                db["responses"].insert(cloned_resp)
+                cloned_responses.append(cloned_resp)
 
-        # Clone junction tables for each response
-        for old_resp_id, new_resp_id in response_id_map.items():
-            # prompt_attachments (response_id, attachment_id)
-            if "prompt_attachments" in existing_tables:
-                for row in db["prompt_attachments"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    db["prompt_attachments"].insert({
-                        "response_id": new_resp_id,
-                        "attachment_id": row["attachment_id"],
-                    })
-
-            # prompt_fragments (response_id, fragment_id)
-            if "prompt_fragments" in existing_tables:
-                for row in db["prompt_fragments"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    db["prompt_fragments"].insert({
-                        "response_id": new_resp_id,
-                        "fragment_id": row["fragment_id"],
-                    })
-
-            # system_fragments (response_id, fragment_id)
-            if "system_fragments" in existing_tables:
-                for row in db["system_fragments"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    db["system_fragments"].insert({
-                        "response_id": new_resp_id,
-                        "fragment_id": row["fragment_id"],
-                    })
-
-            # tool_responses (response_id, tool_id)
-            if "tool_responses" in existing_tables:
-                for row in db["tool_responses"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    db["tool_responses"].insert({
-                        "response_id": new_resp_id,
-                        "tool_id": row["tool_id"],
-                    })
-
-            # tool_calls (response_id, tool_call_id, name, arguments)
-            tool_call_id_map = {}
-            if "tool_calls" in existing_tables:
-                for row in db["tool_calls"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    old_tc_id = row.get("id")
-                    new_tc_id = str(monotonic_ulid()).lower() if old_tc_id else None
-                    if old_tc_id:
-                        tool_call_id_map[old_tc_id] = new_tc_id
-
-                    db["tool_calls"].insert({
-                        "id": new_tc_id,
-                        "response_id": new_resp_id,
-                        "tool_call_id": row.get("tool_call_id"),
-                        "name": row.get("name"),
-                        "arguments": row.get("arguments"),
-                    })
-
-            # tool_results (response_id, tool_result_id, name, output, tool_call_id)
-            tool_result_id_map = {}
-            if "tool_results" in existing_tables:
-                for row in db["tool_results"].rows_where(
-                    "response_id = ?", [old_resp_id]
-                ):
-                    old_tr_id = row.get("id")
-                    new_tr_id = str(monotonic_ulid()).lower() if old_tr_id else None
-                    if old_tr_id:
-                        tool_result_id_map[old_tr_id] = new_tr_id
-
-                    # Map tool_call_id if it exists and was cloned
-                    old_tool_call_id = row.get("tool_call_id")
-                    new_tool_call_id = tool_call_id_map.get(old_tool_call_id, old_tool_call_id)
-
-                    db["tool_results"].insert({
-                        "id": new_tr_id,
-                        "response_id": new_resp_id,
-                        "tool_result_id": row.get("tool_result_id"),
-                        "name": row.get("name"),
-                        "output": row.get("output"),
-                        "tool_call_id": new_tool_call_id,
-                    })
-
-            # tool_results_attachments (tool_result_id, attachment_id)
-            if "tool_results_attachments" in existing_tables:
-                for old_tr_id, new_tr_id in tool_result_id_map.items():
-                    for row in db["tool_results_attachments"].rows_where(
-                        "tool_result_id = ?", [old_tr_id]
+            # Clone junction tables for each response
+            for old_resp_id, new_resp_id in response_id_map.items():
+                # prompt_attachments (response_id, attachment_id)
+                if "prompt_attachments" in existing_tables:
+                    for row in db["prompt_attachments"].rows_where(
+                        "response_id = ?", [old_resp_id]
                     ):
-                        db["tool_results_attachments"].insert({
-                            "tool_result_id": new_tr_id,
+                        db["prompt_attachments"].insert({
+                            "response_id": new_resp_id,
                             "attachment_id": row["attachment_id"],
                         })
 
-        # Build full Response objects for the cloned responses
-        # This properly handles response_json, tool_calls, attachments, etc.
-        responses = [
-            llm.Response.from_row(db, resp)
-            for resp in cloned_responses
-        ]
+                # prompt_fragments (response_id, fragment_id)
+                if "prompt_fragments" in existing_tables:
+                    for row in db["prompt_fragments"].rows_where(
+                        "response_id = ?", [old_resp_id]
+                    ):
+                        db["prompt_fragments"].insert({
+                            "response_id": new_resp_id,
+                            "fragment_id": row["fragment_id"],
+                        })
 
-        return {
-            "new_conversation_id": new_conv_id,
-            "model": conv_data.get("model"),
-            "responses": responses,
-        }
+                # system_fragments (response_id, fragment_id)
+                if "system_fragments" in existing_tables:
+                    for row in db["system_fragments"].rows_where(
+                        "response_id = ?", [old_resp_id]
+                    ):
+                        db["system_fragments"].insert({
+                            "response_id": new_resp_id,
+                            "fragment_id": row["fragment_id"],
+                        })
+
+                # tool_responses (response_id, tool_id)
+                if "tool_responses" in existing_tables:
+                    for row in db["tool_responses"].rows_where(
+                        "response_id = ?", [old_resp_id]
+                    ):
+                        db["tool_responses"].insert({
+                            "response_id": new_resp_id,
+                            "tool_id": row["tool_id"],
+                        })
+
+                # tool_calls (response_id, tool_call_id, name, arguments)
+                tool_call_id_map = {}
+                if "tool_calls" in existing_tables:
+                    for row in db["tool_calls"].rows_where(
+                        "response_id = ?", [old_resp_id]
+                    ):
+                        old_tc_id = row.get("id")
+                        new_tc_id = str(monotonic_ulid()).lower() if old_tc_id else None
+                        if old_tc_id:
+                            tool_call_id_map[old_tc_id] = new_tc_id
+
+                        db["tool_calls"].insert({
+                            "id": new_tc_id,
+                            "response_id": new_resp_id,
+                            "tool_call_id": row.get("tool_call_id"),
+                            "name": row.get("name"),
+                            "arguments": row.get("arguments"),
+                        })
+
+                # tool_results (response_id, tool_result_id, name, output, tool_call_id)
+                tool_result_id_map = {}
+                if "tool_results" in existing_tables:
+                    for row in db["tool_results"].rows_where(
+                        "response_id = ?", [old_resp_id]
+                    ):
+                        old_tr_id = row.get("id")
+                        new_tr_id = str(monotonic_ulid()).lower() if old_tr_id else None
+                        if old_tr_id:
+                            tool_result_id_map[old_tr_id] = new_tr_id
+
+                        # Map tool_call_id if it exists and was cloned
+                        old_tool_call_id = row.get("tool_call_id")
+                        new_tool_call_id = tool_call_id_map.get(old_tool_call_id, old_tool_call_id)
+
+                        db["tool_results"].insert({
+                            "id": new_tr_id,
+                            "response_id": new_resp_id,
+                            "tool_result_id": row.get("tool_result_id"),
+                            "name": row.get("name"),
+                            "output": row.get("output"),
+                            "tool_call_id": new_tool_call_id,
+                        })
+
+                # tool_results_attachments (tool_result_id, attachment_id)
+                if "tool_results_attachments" in existing_tables:
+                    for old_tr_id, new_tr_id in tool_result_id_map.items():
+                        for row in db["tool_results_attachments"].rows_where(
+                            "tool_result_id = ?", [old_tr_id]
+                        ):
+                            db["tool_results_attachments"].insert({
+                                "tool_result_id": new_tr_id,
+                                "attachment_id": row["attachment_id"],
+                            })
+
+            # Commit the transaction
+            conn.commit()
+
+            # Build full Response objects for the cloned responses
+            # This properly handles response_json, tool_calls, attachments, etc.
+            try:
+                responses = [
+                    llm.Response.from_row(db, resp)
+                    for resp in cloned_responses
+                ]
+            except Exception as e:
+                return {"error": f"Failed to reconstruct cloned responses: {e}"}
+
+            return {
+                "new_conversation_id": new_conv_id,
+                "model": conv_data.get("model"),
+                "responses": responses,
+            }
+        except Exception as e:
+            # Rollback on any error
+            try:
+                conn.rollback()
+            except Exception:
+                pass
+            return {"error": f"Fork failed: {e}"}
+        finally:
+            # Always close the executor connection
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     async def _handle_strip_markdown(
         self,
@@ -1655,8 +1776,10 @@ class WebUIServer:
                 return web.Response(status=400, text="Missing path parameter")
 
             # Security: only allow files from temp directories
-            path = os.path.abspath(path)
-            if not (path.startswith("/tmp/") or path.startswith(os.path.expanduser("~/.cache/"))):
+            # Use realpath to resolve symlinks and prevent traversal attacks
+            path = os.path.realpath(path)
+            cache_dir = os.path.realpath(os.path.expanduser("~/.cache/"))
+            if not (path.startswith("/tmp/") or path.startswith(cache_dir + "/")):
                 return web.Response(status=403, text="Access denied")
 
             if not os.path.isfile(path):
@@ -1740,6 +1863,20 @@ class WebUIServer:
                     status=400
                 )
 
+            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
+            if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
+                return web.json_response(
+                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
+                    status=400
+                )
+
+            # Validate top_k bounds (reasonable range: 1-100)
+            if not isinstance(top_k, int) or top_k < 1 or top_k > 100:
+                return web.json_response(
+                    {"error": "top_k must be an integer between 1 and 100"},
+                    status=400
+                )
+
             handler = RAGHandler()
             if not handler.available():
                 return web.json_response(
@@ -1784,6 +1921,14 @@ class WebUIServer:
                     status=400
                 )
 
+            # Validate collection name if provided (None is allowed to deactivate)
+            if collection is not None:
+                if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
+                    return web.json_response(
+                        {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
+                        status=400
+                    )
+
             # Store active collection for this session (None = deactivate)
             state = self.daemon.get_session_state(session_id, source="gui")
             if hasattr(state.session, "active_rag_collection"):
@@ -1817,8 +1962,8 @@ class WebUIServer:
         """
         try:
             data = await request.json()
-            collection = data.get("collection")
-            path = data.get("path")
+            collection = data.get("collection", "").strip()
+            path = data.get("path", "").strip()
             refresh = data.get("refresh", False)
 
             if not collection or not path:
@@ -1826,6 +1971,50 @@ class WebUIServer:
                     {"error": "Missing collection or path"},
                     status=400
                 )
+
+            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
+            if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
+                return web.json_response(
+                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
+                    status=400
+                )
+
+            # Validate path based on type
+            is_url = path.startswith('http://') or path.startswith('https://')
+            is_git = path.startswith('git:')
+            is_local = not is_url and not is_git
+
+            if is_local:
+                # Security: validate local file paths
+                # Resolve the path and ensure it's in allowed directories
+                expanded = os.path.expanduser(path)
+                # Handle glob patterns: use the directory part for validation
+                if '*' in expanded or '?' in expanded:
+                    # For globs, validate the base directory
+                    import glob as glob_module
+                    base_dir = os.path.dirname(expanded.split('*')[0].split('?')[0])
+                    if base_dir:
+                        real_base = os.path.realpath(base_dir)
+                    else:
+                        real_base = os.path.realpath('.')
+                else:
+                    real_base = os.path.realpath(expanded)
+
+                home_dir = os.path.realpath(os.path.expanduser('~'))
+                # Allow: home directory and subdirs, /tmp, current working directory
+                cwd = os.path.realpath(os.getcwd())
+                allowed = (
+                    real_base.startswith(home_dir + '/') or
+                    real_base == home_dir or
+                    real_base.startswith('/tmp/') or
+                    real_base.startswith(cwd + '/') or
+                    real_base == cwd
+                )
+                if not allowed:
+                    return web.json_response(
+                        {"error": "Path must be within home directory, /tmp, or current working directory"},
+                        status=403
+                    )
 
             handler = RAGHandler()
             if not handler.available():
@@ -1868,6 +2057,13 @@ class WebUIServer:
                     status=400
                 )
 
+            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
+            if not re.match(r'^[\w\-]+$', name) or len(name) > 64:
+                return web.json_response(
+                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
+                    status=400
+                )
+
             handler = RAGHandler()
             if not handler.available():
                 return web.json_response(
@@ -1897,6 +2093,13 @@ class WebUIServer:
             if not name:
                 return web.json_response(
                     {"error": "Collection name is required"},
+                    status=400
+                )
+
+            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
+            if not re.match(r'^[\w\-]+$', name) or len(name) > 64:
+                return web.json_response(
+                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
                     status=400
                 )
 
@@ -1991,22 +2194,38 @@ class WebUIServer:
 
             if not session_id:
                 return web.json_response({'error': 'session parameter required'}, status=400)
+            if not name:
+                return web.json_response({'error': 'name parameter required'}, status=400)
+            if tool_type not in ('mcp', 'optional'):
+                return web.json_response({'error': 'type must be "mcp" or "optional"'}, status=400)
 
             state = self.daemon.get_session_state(session_id, source="gui")
             session = state.session
 
+            # Validate tool/server name before modifying state
             if tool_type == 'mcp':
-                if enabled:
-                    session.active_mcp_servers.add(name)
-                else:
-                    session.active_mcp_servers.discard(name)
+                all_servers = session._get_all_mcp_servers()
+                if name not in all_servers:
+                    return web.json_response({'error': f'Unknown MCP server: {name}'}, status=400)
             elif tool_type == 'optional':
-                if not hasattr(session, 'loaded_optional_tools'):
-                    session.loaded_optional_tools = set()
-                if enabled:
-                    session.loaded_optional_tools.add(name)
-                else:
-                    session.loaded_optional_tools.discard(name)
+                from .config import OPTIONAL_TOOL_PLUGINS
+                if name not in OPTIONAL_TOOL_PLUGINS:
+                    return web.json_response({'error': f'Unknown optional tool: {name}'}, status=400)
+
+            # Use lock to protect concurrent modifications to session state sets
+            async with self._tool_toggle_lock:
+                if tool_type == 'mcp':
+                    if enabled:
+                        session.active_mcp_servers.add(name)
+                    else:
+                        session.active_mcp_servers.discard(name)
+                elif tool_type == 'optional':
+                    if not hasattr(session, 'loaded_optional_tools'):
+                        session.loaded_optional_tools = set()
+                    if enabled:
+                        session.loaded_optional_tools.add(name)
+                    else:
+                        session.loaded_optional_tools.discard(name)
 
             return web.json_response({'success': True, 'name': name, 'enabled': enabled})
         except Exception as e:
@@ -2037,8 +2256,17 @@ class WebUIServer:
             await self.site.stop()
         if self.runner:
             await self.runner.cleanup()
-        # Shutdown the dedicated LLM executor
-        self._llm_executor.shutdown(wait=False)
+        # Shutdown the dedicated LLM executor (wait for pending tasks to complete)
+        self._llm_executor.shutdown(wait=True)
+        # Clean up all temp files from all sessions
+        for session_id, temp_files in self._session_temp_files.items():
+            for temp_path in temp_files:
+                try:
+                    if os.path.exists(temp_path):
+                        os.unlink(temp_path)
+                except OSError:
+                    pass  # Ignore cleanup errors
+        self._session_temp_files.clear()
         # Close the database connection
         if self._logs_db is not None:
             self._logs_db.close()

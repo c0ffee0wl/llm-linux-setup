@@ -214,142 +214,147 @@ class ConversationHistory:
         if db is None:
             return None
 
-        # Get conversation metadata
-        conv_rows = list(db["conversations"].rows_where(
-            "id = ?", [conversation_id]
-        ))
-        if not conv_rows:
-            return None
-        conv_row = conv_rows[0]
+        try:
+            # Get conversation metadata
+            conv_rows = list(db["conversations"].rows_where(
+                "id = ?", [conversation_id]
+            ))
+            if not conv_rows:
+                return None
+            conv_row = conv_rows[0]
 
-        # Get response rows ordered by insertion (using sqlite_utils)
-        response_rows = list(db["responses"].rows_where(
-            "conversation_id = ?",
-            [conversation_id],
-            order_by="rowid",
-        ))
+            # Get response rows ordered by insertion (using sqlite_utils)
+            response_rows = list(db["responses"].rows_where(
+                "conversation_id = ?",
+                [conversation_id],
+                order_by="rowid",
+            ))
 
-        # Lazy-loaded tool calls for fallback mode (only fetched if needed)
-        tool_calls_by_response: Optional[Dict[str, list]] = None
+            # Lazy-loaded tool calls for fallback mode (only fetched if needed)
+            tool_calls_by_response: Optional[Dict[str, list]] = None
 
-        def _get_tool_calls_fallback() -> Dict[str, list]:
-            """Lazy-load tool calls from database for fallback mode."""
-            nonlocal tool_calls_by_response
-            if tool_calls_by_response is not None:
+            def _get_tool_calls_fallback() -> Dict[str, list]:
+                """Lazy-load tool calls from database for fallback mode."""
+                nonlocal tool_calls_by_response
+                if tool_calls_by_response is not None:
+                    return tool_calls_by_response
+
+                tool_calls_by_response = {}
+                try:
+                    for tc_row in db["tool_calls"].rows_where(
+                        "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
+                        [conversation_id],
+                        order_by="response_id, tool_call_id",
+                    ):
+                        resp_id = tc_row["response_id"]
+                        if resp_id not in tool_calls_by_response:
+                            tool_calls_by_response[resp_id] = []
+                        tool_calls_by_response[resp_id].append({
+                            "name": tc_row["name"],
+                            "arguments": tc_row["arguments"],
+                            "tool_call_id": tc_row.get("tool_call_id"),
+                        })
+                except sqlite3.OperationalError:
+                    # tool_calls table might not exist in older databases
+                    pass
                 return tool_calls_by_response
 
-            tool_calls_by_response = {}
-            try:
-                for tc_row in db["tool_calls"].rows_where(
-                    "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
-                    [conversation_id],
-                    order_by="response_id, tool_call_id",
-                ):
-                    resp_id = tc_row["response_id"]
-                    if resp_id not in tool_calls_by_response:
-                        tool_calls_by_response[resp_id] = []
-                    tool_calls_by_response[resp_id].append({
-                        "name": tc_row["name"],
-                        "arguments": tc_row["arguments"],
-                        "tool_call_id": tc_row.get("tool_call_id"),
-                    })
-            except sqlite3.OperationalError:
-                # tool_calls table might not exist in older databases
-                pass
-            return tool_calls_by_response
+            # Lazy-loaded tool results (only fetched if needed)
+            tool_results_by_tool_call_id: Optional[Dict[str, str]] = None
 
-        # Lazy-loaded tool results (only fetched if needed)
-        tool_results_by_tool_call_id: Optional[Dict[str, str]] = None
+            def _get_tool_results_fallback() -> Dict[str, str]:
+                """Lazy-load tool results from database, keyed by tool_call_id."""
+                nonlocal tool_results_by_tool_call_id
+                if tool_results_by_tool_call_id is not None:
+                    return tool_results_by_tool_call_id
 
-        def _get_tool_results_fallback() -> Dict[str, str]:
-            """Lazy-load tool results from database, keyed by tool_call_id."""
-            nonlocal tool_results_by_tool_call_id
-            if tool_results_by_tool_call_id is not None:
+                tool_results_by_tool_call_id = {}
+                try:
+                    for tr_row in db["tool_results"].rows_where(
+                        "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
+                        [conversation_id],
+                    ):
+                        tc_id = tr_row.get("tool_call_id")
+                        if tc_id:
+                            tool_results_by_tool_call_id[tc_id] = tr_row.get("output", "")
+                except sqlite3.OperationalError:
+                    # tool_results table might not exist in older databases
+                    pass
                 return tool_results_by_tool_call_id
 
-            tool_results_by_tool_call_id = {}
-            try:
-                for tr_row in db["tool_results"].rows_where(
-                    "response_id IN (SELECT id FROM responses WHERE conversation_id = ?)",
-                    [conversation_id],
-                ):
-                    tc_id = tr_row.get("tool_call_id")
+            messages = []
+            for row in response_rows:
+                response_id = row["id"]
+
+                # Try using llm.Response.from_row() for proper reconstruction
+                try:
+                    response = llm.Response.from_row(db, row)
+                    prompt_text = response.prompt.prompt
+                    response_text = response.text()
+                    tool_calls = [
+                        {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
+                        for tc in response.tool_calls()
+                    ]
+                    input_tokens = response.input_tokens
+                    output_tokens = response.output_tokens
+                except llm.UnknownModelError:
+                    # Fall back to manual extraction if model isn't installed
+                    prompt_text = row.get("prompt")
+                    response_text = row.get("response")
+                    tool_calls = _get_tool_calls_fallback().get(response_id, [])
+                    input_tokens = row.get("input_tokens")
+                    output_tokens = row.get("output_tokens")
+
+                # Convert to Message format for display
+                # User message (prompt)
+                if prompt_text:
+                    messages.append(Message(
+                        id=f"{response_id}_user",
+                        role="user",
+                        content=prompt_text,
+                        datetime_utc=row.get("datetime_utc") or "",
+                        input_tokens=input_tokens,
+                    ))
+
+                # Assistant message (response + tool calls)
+                content_parts = []
+                if response_text:
+                    content_parts.append(response_text)
+
+                # Format tool calls with results using shared function
+                for tc in tool_calls:
+                    tc_id = tc.get("tool_call_id")
+                    result_output = None
                     if tc_id:
-                        tool_results_by_tool_call_id[tc_id] = tr_row.get("output", "")
-            except sqlite3.OperationalError:
-                # tool_results table might not exist in older databases
-                pass
-            return tool_results_by_tool_call_id
+                        results = _get_tool_results_fallback()
+                        result_output = results.get(tc_id)
 
-        messages = []
-        for row in response_rows:
-            response_id = row["id"]
+                    content_parts.append(format_tool_call_markdown(
+                        name=tc["name"],
+                        arguments=tc.get("arguments"),
+                        result=result_output,
+                    ))
 
-            # Try using llm.Response.from_row() for proper reconstruction
-            try:
-                response = llm.Response.from_row(db, row)
-                prompt_text = response.prompt.prompt
-                response_text = response.text()
-                tool_calls = [
-                    {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
-                    for tc in response.tool_calls()
-                ]
-                input_tokens = response.input_tokens
-                output_tokens = response.output_tokens
-            except llm.UnknownModelError:
-                # Fall back to manual extraction if model isn't installed
-                prompt_text = row.get("prompt")
-                response_text = row.get("response")
-                tool_calls = _get_tool_calls_fallback().get(response_id, [])
-                input_tokens = row.get("input_tokens")
-                output_tokens = row.get("output_tokens")
+                if content_parts:
+                    messages.append(Message(
+                        id=f"{response_id}_assistant",
+                        role="assistant",
+                        content="".join(content_parts),
+                        datetime_utc=row.get("datetime_utc") or "",
+                        output_tokens=output_tokens,
+                    ))
 
-            # Convert to Message format for display
-            # User message (prompt)
-            if prompt_text:
-                messages.append(Message(
-                    id=f"{response_id}_user",
-                    role="user",
-                    content=prompt_text,
-                    datetime_utc=row.get("datetime_utc") or "",
-                    input_tokens=input_tokens,
-                ))
-
-            # Assistant message (response + tool calls)
-            content_parts = []
-            if response_text:
-                content_parts.append(response_text)
-
-            # Format tool calls with results using shared function
-            for tc in tool_calls:
-                tc_id = tc.get("tool_call_id")
-                result_output = None
-                if tc_id:
-                    results = _get_tool_results_fallback()
-                    result_output = results.get(tc_id)
-
-                content_parts.append(format_tool_call_markdown(
-                    name=tc["name"],
-                    arguments=tc.get("arguments"),
-                    result=result_output,
-                ))
-
-            if content_parts:
-                messages.append(Message(
-                    id=f"{response_id}_assistant",
-                    role="assistant",
-                    content="".join(content_parts),
-                    datetime_utc=row.get("datetime_utc") or "",
-                    output_tokens=output_tokens,
-                ))
-
-        return FullConversation(
-            id=conv_row["id"],
-            name=conv_row.get("name"),
-            model=conv_row.get("model") or "unknown",
-            messages=messages,
-            source=conv_row.get("source"),
-        )
+            return FullConversation(
+                id=conv_row["id"],
+                name=conv_row.get("name"),
+                model=conv_row.get("model") or "unknown",
+                messages=messages,
+                source=conv_row.get("source"),
+            )
+        finally:
+            # Close the sqlite_utils Database connection
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     def search(self, query: str, limit: int = 20) -> List[ConversationSummary]:
         """Search conversations using full-text search.

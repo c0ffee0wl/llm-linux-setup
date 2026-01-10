@@ -10,6 +10,7 @@ This module provides the main GTK application and window:
 
 import json
 import os
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -73,11 +74,13 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.debug = debug
         self.with_selection = with_selection
         self.context = {}
-        self.session_id = f"guiassistant:{os.getpid()}"
+        # Include timestamp in session ID to avoid collision on rapid crash/restart
+        self.session_id = f"guiassistant:{os.getpid()}-{int(time.time() * 1000)}"
         self.web_port = get_web_port()
         self._save_state_timeout_id = None
         self._temp_files = []
         self._initializing = True  # Prevent state save during initialization
+        self._load_retry_count = 0  # Initialize before _load_web_ui() to avoid race
 
         # Window setup - store state for later use
         self._saved_state = load_window_state()
@@ -94,7 +97,11 @@ class PopupWindow(Gtk.ApplicationWindow):
         self._gather_context()
 
         # Ensure daemon is running
-        ensure_daemon()
+        try:
+            ensure_daemon()
+        except Exception as e:
+            if self.debug:
+                print(f"[Daemon] Failed to start: {e}")
 
     def _build_ui(self):
         """Build the popup UI with WebKit view."""
@@ -426,7 +433,10 @@ class PopupApplication(Gtk.Application):
                 self.window._saved_state["height"]
             )
             # Ensure daemon is still running (may have died while hidden)
-            ensure_daemon()
+            try:
+                ensure_daemon()
+            except Exception:
+                pass  # Continue showing window even if daemon fails (web UI will show error)
             self.window.show_all()
             self.window.present()
 

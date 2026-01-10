@@ -986,7 +986,7 @@ pre code {
     flex-shrink: 0;
     padding: 8px;
     border-top: 1px solid var(--border-color);
-    background: var(--sidebar-bg);
+    background: var(--panel-bg);
 }
 
 #rag-collections {

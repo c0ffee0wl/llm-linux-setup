@@ -1213,10 +1213,17 @@ class AssistantDaemon:
                 await asyncio.sleep(0.1)
         finally:
             idle_task.cancel()
+            try:
+                await idle_task
+            except asyncio.CancelledError:
+                pass
 
-            # Cancel all workers
+            # Cancel all workers and await them
             for task in self.workers.values():
                 task.cancel()
+            if self.workers:
+                await asyncio.gather(*self.workers.values(), return_exceptions=True)
+            self.workers.clear()
 
             # Stop web UI server
             if self.web_server:

@@ -858,6 +858,11 @@ const toolsControl = {
     },
 
     async refresh() {
+        if (!sessionId) {
+            this.data = { mcp_servers: [], optional_tools: [] };
+            this.render();
+            return;
+        }
         try {
             const response = await fetch(`/api/tools?session=${sessionId}`);
             if (!response.ok) {
@@ -893,13 +898,14 @@ const toolsControl = {
             html += '<div class="tool-section">';
             html += '<div class="tool-section-header">Optional Tools</div>';
             for (const tool of this.data.optional_tools) {
+                const safeName = escapeHtml(tool.name);
                 html += `
                     <label class="tool-item optional">
                         <input type="checkbox"
                                data-type="optional"
-                               data-name="${tool.name}"
+                               data-name="${safeName}"
                                ${tool.enabled ? 'checked' : ''}>
-                        <span class="tool-item-label">${tool.name}</span>
+                        <span class="tool-item-label">${safeName}</span>
                     </label>`;
             }
             html += '</div>';
@@ -915,13 +921,14 @@ const toolsControl = {
                 html += '<div class="tool-section">';
                 html += '<div class="tool-section-header">MCP Servers</div>';
                 for (const server of defaultServers) {
+                    const safeName = escapeHtml(server.name);
                     html += `
                         <label class="tool-item">
                             <input type="checkbox"
                                    data-type="mcp"
-                                   data-name="${server.name}"
+                                   data-name="${safeName}"
                                    ${server.enabled ? 'checked' : ''}>
-                            <span class="tool-item-label">${server.name}</span>
+                            <span class="tool-item-label">${safeName}</span>
                             <span class="tool-item-badge">${server.tool_count} tools</span>
                         </label>`;
                 }
@@ -932,13 +939,14 @@ const toolsControl = {
                 html += '<div class="tool-section">';
                 html += '<div class="tool-section-header">Optional MCP Servers</div>';
                 for (const server of optionalServers) {
+                    const safeName = escapeHtml(server.name);
                     html += `
                         <label class="tool-item optional">
                             <input type="checkbox"
                                    data-type="mcp"
-                                   data-name="${server.name}"
+                                   data-name="${safeName}"
                                    ${server.enabled ? 'checked' : ''}>
-                            <span class="tool-item-label">${server.name}</span>
+                            <span class="tool-item-label">${safeName}</span>
                             <span class="tool-item-badge">${server.tool_count} tools</span>
                         </label>`;
                 }
@@ -1556,11 +1564,16 @@ function updateConnectionUI() {
                 <span class="status-text">Server not running</span>
             </div>
             <div class="status-actions">
-                <button onclick="retryConnection()" class="retry-btn">Retry Connection</button>
-                <button onclick="copyRestartCommand()" class="copy-cmd-btn" title="Copy restart command">Copy Command</button>
+                <button class="retry-btn">Retry Connection</button>
+                <button class="copy-cmd-btn" title="Copy restart command">Copy Command</button>
             </div>
             <div class="status-hint">Run: <code>llm-assistant --daemon</code> to start the server</div>
         `;
+        // Add event listeners (CSP-compliant instead of inline onclick)
+        const retryBtn = statusEl.querySelector('.retry-btn');
+        const copyBtn = statusEl.querySelector('.copy-cmd-btn');
+        if (retryBtn) retryBtn.addEventListener('click', retryConnection);
+        if (copyBtn) copyBtn.addEventListener('click', copyRestartCommand);
     } else {
         statusEl.className = 'connection-status disconnected';
         statusEl.innerHTML = `
@@ -2533,9 +2546,11 @@ function submitEditedMessage(messageId, newContent) {
     if (!msg) return;
 
     msg.content = newContent;
-    const contentDiv = msg.element.querySelector('.message-content');
-    contentDiv.innerHTML = safeMarkdown(newContent);
-    applyCodeBlockEnhancements(contentDiv);
+    const contentDiv = msg.element?.querySelector('.message-content');
+    if (contentDiv) {
+        contentDiv.innerHTML = safeMarkdown(newContent);
+        applyCodeBlockEnhancements(contentDiv);
+    }
 
     messageStore.truncateAfter(messageId);
     updateLastMessageIndicators();
@@ -2678,6 +2693,7 @@ function sendMessage() {
 
 function autoResizeInput() {
     const input = document.getElementById('input');
+    if (!input) return;
     input.style.height = 'auto';
     input.style.height = Math.min(input.scrollHeight, 200) + 'px';
 }
