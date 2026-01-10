@@ -654,16 +654,17 @@ has_other_provider_configured() {
         return 1  # Empty or no default
     fi
 
-    # Check if it's Azure or Gemini (models we configure)
+    # Check if it's Azure or Gemini (models we configure via this script)
+    # Note: vertex/* models are configured separately via llm-vertex plugin
     case "$current_default" in
         azure/*)
             return 1  # Azure model - we handle this
             ;;
-        gemini-*|vertex/*)
+        gemini-*)
             return 1  # Gemini model - we handle this
             ;;
         *)
-            # Another provider (Anthropic, OpenRouter, local, etc.)
+            # Another provider (Anthropic, OpenRouter, Vertex, local, etc.)
             return 0
             ;;
     esac
