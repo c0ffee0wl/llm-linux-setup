@@ -6,6 +6,7 @@ This module provides:
 - MCPMixin for server management commands
 """
 
+import atexit
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from typing import TYPE_CHECKING, Set
@@ -56,6 +57,48 @@ def _load_mcp_background():
 
 # Start loading immediately but don't block module import
 _mcp_future = _mcp_executor.submit(_load_mcp_background)
+
+
+def _cleanup_mcp():
+    """Clean up MCP resources on exit.
+
+    Properly shuts down the ThreadPoolExecutor and closes any MCP toolbox
+    HTTP connections to prevent 'coroutine was never awaited' warnings.
+    """
+    global _mcp_toolbox, _mcp_executor
+
+    # Close MCP toolbox HTTP connections if it has a close method
+    if _mcp_toolbox is not None:
+        try:
+            # MCP toolbox may have an async close method
+            if hasattr(_mcp_toolbox, 'close'):
+                _mcp_toolbox.close()
+            elif hasattr(_mcp_toolbox, 'aclose'):
+                # For async close, we need to run it in an event loop
+                import asyncio
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # Can't await in running loop from atexit
+                        pass
+                    else:
+                        loop.run_until_complete(_mcp_toolbox.aclose())
+                except RuntimeError:
+                    # No event loop available
+                    pass
+        except Exception:
+            pass  # Ignore cleanup errors
+
+    # Shutdown the executor
+    if _mcp_executor is not None:
+        try:
+            _mcp_executor.shutdown(wait=False)
+        except Exception:
+            pass
+
+
+# Register cleanup handler
+atexit.register(_cleanup_mcp)
 
 
 def _rebuild_tool_lists():

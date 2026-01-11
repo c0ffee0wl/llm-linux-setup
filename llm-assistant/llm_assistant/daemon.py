@@ -20,7 +20,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 import daemon
 from daemon import pidfile as daemon_pidfile
@@ -488,13 +488,21 @@ class AssistantDaemon:
 
             # Process tool calls if any
             iteration = 0
+            # Build arg overrides based on session settings (sources toggle)
+            sources_enabled = getattr(session, '_sources_enabled', True)
+            arg_overrides = {
+                "search_google": {"sources": sources_enabled},
+                "microsoft_sources": {"sources": sources_enabled},
+            }
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
                 # Execute each tool call and collect results
                 tool_results = []
                 for tool_call in tool_calls:
-                    result = await self._execute_tool_call(tool_call, implementations, writer)
+                    result = await self._execute_tool_call(
+                        tool_call, implementations, writer, arg_overrides
+                    )
                     tool_results.append(result)
 
                 # Continue conversation with tool results
@@ -673,6 +681,24 @@ class AssistantDaemon:
             await self._emit(writer, {"type": "done"})
             return True
 
+        elif cmd == "/sources":
+            if session:
+                if not args or args.lower() == "status":
+                    status = "enabled" if getattr(session, '_sources_enabled', True) else "disabled"
+                    await self._emit(writer, {"type": "text", "content": f"[bold]Sources:[/] {status}"})
+                elif args.lower() == "on":
+                    session._sources_enabled = True
+                    await self._emit(writer, {"type": "text", "content": "[green]Sources enabled[/]"})
+                elif args.lower() == "off":
+                    session._sources_enabled = False
+                    await self._emit(writer, {"type": "text", "content": "[yellow]Sources disabled[/]"})
+                else:
+                    await self._emit(writer, {"type": "text", "content": "[yellow]Usage: /sources [on|off|status][/]"})
+            else:
+                await self._emit(writer, {"type": "text", "content": "[yellow]No active session[/]"})
+            await self._emit(writer, {"type": "done"})
+            return True
+
         elif cmd == "/copy":
             # /copy is handled by thin client via get_responses command
             # If it reaches here, pass through (shouldn't normally happen)
@@ -708,7 +734,8 @@ class AssistantDaemon:
         self,
         tool_call,
         implementations: Dict[str, callable],
-        writer: asyncio.StreamWriter
+        writer: asyncio.StreamWriter,
+        arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> ToolResult:
         """Execute a single tool call and return the result.
 
@@ -717,7 +744,7 @@ class AssistantDaemon:
         async def emit(event: dict) -> None:
             await self._emit(writer, event)
 
-        return await execute_tool_call(tool_call, implementations, emit)
+        return await execute_tool_call(tool_call, implementations, emit, arg_overrides)
 
     async def handle_complete(self, request: dict, writer: asyncio.StreamWriter):
         """Handle completion request for slash commands and fragments."""

@@ -38,6 +38,16 @@ import dbus
 import fcntl
 import signal
 import atexit
+import warnings
+
+# Suppress httpx/httpcore async cleanup warnings during interpreter shutdown
+# These occur when HTTP connections are garbage collected without being properly closed
+warnings.filterwarnings(
+    "ignore",
+    message="coroutine.*was never awaited",
+    category=RuntimeWarning,
+    module="asyncio.*"
+)
 import webbrowser
 from pathlib import Path
 from datetime import date
@@ -87,6 +97,7 @@ from .web import WebMixin
 from .terminal import TerminalMixin
 from .context import ContextMixin
 from llm_tools_core import filter_new_blocks
+from llm_tools_core.mcp_citations import is_microsoft_doc_tool, format_microsoft_citations
 from .watch import WatchMixin
 from .workflow import WorkflowMixin
 from .mcp import (
@@ -192,6 +203,9 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Operating mode must be set BEFORE rendering system prompt
         # (Jinja2 template uses mode to conditionally include agent/assistant content)
         self.mode: str = "agent" if agent_mode else "assistant"
+
+        # Source citations (default: enabled)
+        self._sources_enabled = True
 
         # Watch mode state (must be initialized before _render_system_prompt)
         self.watch_mode = False
@@ -3060,6 +3074,21 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.error(self.console, "Usage: /mcp, /mcp load <server>, /mcp unload <server>")
             return True
 
+        elif cmd == "/sources":
+            parts = command.split()
+            if len(parts) == 1 or parts[1] == "status":
+                status = "enabled" if self._sources_enabled else "disabled"
+                self.console.print(f"[bold]Sources:[/] {status}")
+            elif parts[1] == "on":
+                self._sources_enabled = True
+                ConsoleHelper.success(self.console, "Sources enabled")
+            elif parts[1] == "off":
+                self._sources_enabled = False
+                ConsoleHelper.warning(self.console, "Sources disabled")
+            else:
+                ConsoleHelper.error(self.console, "Usage: /sources [on|off|status]")
+            return True
+
         elif cmd == "/report":
             return self._handle_report_command(args)
 
@@ -3622,6 +3651,10 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 status_msg = f"Calling {tool_name}..."
 
             try:
+                # Apply sources override for search_google
+                if tool_name == 'search_google':
+                    tool_args = {**tool_args, 'sources': self._sources_enabled}
+
                 with Spinner(status_msg, console=self.console):
                     result = impl(**tool_args)
                 self.console.print(f"[dim cyan]{status_msg}[/]")  # dim + cyan combined style
@@ -3639,6 +3672,10 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     result = ""
                 elif not isinstance(result, str):
                     result = json.dumps(result, default=repr)
+
+                # Post-process Microsoft MCP tools for citations
+                if is_microsoft_doc_tool(tool_name):
+                    result = format_microsoft_citations(tool_name, result, self._sources_enabled)
 
                 return ToolResult(
                     name=tool_call.name,

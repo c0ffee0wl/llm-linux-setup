@@ -168,6 +168,14 @@ from .tool_execution import (
     ToolEvent,
 )
 
+# MCP citation post-processing
+from .mcp_citations import (
+    MICROSOFT_DOC_TOOLS,
+    MCP_CITATION_RULES,
+    is_microsoft_doc_tool,
+    format_microsoft_citations,
+)
+
 __all__ = [
     # Prompt detection
     "PromptDetector",
@@ -284,6 +292,11 @@ __all__ = [
     # Tool execution
     "execute_tool_call",
     "ToolEvent",
+    # MCP citation post-processing
+    "MICROSOFT_DOC_TOOLS",
+    "MCP_CITATION_RULES",
+    "is_microsoft_doc_tool",
+    "format_microsoft_citations",
 ]
 
 __version__ = "1.3.0"

@@ -717,8 +717,12 @@ class WebUIServer:
             # Tool execution loop
             iteration = 0
             # Build arg overrides based on session settings (always explicit for search_google)
+            # Also applies to Microsoft MCP tools for citation post-processing
             sources = self._rag_sources.get(session_id, True)
-            arg_overrides = {"search_google": {"sources": sources}}
+            arg_overrides = {
+                "search_google": {"sources": sources},
+                "microsoft_sources": {"sources": sources},
+            }
 
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1

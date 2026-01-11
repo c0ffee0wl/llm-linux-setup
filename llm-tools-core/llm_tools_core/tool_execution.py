@@ -10,6 +10,8 @@ from typing import Any, Callable, Dict, Optional, Protocol
 
 from llm import ToolResult
 
+from .mcp_citations import is_microsoft_doc_tool, format_microsoft_citations
+
 
 @dataclass
 class ToolEvent:
@@ -91,6 +93,13 @@ async def execute_tool_call(
             output = result
         else:
             output = str(result)
+
+        # Post-process Microsoft MCP tools for citations
+        if is_microsoft_doc_tool(tool_name):
+            sources_enabled = True
+            if arg_overrides and 'microsoft_sources' in arg_overrides:
+                sources_enabled = arg_overrides['microsoft_sources'].get('sources', True)
+            output = format_microsoft_citations(tool_name, output, sources_enabled)
 
         await emit({
             "type": "tool_done",

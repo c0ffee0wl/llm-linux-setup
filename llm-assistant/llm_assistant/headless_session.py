@@ -263,6 +263,9 @@ class HeadlessSession(
         # Mode (only assistant supported in headless)
         self.mode = 'assistant'
 
+        # Source citations (default: enabled)
+        self._sources_enabled = True
+
         # Template variables
         self.headless = True
         self.exec = False

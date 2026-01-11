@@ -40,6 +40,7 @@ SLASH_COMMANDS = {
     "/report": {"subcommands": ["list", "edit", "delete", "export", "severity", "init", "projects", "open"], "dynamic": "findings", "description": "Pentest finding management"},
     "/mcp": {"subcommands": ["load", "unload", "status"], "dynamic": "mcp_servers", "description": "Load/unload MCP servers"},
     "/skill": {"subcommands": ["load", "unload", "reload", "list"], "dynamic": "skills", "description": "Skill management"},
+    "/sources": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "Toggle source citations"},
 }
 
 
@@ -63,6 +64,7 @@ HEADLESS_AVAILABLE_COMMANDS = {
     '/mcp',         # MCP servers
     '/report',      # Pentest findings
     '/copy',        # Copy responses to clipboard
+    '/sources',     # Source citation control
 }
 
 
