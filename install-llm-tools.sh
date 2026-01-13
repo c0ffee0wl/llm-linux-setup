@@ -40,6 +40,7 @@ FORCE_GEMINI_CONFIG=false
 CLEAR_CACHE=false
 MINIMAL_FLAG=false
 FULL_FLAG=false
+WSL_FLAG=""  # "", "force", or "disable"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -63,6 +64,14 @@ while [[ $# -gt 0 ]]; do
             FULL_FLAG=true
             shift
             ;;
+        --wsl)
+            WSL_FLAG="force"
+            shift
+            ;;
+        --no-wsl)
+            WSL_FLAG="disable"
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -71,6 +80,8 @@ while [[ $# -gt 0 ]]; do
             echo "Options:"
             echo "  --minimal      Install only LLM core tools (persists for future runs)"
             echo "  --full         Install all tools (overrides saved --minimal preference)"
+            echo "  --wsl          Force WSL mode (skip session recording, prompt for CCR)"
+            echo "  --no-wsl       Disable WSL auto-detection (run full install even in WSL)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
@@ -126,6 +137,25 @@ elif [ "$FULL_FLAG" = "true" ]; then
 elif [ -f "$INSTALL_MODE_FILE" ]; then
     INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
     log "Using saved installation mode: $INSTALL_MODE (use --full to override)"
+fi
+
+#############################################################################
+# WSL Mode Detection
+#############################################################################
+
+# WSL mode detection with override
+# Note: IS_WSL is independent of INSTALL_MODE - allows WSL+full or WSL+minimal
+IS_WSL=false
+
+if [ "$WSL_FLAG" = "force" ]; then
+    IS_WSL=true
+    log "WSL mode forced via --wsl flag"
+elif [ "$WSL_FLAG" = "disable" ]; then
+    IS_WSL=false
+    log "WSL mode disabled via --no-wsl flag"
+elif is_wsl; then
+    IS_WSL=true
+    log "WSL environment auto-detected (session recording will be skipped)"
 fi
 
 #############################################################################
@@ -566,6 +596,128 @@ EOF
         "Claude Code Router config.json" "N" "true"
 }
 
+# Configure Claude Code Router for WSL environment
+# Sets up: CCR installation, systemd service, profile environment
+configure_wsl_ccr() {
+    local CCR_PORT=3456
+
+    # 1. Install/update Claude Code Router (uses existing helper)
+    install_or_upgrade_npm_global @musistudio/claude-code-router
+
+    # 2. Generate CCR config (reuse existing function)
+    update_ccr_config
+
+    # 3. Configure ~/.profile environment variables
+    configure_wsl_profile "$CCR_PORT"
+
+    # 4. Set up systemd user service
+    configure_wsl_systemd_service "$CCR_PORT"
+
+    log "Claude Code Router configured for WSL"
+    log "Service will start automatically on WSL boot"
+    log ""
+    log "To manually control: systemctl --user {start|stop|status} claude-code-router"
+}
+
+# Add CCR environment variables to ~/.profile
+configure_wsl_profile() {
+    local port="$1"
+    local profile_file="$HOME/.profile"
+    local marker_start="# === Claude Code Router (managed by llm-tools) ==="
+    local marker_end="# === End Claude Code Router ==="
+
+    # Remove existing block if present
+    if grep -q "$marker_start" "$profile_file" 2>/dev/null; then
+        sed -i "/$marker_start/,/$marker_end/d" "$profile_file"
+    fi
+
+    # Append new configuration block
+    cat >> "$profile_file" << EOF
+
+$marker_start
+# Routes Claude Code API calls through local CCR proxy
+# To disable: unset ANTHROPIC_BASE_URL
+export ANTHROPIC_BASE_URL="http://127.0.0.1:${port}"
+export DISABLE_TELEMETRY="true"
+export NO_PROXY="127.0.0.1"
+$marker_end
+EOF
+
+    log "Added CCR environment to ~/.profile"
+    log "  ANTHROPIC_BASE_URL=http://127.0.0.1:${port}"
+    log "  DISABLE_TELEMETRY=true"
+}
+
+# Create and enable systemd user service for CCR (idempotent)
+configure_wsl_systemd_service() {
+    local port="$1"
+    local service_dir="$HOME/.config/systemd/user"
+    local service_file="$service_dir/claude-code-router.service"
+    # CCR is installed via npm global, so fallback to NPM_PREFIX if 'which' fails
+    local ccr_path=$(which ccr 2>/dev/null || echo "${NPM_PREFIX:-/usr/local}/bin/ccr")
+
+    mkdir -p "$service_dir"
+
+    # Generate expected service content
+    local expected_content="[Unit]
+Description=Claude Code Router - Multi-provider proxy for Claude Code
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=${ccr_path} start
+Restart=on-failure
+RestartSec=5
+Environment=PORT=${port}
+
+[Install]
+WantedBy=default.target"
+
+    # Check if service file needs updating
+    local needs_update=false
+    if [ ! -f "$service_file" ]; then
+        needs_update=true
+    elif [ "$(cat "$service_file")" != "$expected_content" ]; then
+        needs_update=true
+    fi
+
+    if [ "$needs_update" = true ]; then
+        echo "$expected_content" > "$service_file"
+        systemctl --user daemon-reload
+        log "Systemd service file updated"
+    fi
+
+    # Enable service if not already enabled
+    if ! systemctl --user is-enabled claude-code-router &>/dev/null; then
+        systemctl --user enable claude-code-router
+        log "Systemd service enabled"
+    fi
+
+    # Start or restart service
+    if systemctl --user is-active claude-code-router &>/dev/null; then
+        if [ "$needs_update" = true ]; then
+            systemctl --user restart claude-code-router
+            log "Claude Code Router service restarted"
+        else
+            log "Claude Code Router service already running"
+        fi
+    else
+        if systemctl --user start claude-code-router; then
+            log "Claude Code Router service started"
+        else
+            warn "Failed to start CCR service. Start manually: systemctl --user start claude-code-router"
+        fi
+    fi
+
+    # Enable lingering so service starts without login (idempotent)
+    if command -v loginctl > /dev/null 2>&1; then
+        if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+            sudo loginctl enable-linger "$USER" 2>/dev/null || \
+                warn "Could not enable lingering. CCR may not auto-start on WSL boot."
+        fi
+    fi
+}
+
 # Set or migrate default model (handles automatic migration from old defaults)
 set_or_migrate_default_model() {
     local new_default="$1"
@@ -926,14 +1078,18 @@ fi
 # Install/update uv
 install_or_upgrade_uv
 
-# The following are only needed in full mode (for Claude Code, llm-assistant, etc.)
-if [ "$INSTALL_MODE" = "full" ]; then
+# Session recording tools - only in full mode and NOT in WSL
+# (Rust is only needed for asciinema, skip both in WSL)
+if [ "$INSTALL_MODE" = "full" ] && [ "$IS_WSL" != true ]; then
     # Install/update Rust (with intelligent version detection and rustup fallback)
     install_or_upgrade_rust
 
     # Install/update asciinema (with commit-hash checking to avoid unnecessary rebuilds)
     install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
+fi
 
+# Node.js - needed in full mode for Claude Code, and in WSL mode for CCR
+if [ "$INSTALL_MODE" = "full" ]; then
     # Install/update Node.js (with intelligent version detection and nvm fallback)
     install_or_upgrade_nodejs
 
@@ -1473,8 +1629,9 @@ prompt_for_session_log_silent() {
     fi
 }
 
-# Shell integration and assistant tools are only in full mode
-if [ "$INSTALL_MODE" = "full" ]; then
+# Shell integration and assistant tools are only in full mode and NOT in WSL
+# (WSL mode skips session recording/logging and desktop assistant tools)
+if [ "$INSTALL_MODE" = "full" ] && [ "$IS_WSL" != true ]; then
     # Update shell RC files
     update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
     update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
@@ -1978,10 +2135,10 @@ fi  # End of INSTALL_MODE = "full" block for Phase 6
 # PHASE 7: Agentic CLI (coding) tools
 #############################################################################
 
-# Phase 7 tools are only installed in full mode
+# Full mode: Install agentic CLI tools
 if [ "$INSTALL_MODE" = "full" ]; then
 
-# Install/update Claude Code using native installation
+# Install/update Claude Code using native installation (both WSL and non-WSL)
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
 NPM_CLAUDE="$NPM_PREFIX/bin/claude"
 
@@ -2024,6 +2181,44 @@ else
         warn "Native Claude installation failed, keeping npm version"
     fi
 fi
+
+# WSL mode: Prompt for CCR with systemd service, skip claudo/Codex
+if [ "$IS_WSL" = true ]; then
+    log ""
+    log "========================================"
+    log "WSL INTEGRATION"
+    log "========================================"
+
+    # Check if CCR is already installed
+    ccr_installed=false
+    if npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null; then
+        ccr_installed=true
+    fi
+
+    echo ""
+    log "WSL environment detected."
+    log "Claude Code Router enables Obsidian and other external clients"
+    log "to use your configured LLM providers (Azure/Gemini)."
+    echo ""
+
+    if [ "$ccr_installed" = true ]; then
+        # Already installed - offer to update/reconfigure
+        if ask_yes_no "Claude Code Router is installed. Update and reconfigure for WSL?" "Y"; then
+            configure_wsl_ccr
+        else
+            log "Keeping existing Claude Code Router configuration"
+        fi
+    else
+        # Fresh install
+        if ask_yes_no "Install Claude Code Router for external client integration?" "N"; then
+            configure_wsl_ccr
+        else
+            log "Skipping Claude Code Router installation"
+        fi
+    fi
+
+# Non-WSL mode: Install claudo, CCR (auto), Codex CLI
+else
 
 # Install/update claudo (Claude in Podman) if Podman is installed
 if command -v podman &> /dev/null; then
@@ -2077,10 +2272,12 @@ else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
 
-# Clean up package caches to reclaim disk space
-clear_package_caches
+fi  # End of WSL/non-WSL block
 
 fi  # End of INSTALL_MODE = "full" block for Phase 7
+
+# Clean up package caches to reclaim disk space (runs regardless of install mode)
+clear_package_caches
 
 #############################################################################
 # Update existing CLI tools (regardless of install mode)
@@ -2154,7 +2351,54 @@ log "Installation/Update Complete!"
 log "============================================="
 log ""
 
-if [ "$INSTALL_MODE" = "full" ]; then
+if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
+    log "Installed tools (WSL mode):"
+    log ""
+    log "  AI Assistants:"
+    log "    - llm              Simon Willison's LLM CLI tool"
+    log "    - Claude Code      Anthropic's agentic coding CLI"
+    log ""
+    log "  LLM Plugins:"
+    log "    - Providers: gemini, vertex, openrouter, anthropic"
+    log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
+    log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
+    log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log ""
+    log "  CLI Utilities:"
+    log "    - gitingest        Git repository to LLM-friendly text"
+    log "    - llm-observability  Log viewer for llm conversations"
+    log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
+    log "    - toko             LLM token counter with cost estimation"
+    log ""
+    if npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null 2>&1; then
+        log "  WSL Integration:"
+        log "    - Claude Code Router  Multi-provider proxy (systemd service enabled)"
+        log ""
+        log "  CCR Environment (in ~/.profile):"
+        log "    - ANTHROPIC_BASE_URL=http://127.0.0.1:3456"
+        log ""
+        log "  Next steps:"
+        log "    1. Restart WSL or source ~/.profile"
+        log "    2. Test Claude Code: claude"
+        log "    3. Verify CCR is running: systemctl --user status claude-code-router"
+        log "    4. Configure external clients to use WSL's CCR endpoint"
+    else
+        log "  WSL Integration:"
+        log "    - Claude Code Router was not installed"
+        log "    - Re-run with --wsl to configure CCR for external clients"
+        log ""
+        log "  Next steps:"
+        log "    1. Test Claude Code: claude"
+    fi
+    log ""
+    log "  Skipped in WSL mode:"
+    log "    - Session recording (asciinema)"
+    log "    - Shell integration (llm-integration.bash/zsh)"
+    log "    - Desktop tools (Handy, espanso, Ulauncher)"
+    log "    - claudo, Codex CLI"
+    log ""
+elif [ "$INSTALL_MODE" = "full" ]; then
     log "Installed tools (full mode):"
     log ""
     log "  AI Assistants:"

@@ -267,6 +267,24 @@ is_ubuntu() {
     fi
 }
 
+# Check if running in Windows Subsystem for Linux
+# Returns: 0 if WSL, 1 otherwise
+is_wsl() {
+    # Check /proc/version for Microsoft/WSL indicators
+    if grep -qi 'microsoft\|wsl' /proc/version 2>/dev/null; then
+        return 0
+    fi
+    # Check for WSL environment variable
+    if [ -n "$WSL_DISTRO_NAME" ]; then
+        return 0
+    fi
+    # Check for WSL interop file
+    if [ -f /proc/sys/fs/binfmt_misc/WSLInterop ]; then
+        return 0
+    fi
+    return 1
+}
+
 # Check if a desktop environment is available
 # Detects xsessions, wayland-sessions, display managers, or common DE packages
 has_desktop_environment() {
