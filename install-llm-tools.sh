@@ -492,7 +492,6 @@ EOF
       "api_base_url": "${azure_api_base}/chat/completions",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
-        "gpt-5",
         "gpt-5-mini",
         "gpt-5-nano",
         "gpt-5.1"
@@ -1430,14 +1429,6 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
 
 - model_id: azure/gpt-4.1-nano
   model_name: gpt-4.1-nano
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-5
-  model_name: gpt-5
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
   supports_tools: true

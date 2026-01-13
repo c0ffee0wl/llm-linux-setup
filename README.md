@@ -2039,7 +2039,7 @@ The following Azure models are configured (examples):
 - `azure/gpt-4.1-mini` - GPT-4.1 Mini (balanced, **default**)
 - `azure/gpt-4.1-nano` - GPT-4.1 Nano (fast, cost-effective)
 - `azure/o4-mini` - O4 Mini (advanced reasoning)
-- `azure/gpt-5`, `azure/gpt-5-mini`, `azure/gpt-5-nano` - GPT-5 models
+- `azure/gpt-5-mini`, `azure/gpt-5-nano`, `azure/gpt-5.1` - GPT-5 models
 
 **Default Model Recommendation:**
 
