@@ -2227,30 +2227,6 @@ else
     fi
 fi
 
-# Install Claude Code skills from repository
-# Skills are copied on every run to ensure latest versions are always available
-if command -v claude &>/dev/null; then
-    SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
-    SKILLS_DEST_DIR="$HOME/.claude/skills"
-
-    if [ -d "$SKILLS_SOURCE_DIR" ] && [ -n "$(ls -A "$SKILLS_SOURCE_DIR" 2>/dev/null)" ]; then
-        log "Installing Claude Code skills..."
-        mkdir -p "$SKILLS_DEST_DIR"
-
-        # Copy each skill directory to destination
-        for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
-            if [ -d "$skill_dir" ]; then
-                skill_name=$(basename "$skill_dir")
-                log "  Installing skill: $skill_name"
-                # Use cp -r to copy entire skill directory, -f to overwrite
-                cp -rf "$skill_dir" "$SKILLS_DEST_DIR/"
-            fi
-        done
-
-        log "Claude Code skills installed to $SKILLS_DEST_DIR"
-    fi
-fi
-
 # Install/update claudo (Claude in Podman) if Podman is installed
 if command -v podman &> /dev/null; then
     log "Installing/updating claudo (Claude Code in Podman)..."
@@ -2320,6 +2296,37 @@ if [ "$INSTALL_MODE" != "full" ] && [ -x "$NATIVE_CLAUDE" ]; then
     "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
 fi
 
+# Install Claude Code skills from repository (regardless of install mode)
+# Skills are copied on every run to ensure latest versions are always available
+if command -v claude &>/dev/null; then
+    SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
+    SKILLS_DEST_DIR="$HOME/.claude/skills"
+
+    if [ -d "$SKILLS_SOURCE_DIR" ] && [ -n "$(ls -A "$SKILLS_SOURCE_DIR" 2>/dev/null)" ]; then
+        log "Installing Claude Code skills..."
+        mkdir -p "$SKILLS_DEST_DIR"
+
+        # Copy each skill directory to destination
+        for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
+            if [ -d "$skill_dir" ]; then
+                skill_name=$(basename "$skill_dir")
+                log "  Installing skill: $skill_name"
+                # Use cp -r to copy entire skill directory, -f to overwrite
+                cp -rf "$skill_dir" "$SKILLS_DEST_DIR/"
+            fi
+        done
+
+        log "Claude Code skills installed to $SKILLS_DEST_DIR"
+    fi
+fi
+
+# Update claudo if already installed (no automatic installation in minimal mode)
+CLAUDO_BIN="$HOME/.local/bin/claudo"
+if [ "$INSTALL_MODE" != "full" ] && [ -x "$CLAUDO_BIN" ]; then
+    log "Updating claudo..."
+    curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$CLAUDO_BIN" || warn "claudo update failed, continuing..."
+fi
+
 # Update npm-based tools if npm is available (skip silently if npm not installed)
 if command -v npm &>/dev/null; then
     # Update Gemini CLI if already installed (no automatic installation)
@@ -2327,6 +2334,16 @@ if command -v npm &>/dev/null; then
 
     # Update OpenCode if already installed (no automatic installation)
     upgrade_npm_global_if_installed opencode-ai
+
+    # Update Claude Code Router if already installed (no automatic installation in minimal mode)
+    if [ "$INSTALL_MODE" != "full" ]; then
+        upgrade_npm_global_if_installed @musistudio/claude-code-router
+    fi
+
+    # Update Codex CLI if already installed (no automatic installation in minimal mode)
+    if [ "$INSTALL_MODE" != "full" ]; then
+        upgrade_npm_global_if_installed @openai/codex
+    fi
 fi
 
 #############################################################################
