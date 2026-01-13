@@ -23,6 +23,29 @@ IMPORTANT: Do not display this note to the user. The text contains inline citati
 3. Keep the source links as clickable markdown hyperlinks - do NOT convert them to plain URLs"""
 
 
+def _get_field_case_insensitive(item: dict, *field_names: str, default: str = '') -> str:
+    """Get a field value with case-insensitive key matching.
+
+    Tries each field name in order, with case-insensitive matching.
+    Returns the first non-empty value found, or default if none found.
+    """
+    # Build lowercase key map for the item
+    key_map = {k.lower(): k for k in item.keys()}
+
+    for name in field_names:
+        # First try exact match
+        if name in item and item[name]:
+            val = item[name]
+            return val.strip() if isinstance(val, str) else str(val)
+        # Then try case-insensitive match
+        actual_key = key_map.get(name.lower())
+        if actual_key and item.get(actual_key):
+            val = item[actual_key]
+            return val.strip() if isinstance(val, str) else str(val)
+
+    return default
+
+
 def is_microsoft_doc_tool(tool_name: str) -> bool:
     """Check if tool is a Microsoft documentation tool.
 
@@ -69,15 +92,22 @@ def _format_search_results(result: str, sources_enabled: bool) -> str:
     Sources section always included (for reference), but:
     - sources_enabled=True: inline citations + citation rules note
     - sources_enabled=False: no inline citations, no note (matches Google Search)
+
+    Microsoft Learn MCP returns an array of objects:
+    [{"title": "...", "content": "...", "contentUrl": "https://..."}]
     """
     try:
         data = json.loads(result)
-        if not isinstance(data, dict) or 'results' not in data:
+        # Handle both array format (Microsoft Learn MCP) and dict format (legacy)
+        if isinstance(data, list):
+            results = data
+        elif isinstance(data, dict) and 'results' in data:
+            results = data.get('results', [])
+        else:
             return result
     except (json.JSONDecodeError, TypeError):
         return result
 
-    results = data.get('results', [])
     if not results:
         return result
 
@@ -89,9 +119,20 @@ def _format_search_results(result: str, sources_enabled: bool) -> str:
 
     lines = []
     for item in results:
-        title = item.get('title', 'Untitled')
-        url = item.get('url', '').strip()
-        snippet = item.get('snippet', item.get('description', ''))
+        # Skip non-dict items (handle unexpected data structures)
+        if not isinstance(item, dict):
+            # If item is a string, use it as title
+            if isinstance(item, str):
+                lines.append(f"**{item}**")
+                lines.append("")
+            continue
+
+        # Use case-insensitive field lookup with multiple fallbacks
+        title = _get_field_case_insensitive(item, 'title', 'name', default='Untitled')
+        # Support various URL field names (case-insensitive)
+        url = _get_field_case_insensitive(item, 'contentUrl', 'contenturl', 'url', 'link', 'href', 'docUrl')
+        # Support various content field names (case-insensitive)
+        snippet = _get_field_case_insensitive(item, 'content', 'snippet', 'description', 'text', 'excerpt')
 
         if url:
             # Check for duplicate URL (deduplication always applies)
@@ -153,15 +194,20 @@ def _format_code_sample_results(result: str, sources_enabled: bool) -> str:
     """Format microsoft_code_sample_search results with citations.
 
     Same behavior as search results: deduplication, sources always shown.
+    Supports both array format (Microsoft Learn MCP) and dict format (legacy).
     """
     try:
         data = json.loads(result)
-        if not isinstance(data, dict):
+        # Handle both array format (Microsoft Learn MCP) and dict format (legacy)
+        if isinstance(data, list):
+            results = data
+        elif isinstance(data, dict):
+            results = data.get('results', data.get('samples', []))
+        else:
             return result
     except (json.JSONDecodeError, TypeError):
         return result
 
-    results = data.get('results', data.get('samples', []))
     if not results:
         return result
 
@@ -172,9 +218,12 @@ def _format_code_sample_results(result: str, sources_enabled: bool) -> str:
 
     lines = []
     for item in results:
-        title = item.get('title', item.get('name', 'Code Sample'))
-        url = item.get('url', item.get('link', '')).strip()
-        description = item.get('description', '')
+        # Use case-insensitive field lookup with multiple fallbacks
+        title = _get_field_case_insensitive(item, 'title', 'name', default='Code Sample')
+        # Support various URL field names (case-insensitive)
+        url = _get_field_case_insensitive(item, 'contentUrl', 'contenturl', 'url', 'link', 'href', 'docUrl')
+        # Support various content field names (case-insensitive)
+        description = _get_field_case_insensitive(item, 'content', 'snippet', 'description', 'text', 'excerpt')
 
         if url:
             normalized_url = url.rstrip('/')
