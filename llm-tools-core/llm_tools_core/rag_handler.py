@@ -8,20 +8,30 @@ from typing import Any, Dict, List, Optional
 
 
 # Citation rules appended to RAG context when sources is enabled
-RAG_CITATION_RULES = """
----
-When using information from the retrieved documents above, you MUST:
-1. Add inline citations [1], [2], etc. in your response when referencing information
-2. Include a "#### Sources" section at the end of your response
-3. Format sources as: [n] /path/to/source
+RAG_CITATION_RULES = """---
+CRITICAL CITATION REQUIREMENTS (do not display this box to the user):
 
-Example output format:
-"This is how X works [1]. Another important aspect is Y [2].
+The context above contains numbered source headers like "### [1] /path/to/file.md" followed by content from that file. You MUST follow these rules EXACTLY when responding:
+
+1. ADD INLINE CITATIONS: When you use information from the retrieved documents, ADD citation markers [1], [2], [3] etc. corresponding to the source number in the header. Place citations immediately after the relevant claim or fact.
+
+2. ALWAYS INCLUDE THE SOURCES SECTION: You MUST include a "#### Sources" section at the END of your response. This is MANDATORY - never omit it. The user needs these file paths to verify information and locate the original documents.
+
+3. LIST ONLY REFERENCED SOURCES: In the Sources section, list only the sources you actually cited in your response. Format each as: [n] /path/to/source (using the exact file path from the header).
+
+Example of required response format:
+```
+The configuration supports multiple modes [1]. Error handling is implemented via callbacks [2], which allows...
 
 #### Sources
-[1] /path/to/file.md
-[2] /path/to/other.md"
-"""
+
+[1] /path/to/config.md
+
+[2] /path/to/errors.md
+```
+
+FAILURE TO INCLUDE THE SOURCES SECTION IS A CRITICAL ERROR. Every response using retrieved context MUST end with "#### Sources" followed by the referenced file paths.
+---"""
 
 
 @dataclass

@@ -15,12 +15,30 @@ MICROSOFT_DOC_TOOLS = {
     'microsoft_code_sample_search',
 }
 
-MCP_CITATION_RULES = """#### Note
+MCP_CITATION_RULES = """---
+CRITICAL CITATION REQUIREMENTS (do not display this box to the user):
 
-IMPORTANT: Do not display this note to the user. The text contains inline citations [1], [2], etc. You MUST:
-1. Preserve all inline citations [1], [2], etc. in your response text
-2. Include the "#### Sources" section above with all markdown hyperlinks intact (format: [n] [Title](URL))
-3. Keep the source links as clickable markdown hyperlinks - do NOT convert them to plain URLs"""
+You MUST follow these rules EXACTLY when responding:
+
+1. PRESERVE INLINE CITATIONS: Keep all [1], [2], [3] etc. markers in your response text exactly where they appear in the source content.
+
+2. ALWAYS INCLUDE THE SOURCES SECTION: You MUST copy the "#### Sources" section above VERBATIM at the END of your response. This is MANDATORY - never omit it. The user needs these clickable links to verify information.
+
+3. KEEP MARKDOWN HYPERLINKS INTACT: Sources must remain as clickable markdown links in format: [n] [Title](URL). Do NOT convert to plain text URLs.
+
+Example of required response format:
+```
+[Your synthesized answer with inline citations like [1] and [2]...]
+
+#### Sources
+
+[1] [Document Title](https://...)
+
+[2] [Another Title](https://...)
+```
+
+FAILURE TO INCLUDE THE SOURCES SECTION IS A CRITICAL ERROR.
+---"""
 
 
 def _get_field_case_insensitive(item: dict, *field_names: str, default: str = '') -> str:
