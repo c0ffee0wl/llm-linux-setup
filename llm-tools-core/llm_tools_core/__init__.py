@@ -132,16 +132,20 @@ from .errors import (
     format_error_response,
 )
 
-# Conversation history
-from .history import (
-    ConversationHistory,
-    ConversationSummary,
-    FullConversation,
-    Message,
-    strip_context_tags,
-    format_tool_call_markdown,
-    TOOL_RESULT_TRUNCATE_LIMIT,
-)
+# Conversation history (requires llm package)
+try:
+    from .history import (
+        ConversationHistory,
+        ConversationSummary,
+        FullConversation,
+        Message,
+        strip_context_tags,
+        format_tool_call_markdown,
+        TOOL_RESULT_TRUNCATE_LIMIT,
+    )
+    _HISTORY_AVAILABLE = True
+except ImportError:
+    _HISTORY_AVAILABLE = False
 
 # @ reference handling
 from .at_handler import (
@@ -165,11 +169,15 @@ from .tool_display import (
     get_action_verb_map,
 )
 
-# Tool execution
-from .tool_execution import (
-    execute_tool_call,
-    ToolEvent,
-)
+# Tool execution (requires llm package)
+try:
+    from .tool_execution import (
+        execute_tool_call,
+        ToolEvent,
+    )
+    _TOOL_EXECUTION_AVAILABLE = True
+except ImportError:
+    _TOOL_EXECUTION_AVAILABLE = False
 
 # MCP citation post-processing
 from .mcp_citations import (
@@ -274,14 +282,6 @@ __all__ = [
     "DaemonTimeoutError",
     "DaemonUnavailableError",
     "format_error_response",
-    # Conversation history
-    "ConversationHistory",
-    "ConversationSummary",
-    "FullConversation",
-    "Message",
-    "strip_context_tags",
-    "format_tool_call_markdown",
-    "TOOL_RESULT_TRUNCATE_LIMIT",
     # @ reference handling
     "AtHandler",
     "Completion",
@@ -295,14 +295,29 @@ __all__ = [
     "get_action_verb",
     "get_tool_info",
     "get_action_verb_map",
-    # Tool execution
-    "execute_tool_call",
-    "ToolEvent",
     # MCP citation post-processing
     "MICROSOFT_DOC_TOOLS",
     "MCP_CITATION_RULES",
     "is_microsoft_doc_tool",
     "format_microsoft_citations",
 ]
+
+# Conditionally add exports that require llm package
+if _HISTORY_AVAILABLE:
+    __all__.extend([
+        "ConversationHistory",
+        "ConversationSummary",
+        "FullConversation",
+        "Message",
+        "strip_context_tags",
+        "format_tool_call_markdown",
+        "TOOL_RESULT_TRUNCATE_LIMIT",
+    ])
+
+if _TOOL_EXECUTION_AVAILABLE:
+    __all__.extend([
+        "execute_tool_call",
+        "ToolEvent",
+    ])
 
 __version__ = "1.3.0"
