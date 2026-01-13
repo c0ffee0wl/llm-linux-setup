@@ -298,11 +298,19 @@ class RAGMixin:
         if not results:
             return ""
 
-        parts = ["<retrieved_documents>"]
-        for i, r in enumerate(results, 1):
-            source = r.get('metadata', {}).get('source', 'unknown')
-            content = r.get('content', '')
-            parts.append(f"\n[{i}. {source}]\n{content}")
-        parts.append("\n</retrieved_documents>")
+        from llm_tools_core import RAGHandler, SearchResult
 
-        return "\n".join(parts)
+        search_results = [
+            SearchResult(
+                content=r.get('content', ''),
+                source=r.get('metadata', {}).get('source', 'unknown'),
+                score=r.get('score', 0.0),
+                metadata=r.get('metadata', {})
+            )
+            for r in results
+        ]
+
+        handler = RAGHandler()
+        formatted = handler.format_context(search_results, sources=self._sources_enabled)
+
+        return f"<retrieved_documents>\n{formatted}\n</retrieved_documents>"
