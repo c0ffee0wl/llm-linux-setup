@@ -41,6 +41,7 @@ from llm_tools_core import (
     format_gui_context,
     strip_context_tags,
     format_tool_call_markdown,
+    get_assistant_default_model,
 )
 from llm_tools_core.hashing import hash_gui_context
 
@@ -398,7 +399,7 @@ class WebUIServer:
         self.ws_clients[session_id].add(ws)
 
         # Send connection confirmation with actual current model
-        model_id = self.daemon.model_id or llm.get_model().model_id
+        model_id = self.daemon.model_id or get_assistant_default_model()
         await ws.send_json({
             "type": "connected",
             "sessionId": session_id,
@@ -1518,7 +1519,7 @@ class WebUIServer:
         """
         try:
             provider_filter = request.query.get("provider", None)
-            current_model = self.daemon.model_id or llm.get_model().model_id
+            current_model = self.daemon.model_id or get_assistant_default_model()
 
             # Run in executor to avoid blocking event loop
             loop = asyncio.get_running_loop()

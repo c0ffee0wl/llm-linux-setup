@@ -96,7 +96,7 @@ from .report import ReportMixin
 from .web import WebMixin
 from .terminal import TerminalMixin
 from .context import ContextMixin
-from llm_tools_core import filter_new_blocks
+from llm_tools_core import filter_new_blocks, get_assistant_default_model
 from llm_tools_core.mcp_citations import is_microsoft_doc_tool, format_microsoft_citations
 from .watch import WatchMixin
 from .workflow import WorkflowMixin
@@ -278,6 +278,12 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Watch mode intelligent change detection
         self.previous_watch_context_hash = None  # SHA256 hash for deduplication
         self.previous_watch_iteration_count = 0   # Track iterations for prompt
+        self.previous_watch_context: Optional[str] = None  # Store for diff computation
+        # Watch mode statistics
+        self.watch_start_time: Optional[float] = None
+        self.watch_total_iterations: int = 0
+        self.watch_ai_calls: int = 0
+        self.watch_alerts_shown: int = 0
 
         # Web companion (real-time browser view)
         self.web_server = None          # uvicorn server instance
@@ -699,17 +705,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
     def _get_default_model(self) -> str:
         """Get default model from llm configuration.
 
-        If default is gpt-4.1-mini, upgrade to gpt-4.1 for assistant
-        (assistant benefits from more capable model).
+        Delegates to centralized get_assistant_default_model() which applies
+        upgrade rules (e.g., azure/gpt-4.1-mini -> azure/gpt-4.1).
         """
-        try:
-            model = llm.get_default_model()
-            # Upgrade mini to full model for assistant
-            if model == "azure/gpt-4.1-mini":
-                return "azure/gpt-4.1"
-            return model
-        except Exception:
-            return "azure/gpt-4.1"
+        return get_assistant_default_model()
 
     def _is_vertex_model(self) -> bool:
         """Check if current model is a Vertex AI model (vertex/*)"""
@@ -730,6 +729,33 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         """Print debug message if debug mode is enabled"""
         if self.debug:
             ConsoleHelper.dim(self.console, f"DEBUG: {msg}")
+
+    def _display_watch_stats(self):
+        """Display watch mode statistics."""
+        self.console.print(f"Goal: {self.watch_goal}")
+
+        # Calculate uptime
+        if self.watch_start_time:
+            uptime_secs = int(time.time() - self.watch_start_time)
+            mins, secs = divmod(uptime_secs, 60)
+            hours, mins = divmod(mins, 60)
+            uptime_str = f"{hours}h {mins}m {secs}s" if hours else f"{mins}m {secs}s"
+        else:
+            uptime_str = "unknown"
+
+        # Efficiency percentage
+        if self.watch_total_iterations > 0:
+            pct = (self.watch_ai_calls / self.watch_total_iterations) * 100
+            efficiency_str = f"{pct:.1f}%"
+        else:
+            efficiency_str = "N/A"
+
+        self.console.print(f"Uptime: {uptime_str}")
+        self.console.print(
+            f"Iterations: {self.watch_total_iterations} | "
+            f"AI Calls: {self.watch_ai_calls} ({efficiency_str}) | "
+            f"Alerts: {self.watch_alerts_shown}"
+        )
 
     def _stream_response_with_display(self, response, tts_enabled: bool = False) -> str:
         """
@@ -2698,8 +2724,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 # No args: show status with usage hint
                 if self.watch_mode:
                     ConsoleHelper.success(self.console, "Watch mode: enabled")
-                    self.console.print(f"Goal: {self.watch_goal}")
-                    self.console.print(f"Interval: {self.watch_interval}s")
+                    self._display_watch_stats()
                 else:
                     ConsoleHelper.warning(self.console, "Watch mode: disabled")
                     ConsoleHelper.dim(self.console, "Usage: /watch <goal> to enable")
@@ -2712,6 +2737,12 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                         # Reset state for next enable
                         self.previous_watch_context_hash = None
                         self.previous_watch_iteration_count = 0
+                        self.previous_watch_context = None
+                        # Reset statistics
+                        self.watch_start_time = None
+                        self.watch_total_iterations = 0
+                        self.watch_ai_calls = 0
+                        self.watch_alerts_shown = 0
                         # Re-render system prompt without watch mode context
                         self._update_system_prompt()
                         if self.watch_task and not self.watch_task.done():
@@ -2731,8 +2762,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 # Show watch mode status
                 if self.watch_mode:
                     ConsoleHelper.success(self.console, "Watch mode: enabled")
-                    self.console.print(f"Goal: {self.watch_goal}")
-                    self.console.print(f"Interval: {self.watch_interval}s")
+                    self._display_watch_stats()
                 else:
                     ConsoleHelper.warning(self.console, "Watch mode: disabled")
             else:
@@ -2759,6 +2789,12 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     # Reset state for fresh analysis with new goal
                     self.previous_watch_context_hash = None
                     self.previous_watch_iteration_count = 0
+                    self.previous_watch_context = None
+                    # Initialize statistics
+                    self.watch_start_time = time.time()
+                    self.watch_total_iterations = 0
+                    self.watch_ai_calls = 0
+                    self.watch_alerts_shown = 0
                     # Re-render system prompt with watch mode context
                     self._update_system_prompt()
                     self._start_watch_mode_thread()

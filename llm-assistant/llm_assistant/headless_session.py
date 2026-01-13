@@ -21,7 +21,7 @@ import llm
 from llm import Tool
 from rich.console import Console
 
-from llm_tools_core import filter_new_blocks
+from llm_tools_core import filter_new_blocks, get_assistant_default_model
 
 # Mixin imports (9 mixins, excluding TerminalMixin and WatchMixin)
 from .kb import KnowledgeBaseMixin
@@ -253,8 +253,8 @@ class HeadlessSession(
         # Context tracking
         self.context_hashes: Set[str] = set()
 
-        # Model setup
-        self.model = llm.get_model(model_name) if model_name else llm.get_model()
+        # Model setup (use centralized upgrade logic for assistant default)
+        self.model = llm.get_model(model_name or get_assistant_default_model())
         self.model_name = self.model.model_id
 
         # Conversation

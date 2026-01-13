@@ -213,6 +213,7 @@ __marimo__/
 burr/
 Ulauncher/
 llm/
+terminator/
 
 # JS version tracking (libraries now bundled in git)
 llm-assistant/llm_assistant/static/.versions

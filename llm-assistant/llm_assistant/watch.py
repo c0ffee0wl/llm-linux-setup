@@ -8,6 +8,7 @@ This module provides background terminal monitoring:
 """
 
 import asyncio
+import difflib
 import hashlib
 import threading
 from typing import TYPE_CHECKING, List, Optional
@@ -39,6 +40,11 @@ class WatchMixin:
     - event_loop: Optional asyncio event loop
     - previous_watch_context_hash: Optional[str] for deduplication
     - previous_watch_iteration_count: int for tracking iterations
+    - previous_watch_context: Optional[str] for diff computation
+    - watch_start_time: Optional[float] timestamp when watch enabled
+    - watch_total_iterations: int total loop iterations
+    - watch_ai_calls: int number of AI calls made
+    - watch_alerts_shown: int number of alerts displayed
     - plugin_dbus: D-Bus plugin service object
     - exec_terminal_uuid: str UUID of exec terminal
     - chat_terminal_uuid: str UUID of chat terminal (for exclusion)
@@ -64,6 +70,11 @@ class WatchMixin:
     event_loop: Optional[object]
     previous_watch_context_hash: Optional[str]
     previous_watch_iteration_count: int
+    previous_watch_context: Optional[str]
+    watch_start_time: Optional[float]
+    watch_total_iterations: int
+    watch_ai_calls: int
+    watch_alerts_shown: int
     plugin_dbus: object
     exec_terminal_uuid: str
 
@@ -146,6 +157,9 @@ class WatchMixin:
         try:
             while self.watch_mode:
                 try:
+                    # Increment total iterations counter
+                    self.watch_total_iterations += 1
+
                     # Update subscriptions if terminals changed (new tabs, closed tabs)
                     if use_signals:
                         current_uuids = set(self._get_watched_terminal_uuids())
@@ -203,16 +217,37 @@ class WatchMixin:
                                 # Context unchanged - skip AI call entirely
                                 should_skip = True
                             else:
-                                # Context changed - update hash and proceed
+                                # Compute diff if we have previous context
+                                context_to_send = context
+                                is_diff_mode = False
+
+                                if self.previous_watch_context is not None:
+                                    diff_lines = list(difflib.unified_diff(
+                                        self.previous_watch_context.splitlines(keepends=True),
+                                        context.splitlines(keepends=True),
+                                        fromfile='previous',
+                                        tofile='current',
+                                        lineterm=''
+                                    ))
+                                    if diff_lines:
+                                        diff_text = '\n'.join(diff_lines)
+                                        # Fallback if diff > 80% of full context
+                                        if len(diff_text) < len(context) * 0.8:
+                                            context_to_send = diff_text
+                                            is_diff_mode = True
+
+                                # Update stored context and hash
+                                self.previous_watch_context = context
                                 self.previous_watch_context_hash = current_hash
                                 self.previous_watch_iteration_count += 1
 
-                                # HISTORY-AWARE PROMPT: Tell AI to focus on new content
+                                # Build prompt with diff or full context
                                 prompt = render('prompts/watch_prompt.j2',
                                     iteration_count=self.previous_watch_iteration_count,
                                     goal=self.watch_goal,
                                     exec_status=exec_status,
-                                    context=context,
+                                    context=context_to_send,
+                                    is_diff_mode=is_diff_mode,
                                 )
 
                                 try:
@@ -223,6 +258,7 @@ class WatchMixin:
                                     # IMPORTANT: stream=False minimizes lock hold time by getting the
                                     # complete response in one call. Lock is necessary because the
                                     # conversation object is not thread-safe and is shared with main thread.
+                                    self.watch_ai_calls += 1
                                     response = self._prompt(
                                         prompt,
                                         system=self._build_system_prompt(),
@@ -239,7 +275,11 @@ class WatchMixin:
 
                     # Only show if AI has actionable feedback - outside lock
                     if not should_skip and response_text and response_text.strip():
-                        if not is_watch_response_dismissive(response_text):
+                        if '<NoComment/>' in response_text:
+                            pass  # AI explicitly indicated nothing to report
+                        elif not is_watch_response_dismissive(response_text):
+                            # Fallback for models that don't follow NoComment instruction
+                            self.watch_alerts_shown += 1
                             self.console.print()
                             self.console.print(Panel(
                                 Markdown(response_text),

@@ -44,6 +44,7 @@ from llm_tools_core import (
     write_pid_file,
     remove_pid_file,
     cleanup_stale_daemon,
+    get_assistant_default_model,
 )
 from llm_tools_core.tool_execution import execute_tool_call
 
@@ -569,7 +570,7 @@ class AssistantDaemon:
                 # List available models (run in executor to avoid blocking)
                 def get_model_list():
                     lines = ["[bold]Available models:[/]"]
-                    current = self.model_id or llm.get_model().model_id
+                    current = self.model_id or get_assistant_default_model()
                     for model in llm.get_models():
                         marker = " [green](current)[/]" if model.model_id == current else ""
                         lines.append(f"  - {model.model_id}{marker}")
@@ -927,7 +928,7 @@ class AssistantDaemon:
             tools = get_headless_tools()
             tool_names = [t.name for t in tools]
             conv = None
-            model_id = self.model_id or llm.get_model().model_id
+            model_id = self.model_id or get_assistant_default_model()
 
         status = {
             "terminal_id": terminal_id,

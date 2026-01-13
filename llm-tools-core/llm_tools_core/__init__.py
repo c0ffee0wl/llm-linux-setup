@@ -26,12 +26,15 @@ from .console import ConsoleHelper
 from .xdg import get_config_dir, get_temp_dir, get_logs_db_path
 from .markdown import strip_markdown, strip_markdown_for_tts, extract_code_blocks
 
-# Model context limits
+# Model context limits and assistant model selection
 from .models import (
     MODEL_CONTEXT_LIMITS,
     PROVIDER_DEFAULT_LIMITS,
     DEFAULT_CONTEXT_LIMIT,
     get_model_context_limit,
+    ASSISTANT_MODEL_UPGRADES,
+    ASSISTANT_MODEL_FALLBACK,
+    get_assistant_default_model,
 )
 
 # System detection
@@ -194,11 +197,14 @@ __all__ = [
     "strip_markdown",
     "strip_markdown_for_tts",
     "extract_code_blocks",
-    # Model context limits
+    # Model context limits and assistant model selection
     "MODEL_CONTEXT_LIMITS",
     "PROVIDER_DEFAULT_LIMITS",
     "DEFAULT_CONTEXT_LIMIT",
     "get_model_context_limit",
+    "ASSISTANT_MODEL_UPGRADES",
+    "ASSISTANT_MODEL_FALLBACK",
+    "get_assistant_default_model",
     # System detection
     "detect_shell",
     "detect_os",

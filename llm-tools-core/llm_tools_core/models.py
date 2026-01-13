@@ -57,6 +57,45 @@ PROVIDER_DEFAULT_LIMITS: Dict[str, int] = {
 # Absolute fallback
 DEFAULT_CONTEXT_LIMIT = 200000
 
+# Model upgrades for assistant applications
+# Maps lightweight default models to more capable versions
+ASSISTANT_MODEL_UPGRADES: Dict[str, str] = {
+    "azure/gpt-4.1-mini": "azure/gpt-4.1",
+    # Future: add more as needed
+    # "gemini-2.5-flash-lite": "gemini-2.5-flash",
+}
+
+# Fallback model when llm.get_default_model() fails
+ASSISTANT_MODEL_FALLBACK = "azure/gpt-4.1"
+
+
+def get_assistant_default_model() -> str:
+    """Get default model for assistant applications.
+
+    Assistants benefit from more capable models. This function:
+    1. Gets the system default model from llm
+    2. Applies upgrade rules (ASSISTANT_MODEL_UPGRADES)
+    3. Falls back to ASSISTANT_MODEL_FALLBACK on error
+
+    Returns:
+        Model name, potentially upgraded from system default
+
+    Examples:
+        >>> # If system default is azure/gpt-4.1-mini:
+        >>> get_assistant_default_model()
+        'azure/gpt-4.1'
+        >>> # If system default is gemini-2.5-flash:
+        >>> get_assistant_default_model()
+        'gemini-2.5-flash'  # No upgrade rule, returns as-is
+    """
+    import llm  # Lazy import to avoid circular deps at module load
+
+    try:
+        default_model = llm.get_default_model()
+        return ASSISTANT_MODEL_UPGRADES.get(default_model, default_model)
+    except Exception:
+        return ASSISTANT_MODEL_FALLBACK
+
 
 def get_model_context_limit(model_name: str) -> int:
     """Get context limit for a model.
