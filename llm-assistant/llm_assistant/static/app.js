@@ -327,11 +327,27 @@ const ICONS = {
 
 // Tool display names and icons
 const TOOL_CONFIG = {
+    // Built-in tools
     execute_python: { name: 'Python', icon: 'python' },
     sandboxed_shell: { name: 'Shell', icon: 'shell' },
     search_google: { name: 'Google Search', icon: 'search' },
     fetch_url: { name: 'Fetch URL', icon: 'web' },
-    capture_screen: { name: 'Screenshot', icon: 'tool' }
+    capture_screen: { name: 'Screenshot', icon: 'tool' },
+    // Microsoft MCP tools
+    microsoft_docs_search: { name: 'MS Docs Search', icon: 'search' },
+    microsoft_docs_fetch: { name: 'MS Docs Fetch', icon: 'web' },
+    microsoft_code_sample_search: { name: 'MS Code Samples', icon: 'search' },
+    // AWS MCP tools
+    aws_docs_search: { name: 'AWS Docs Search', icon: 'search' },
+    aws_docs_fetch: { name: 'AWS Docs Fetch', icon: 'web' },
+    // ArXiv MCP tools
+    search_papers: { name: 'ArXiv Search', icon: 'search' },
+    download_paper: { name: 'ArXiv Download', icon: 'web' },
+    read_paper: { name: 'ArXiv Read', icon: 'tool' },
+    list_papers: { name: 'ArXiv List', icon: 'tool' },
+    // Context7 MCP tools
+    'resolve-library-id': { name: 'Context7 Resolve', icon: 'search' },
+    'query-docs': { name: 'Context7 Query', icon: 'search' }
 };
 
 // ============================================================================
@@ -1917,6 +1933,10 @@ function appendAssistantMessageWithToolCalls(content) {
         if (part.type === 'text') {
             appendMessage('assistant', part.content);
         } else if (part.type === 'toolcall') {
+            // Debug: log parsed tool call
+            if (!part.name || !String(part.name).trim()) {
+                console.warn('parseToolCallsFromContent: empty tool name', part);
+            }
             const toolCallId = 'history-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9);
             addToolCall(part.name, part.args, toolCallId);
             // Immediately complete since this is from history
@@ -2028,7 +2048,12 @@ function finalizeMessage() {
 // ============================================================================
 
 function getToolConfig(toolName) {
-    return TOOL_CONFIG[toolName] || { name: toolName, icon: 'tool' };
+    // Defensive: handle undefined, null, or empty tool names
+    const safeName = toolName ? String(toolName).trim() : '';
+    if (!safeName) {
+        return { name: '(unknown tool)', icon: 'tool' };
+    }
+    return TOOL_CONFIG[safeName] || { name: safeName, icon: 'tool' };
 }
 
 function getToolPreview(toolName, args) {
@@ -2062,6 +2087,11 @@ function addToolCall(toolName, args, toolCallId) {
     const conversation = document.getElementById('conversation');
     const config = getToolConfig(toolName);
     const preview = getToolPreview(toolName, args);
+
+    // Debug: warn if tool name is missing
+    if (!toolName || !String(toolName).trim()) {
+        console.warn('addToolCall: empty tool name', { toolName, args, toolCallId });
+    }
 
     const container = document.createElement('div');
     container.className = 'tool-call running';
