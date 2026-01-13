@@ -1008,8 +1008,8 @@ class WebUIServer:
             responses = result["responses"]
 
             # Get the model for this conversation
-            model_id = conv_data.get("model", "")
-            model = llm.get_model(model_id) if model_id else self.daemon.model
+            model_id = conv_data.get("model", "") or get_assistant_default_model()
+            model = llm.get_model(model_id)
 
             # Create a new conversation with the historical ID
             conversation = llm.Conversation(model=model, id=conversation_id)
@@ -1087,7 +1087,7 @@ class WebUIServer:
             responses = result["responses"]
 
             # Load the forked conversation into session
-            model = llm.get_model(model_id) if model_id else self.daemon.model
+            model = llm.get_model(model_id or get_assistant_default_model())
             conversation = llm.Conversation(model=model, id=new_conv_id)
             # Set source so future responses are tagged correctly
             conversation.source = "gui"
