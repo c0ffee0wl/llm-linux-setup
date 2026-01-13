@@ -2227,6 +2227,30 @@ else
     fi
 fi
 
+# Install Claude Code skills from repository
+# Skills are copied on every run to ensure latest versions are always available
+if command -v claude &>/dev/null; then
+    SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
+    SKILLS_DEST_DIR="$HOME/.claude/skills"
+
+    if [ -d "$SKILLS_SOURCE_DIR" ] && [ -n "$(ls -A "$SKILLS_SOURCE_DIR" 2>/dev/null)" ]; then
+        log "Installing Claude Code skills..."
+        mkdir -p "$SKILLS_DEST_DIR"
+
+        # Copy each skill directory to destination
+        for skill_dir in "$SKILLS_SOURCE_DIR"/*/; do
+            if [ -d "$skill_dir" ]; then
+                skill_name=$(basename "$skill_dir")
+                log "  Installing skill: $skill_name"
+                # Use cp -r to copy entire skill directory, -f to overwrite
+                cp -rf "$skill_dir" "$SKILLS_DEST_DIR/"
+            fi
+        done
+
+        log "Claude Code skills installed to $SKILLS_DEST_DIR"
+    fi
+fi
+
 # Install/update claudo (Claude in Podman) if Podman is installed
 if command -v podman &> /dev/null; then
     log "Installing/updating claudo (Claude Code in Podman)..."
@@ -2323,6 +2347,7 @@ if [ "$INSTALL_MODE" = "full" ]; then
     log "    - llm-inlineassistant  Inline AI assistant (@ syntax, espanso triggers)"
     log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
     log "    - Claude Code      Anthropic's agentic coding CLI"
+    log "    - Claude Code skills  Custom skills installed to ~/.claude/skills/"
     log "    - claudo           Claude Code in Docker (if Docker installed)"
     log "    - Claude Code Router  Multi-provider proxy for Claude Code"
     log "    - Codex CLI        OpenAI's coding agent (if Azure configured)"
