@@ -172,6 +172,82 @@ store_checksum() {
     echo "${template_name}:${checksum}" >> "$checksum_file"
 }
 
+# Update a tracked configuration file with smart checksum-based detection
+# Usage: update_tracked_config <checksum_key> <dest_file> <new_content> [display_name] [default_answer] [create_backup]
+#   checksum_key:   Key for checksum tracking (e.g., "ccr-config", "mcp-config")
+#   dest_file:      Full path to installed config file
+#   new_content:    New content to install (string)
+#   display_name:   Human-readable name for prompts/logs (default: checksum_key)
+#   default_answer: Default Y/N for update prompt (default: N)
+#   create_backup:  "true" to create timestamped backup (default: false)
+update_tracked_config() {
+    local checksum_key="$1"
+    local dest_file="$2"
+    local new_content="$3"
+    local display_name="${4:-$checksum_key}"
+    local default_answer="${5:-N}"
+    local create_backup="${6:-false}"
+
+    # Calculate checksum of new content
+    local new_checksum=$(printf '%s' "$new_content" | sha256sum | awk '{print $1}')
+
+    # Ensure parent directory exists
+    mkdir -p "$(dirname "$dest_file")"
+
+    # If file doesn't exist, create it
+    if [ ! -f "$dest_file" ]; then
+        printf '%s' "$new_content" > "$dest_file"
+        store_checksum "$checksum_key" "$dest_file"
+        log "Created $display_name"
+        return 0
+    fi
+
+    # Calculate installed file checksum
+    local installed_checksum=$(sha256sum "$dest_file" | awk '{print $1}')
+
+    # Already up to date
+    if [ "$installed_checksum" = "$new_checksum" ]; then
+        log "$display_name is up to date"
+        store_checksum "$checksum_key" "$dest_file"
+        return 0
+    fi
+
+    # Get stored checksum (what we last installed)
+    local stored_checksum=$(get_stored_checksum "$checksum_key")
+
+    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
+        # User hasn't modified - auto-update silently
+        log "$display_name updated (no local modifications detected)"
+        printf '%s' "$new_content" > "$dest_file"
+        store_checksum "$checksum_key" "$dest_file"
+        return 0
+    fi
+
+    # User has modified or no stored checksum - prompt
+    log "$display_name has changed"
+    if [ -z "$stored_checksum" ]; then
+        log "Cannot determine if you have local modifications (legacy installation)"
+    else
+        log "Local modifications detected"
+    fi
+    echo ""
+
+    if ask_yes_no "Update $display_name? This will overwrite your version." "$default_answer"; then
+        # Create backup if requested
+        if [ "$create_backup" = "true" ]; then
+            local backup_timestamp=$(date +%Y%m%d-%H%M%S)
+            cp "$dest_file" "$dest_file.backup-$backup_timestamp"
+            log "Backed up to $dest_file.backup-$backup_timestamp"
+        fi
+        printf '%s' "$new_content" > "$dest_file"
+        store_checksum "$checksum_key" "$dest_file"
+        log "$display_name updated"
+    else
+        log "Keeping existing $display_name"
+        store_checksum "$checksum_key" "$dest_file"
+    fi
+}
+
 #############################################################################
 # Distribution Detection
 #############################################################################
@@ -1230,4 +1306,41 @@ clear_package_caches() {
     fi
 
     log "Cache cleanup complete!"
+}
+
+#############################################################################
+# Process Management
+#############################################################################
+
+# Gracefully stop a process with SIGTERM, wait, then SIGKILL if needed
+# Usage: graceful_stop_process <pattern> [wait_iterations] [process_name]
+#   pattern:         pgrep -f pattern to match
+#   wait_iterations: Number of 0.5s waits (default: 10 = 5 seconds)
+#   process_name:    Human-readable name for logging (optional)
+# Returns: 0 if process was stopped, 1 if process wasn't running
+graceful_stop_process() {
+    local pattern="$1"
+    local wait_iterations="${2:-10}"
+    local process_name="${3:-$pattern}"
+
+    if ! pgrep -f "$pattern" > /dev/null 2>&1; then
+        return 1  # Not running
+    fi
+
+    log "Stopping $process_name..."
+    pkill -TERM -f "$pattern" 2>/dev/null || true
+
+    # Wait for graceful shutdown
+    for ((i=1; i<=wait_iterations; i++)); do
+        if ! pgrep -f "$pattern" > /dev/null 2>&1; then
+            return 0  # Stopped
+        fi
+        sleep 0.5
+    done
+
+    # Force kill if still running
+    if pgrep -f "$pattern" > /dev/null 2>&1; then
+        pkill -KILL -f "$pattern" 2>/dev/null || true
+    fi
+    return 0
 }

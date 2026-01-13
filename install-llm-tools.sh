@@ -562,59 +562,8 @@ EOF
         return 1
     fi
 
-    # Calculate checksum of new config
-    local new_checksum=$(echo "$config_content" | sha256sum | awk '{print $1}')
-
-    # Check if config exists
-    if [ ! -f "$config_file" ]; then
-        # No existing config - create it
-        echo "$config_content" > "$config_file"
-        store_checksum "ccr-config" "$config_file"
-        log "Created Claude Code Router config.json"
-        return
-    fi
-
-    # Calculate installed file checksum
-    local installed_checksum=$(sha256sum "$config_file" | awk '{print $1}')
-
-    # Check if already up to date
-    if [ "$installed_checksum" = "$new_checksum" ]; then
-        log "Claude Code Router config.json is up to date"
-        store_checksum "ccr-config" "$config_file"
-        return
-    fi
-
-    # Get stored checksum (what we last installed)
-    local stored_checksum=$(get_stored_checksum "ccr-config")
-
-    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
-        # User hasn't modified the file - auto-update silently
-        log "Updating Claude Code Router config.json (no local modifications detected)"
-        echo "$config_content" > "$config_file"
-        store_checksum "ccr-config" "$config_file"
-    else
-        # User has modified the file OR no stored checksum - prompt
-        log "Claude Code Router config.json has changed"
-        if [ -z "$stored_checksum" ]; then
-            log "Cannot determine if you have local modifications (legacy installation)"
-        else
-            log "Local modifications detected in config.json"
-        fi
-        echo ""
-        if ask_yes_no "Update Claude Code Router config.json? This will overwrite your version." N; then
-            # Backup existing config
-            local backup_timestamp=$(date +%Y%m%d-%H%M%S)
-            cp "$config_file" "$config_file.backup-$backup_timestamp"
-            log "Backed up existing config to $config_file.backup-$backup_timestamp"
-            echo "$config_content" > "$config_file"
-            store_checksum "ccr-config" "$config_file"
-            log "Claude Code Router config.json updated"
-        else
-            log "Keeping existing Claude Code Router config.json"
-            # Update stored checksum to current installed version to avoid prompting next time
-            store_checksum "ccr-config" "$config_file"
-        fi
-    fi
+    update_tracked_config "ccr-config" "$config_file" "$config_content" \
+        "Claude Code Router config.json" "N" "true"
 }
 
 # Set or migrate default model (handles automatic migration from old defaults)
@@ -681,55 +630,9 @@ update_template_file() {
         return
     fi
 
-    # Calculate repo file checksum
-    local repo_checksum=$(sha256sum "$source_file" | awk '{print $1}')
-
-    if [ ! -f "$dest_file" ]; then
-        # No installed file - install from repo
-        log "Installing ${template_name}.yaml template..."
-        cp "$source_file" "$dest_file"
-        store_checksum "$template_name" "$dest_file"
-        log "Template installed to $dest_file"
-        return
-    fi
-
-    # Calculate installed file checksum
-    local installed_checksum=$(sha256sum "$dest_file" | awk '{print $1}')
-
-    # Check if already up to date
-    if [ "$installed_checksum" = "$repo_checksum" ]; then
-        log "${template_name}.yaml template is up to date"
-        store_checksum "$template_name" "$dest_file"
-        return
-    fi
-
-    # Get stored checksum (what we last installed)
-    local stored_checksum=$(get_stored_checksum "$template_name")
-
-    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
-        # User hasn't modified the file - auto-update silently
-        log "${template_name}.yaml template updated from repository (no local modifications detected)"
-        cp "$source_file" "$dest_file"
-        store_checksum "$template_name" "$dest_file"
-    else
-        # User has modified the file OR no stored checksum (legacy) - prompt
-        log "${template_name}.yaml template has changed in repository"
-        if [ -z "$stored_checksum" ]; then
-            log "Cannot determine if you have local modifications (legacy installation)"
-        else
-            log "Local modifications detected"
-        fi
-        echo ""
-        if ask_yes_no "Update ${template_name}.yaml template? This will overwrite your version." N; then
-            cp "$source_file" "$dest_file"
-            store_checksum "$template_name" "$dest_file"
-            log "${template_name}.yaml template updated to $dest_file"
-        else
-            log "Keeping existing ${template_name}.yaml template"
-            # Update stored checksum to current installed version to avoid prompting next time
-            store_checksum "$template_name" "$dest_file"
-        fi
-    fi
+    # Note: Use cat to preserve exact file contents including trailing newlines
+    update_tracked_config "$template_name" "$dest_file" "$(cat "$source_file")" \
+        "${template_name}.yaml template" "N" "false"
 }
 
 # Extract normalized plugin name from various source formats
@@ -957,68 +860,10 @@ fi
 stop_assistant_processes() {
     local stopped=false
 
-    # Stop llm-assistant daemon (runs with --daemon flag)
-    if pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
-        log "Stopping llm-assistant daemon for update..."
-        pkill -TERM -f "llm-assistant.*--daemon" 2>/dev/null || true
-        # Wait up to 5 seconds for graceful shutdown
-        for i in {1..10}; do
-            if ! pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
-                break
-            fi
-            sleep 0.5
-        done
-        # Force kill if still running
-        if pgrep -f "llm-assistant.*--daemon" > /dev/null 2>&1; then
-            pkill -KILL -f "llm-assistant.*--daemon" 2>/dev/null || true
-        fi
-        stopped=true
-    fi
-
-    # Stop llm-guiassistant (web UI server)
-    if pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
-        log "Stopping llm-guiassistant for update..."
-        pkill -TERM -f "llm-guiassistant" 2>/dev/null || true
-        # Wait up to 5 seconds for graceful shutdown
-        for i in {1..10}; do
-            if ! pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
-                break
-            fi
-            sleep 0.5
-        done
-        # Force kill if still running
-        if pgrep -f "llm-guiassistant" > /dev/null 2>&1; then
-            pkill -KILL -f "llm-guiassistant" 2>/dev/null || true
-        fi
-        stopped=true
-    fi
-
-    # Also stop any Python processes running llm_assistant or llm_guiassistant modules
-    # Pattern: python3 -m llm_assistant --daemon (after exec from wrapper script)
-    if pgrep -f "python.*llm_assistant.*--daemon" > /dev/null 2>&1; then
-        pkill -TERM -f "python.*llm_assistant.*--daemon" 2>/dev/null || true
-        for i in {1..10}; do
-            if ! pgrep -f "python.*llm_assistant.*--daemon" > /dev/null 2>&1; then
-                break
-            fi
-            sleep 0.5
-        done
-        pkill -KILL -f "python.*llm_assistant.*--daemon" 2>/dev/null || true
-        stopped=true
-    fi
-
-    # Pattern: python3 -m llm_guiassistant (after exec from wrapper script)
-    if pgrep -f "python.*llm_guiassistant" > /dev/null 2>&1; then
-        pkill -TERM -f "python.*llm_guiassistant" 2>/dev/null || true
-        for i in {1..10}; do
-            if ! pgrep -f "python.*llm_guiassistant" > /dev/null 2>&1; then
-                break
-            fi
-            sleep 0.5
-        done
-        pkill -KILL -f "python.*llm_guiassistant" 2>/dev/null || true
-        stopped=true
-    fi
+    graceful_stop_process "llm-assistant.*--daemon" 10 "llm-assistant daemon" && stopped=true
+    graceful_stop_process "llm-guiassistant" 10 "llm-guiassistant" && stopped=true
+    graceful_stop_process "python.*llm_assistant.*--daemon" 10 "Python llm-assistant" && stopped=true
+    graceful_stop_process "python.*llm_guiassistant" 10 "Python llm-guiassistant" && stopped=true
 
     if [ "$stopped" = "true" ]; then
         log "Assistant processes stopped. They will use updated code when restarted."
@@ -1344,55 +1189,8 @@ update_mcp_config() {
   }
 }'
 
-    # Calculate expected config checksum
-    local expected_checksum=$(echo "$expected_config" | sha256sum | awk '{print $1}')
-
-    if [ ! -f "$MCP_CONFIG_FILE" ]; then
-        # No installed file - install new
-        log "Creating MCP configuration with Microsoft Learn, AWS Knowledge, and optional servers..."
-        echo "$expected_config" > "$MCP_CONFIG_FILE"
-        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
-        log "MCP configuration created at $MCP_CONFIG_FILE"
-        return
-    fi
-
-    # Calculate installed file checksum
-    local installed_checksum=$(sha256sum "$MCP_CONFIG_FILE" | awk '{print $1}')
-
-    # Check if already up to date
-    if [ "$installed_checksum" = "$expected_checksum" ]; then
-        log "MCP configuration is up to date"
-        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
-        return
-    fi
-
-    # Get stored checksum (what we last installed)
-    local stored_checksum=$(get_stored_checksum "mcp-config")
-
-    if [ -n "$stored_checksum" ] && [ "$installed_checksum" = "$stored_checksum" ]; then
-        # User hasn't modified the file - auto-update silently
-        log "MCP configuration updated (no local modifications detected)"
-        echo "$expected_config" > "$MCP_CONFIG_FILE"
-        store_checksum "mcp-config" "$MCP_CONFIG_FILE"
-    else
-        # User has modified the file OR no stored checksum (legacy) - prompt
-        log "MCP configuration has changed in repository"
-        if [ -z "$stored_checksum" ]; then
-            log "Cannot determine if you have local modifications (legacy installation)"
-        else
-            log "Local modifications detected"
-        fi
-        echo ""
-        if ask_yes_no "Update MCP configuration? This will overwrite your version." Y; then
-            echo "$expected_config" > "$MCP_CONFIG_FILE"
-            store_checksum "mcp-config" "$MCP_CONFIG_FILE"
-            log "MCP configuration updated to $MCP_CONFIG_FILE"
-        else
-            log "Keeping existing MCP configuration"
-            # Update stored checksum to current installed version to avoid prompting next time
-            store_checksum "mcp-config" "$MCP_CONFIG_FILE"
-        fi
-    fi
+    update_tracked_config "mcp-config" "$MCP_CONFIG_FILE" "$expected_config" \
+        "MCP configuration" "Y" "false"
 }
 
 # MCP servers only in full mode
