@@ -1192,6 +1192,7 @@ REMOTE_PLUGINS=(
 LOCAL_PLUGINS=(
     "$SCRIPT_DIR/llm-tools-core"
     "$SCRIPT_DIR/llm-tools-context"
+    "$SCRIPT_DIR/llm-openai-plugin"
 )
 
 # Full mode plugins
@@ -1457,6 +1458,25 @@ EOF
 
     # Set default model with automatic migration from old default
     set_or_migrate_default_model "azure/gpt-4.1-mini"
+
+    # Create extra-responses-models.yaml for Responses API models (gpt-5.1-codex)
+    # These models require the Responses API and do NOT work with Chat Completions
+    log "Creating Azure OpenAI Responses API models configuration..."
+
+    EXTRA_RESPONSES_FILE="$LLM_CONFIG_DIR/extra-responses-models.yaml"
+    cat > "$EXTRA_RESPONSES_FILE" <<EOF
+# Azure OpenAI models that require the Responses API
+# These models do NOT work with Chat Completions API
+
+- model_id: gpt-5.1-codex
+  model_name: gpt-5.1-codex
+  api_base: "${AZURE_API_BASE}"
+  api_key_name: azure
+  vision: true
+  reasoning: true
+  aliases:
+    - azure/gpt-5.1-codex
+EOF
 else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
