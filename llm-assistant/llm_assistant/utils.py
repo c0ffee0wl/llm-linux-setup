@@ -340,6 +340,68 @@ def is_watch_response_dismissive(response_text: str) -> bool:
 
 
 # =============================================================================
+# Judge Model Selection
+# =============================================================================
+
+def get_judge_model_id(model_id: str) -> Optional[str]:
+    """Get appropriate lightweight model for security judge based on current model's provider.
+
+    The judge model is used for safety evaluation in auto mode. Using a lighter model
+    reduces cost and latency while maintaining sufficient capability for safety checks.
+
+    Args:
+        model_id: The current model's ID (e.g., 'gemini-2.5-pro', 'vertex/gemini-2.5-pro', 'azure/gpt-4.1')
+
+    Returns:
+        Model ID for judge, or None if no lighter alternative available
+    """
+    model_id_lower = model_id.lower()
+
+    # Vertex Gemini → vertex/gemini-2.5-flash-lite
+    if model_id_lower.startswith('vertex/'):
+        return 'vertex/gemini-2.5-flash-lite'
+
+    # Regular Gemini → gemini-2.5-flash-lite
+    if model_id_lower.startswith('gemini'):
+        return 'gemini-2.5-flash-lite'
+
+    # Azure/OpenAI → azure/gpt-4.1-mini
+    if model_id_lower.startswith(('azure/', 'gpt-', 'o1-', 'o3-', 'o4-')):
+        return 'azure/gpt-4.1-mini'
+
+    return None  # No lighter alternative known
+
+
+def get_judge_model(current_model):
+    """Get a lightweight model for security judge operations.
+
+    Attempts to find a cheaper/faster model from the same provider for safety
+    evaluation. Falls back to current model if no alternative is available or
+    if the alternative doesn't support schema (required for structured output).
+
+    Args:
+        current_model: The current llm model object
+
+    Returns:
+        A model suitable for judge operations (lighter model if available, else current)
+    """
+    import llm
+
+    judge_model_id = get_judge_model_id(current_model.model_id)
+
+    if judge_model_id:
+        try:
+            judge_model = llm.get_model(judge_model_id)
+            # Verify schema support (required for structured safety evaluation)
+            if getattr(judge_model, 'supports_schema', False):
+                return judge_model
+        except Exception:
+            pass  # Fall through to return current model
+
+    return current_model
+
+
+# =============================================================================
 # Model Context Limits (imported from llm-tools-core)
 # =============================================================================
 

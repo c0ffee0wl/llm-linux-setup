@@ -34,7 +34,7 @@ from .web import WebMixin
 from .context import ContextMixin
 from .mcp import MCPMixin
 from .templates import render
-from .utils import get_config_dir, get_logs_db_path, logs_on, ConsoleHelper
+from .utils import get_config_dir, get_logs_db_path, logs_on, get_judge_model, ConsoleHelper
 
 
 # Try to import context capture from llm_tools_context
@@ -330,6 +330,10 @@ class HeadlessSession(
         if hasattr(WorkflowMixin, '_workflow_init'):
             WorkflowMixin._workflow_init(self)
 
+        # SkillsMixin - auto-load all available skills
+        if hasattr(self, '_auto_load_all_skills'):
+            self._auto_load_all_skills()
+
         # ContextMixin (token management)
         self.terminal_content_hashes = {}
         self.toolresult_hash_updated = set()
@@ -347,6 +351,23 @@ class HeadlessSession(
         """Print debug message if debug mode enabled."""
         if self.debug:
             ConsoleHelper.debug(self.console, msg)
+
+    def _get_judge_model(self):
+        """Get or create the cached judge model for safety evaluation.
+
+        Uses a lighter model from the same provider when available:
+        - vertex/* → vertex/gemini-2.5-flash-lite
+        - gemini-* → gemini-2.5-flash-lite
+        - azure/*, gpt-*, o1-*, etc. → azure/gpt-4.1-mini
+
+        Falls back to conversation model if no lighter alternative or schema unsupported.
+        """
+        if not hasattr(self, '_judge_model'):
+            self._judge_model = get_judge_model(self.model)
+            # Log which model we're using (only on first call)
+            if self._judge_model.model_id != self.model.model_id:
+                self._debug(f"Using {self._judge_model.model_id} as safety judge")
+        return self._judge_model
 
     def _get_all_terminals_with_content(self) -> List[Dict]:
         """Get terminal content - not available in headless mode.

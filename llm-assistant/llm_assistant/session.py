@@ -84,7 +84,7 @@ from .config import (
 from .schemas import SafetySchema
 from .utils import (
     strip_markdown, get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
-    get_model_context_limit, ConsoleHelper,
+    get_model_context_limit, get_judge_model, ConsoleHelper,
 )
 from .templates import render
 from .cli import resolve_model_query
@@ -1886,6 +1886,23 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         return False
 
+    def _get_judge_model(self):
+        """Get or create the cached judge model for safety evaluation.
+
+        Uses a lighter model from the same provider when available:
+        - vertex/* → vertex/gemini-2.5-flash-lite
+        - gemini-* → gemini-2.5-flash-lite
+        - azure/*, gpt-*, o1-*, etc. → azure/gpt-4.1-mini
+
+        Falls back to conversation model if no lighter alternative or schema unsupported.
+        """
+        if not hasattr(self, '_judge_model'):
+            self._judge_model = get_judge_model(self.conversation.model)
+            # Log which model we're using (only on first call)
+            if self._judge_model.model_id != self.conversation.model.model_id:
+                self._debug(f"Using {self._judge_model.model_id} as safety judge")
+        return self._judge_model
+
     def _judge_command_safety(self, command: str) -> Tuple[bool, str, str]:
         """
         Use LLM as judge to evaluate command safety for auto mode.
@@ -1911,7 +1928,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         judge_prompt = render('prompts/safety_evaluation.j2', command=command, history_context=history_context)
 
         try:
-            model = self.conversation.model
+            model = self._get_judge_model()
 
             # Require schema support for reliable safety evaluation
             if not model.supports_schema:
