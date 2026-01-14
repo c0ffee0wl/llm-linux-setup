@@ -67,6 +67,23 @@ def get_suggest_path() -> Path:
     return get_socket_dir() / "suggest"
 
 
+def get_sessions_dir(subdir: str) -> Path:
+    """Get path for session tracking directory.
+
+    Session tracking files map terminal IDs to conversation IDs.
+    These are ephemeral and don't need to persist across reboots.
+
+    Args:
+        subdir: Subdirectory name (e.g., 'daemon', 'inlineassistant')
+
+    Returns:
+        Path to /tmp/llm-assistant-{UID}/sessions/{subdir}/
+    """
+    sessions_dir = get_socket_dir() / "sessions" / subdir
+    sessions_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    return sessions_dir
+
+
 def ensure_socket_dir() -> Path:
     """Ensure the socket directory exists with proper permissions.
 

@@ -12,6 +12,7 @@ from llm_tools_core import (
     get_config_dir as _core_get_config_dir,
     get_socket_path,
     get_suggest_path,
+    get_sessions_dir,
     write_suggested_command,
     read_suggested_command,
     get_terminal_session_id,
@@ -80,11 +81,10 @@ def get_active_conversation_path(terminal_id: str) -> Path:
     Returns:
         Path to the active conversation tracking file
 
-    Files are stored in ~/.config/llm-assistant/inlineassistant-sessions/ to track
-    per-terminal conversation IDs for llm-inlineassistant.
+    Files are stored in /tmp/llm-assistant-{UID}/sessions/inlineassistant/ to track
+    per-terminal conversation IDs. These are ephemeral and cleared on reboot.
     """
-    sessions_dir = get_config_dir() / 'inlineassistant-sessions'
-    sessions_dir.mkdir(parents=True, exist_ok=True)
+    sessions_dir = get_sessions_dir('inlineassistant')
 
     # Sanitize terminal_id for filename
     safe_id = terminal_id.replace('/', '_').replace(':', '_')

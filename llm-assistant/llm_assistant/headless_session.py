@@ -21,7 +21,7 @@ import llm
 from llm import Tool
 from rich.console import Console
 
-from llm_tools_core import filter_new_blocks, get_assistant_default_model
+from llm_tools_core import filter_new_blocks, get_assistant_default_model, get_sessions_dir
 
 # Mixin imports (9 mixins, excluding TerminalMixin and WatchMixin)
 from .kb import KnowledgeBaseMixin
@@ -527,10 +527,12 @@ class HeadlessSession(
             self._save_active_conversation(self.conversation.id)
 
     def _get_sessions_dir(self) -> Path:
-        """Get sessions tracking directory."""
-        sessions_dir = get_config_dir() / 'daemon-sessions'
-        sessions_dir.mkdir(parents=True, exist_ok=True)
-        return sessions_dir
+        """Get sessions tracking directory.
+
+        Returns /tmp/llm-assistant-{UID}/sessions/daemon/ for ephemeral
+        session tracking that doesn't persist across reboots.
+        """
+        return get_sessions_dir('daemon')
 
     def _get_active_conversation(self) -> Optional[str]:
         """Get saved conversation ID for this terminal."""
