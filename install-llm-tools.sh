@@ -1147,6 +1147,7 @@ REMOTE_PLUGINS=(
     # Provider plugins
     "git+https://github.com/c0ffee0wl/llm-gemini"
     "git+https://github.com/c0ffee0wl/llm-vertex"
+    "git+https://github.com/c0ffee0wl/llm-openai-plugin"
     "llm-openrouter"
     "llm-anthropic"
 
@@ -1192,7 +1193,6 @@ REMOTE_PLUGINS=(
 LOCAL_PLUGINS=(
     "$SCRIPT_DIR/llm-tools-core"
     "$SCRIPT_DIR/llm-tools-context"
-    "$SCRIPT_DIR/llm-openai-plugin"
 )
 
 # Full mode plugins
