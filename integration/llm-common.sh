@@ -21,6 +21,10 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export POWERSHELL_TELEMETRY_OPTOUT=1
 # AI/ML
 export HF_HUB_DISABLE_TELEMETRY=1
+# Scripting languages packaging
+export PYPI_DISABLE_TELEMETRY=1
+export UV_NO_TELEMETRY=1
+export SCARF_ANALYTICS=false
 
 # Custom llm wrapper function to set default template
 llm() {

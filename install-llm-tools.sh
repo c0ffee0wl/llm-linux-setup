@@ -2249,6 +2249,10 @@ update_profile_export "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
 update_profile_export "POWERSHELL_TELEMETRY_OPTOUT" "1"
 # AI/ML
 update_profile_export "HF_HUB_DISABLE_TELEMETRY" "1"
+# Scripting languages packaging
+update_profile_export "PYPI_DISABLE_TELEMETRY" "1"
+update_profile_export "UV_NO_TELEMETRY" "1"
+update_profile_export "SCARF_ANALYTICS" "false"
 ensure_zprofile_sources_profile
 
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
