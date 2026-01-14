@@ -6,8 +6,15 @@
 # Configure terminal session log directory (can be overridden before sourcing this file)
 export SESSION_LOG_DIR="${SESSION_LOG_DIR:-/tmp/session_logs/asciinema}"
 
-# Disable Claude Code auto-update checker
+# Claude Code and VS Code defaults (also in ~/.profile for login shells)
+export DISABLE_TELEMETRY=1
 export DISABLE_AUTOUPDATER=1
+export DISABLE_ERROR_REPORTING=1
+export DISABLE_BUG_COMMAND=1
+export CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+export VSCODE_TELEMETRY_DISABLE=1
+export VSCODE_CRASH_REPORTER_DISABLE=1
+export DOTNET_CLI_TELEMETRY_OPTOUT=1
 
 # Custom llm wrapper function to set default template
 llm() {

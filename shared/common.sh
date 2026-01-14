@@ -249,6 +249,59 @@ update_tracked_config() {
 }
 
 #############################################################################
+# Profile Environment Variable Management
+#############################################################################
+
+# Update or add a single export in ~/.profile (idempotent)
+# Uses grep to check existence, sed to update in place, or appends if new
+#
+# Usage: update_profile_export <var_name> <var_value>
+#   var_name:  Environment variable name (e.g., AZURE_OPENAI_API_KEY)
+#   var_value: Value to set (will be quoted in the export)
+#
+# Returns: 0 on success
+update_profile_export() {
+    local var_name="$1"
+    local var_value="$2"
+    local profile_file="$HOME/.profile"
+
+    # Create file if it doesn't exist
+    [ ! -f "$profile_file" ] && touch "$profile_file"
+
+    if grep -q "^export ${var_name}=" "$profile_file" 2>/dev/null; then
+        # Update existing export in place
+        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$profile_file"
+    else
+        # Append new export
+        echo "export ${var_name}=\"${var_value}\"" >> "$profile_file"
+    fi
+}
+
+# Ensure ~/.zprofile sources ~/.profile for ZSH compatibility
+# ZSH doesn't read ~/.profile by default, so we add a source line
+# This is idempotent - only adds the line if not already present
+# Skips on Kali Linux (already sources .profile in default .zshrc)
+#
+# Usage: ensure_zprofile_sources_profile
+ensure_zprofile_sources_profile() {
+    # Kali Linux already sources .profile in its default ZSH config
+    is_kali_linux && return 0
+
+    local zprofile="$HOME/.zprofile"
+    local source_line='[[ -f ~/.profile ]] && emulate sh -c "source ~/.profile"'
+
+    # Create file if it doesn't exist
+    [ ! -f "$zprofile" ] && touch "$zprofile"
+
+    # Add source line if not present (using fixed string match)
+    if ! grep -qF "$source_line" "$zprofile" 2>/dev/null; then
+        echo "" >> "$zprofile"
+        echo "# Source ~/.profile for environment variables (added by llm-tools)" >> "$zprofile"
+        echo "$source_line" >> "$zprofile"
+    fi
+}
+
+#############################################################################
 # Distribution Detection
 #############################################################################
 

@@ -220,3 +220,6 @@ llm-assistant/llm_assistant/static/.versions
 
 # Plan files
 PLAN*.*
+
+# New thing
+claude-code-terminal-mcp/

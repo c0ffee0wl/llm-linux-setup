@@ -325,7 +325,7 @@ EOF
 
 # Export Azure environment variables to ~/.profile
 export_azure_env_vars() {
-    log "Exporting Azure environment variables to ~/.profile..."
+    log "Exporting Azure environment variables..."
 
     # Extract api_base and resource name
     local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
@@ -347,40 +347,16 @@ export_azure_env_vars() {
         return 1
     fi
 
-    # Create ~/.profile if it doesn't exist
-    touch ~/.profile
-
-    # Add or update AZURE_OPENAI_API_KEY export (idempotent)
-    if grep -q "^export AZURE_OPENAI_API_KEY=" ~/.profile; then
-        # Update existing export
-        sed -i "s|^export AZURE_OPENAI_API_KEY=.*|export AZURE_OPENAI_API_KEY=\"${api_key}\"|" ~/.profile
-        log "Updated AZURE_OPENAI_API_KEY in ~/.profile"
-    else
-        # Add new export
-        echo "" >> ~/.profile
-        echo "# Azure OpenAI configuration (added by llm-linux-setup)" >> ~/.profile
-        echo "export AZURE_OPENAI_API_KEY=\"${api_key}\"" >> ~/.profile
-        log "Added AZURE_OPENAI_API_KEY to ~/.profile"
-    fi
-
-    # Add or update AZURE_RESOURCE_NAME export (idempotent)
-    if grep -q "^export AZURE_RESOURCE_NAME=" ~/.profile; then
-        # Update existing export
-        sed -i "s|^export AZURE_RESOURCE_NAME=.*|export AZURE_RESOURCE_NAME=\"${resource_name}\"|" ~/.profile
-        log "Updated AZURE_RESOURCE_NAME in ~/.profile"
-    else
-        # Add new export
-        echo "export AZURE_RESOURCE_NAME=\"${resource_name}\"" >> ~/.profile
-        log "Added AZURE_RESOURCE_NAME to ~/.profile"
-    fi
+    # Add/update exports (idempotent)
+    update_profile_export "AZURE_OPENAI_API_KEY" "$api_key"
+    update_profile_export "AZURE_RESOURCE_NAME" "$resource_name"
 
     log "Azure environment variables configured in ~/.profile"
-    log "Note: Run 'source ~/.profile' to load them in current session"
 }
 
 # Export Gemini environment variables to ~/.profile
 export_gemini_env_vars() {
-    log "Exporting Gemini environment variables to ~/.profile..."
+    log "Exporting Gemini environment variables..."
 
     # Retrieve API key
     local api_key=$(command llm keys get gemini 2>/dev/null || echo "")
@@ -390,24 +366,10 @@ export_gemini_env_vars() {
         return 1
     fi
 
-    # Create ~/.profile if it doesn't exist
-    touch ~/.profile
-
-    # Add or update GEMINI_API_KEY export (idempotent)
-    if grep -q "^export GEMINI_API_KEY=" ~/.profile; then
-        # Update existing export
-        sed -i "s|^export GEMINI_API_KEY=.*|export GEMINI_API_KEY=\"${api_key}\"|" ~/.profile
-        log "Updated GEMINI_API_KEY in ~/.profile"
-    else
-        # Add new export
-        echo "" >> ~/.profile
-        echo "# Gemini API configuration (added by llm-linux-setup)" >> ~/.profile
-        echo "export GEMINI_API_KEY=\"${api_key}\"" >> ~/.profile
-        log "Added GEMINI_API_KEY to ~/.profile"
-    fi
+    # Add/update export (idempotent)
+    update_profile_export "GEMINI_API_KEY" "$api_key"
 
     log "Gemini environment variables configured in ~/.profile"
-    log "Note: Run 'source ~/.profile' to load them in current session"
 }
 
 # Update Claude Code Router configuration with checksum tracking
@@ -618,33 +580,16 @@ configure_wsl_ccr() {
     log "To manually control: systemctl --user {start|stop|status} claude-code-router"
 }
 
-# Add CCR environment variables to ~/.profile
+# Add CCR-specific environment variables to ~/.profile
 configure_wsl_profile() {
     local port="$1"
-    local profile_file="$HOME/.profile"
-    local marker_start="# === Claude Code Router (managed by llm-tools) ==="
-    local marker_end="# === End Claude Code Router ==="
 
-    # Remove existing block if present
-    if grep -q "$marker_start" "$profile_file" 2>/dev/null; then
-        sed -i "/$marker_start/,/$marker_end/d" "$profile_file"
-    fi
+    # Add/update CCR routing exports (DISABLE_TELEMETRY/AUTOUPDATER set globally)
+    update_profile_export "ANTHROPIC_BASE_URL" "http://127.0.0.1:${port}"
+    update_profile_export "NO_PROXY" "127.0.0.1"
 
-    # Append new configuration block
-    cat >> "$profile_file" << EOF
-
-$marker_start
-# Routes Claude Code API calls through local CCR proxy
-# To disable: unset ANTHROPIC_BASE_URL
-export ANTHROPIC_BASE_URL="http://127.0.0.1:${port}"
-export DISABLE_TELEMETRY="true"
-export NO_PROXY="127.0.0.1"
-$marker_end
-EOF
-
-    log "Added CCR environment to ~/.profile"
+    log "Added CCR routing to ~/.profile"
     log "  ANTHROPIC_BASE_URL=http://127.0.0.1:${port}"
-    log "  DISABLE_TELEMETRY=true"
 }
 
 # Create and enable systemd user service for CCR (idempotent)
@@ -2267,6 +2212,25 @@ fi  # End of WSL/non-WSL block
 
 fi  # End of INSTALL_MODE = "full" block for Phase 7
 
+#############################################################################
+# Global environment defaults (regardless of install mode)
+#############################################################################
+
+# Set Claude Code and VS Code defaults for privacy/noise reduction
+# These apply even in minimal mode in case tools are installed manually later
+log "Setting environment defaults..."
+# Claude Code
+update_profile_export "DISABLE_TELEMETRY" "1"
+update_profile_export "DISABLE_AUTOUPDATER" "1"
+update_profile_export "DISABLE_ERROR_REPORTING" "1"
+update_profile_export "DISABLE_BUG_COMMAND" "1"
+update_profile_export "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY" "1"
+# VS Code / .NET
+update_profile_export "VSCODE_TELEMETRY_DISABLE" "1"
+update_profile_export "VSCODE_CRASH_REPORTER_DISABLE" "1"
+update_profile_export "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
+ensure_zprofile_sources_profile
+
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
 clear_package_caches
 
@@ -2366,11 +2330,11 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
         log "  WSL Integration:"
         log "    - Claude Code Router  Multi-provider proxy (systemd service enabled)"
         log ""
-        log "  CCR Environment (in ~/.profile):"
+        log "  CCR Environment (in ~/.profile, sourced by ~/.zprofile for ZSH):"
         log "    - ANTHROPIC_BASE_URL=http://127.0.0.1:3456"
         log ""
         log "  Next steps:"
-        log "    1. Restart WSL or source ~/.profile"
+        log "    1. Restart WSL or start a new shell"
         log "    2. Test Claude Code: claude"
         log "    3. Verify CCR is running: systemctl --user status claude-code-router"
         log "    4. Configure external clients to use WSL's CCR endpoint"
