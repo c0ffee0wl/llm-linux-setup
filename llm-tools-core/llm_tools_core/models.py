@@ -60,13 +60,13 @@ DEFAULT_CONTEXT_LIMIT = 200000
 # Model upgrades for assistant applications
 # Maps lightweight default models to more capable versions
 ASSISTANT_MODEL_UPGRADES: Dict[str, str] = {
-    "azure/gpt-4.1-mini": "azure/gpt-4.1",
+    "azure/gpt-4.1-mini": "azure/gpt-5.1-codex",
     # Future: add more as needed
     # "gemini-2.5-flash-lite": "gemini-2.5-flash",
 }
 
 # Fallback model when llm.get_default_model() fails
-ASSISTANT_MODEL_FALLBACK = "azure/gpt-4.1"
+ASSISTANT_MODEL_FALLBACK = "azure/gpt-5.1-codex"
 
 
 def get_assistant_default_model() -> str:
@@ -83,7 +83,7 @@ def get_assistant_default_model() -> str:
     Examples:
         >>> # If system default is azure/gpt-4.1-mini:
         >>> get_assistant_default_model()
-        'azure/gpt-4.1'
+        'azure/gpt-5.1-codex'
         >>> # If system default is gemini-2.5-flash:
         >>> get_assistant_default_model()
         'gemini-2.5-flash'  # No upgrade rule, returns as-is

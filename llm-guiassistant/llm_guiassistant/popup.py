@@ -122,6 +122,14 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.webview = WebKit2.WebView()
         self.webview.set_vexpand(True)
 
+        # Register JavaScript → Python message handler for window control
+        user_content_manager = self.webview.get_user_content_manager()
+        user_content_manager.register_script_message_handler('windowControl')
+        user_content_manager.connect(
+            'script-message-received::windowControl',
+            self._on_window_control_message
+        )
+
         # Configure WebKit settings
         settings = self.webview.get_settings()
         settings.set_hardware_acceleration_policy(
@@ -391,6 +399,21 @@ class PopupWindow(Gtk.ApplicationWindow):
     def refresh_context(self):
         """Refresh local context (daemon captures fresh context on each query)."""
         self._gather_context()
+
+    def _on_window_control_message(self, user_content_manager, js_result):
+        """Handle window control messages from JavaScript."""
+        try:
+            data = json.loads(js_result.get_js_value().to_json(0))
+            action = data.get('action')
+
+            if action == 'minimize':
+                self.iconify()
+            elif action == 'restore':
+                self.deiconify()
+                self.present()
+        except Exception as e:
+            if self.debug:
+                print(f"[WebKit] Window control error: {e}")
 
 
 class PopupApplication(Gtk.Application):

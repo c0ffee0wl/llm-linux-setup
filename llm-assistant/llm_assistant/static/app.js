@@ -784,6 +784,28 @@ const atAutocomplete = {
 };
 
 // ============================================================================
+// GTK Popup Detection (for WebKit message handlers)
+// ============================================================================
+
+/**
+ * Check if running inside GTK popup (WebKit with message handlers)
+ */
+function isGTKPopup() {
+    return window.webkit &&
+           window.webkit.messageHandlers &&
+           window.webkit.messageHandlers.windowControl;
+}
+
+/**
+ * Minimize/restore GTK popup window (no-op in browser)
+ */
+function controlGTKWindow(action) {
+    if (isGTKPopup()) {
+        window.webkit.messageHandlers.windowControl.postMessage({action: action});
+    }
+}
+
+// ============================================================================
 // Capture Controls
 // ============================================================================
 
@@ -851,6 +873,14 @@ const captureControls = {
     async capture(mode) {
         this.hideDropdown();
 
+        // Minimize GTK popup before screenshot (no-op in browser)
+        controlGTKWindow('minimize');
+
+        // Brief delay for window to minimize
+        if (isGTKPopup()) {
+            await new Promise(resolve => setTimeout(resolve, 200));
+        }
+
         try {
             showToast('Capturing ' + mode + (this.delay > 0 ? ' in ' + this.delay + 's...' : '...'));
 
@@ -883,6 +913,9 @@ const captureControls = {
         } catch (err) {
             console.error('Capture error:', err);
             showToast('Capture failed: ' + err.message);
+        } finally {
+            // Restore GTK popup after screenshot (no-op in browser)
+            controlGTKWindow('restore');
         }
     }
 };
