@@ -41,6 +41,7 @@ CLEAR_CACHE=false
 MINIMAL_FLAG=false
 FULL_FLAG=false
 WSL_FLAG=""  # "", "force", or "disable"
+CCR_FLAG=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -72,6 +73,10 @@ while [[ $# -gt 0 ]]; do
             WSL_FLAG="disable"
             shift
             ;;
+        --ccr)
+            CCR_FLAG=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -82,6 +87,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --full         Install all tools (overrides saved --minimal preference)"
             echo "  --wsl          Force WSL mode (skip session recording, prompt for CCR)"
             echo "  --no-wsl       Disable WSL auto-detection (run full install even in WSL)"
+            echo "  --ccr          Full Claude Code Router setup (config, profile exports, systemd service)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
@@ -557,31 +563,31 @@ EOF
         "Claude Code Router config.json" "N" "true"
 }
 
-# Configure Claude Code Router for WSL environment
-# Sets up: CCR installation, systemd service, profile environment
-configure_wsl_ccr() {
+# Configure Claude Code Router (full setup including systemd service)
+# Sets up: CCR installation, config, profile environment, systemd service
+configure_ccr() {
     local CCR_PORT=3456
 
-    # 1. Install/update Claude Code Router (uses existing helper)
+    # 1. Install/update Claude Code Router
     install_or_upgrade_npm_global @musistudio/claude-code-router
 
-    # 2. Generate CCR config (reuse existing function)
+    # 2. Generate CCR config
     update_ccr_config
 
-    # 3. Configure ~/.profile environment variables
-    configure_wsl_profile "$CCR_PORT"
+    # 3. Configure ~/.profile environment variables and create env file
+    configure_ccr_profile "$CCR_PORT"
 
-    # 4. Set up systemd user service
-    configure_wsl_systemd_service "$CCR_PORT"
+    # 4. Set up systemd user service for auto-start
+    configure_ccr_systemd_service "$CCR_PORT"
 
-    log "Claude Code Router configured for WSL"
-    log "Service will start automatically on WSL boot"
-    log ""
-    log "To manually control: systemctl --user {start|stop|status} claude-code-router"
+    log "Claude Code Router configured"
+    log "  Config:  ~/.claude-code-router/config.json"
+    log "  Env:     ~/.config/claude-code-router/env"
+    log "  Service: systemctl --user {start|stop|status} claude-code-router"
 }
 
-# Add CCR-specific environment variables to ~/.profile and create env file for systemd
-configure_wsl_profile() {
+# Add CCR-specific environment variables to ~/.profile and create env file
+configure_ccr_profile() {
     local port="$1"
     local env_file="${HOME}/.config/claude-code-router/env"
 
@@ -617,7 +623,7 @@ configure_wsl_profile() {
 }
 
 # Create and enable systemd user service for CCR (idempotent)
-configure_wsl_systemd_service() {
+configure_ccr_systemd_service() {
     local port="$1"
     local service_dir="$HOME/.config/systemd/user"
     local service_file="$service_dir/claude-code-router.service"
@@ -631,7 +637,7 @@ configure_wsl_systemd_service() {
     local current_path="$PATH"
 
     # Generate expected service content
-    # API keys are loaded from EnvironmentFile (created by configure_wsl_profile)
+    # API keys are loaded from EnvironmentFile (created by configure_ccr_profile)
     local env_file="${HOME}/.config/claude-code-router/env"
     local expected_content="[Unit]
 Description=Claude Code Router - Multi-provider proxy for Claude Code
@@ -2174,14 +2180,14 @@ if [ "$IS_WSL" = true ]; then
         if systemctl --user is-active claude-code-router &>/dev/null; then
             # Service is running - default to skip reconfiguration
             if ask_yes_no "Claude Code Router is running. Update/reconfigure anyway?" "N"; then
-                configure_wsl_ccr
+                configure_ccr
             else
                 log "Keeping existing Claude Code Router configuration"
             fi
         else
             # Installed but not running - likely needs fixing, default to yes
             if ask_yes_no "Claude Code Router is installed but not running. Reconfigure?" "Y"; then
-                configure_wsl_ccr
+                configure_ccr
             else
                 log "Keeping existing Claude Code Router configuration"
             fi
@@ -2189,7 +2195,7 @@ if [ "$IS_WSL" = true ]; then
     else
         # Fresh install - default to yes since user chose WSL mode
         if ask_yes_no "Install Claude Code Router for external client integration?" "Y"; then
-            configure_wsl_ccr
+            configure_ccr
         else
             log "Skipping Claude Code Router installation"
         fi
@@ -2215,9 +2221,6 @@ fi
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
 if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
-    log "Installing/updating Claude Code Router..."
-    install_or_upgrade_npm_global @musistudio/claude-code-router
-
     # Export environment variables for providers with keys
     if [ "$AZURE_CONFIGURED" = "true" ]; then
         export_azure_env_vars
@@ -2227,10 +2230,18 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
         export_gemini_env_vars
     fi
 
-    # Generate CCR configuration (auto-adapts based on AZURE_CONFIGURED/GEMINI_CONFIGURED)
-    update_ccr_config
-
-    log "Claude Code Router installed"
+    if [ "$CCR_FLAG" = true ]; then
+        # Full CCR setup with profile exports (for VS Code extension etc.)
+        log "Setting up Claude Code Router with profile exports..."
+        configure_ccr
+    else
+        # Basic CCR install without profile exports
+        log "Installing/updating Claude Code Router..."
+        install_or_upgrade_npm_global @musistudio/claude-code-router
+        update_ccr_config
+        log "Claude Code Router installed"
+        log "  Tip: Use --ccr flag to set up profile exports for VS Code integration"
+    fi
 else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi

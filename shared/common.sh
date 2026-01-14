@@ -268,12 +268,25 @@ update_profile_export() {
     # Create file if it doesn't exist
     [ ! -f "$profile_file" ] && touch "$profile_file"
 
+    # Escape special characters for shell double-quoted string:
+    # - Backslashes must be escaped first (before other escapes add more)
+    # - Double quotes, dollar signs, and backticks need escaping
+    local escaped_value="$var_value"
+    escaped_value="${escaped_value//\\/\\\\}"    # \ -> \\
+    escaped_value="${escaped_value//\"/\\\"}"    # " -> \"
+    escaped_value="${escaped_value//\$/\\\$}"    # $ -> \$
+    escaped_value="${escaped_value//\`/\\\`}"    # ` -> \`
+
+    # For sed replacement, also escape & (special in replacement string)
+    local sed_value="$escaped_value"
+    sed_value="${sed_value//&/\\&}"              # & -> \&
+
     if grep -q "^export ${var_name}=" "$profile_file" 2>/dev/null; then
         # Update existing export in place
-        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${var_value}\"|" "$profile_file"
+        sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${sed_value}\"|" "$profile_file"
     else
         # Append new export
-        echo "export ${var_name}=\"${var_value}\"" >> "$profile_file"
+        echo "export ${var_name}=\"${escaped_value}\"" >> "$profile_file"
     fi
 }
 
