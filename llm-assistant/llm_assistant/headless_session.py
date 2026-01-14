@@ -142,7 +142,7 @@ HEADLESS_TOOL_NAMES = (
 
 def _suggest_command_impl(command: str) -> str:
     """Implementation for suggest_command tool."""
-    from .utils import write_suggested_command
+    from llm_tools_core.daemon import write_suggested_command
     write_suggested_command(command)
     return f"Command ready. User presses Ctrl+G to apply: {command}"
 
