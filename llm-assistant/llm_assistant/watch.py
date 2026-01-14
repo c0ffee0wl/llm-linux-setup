@@ -8,6 +8,7 @@ This module provides background terminal monitoring:
 """
 
 import asyncio
+import re
 import threading
 from typing import TYPE_CHECKING, List, Optional
 
@@ -24,6 +25,11 @@ if TYPE_CHECKING:
 
 # Marker returned by capture_context when all terminals are unchanged
 CONTEXT_UNCHANGED_MARKER = "[Context: unchanged]"
+
+# Pattern for NoComment tag detection (case-insensitive, forgiving of malformed XML)
+# Matches: <NoComment/>, <nocomment/>, NoComment/>, <NoComment>, <no comment/>, etc.
+# Also accepts leading/trailing whitespace
+NO_COMMENT_PATTERN = re.compile(r'\s*<?\s*no\s*comment\s*/?\s*>?\s*', re.IGNORECASE)
 
 
 class WatchMixin:
@@ -237,7 +243,7 @@ class WatchMixin:
 
                     # Only show if AI has actionable feedback - outside lock
                     if not should_skip and response_text and response_text.strip():
-                        if '<NoComment/>' in response_text:
+                        if NO_COMMENT_PATTERN.search(response_text):
                             pass  # AI explicitly indicated nothing to report
                         elif not is_watch_response_dismissive(response_text):
                             # Fallback for models that don't follow NoComment instruction
