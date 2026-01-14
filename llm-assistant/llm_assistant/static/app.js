@@ -140,6 +140,14 @@ const attachmentPanel = {
     },
 
     remove(index) {
+        // Also remove from pendingImages to keep them in sync
+        const item = this.items[index];
+        if (item && item.path) {
+            const imgIndex = window.pendingImages.indexOf(item.path);
+            if (imgIndex !== -1) {
+                window.pendingImages.splice(imgIndex, 1);
+            }
+        }
         this.items.splice(index, 1);
         this.render();
     },
@@ -175,9 +183,12 @@ const attachmentPanel = {
         // Show/hide button based on item count
         if (this.items.length === 0) {
             btn.classList.add('hidden');
+            count.classList.add('hidden');  // Hide badge completely
+            count.textContent = '';
             this.hide();
         } else {
             btn.classList.remove('hidden');
+            count.classList.remove('hidden');
             count.textContent = this.items.length;
         }
 
@@ -505,6 +516,10 @@ const historySidebar = {
     },
 
     async loadConversation(id) {
+        // Clear pending attachments when switching conversations
+        attachmentPanel.clear();
+        window.pendingImages = [];
+
         try {
             const response = await fetch('/api/history/' + id);
             if (!response.ok) throw new Error('Failed to load conversation');
@@ -1825,6 +1840,9 @@ function handleMessage(msg) {
             // This is the active session's history, not a historical load
             isHistoricalView = false;
             resetInputToActive();
+            // Clear any pending attachments from previous state
+            attachmentPanel.clear();
+            window.pendingImages = [];
             loadHistory(msg.messages || []);
             break;
 
@@ -2493,6 +2511,9 @@ function clearConversation() {
     messageStore.clear();
     // Reset temp chat toggle for new conversation
     tempChatToggle.reset();
+    // Clear pending attachments from previous conversation
+    attachmentPanel.clear();
+    window.pendingImages = [];
 }
 
 // ============================================================================

@@ -388,7 +388,14 @@ class PopupWindow(Gtk.ApplicationWindow):
                     # Notify web UI about the upload via JavaScript
                     temp_path = result.get('path', '')
                     if temp_path:
-                        js = f"window.pendingImages = window.pendingImages || []; window.pendingImages.push({json.dumps(temp_path)});"
+                        # Add to both pendingImages and attachmentPanel for proper sync
+                        js = f"""
+                            window.pendingImages = window.pendingImages || [];
+                            window.pendingImages.push({json.dumps(temp_path)});
+                            if (typeof attachmentPanel !== 'undefined') {{
+                                attachmentPanel.add({json.dumps(temp_path)}, 'upload');
+                            }}
+                        """
                         self.webview.run_javascript(js, None, None, None)
                         if self.debug:
                             print(f"[Upload] Uploaded: {temp_path}")
