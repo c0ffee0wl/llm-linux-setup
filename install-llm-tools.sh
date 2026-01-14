@@ -611,8 +611,13 @@ configure_ccr_profile() {
     log "Created CCR environment file: $env_file"
 
     # Add/update CCR routing exports to ~/.profile
+    # Based on CCR's createEnvVariables.ts - set both auth vars for compatibility
     update_profile_export "ANTHROPIC_BASE_URL" "http://127.0.0.1:${port}"
+    update_profile_export "ANTHROPIC_AUTH_TOKEN" "ccr"  # Used by ccr code
+    update_profile_export "ANTHROPIC_API_KEY" "ccr"     # Used by claude directly
     update_profile_export "NO_PROXY" "127.0.0.1"
+    update_profile_export "API_TIMEOUT_MS" "600000"
+    update_profile_export "DISABLE_COST_WARNINGS" "true"  # Costs don't apply via CCR
 
     # Also export API keys to ~/.profile for general shell availability
     [ -n "$azure_key" ] && update_profile_export "AZURE_OPENAI_API_KEY" "$azure_key"
