@@ -275,10 +275,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         self.watch_interval = 5  # seconds
         self.watch_lock = threading.Lock()
         self.event_loop = None
-        # Watch mode intelligent change detection
-        self.previous_watch_context_hash = None  # SHA256 hash for deduplication
+        # Watch mode iteration tracking
         self.previous_watch_iteration_count = 0   # Track iterations for prompt
-        self.previous_watch_context: Optional[str] = None  # Store for diff computation
         # Watch mode statistics
         self.watch_start_time: Optional[float] = None
         self.watch_total_iterations: int = 0
@@ -2466,8 +2464,7 @@ Screenshot size: {file_size} bytes"""
                 # Clear rewind undo buffer (full reset = no undo)
                 self.rewind_undo_buffer = None
 
-                # Reset watch mode tracking state
-                self.previous_watch_context_hash = None
+                # Reset watch mode iteration count
                 self.previous_watch_iteration_count = 0
 
                 # Broadcast clear to web companion
@@ -2734,10 +2731,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     with self.watch_lock:
                         self.watch_mode = False
                         self.watch_goal = None
-                        # Reset state for next enable
-                        self.previous_watch_context_hash = None
+                        # Reset iteration count for next enable
                         self.previous_watch_iteration_count = 0
-                        self.previous_watch_context = None
                         # Reset statistics
                         self.watch_start_time = None
                         self.watch_total_iterations = 0
@@ -2786,10 +2781,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 with self.watch_lock:
                     self.watch_mode = True
                     self.watch_goal = args
-                    # Reset state for fresh analysis with new goal
-                    self.previous_watch_context_hash = None
+                    # Reset iteration count for fresh analysis with new goal
                     self.previous_watch_iteration_count = 0
-                    self.previous_watch_context = None
                     # Initialize statistics
                     self.watch_start_time = time.time()
                     self.watch_total_iterations = 0

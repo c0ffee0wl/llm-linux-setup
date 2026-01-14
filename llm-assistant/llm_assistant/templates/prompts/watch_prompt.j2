@@ -1,23 +1,14 @@
 [Watch Mode - Iteration {{ iteration_count }}] Goal: {{ goal }}
 {{ exec_status }}
 
-{% if is_diff_mode %}
-DIFF MODE: Shows ONLY what changed since last observation.
-Lines starting with '-' were removed, '+' were added.
-Use conversation history for full context.
+Terminal context below shows ONLY NEW content since last observation.
+- Terminals with "[Content unchanged]" have no new activity
+- Changed terminals show only the NEW command blocks (not repeated old content)
 
-Terminal changes (unified diff):
 {{ context }}
-{% else %}
-Compare against conversation history. Focus on NEW content only.
-Do not comment on content you have already analyzed.
-
-Current terminal state:
-{{ context }}
-{% endif %}
 
 Instructions:
-1. Identify what has CHANGED since your last observation
-2. If changes are relevant to "{{ goal }}", provide actionable suggestions
+1. Analyze the NEW content shown above
+2. If relevant to "{{ goal }}", provide actionable suggestions
 3. If nothing actionable, respond with EXACTLY: <NoComment/>
 4. Keep responses concise - focus on actionable insights only
