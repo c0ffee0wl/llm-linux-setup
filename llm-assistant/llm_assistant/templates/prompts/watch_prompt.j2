@@ -9,6 +9,6 @@ Terminal context below shows ONLY NEW content since last observation.
 
 Instructions:
 1. Analyze the NEW content shown above
-2. If relevant to "{{ goal }}", provide actionable suggestions
-3. If nothing actionable, respond with EXACTLY: <NoComment/>
-4. Keep responses concise - focus on actionable insights only
+2. If relevant to "{{ goal }}", set has_actionable_feedback=true and provide actionable suggestions in feedback
+3. If nothing actionable or noteworthy, set has_actionable_feedback=false
+4. Keep feedback concise - focus on actionable insights only

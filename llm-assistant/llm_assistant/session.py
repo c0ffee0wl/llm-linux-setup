@@ -3749,11 +3749,15 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
             self.setup_terminals()
 
         # Build external tools list for display (mode-aware)
+        # Hide internal tools from display (skill_invoke/skill_load_file are implementation details)
+        hidden_tools = {'skill_invoke', 'skill_load_file'}
         external_tools_list = ""
         active_external = self._get_active_external_tools()
         if active_external:
             tools_info = []
             for name in sorted(active_external.keys()):
+                if name in hidden_tools:
+                    continue
                 if name in EXTERNAL_TOOL_DISPLAY:
                     _, _, desc = EXTERNAL_TOOL_DISPLAY[name]
                     tools_info.append(f"  [dim]•[/] {name}: {desc}")

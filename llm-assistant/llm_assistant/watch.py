@@ -8,6 +8,7 @@ This module provides background terminal monitoring:
 """
 
 import asyncio
+import json
 import re
 import threading
 from typing import TYPE_CHECKING, List, Optional
@@ -16,9 +17,9 @@ from rich.markdown import Markdown
 from rich.panel import Panel
 
 from llm_tools_core import PromptDetector
+from .schemas import WatchResponseSchema
 from .templates import render
 from .utils import ConsoleHelper
-from .utils import is_watch_response_dismissive
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -26,9 +27,9 @@ if TYPE_CHECKING:
 # Marker returned by capture_context when all terminals are unchanged
 CONTEXT_UNCHANGED_MARKER = "[Context: unchanged]"
 
-# Pattern for NoComment tag detection (case-insensitive, forgiving of malformed XML)
+# Fallback pattern for NoComment tag detection when schema not supported
+# Case-insensitive, forgiving of malformed XML
 # Matches: <NoComment/>, <nocomment/>, NoComment/>, <NoComment>, <no comment/>, etc.
-# Also accepts leading/trailing whitespace
 NO_COMMENT_PATTERN = re.compile(r'\s*<?\s*no\s*comment\s*/?\s*>?\s*', re.IGNORECASE)
 
 
@@ -229,11 +230,15 @@ class WatchMixin:
                                 # complete response in one call. Lock is necessary because the
                                 # conversation object is not thread-safe and is shared with main thread.
                                 self.watch_ai_calls += 1
+
+                                # Use schema if model supports it for reliable parsing
+                                use_schema = getattr(self.model, 'supports_schema', False)
                                 response = self._prompt(
                                     prompt,
                                     system=self._build_system_prompt(),
                                     attachments=tui_attachments if tui_attachments else None,
-                                    stream=False  # Reduce lock hold time
+                                    stream=False,  # Reduce lock hold time
+                                    schema=WatchResponseSchema if use_schema else None
                                 )
                                 response_text = response.text()
                                 # Log watch mode response to database
@@ -243,14 +248,37 @@ class WatchMixin:
 
                     # Only show if AI has actionable feedback - outside lock
                     if not should_skip and response_text and response_text.strip():
-                        if NO_COMMENT_PATTERN.search(response_text):
-                            pass  # AI explicitly indicated nothing to report
-                        elif not is_watch_response_dismissive(response_text):
-                            # Fallback for models that don't follow NoComment instruction
+                        has_feedback = False
+                        feedback_text = response_text
+
+                        # Try to parse as schema response first
+                        try:
+                            parsed = json.loads(response_text)
+                            if isinstance(parsed, dict) and 'has_actionable_feedback' in parsed:
+                                # Schema response - use structured fields
+                                has_feedback = parsed.get('has_actionable_feedback', False)
+                                feedback_text = parsed.get('feedback', '')
+                            else:
+                                # Not a schema response, use fallback
+                                has_feedback = None  # Will use fallback logic
+                        except (json.JSONDecodeError, TypeError):
+                            # Not JSON, use fallback pattern matching
+                            has_feedback = None
+
+                        # Fallback: regex pattern for non-schema responses
+                        if has_feedback is None:
+                            if NO_COMMENT_PATTERN.search(response_text):
+                                has_feedback = False
+                            else:
+                                has_feedback = True
+                                feedback_text = response_text
+
+                        # Show alert if we have actionable feedback
+                        if has_feedback and feedback_text and feedback_text.strip():
                             self.watch_alerts_shown += 1
                             self.console.print()
                             self.console.print(Panel(
-                                Markdown(response_text),
+                                Markdown(feedback_text),
                                 title="[bold yellow]Watch Mode Alert[/]",
                                 border_style="yellow"
                             ))

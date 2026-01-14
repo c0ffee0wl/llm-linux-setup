@@ -26,3 +26,15 @@ class SafetySchema(BaseModel):
     risk_level: Literal["safe", "caution", "dangerous"] = Field(description="Risk classification")
     safe: bool = Field(description="True if safe or caution, false if dangerous")
     reason: str = Field(description="One short sentence summary (max 10 words)")
+
+
+# Schema for watch mode responses
+class WatchResponseSchema(BaseModel):
+    """Schema for watch mode AI responses."""
+    has_actionable_feedback: bool = Field(
+        description="True if there is something actionable to report, false if nothing noteworthy"
+    )
+    feedback: str = Field(
+        default="",
+        description="Actionable feedback/suggestions if has_actionable_feedback is true, empty string otherwise"
+    )
