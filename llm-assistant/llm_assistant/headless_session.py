@@ -289,7 +289,7 @@ class HeadlessSession(
         self.active_rag_collection: Optional[str] = None
         self.pending_rag_context: Optional[str] = None
         self.rag_top_k = 5
-        self.rag_mode = "hybrid"
+        self.rag_search_mode = "hybrid"  # hybrid|vector|keyword
 
         # Knowledge base state (KnowledgeBaseMixin)
         self.loaded_kbs: Dict[str, str] = {}  # name -> content
@@ -302,6 +302,13 @@ class HeadlessSession(
         self._global_memory_path: Optional[Path] = None
         self._local_memory: str = ""
         self._local_memory_path: Optional[Path] = None
+
+        # Web companion state (WebMixin) - not used in headless but referenced
+        self.web_clients: Set = set()
+        self.web_server = None
+        self.web_server_thread = None
+        self.web_port = 8765
+        self.web_event_loop = None
 
         # Initialize mixins that need it
         self._init_mixins()

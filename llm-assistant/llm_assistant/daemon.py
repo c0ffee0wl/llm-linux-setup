@@ -429,14 +429,29 @@ class AssistantDaemon:
         # Capture context with deduplication
         context = session.capture_context(session_log)
 
-        # Build prompt with context
+        # RAG context retrieval (if RAG collection is active)
+        rag_context = ""
+        if hasattr(session, 'pending_rag_context') and session.pending_rag_context:
+            # One-shot: consume pending context from /rag search
+            rag_context = session.pending_rag_context
+            session.pending_rag_context = None
+        elif hasattr(session, 'active_rag_collection') and session.active_rag_collection and query.strip():
+            # Persistent mode: search on every prompt
+            if hasattr(session, '_retrieve_rag_context'):
+                rag_context = session._retrieve_rag_context(query) or ""
+
+        # Build prompt with context (order: terminal context → RAG context → user input)
+        prompt_parts = []
         if context and context != "<terminal_context>[Content unchanged]</terminal_context>":
-            full_prompt = f"{context}\n\n{query}"
+            prompt_parts.append(context)
         elif "[Content unchanged]" in context:
-            # Context unchanged - send marker so LLM knows to reference previous context
-            full_prompt = f"<terminal_context>[Terminal context unchanged from previous message]</terminal_context>\n\n{query}"
-        else:
-            full_prompt = query
+            prompt_parts.append("<terminal_context>[Terminal context unchanged from previous message]</terminal_context>")
+
+        if rag_context:
+            prompt_parts.append(rag_context)
+
+        prompt_parts.append(query)
+        full_prompt = "\n\n".join(prompt_parts)
 
         # Determine tools and system prompt based on mode
         if mode == 'simple':
