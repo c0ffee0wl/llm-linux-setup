@@ -2216,19 +2216,24 @@ fi  # End of INSTALL_MODE = "full" block for Phase 7
 # Global environment defaults (regardless of install mode)
 #############################################################################
 
-# Set Claude Code and VS Code defaults for privacy/noise reduction
+# Set telemetry/privacy defaults for dev tools
 # These apply even in minimal mode in case tools are installed manually later
 log "Setting environment defaults..."
+# Universal
+update_profile_export "DO_NOT_TRACK" "1"
 # Claude Code
 update_profile_export "DISABLE_TELEMETRY" "1"
 update_profile_export "DISABLE_AUTOUPDATER" "1"
 update_profile_export "DISABLE_ERROR_REPORTING" "1"
 update_profile_export "DISABLE_BUG_COMMAND" "1"
 update_profile_export "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY" "1"
-# VS Code / .NET
+# VS Code / .NET / PowerShell
 update_profile_export "VSCODE_TELEMETRY_DISABLE" "1"
 update_profile_export "VSCODE_CRASH_REPORTER_DISABLE" "1"
 update_profile_export "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
+update_profile_export "POWERSHELL_TELEMETRY_OPTOUT" "1"
+# AI/ML
+update_profile_export "HF_HUB_DISABLE_TELEMETRY" "1"
 ensure_zprofile_sources_profile
 
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
