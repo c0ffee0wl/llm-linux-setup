@@ -132,6 +132,8 @@ class SkillsMixin:
         if not self.loaded_skills:
             self._skill_invoke_tool = None
             self._skill_load_file_tool = None
+            self._skill_invoke_impl = None
+            self._skill_load_file_impl = None
             return
 
         # Create skill_invoke tool (XML is in system prompt, not here)
@@ -151,7 +153,12 @@ class SkillsMixin:
             }, "required": ["skill", "file"]},
         )
 
-    def _skill_invoke_impl(self, name: str) -> str:
+        # Set impl attributes to bound methods for _get_active_external_tools dispatch
+        # (MCPMixin._mcp_init sets these to None, which shadows the methods)
+        self._skill_invoke_impl = self._do_skill_invoke
+        self._skill_load_file_impl = self._do_skill_load_file
+
+    def _do_skill_invoke(self, name: str) -> str:
         """Tool implementation: Load a skill's full SKILL.md content."""
         if name not in self.loaded_skills:
             return f"Error: Skill '{name}' not loaded. Use /skill load {name} first."
@@ -167,7 +174,7 @@ class SkillsMixin:
 
         return content
 
-    def _skill_load_file_impl(self, skill: str, file: str) -> str:
+    def _do_skill_load_file(self, skill: str, file: str) -> str:
         """Tool implementation: Load a specific file from a skill directory."""
         if skill not in self.loaded_skills:
             return f"Error: Skill '{skill}' not loaded."
