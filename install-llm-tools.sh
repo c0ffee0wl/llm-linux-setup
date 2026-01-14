@@ -580,13 +580,37 @@ configure_wsl_ccr() {
     log "To manually control: systemctl --user {start|stop|status} claude-code-router"
 }
 
-# Add CCR-specific environment variables to ~/.profile
+# Add CCR-specific environment variables to ~/.profile and create env file for systemd
 configure_wsl_profile() {
     local port="$1"
+    local env_file="${HOME}/.config/claude-code-router/env"
 
-    # Add/update CCR routing exports (DISABLE_TELEMETRY/AUTOUPDATER set globally)
+    # Retrieve API keys from llm key store
+    local llm_cmd="${HOME}/.local/bin/llm"
+    [ ! -x "$llm_cmd" ] && llm_cmd="llm"
+
+    local azure_key=""
+    local gemini_key=""
+    if command -v "$llm_cmd" &>/dev/null; then
+        azure_key=$("$llm_cmd" keys get azure 2>/dev/null || true)
+        gemini_key=$("$llm_cmd" keys get gemini 2>/dev/null || true)
+    fi
+
+    # Create env file for systemd service (simple KEY=value format)
+    mkdir -p "$(dirname "$env_file")"
+    : > "$env_file"  # Truncate/create
+    chmod 600 "$env_file"  # Restrict permissions (contains secrets)
+    [ -n "$azure_key" ] && echo "AZURE_OPENAI_API_KEY=${azure_key}" >> "$env_file"
+    [ -n "$gemini_key" ] && echo "GEMINI_API_KEY=${gemini_key}" >> "$env_file"
+    log "Created CCR environment file: $env_file"
+
+    # Add/update CCR routing exports to ~/.profile
     update_profile_export "ANTHROPIC_BASE_URL" "http://127.0.0.1:${port}"
     update_profile_export "NO_PROXY" "127.0.0.1"
+
+    # Also export API keys to ~/.profile for general shell availability
+    [ -n "$azure_key" ] && update_profile_export "AZURE_OPENAI_API_KEY" "$azure_key"
+    [ -n "$gemini_key" ] && update_profile_export "GEMINI_API_KEY" "$gemini_key"
 
     log "Added CCR routing to ~/.profile"
     log "  ANTHROPIC_BASE_URL=http://127.0.0.1:${port}"
@@ -607,6 +631,8 @@ configure_wsl_systemd_service() {
     local current_path="$PATH"
 
     # Generate expected service content
+    # API keys are loaded from EnvironmentFile (created by configure_wsl_profile)
+    local env_file="${HOME}/.config/claude-code-router/env"
     local expected_content="[Unit]
 Description=Claude Code Router - Multi-provider proxy for Claude Code
 After=network.target
@@ -618,6 +644,7 @@ Restart=on-failure
 RestartSec=5
 Environment=PORT=${port}
 Environment=PATH=${current_path}
+EnvironmentFile=${env_file}
 
 [Install]
 WantedBy=default.target"
