@@ -40,19 +40,26 @@ _all_tools = llm.get_tools()
 _mcp_future = None
 _mcp_toolbox = None
 _mcp_loaded = False
+_mcp_load_error = None  # Stores error message if MCP loading failed
 _mcp_lock = threading.Lock()
 _mcp_executor = ThreadPoolExecutor(max_workers=1)
 
 
 def _load_mcp_background():
-    """Load MCP tools in background thread."""
+    """Load MCP tools in background thread.
+
+    Returns:
+        Tuple of (MCP_toolbox_or_None, error_message_or_None)
+    """
     try:
         from llm_tools_mcp.register_tools import MCP
-        return MCP()
+        return MCP(), None
     except ImportError:
-        return None  # llm-tools-mcp not installed
-    except Exception:
-        return None  # MCP config missing or server unavailable
+        return None, "llm-tools-mcp not installed"
+    except FileNotFoundError as e:
+        return None, f"Config file not found: {e.filename}"
+    except Exception as e:
+        return None, str(e) or "Unknown error during MCP initialization"
 
 
 # Start loading immediately but don't block module import
@@ -130,7 +137,7 @@ def _ensure_mcp_loaded():
     MCP tools are available. The first call waits for background load to
     complete, subsequent calls return immediately.
     """
-    global _mcp_toolbox, _mcp_loaded, ASSISTANT_TOOLS, EXTERNAL_TOOLS
+    global _mcp_toolbox, _mcp_loaded, _mcp_load_error, ASSISTANT_TOOLS, EXTERNAL_TOOLS
     if _mcp_loaded:
         return
 
@@ -139,14 +146,25 @@ def _ensure_mcp_loaded():
             return
         if _mcp_future:
             try:
-                _mcp_toolbox = _mcp_future.result(timeout=30)
+                result = _mcp_future.result(timeout=30)
+                # Handle both old (single value) and new (tuple) return format
+                if isinstance(result, tuple):
+                    _mcp_toolbox, _mcp_load_error = result
+                else:
+                    _mcp_toolbox = result
                 if _mcp_toolbox:
                     for tool in _mcp_toolbox.tools():
                         _all_tools[tool.name] = tool
                     _rebuild_tool_lists()
-            except Exception:
-                pass  # Failed to load MCP tools
+            except Exception as e:
+                _mcp_load_error = str(e) or "Failed to load MCP tools"
         _mcp_loaded = True
+
+
+def get_mcp_load_error() -> str | None:
+    """Get the MCP loading error message, if any."""
+    _ensure_mcp_loaded()
+    return _mcp_load_error
 
 
 # Build ASSISTANT_TOOLS - base tools always offered to model
@@ -439,7 +457,17 @@ class MCPMixin:
         all_servers = self._get_all_mcp_servers()
 
         if not all_servers:
-            ConsoleHelper.dim(self.console, "No MCP servers configured")
+            # Check what went wrong during MCP loading
+            error = get_mcp_load_error()
+            if error:
+                if "not installed" in error:
+                    ConsoleHelper.dim(self.console, "MCP not available (llm-tools-mcp not installed)")
+                elif "not found" in error.lower():
+                    ConsoleHelper.dim(self.console, f"MCP config not found: {error}")
+                else:
+                    ConsoleHelper.dim(self.console, f"MCP loading failed: {error}")
+            else:
+                ConsoleHelper.dim(self.console, "No MCP servers configured in mcp.json")
             return
 
         # Group by optional status

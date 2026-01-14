@@ -3006,13 +3006,7 @@ function addReadlineShortcuts(textarea, onResize) {
             textarea.setSelectionRange(lineStart, lineStart);
             if (onResize) onResize();
         }
-        else if (e.key === 'a') {
-            e.preventDefault();
-            const pos = textarea.selectionStart;
-            const text = textarea.value;
-            let lineStart = text.lastIndexOf('\n', pos - 1) + 1;
-            textarea.setSelectionRange(lineStart, lineStart);
-        }
+        // Note: Ctrl+A is NOT captured - allows native "select all" behavior
         else if (e.key === 'e') {
             e.preventDefault();
             const pos = textarea.selectionStart;

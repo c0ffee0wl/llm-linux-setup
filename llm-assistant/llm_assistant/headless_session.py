@@ -271,6 +271,17 @@ class HeadlessSession(
         self.exec = False
         self.watch = False
 
+        # Watch mode (not supported in headless, but WebMixin references these)
+        self.watch_mode = False
+        self.watch_goal: Optional[str] = None
+
+        # Context management (WebMixin, ContextMixin use these)
+        self.max_context_size = 100000  # Default, can be overridden
+        self.context_squash_threshold = 0.8
+
+        # System prompt (initialized after mixins)
+        self.system_prompt = ""
+
         # Logging
         self.logging_enabled = logs_on()
 
@@ -280,26 +291,29 @@ class HeadlessSession(
         self.rag_top_k = 5
         self.rag_mode = "hybrid"
 
+        # Knowledge base state (KnowledgeBaseMixin)
+        self.loaded_kbs: Dict[str, str] = {}  # name -> content
+
+        # Skills state (SkillsMixin)
+        self.loaded_skills: Dict[str, Tuple[Path, any]] = {}  # name -> (path, props)
+
+        # Memory state (MemoryMixin)
+        self._global_memory: str = ""
+        self._global_memory_path: Optional[Path] = None
+        self._local_memory: str = ""
+        self._local_memory_path: Optional[Path] = None
+
         # Initialize mixins that need it
         self._init_mixins()
 
+        # Now render system prompt (after mixins initialized)
+        self.system_prompt = self._render_system_prompt()
+
     def _init_mixins(self):
         """Initialize mixin-specific state."""
-        # RAGMixin
-        if hasattr(RAGMixin, '_rag_init'):
-            RAGMixin._rag_init(self)
-
-        # KnowledgeBaseMixin
-        if hasattr(KnowledgeBaseMixin, '_kb_init'):
-            KnowledgeBaseMixin._kb_init(self)
-
-        # MemoryMixin
-        if hasattr(MemoryMixin, '_memory_init'):
-            MemoryMixin._memory_init(self)
-
-        # SkillsMixin
-        if hasattr(SkillsMixin, '_skills_init'):
-            SkillsMixin._skills_init(self)
+        # MemoryMixin - load AGENTS.md files
+        if hasattr(self, '_load_memories'):
+            self._load_memories()
 
         # MCPMixin (headless mode = no_exec_mode=True)
         if hasattr(MCPMixin, '_mcp_init'):
@@ -317,10 +331,23 @@ class HeadlessSession(
         self.pending_summary = None
         self._tool_token_overhead = 0
 
+        # ReportMixin stubs (terminal capture not available in headless mode)
+        self.chat_terminal_uuid = ""  # No chat terminal in headless
+        self.findings_base_dir = get_config_dir() / 'findings'
+        self.findings_project: Optional[str] = None
+
     def _debug(self, msg: str):
         """Print debug message if debug mode enabled."""
         if self.debug:
             ConsoleHelper.debug(self.console, msg)
+
+    def _get_all_terminals_with_content(self) -> List[Dict]:
+        """Get terminal content - not available in headless mode.
+
+        Returns empty list since there are no VTE terminals in headless mode.
+        ReportMixin uses this for capturing terminal context as evidence.
+        """
+        return []
 
     def get_system_prompt(self, gui: bool = False) -> str:
         """Render the system prompt for headless mode.
@@ -345,6 +372,40 @@ class HeadlessSession(
             shell=os.environ.get("SHELL", "/bin/bash"),
             environment="",
         )
+
+    def _render_system_prompt(self) -> str:
+        """Render system prompt for headless mode.
+
+        Required by WebMixin._update_system_prompt() and ContextMixin.
+        Delegates to get_system_prompt() which handles GUI mode flag.
+        """
+        return self.get_system_prompt(gui=(self.source == "gui"))
+
+    def _build_system_prompt(self) -> str:
+        """Build system prompt with memory, KB, and workflow context appended.
+
+        Required by WebMixin for web companion and debug info.
+        The base system prompt is rendered by _render_system_prompt().
+        This method appends memory, KB, and workflow context for the current request.
+        """
+        prompt = self.system_prompt
+
+        # Append memory content (AGENTS.md) - before KB
+        memory_content = self._get_memory_content()
+        if memory_content:
+            prompt = f"{prompt}\n\n<memory>\n# Persistent Memory\n\n{memory_content}\n</memory>"
+
+        # Append KB content if any loaded
+        kb_content = self._get_loaded_kb_content()
+        if kb_content:
+            prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
+
+        # Append workflow context if a workflow is active (from WorkflowMixin)
+        workflow_context = self._get_workflow_context()
+        if workflow_context:
+            prompt = f"{prompt}\n\n{workflow_context}"
+
+        return prompt
 
     def capture_context(self, session_log: Optional[str] = None) -> str:
         """Capture terminal context from asciinema log.

@@ -2304,6 +2304,7 @@ update_profile_export "DISABLE_AUTOUPDATER" "1"
 update_profile_export "DISABLE_ERROR_REPORTING" "1"
 update_profile_export "DISABLE_BUG_COMMAND" "1"
 update_profile_export "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY" "1"
+update_profile_export "DISABLE_INSTALL_GITHUB_APP_COMMAND" "1"
 # VS Code / .NET / PowerShell
 update_profile_export "VSCODE_TELEMETRY_DISABLE" "1"
 update_profile_export "VSCODE_CRASH_REPORTER_DISABLE" "1"

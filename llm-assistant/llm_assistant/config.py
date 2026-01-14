@@ -53,8 +53,6 @@ HEADLESS_AVAILABLE_COMMANDS = {
     '/new',         # Alias for clear
     '/info',        # Session info
     '/status',      # Alias for info
-    '/quit',        # Exit
-    '/exit',        # Alias for quit
     '/model',       # Switch or list models
     '/squash',      # Compress context
     '/kb',          # Knowledge base control
