@@ -602,6 +602,10 @@ configure_wsl_systemd_service() {
 
     mkdir -p "$service_dir"
 
+    # Capture current PATH (includes NVM, cargo, etc.) for systemd
+    # Systemd services don't inherit shell environment, so we must pass PATH explicitly
+    local current_path="$PATH"
+
     # Generate expected service content
     local expected_content="[Unit]
 Description=Claude Code Router - Multi-provider proxy for Claude Code
@@ -613,6 +617,7 @@ ExecStart=${ccr_path} start
 Restart=on-failure
 RestartSec=5
 Environment=PORT=${port}
+Environment=PATH=${current_path}
 
 [Install]
 WantedBy=default.target"
@@ -2138,15 +2143,25 @@ if [ "$IS_WSL" = true ]; then
     echo ""
 
     if [ "$ccr_installed" = true ]; then
-        # Already installed - offer to update/reconfigure
-        if ask_yes_no "Claude Code Router is installed. Update and reconfigure for WSL?" "Y"; then
-            configure_wsl_ccr
+        # Check if service is already running properly
+        if systemctl --user is-active claude-code-router &>/dev/null; then
+            # Service is running - default to skip reconfiguration
+            if ask_yes_no "Claude Code Router is running. Update/reconfigure anyway?" "N"; then
+                configure_wsl_ccr
+            else
+                log "Keeping existing Claude Code Router configuration"
+            fi
         else
-            log "Keeping existing Claude Code Router configuration"
+            # Installed but not running - likely needs fixing, default to yes
+            if ask_yes_no "Claude Code Router is installed but not running. Reconfigure?" "Y"; then
+                configure_wsl_ccr
+            else
+                log "Keeping existing Claude Code Router configuration"
+            fi
         fi
     else
-        # Fresh install
-        if ask_yes_no "Install Claude Code Router for external client integration?" "N"; then
+        # Fresh install - default to yes since user chose WSL mode
+        if ask_yes_no "Install Claude Code Router for external client integration?" "Y"; then
             configure_wsl_ccr
         else
             log "Skipping Claude Code Router installation"
