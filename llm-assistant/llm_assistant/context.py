@@ -303,6 +303,8 @@ class ContextMixin:
         - <terminal_context>: Ephemeral terminal captures
         - <conversation_summary>: Squash summaries
         - <retrieved_documents>: RAG search results
+        - <watch_prompt>: Watch mode iteration prompts
+        - <gui_context>: GUI assistant context
 
         Stripping these for DB storage preserves privacy; stripping for
         web companion shows clean user messages (debug view shows full content).
@@ -341,6 +343,14 @@ class ContextMixin:
         # Remove RAG retrieved documents section
         result = re.sub(
             r'<retrieved_documents>.*?</retrieved_documents>\s*',
+            '',
+            result,
+            flags=re.DOTALL
+        )
+
+        # Remove watch mode prompts (entire iteration prompts filtered from web companion)
+        result = re.sub(
+            r'<watch_prompt>.*?</watch_prompt>\s*',
             '',
             result,
             flags=re.DOTALL

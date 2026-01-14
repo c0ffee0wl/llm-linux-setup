@@ -178,10 +178,12 @@ class WatchMixin:
                     with self.watch_lock:
                         # Capture all terminal content (including exec output for watch)
                         # Returns (context_text, tui_attachments) tuple for TUI screenshot support
-                        # Enable per-terminal deduplication after first watch iteration
+                        # NOTE: dedupe_unchanged=False because watch mode uses hash-based
+                        # deduplication at the whole-context level (more efficient - skips
+                        # AI call entirely when unchanged, rather than sending "[Content unchanged]")
                         context, tui_attachments = self.capture_context(
                             include_exec_output=True,
-                            dedupe_unchanged=self.previous_watch_iteration_count > 0
+                            dedupe_unchanged=False
                         )
 
                         # Check exec terminal idle state using PromptDetector and foreground process
@@ -242,13 +244,16 @@ class WatchMixin:
                                 self.previous_watch_iteration_count += 1
 
                                 # Build prompt with diff or full context
-                                prompt = render('prompts/watch_prompt.j2',
+                                # Wrap in <watch_prompt> tag for filtering in web companion
+                                # (stripped by _strip_context, so watch iterations don't
+                                # appear in regular conversation view)
+                                prompt = '<watch_prompt>' + render('prompts/watch_prompt.j2',
                                     iteration_count=self.previous_watch_iteration_count,
                                     goal=self.watch_goal,
                                     exec_status=exec_status,
                                     context=context_to_send,
                                     is_diff_mode=is_diff_mode,
-                                )
+                                ) + '</watch_prompt>'
 
                                 try:
                                     # Include TUI screenshots if any were captured
