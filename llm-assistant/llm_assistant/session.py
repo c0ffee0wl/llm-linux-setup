@@ -257,14 +257,9 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Note: self.mode is already set earlier (before _render_system_prompt)
         # Operating mode controls tool iteration limits and system prompt content
 
-        # Dynamically loaded optional tools (e.g., {'imagemage'})
-        # Tools here are added to the model's available tools list
+        # Initialize MCP-related attributes (active servers, optional tools)
         # Must be initialized before _estimate_tool_schema_tokens()
-        self.loaded_optional_tools: set = set()
-
-        # Active MCP servers - tracks which servers' tools are available
-        # Initialized with default (non-optional) servers; optional servers must be loaded via /mcp load
-        self.active_mcp_servers: set = self._get_default_mcp_servers()
+        self._mcp_init(self.no_exec_mode)
 
         # Tool token overhead (estimated at startup, cached for session)
         self._tool_token_overhead = self._estimate_tool_schema_tokens()

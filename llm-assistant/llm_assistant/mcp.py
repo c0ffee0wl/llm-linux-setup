@@ -215,10 +215,8 @@ class MCPMixin:
     - active_mcp_servers: set of active MCP server names
     - no_exec_mode: bool (True if running without Terminator/D-Bus)
     - loaded_optional_tools: set of loaded optional tool plugins
-    - _skill_invoke_tool: Optional[Tool]
-    - _skill_load_file_tool: Optional[Tool]
-    - _skill_invoke_impl: callable or None
-    - _skill_load_file_impl: callable or None
+
+    Note: Skill tool attributes (_skill_invoke_tool, etc.) are managed by SkillsMixin.
     """
 
     # Type hints for attributes provided by main class
@@ -240,11 +238,6 @@ class MCPMixin:
         self.active_mcp_servers = self._get_default_mcp_servers()
         self.no_exec_mode = no_exec_mode
         self.loaded_optional_tools = set()
-        # Skill tools - will be set by SkillsMixin if skills are loaded
-        self._skill_invoke_tool = None
-        self._skill_load_file_tool = None
-        self._skill_invoke_impl = None
-        self._skill_load_file_impl = None
 
     def _is_gemini_model(self) -> bool:
         """Check if current model is a Gemini model (vertex/* or gemini-*)."""
