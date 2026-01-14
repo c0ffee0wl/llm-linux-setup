@@ -35,15 +35,29 @@ mermaid.initialize({
 
 // Helper function to safely render markdown with DOMPurify sanitization
 function safeMarkdown(content) {
-    return DOMPurify.sanitize(marked.parse(content), {
-        ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div',
-            // SVG elements for mermaid diagrams
-            'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'marker', 'foreignObject', 'style'],
-        ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel',
-            // SVG attributes for mermaid
-            'viewBox', 'width', 'height', 'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'transform', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'points', 'font-size', 'font-family', 'text-anchor', 'dominant-baseline', 'clip-path', 'marker-end', 'marker-start', 'id', 'style', 'xmlns', 'aria-roledescription', 'role'],
-        ALLOW_DATA_ATTR: false
-    });
+    // Ensure content is a string
+    if (content === null || content === undefined) {
+        return '';
+    }
+    if (typeof content !== 'string') {
+        console.warn('safeMarkdown: non-string content, converting:', typeof content);
+        content = String(content);
+    }
+    try {
+        return DOMPurify.sanitize(marked.parse(content), {
+            ALLOWED_TAGS: ['p', 'br', 'strong', 'em', 'code', 'pre', 'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'blockquote', 'hr', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div',
+                // SVG elements for mermaid diagrams
+                'svg', 'g', 'path', 'rect', 'circle', 'ellipse', 'line', 'polyline', 'polygon', 'text', 'tspan', 'defs', 'clipPath', 'marker', 'foreignObject', 'style'],
+            ALLOWED_ATTR: ['href', 'title', 'class', 'target', 'rel',
+                // SVG attributes for mermaid
+                'viewBox', 'width', 'height', 'd', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'transform', 'x', 'y', 'x1', 'y1', 'x2', 'y2', 'cx', 'cy', 'r', 'rx', 'ry', 'points', 'font-size', 'font-family', 'text-anchor', 'dominant-baseline', 'clip-path', 'marker-end', 'marker-start', 'id', 'style', 'xmlns', 'aria-roledescription', 'role'],
+            ALLOW_DATA_ATTR: false
+        });
+    } catch (err) {
+        console.error('safeMarkdown: markdown parsing error:', err);
+        // Return escaped plain text as fallback
+        return DOMPurify.sanitize(content);
+    }
 }
 
 // Configure marked for safe rendering
@@ -79,7 +93,6 @@ let connectionState = 'disconnected'; // 'connected', 'connecting', 'disconnecte
 let currentMessageId = null;
 let sessionId = null;
 let isStreaming = false;
-let currentToolCallId = null;
 let isHistoricalView = false;  // True when viewing a historical conversation (not the active session)
 let viewedConversationId = null;  // ID of the currently viewed historical conversation
 let currentConversationId = null;  // ID of the active conversation (set when done message received)
@@ -261,6 +274,7 @@ function stripContextTags(content) {
 // Message store for tracking conversation history
 const messageStore = {
     messages: [],
+    toolCallsByMessage: new Map(),  // messageId -> [{id, name, args, result, status}]
 
     add(role, content, element) {
         const id = `msg-${Date.now()}-${this.messages.length}`;
@@ -277,9 +291,43 @@ const messageStore = {
         return null;
     },
 
+    // Tool call tracking methods
+    addToolCall(messageId, toolCallId, name, args) {
+        if (!this.toolCallsByMessage.has(messageId)) {
+            this.toolCallsByMessage.set(messageId, []);
+        }
+        this.toolCallsByMessage.get(messageId).push({
+            id: toolCallId,
+            name,
+            args,
+            result: null,
+            status: 'running'
+        });
+    },
+
+    completeToolCall(toolCallId, result) {
+        for (const [msgId, calls] of this.toolCallsByMessage) {
+            const call = calls.find(c => c.id === toolCallId);
+            if (call) {
+                call.result = result;
+                call.status = 'completed';
+                return true;
+            }
+        }
+        return false;
+    },
+
+    getToolCallsForMessage(messageId) {
+        return this.toolCallsByMessage.get(messageId) || [];
+    },
+
     truncateAfter(id) {
         const idx = this.messages.findIndex(m => m.id === id);
         if (idx === -1) return;
+        // Clean up tool calls for removed messages
+        for (let i = idx + 1; i < this.messages.length; i++) {
+            this.toolCallsByMessage.delete(this.messages[i].id);
+        }
         for (let i = idx + 1; i < this.messages.length; i++) {
             this.messages[i].element?.remove();
         }
@@ -290,6 +338,8 @@ const messageStore = {
         const idx = this.messages.findIndex(m => m.id === id);
         if (idx === -1) return null;
         const msg = this.messages[idx];
+        // Clean up tool calls for this message
+        this.toolCallsByMessage.delete(id);
         msg.element?.remove();
         this.messages.splice(idx, 1);
         this.messages.forEach((m, i) => {
@@ -305,6 +355,7 @@ const messageStore = {
 
     clear() {
         this.messages = [];
+        this.toolCallsByMessage.clear();
     }
 };
 
@@ -1701,7 +1752,7 @@ function handleMessage(msg) {
             break;
 
         case 'tool_start':
-            addToolCall(msg.tool, msg.args, msg.tool_call_id);
+            addToolCall(msg.tool, msg.args, msg.tool_call_id, msg.messageId);
             break;
 
         case 'tool_done':
@@ -1973,11 +2024,43 @@ function loadHistory(messages) {
 
     // Rebuild from history
     for (const msg of messages) {
-        if (msg.role === 'assistant' && msg.content && msg.content.includes('**Tool Call:**')) {
-            // Parse and render tool calls properly
-            appendAssistantMessageWithToolCalls(msg.content);
-        } else {
-            appendMessage(msg.role, msg.content || '');
+        try {
+            // Ensure content is always a string
+            const safeContent = (msg.content && typeof msg.content === 'string') ? msg.content : '';
+            const safeRole = msg.role || 'unknown';
+
+            if (safeRole === 'assistant') {
+                // Debug: log tool calls presence for troubleshooting
+                if (msg.toolCalls) {
+                    console.log('loadHistory: assistant message has toolCalls:', msg.toolCalls.length, msg.toolCalls);
+                }
+                if (msg.toolCalls && Array.isArray(msg.toolCalls) && msg.toolCalls.length > 0) {
+                    // New structured format: pass tool calls to appendMessage
+                    // Mark all historical tool calls as completed (they're from the past)
+                    const completedToolCalls = msg.toolCalls.map(tc => ({
+                        ...tc,
+                        // Use existing result or empty string to mark as completed
+                        result: tc.result !== null && tc.result !== undefined ? tc.result : ''
+                    }));
+                    appendMessage('assistant', safeContent, null, null, completedToolCalls);
+                } else if (safeContent && safeContent.includes('**Tool Call:**')) {
+                    // Legacy format: parse markdown (backward compatibility)
+                    appendAssistantMessageWithToolCalls(safeContent);
+                } else {
+                    appendMessage('assistant', safeContent);
+                }
+            } else {
+                appendMessage(safeRole, safeContent);
+            }
+        } catch (err) {
+            console.error('loadHistory: error processing message:', msg, err);
+            // Try to show a placeholder for the failed message with error details
+            try {
+                const errDetail = err && err.message ? err.message : String(err);
+                appendMessage(msg.role || 'unknown', `[Error rendering message: ${errDetail}]`);
+            } catch (e) {
+                console.error('loadHistory: could not even render placeholder:', e);
+            }
         }
     }
 
@@ -1992,7 +2075,7 @@ function loadHistory(messages) {
 // Message Display
 // ============================================================================
 
-function appendMessage(role, content, streamingId, displayOverride) {
+function appendMessage(role, content, streamingId, displayOverride, toolCalls) {
     const emptyState = document.getElementById('empty-state');
     if (emptyState) {
         emptyState.remove();
@@ -2018,6 +2101,42 @@ function appendMessage(role, content, streamingId, displayOverride) {
 
     // Store original content (with context) for model continuation
     const msgId = messageStore.add(role, content, container);
+
+    // Add tool zone for assistant messages (inserted BEFORE actions)
+    if (role === 'assistant') {
+        const toolZone = document.createElement('div');
+        toolZone.className = 'message-tool-calls';
+        toolZone.dataset.messageId = streamingId || msgId;
+        container.appendChild(toolZone);
+
+        // Render pre-existing tool calls (from history)
+        if (toolCalls && toolCalls.length > 0) {
+            console.log('appendMessage: rendering', toolCalls.length, 'tool calls from history');
+            for (const tc of toolCalls) {
+                try {
+                    // Validate and sanitize tool call data
+                    const safeName = (tc.name && typeof tc.name === 'string') ? tc.name : 'unknown_tool';
+                    const safeId = tc.id || `tc-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+                    const safeArgs = (tc.args && typeof tc.args === 'object' && !Array.isArray(tc.args)) ? tc.args : {};
+                    const safeResult = tc.result;
+
+                    console.log('appendMessage: creating tool call element:', safeName, safeId, safeArgs);
+                    const element = createToolCallElement(safeName, safeArgs, safeId, safeResult);
+                    console.log('appendMessage: created element:', element);
+                    toolZone.appendChild(element);
+                    // Also track in messageStore
+                    messageStore.addToolCall(msgId, safeId, safeName, safeArgs);
+                    if (safeResult !== null && safeResult !== undefined) {
+                        messageStore.completeToolCall(safeId, safeResult);
+                    }
+                } catch (err) {
+                    console.error('appendMessage: error rendering tool call:', tc, err);
+                    // Continue with next tool call instead of failing entirely
+                }
+            }
+            console.log('appendMessage: toolZone children count:', toolZone.children.length);
+        }
+    }
 
     const actions = createActionIcons(role, msgId, displayContent);
     container.appendChild(actions);
@@ -2083,20 +2202,22 @@ function getToolPreview(toolName, args) {
     return '';
 }
 
-function addToolCall(toolName, args, toolCallId) {
-    const conversation = document.getElementById('conversation');
+/**
+ * Create a tool call DOM element.
+ * @param {string} toolName - The tool name
+ * @param {object} args - The tool arguments
+ * @param {string} toolCallId - The tool call ID
+ * @param {string|null} result - The result (null for running, string for completed)
+ * @returns {HTMLElement} The tool call container element
+ */
+function createToolCallElement(toolName, args, toolCallId, result) {
     const config = getToolConfig(toolName);
     const preview = getToolPreview(toolName, args);
-
-    // Debug: warn if tool name is missing
-    if (!toolName || !String(toolName).trim()) {
-        console.warn('addToolCall: empty tool name', { toolName, args, toolCallId });
-    }
+    const isCompleted = result !== null && result !== undefined;
 
     const container = document.createElement('div');
-    container.className = 'tool-call running';
+    container.className = isCompleted ? 'tool-call completed' : 'tool-call running';
     container.id = 'tool-' + (toolCallId || Date.now());
-    currentToolCallId = container.id;
 
     // Header (always visible)
     const header = document.createElement('div');
@@ -2119,7 +2240,7 @@ function addToolCall(toolName, args, toolCallId) {
     header.appendChild(previewSpan);
 
     const statusSpan = document.createElement('span');
-    statusSpan.className = 'tool-call-status running';
+    statusSpan.className = isCompleted ? 'tool-call-status completed' : 'tool-call-status running';
     header.appendChild(statusSpan);
 
     const chevronSpan = document.createElement('span');
@@ -2150,7 +2271,7 @@ function addToolCall(toolName, args, toolCallId) {
         body.appendChild(inputSection);
     }
 
-    // Output section (placeholder)
+    // Output section
     const outputSection = document.createElement('div');
     outputSection.className = 'tool-call-section tool-call-output';
 
@@ -2160,39 +2281,115 @@ function addToolCall(toolName, args, toolCallId) {
     outputSection.appendChild(outputLabel);
 
     const outputContent = document.createElement('pre');
-    outputContent.textContent = 'Running...';
+    if (isCompleted) {
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+        if (resultStr && resultStr.length > 0) {
+            outputContent.textContent = resultStr.length > 2000
+                ? resultStr.substring(0, 2000) + '\n... (truncated)'
+                : resultStr;
+        } else {
+            outputContent.textContent = '(completed)';
+            outputContent.className = 'tool-output-placeholder';
+        }
+    } else {
+        outputContent.textContent = 'Running...';
+    }
     outputSection.appendChild(outputContent);
 
     body.appendChild(outputSection);
     container.appendChild(body);
 
-    conversation.appendChild(container);
+    return container;
+}
+
+/**
+ * Add a tool call to the current assistant message.
+ * @param {string} toolName - The tool name
+ * @param {object} args - The tool arguments
+ * @param {string} toolCallId - The tool call ID
+ * @param {string} messageId - The parent message ID
+ */
+function addToolCall(toolName, args, toolCallId, messageId) {
+    console.log('addToolCall called:', { toolName, toolCallId, messageId });
+
+    // Handle missing tool name gracefully
+    if (!toolName || !String(toolName).trim()) {
+        console.warn('addToolCall: empty tool name, using placeholder', { toolName, args, toolCallId, messageId });
+        toolName = 'unknown_tool';
+    }
+
+    // Find correct tool zone by messageId, fallback to current streaming message
+    let toolZone = null;
+    if (messageId) {
+        toolZone = document.querySelector(`.message-tool-calls[data-message-id="${messageId}"]`);
+        console.log('addToolCall: found tool zone by messageId:', !!toolZone);
+    }
+    if (!toolZone) {
+        // Fallback: find tool zone in the last assistant message
+        const assistantMessages = document.querySelectorAll('.message.assistant .message-tool-calls');
+        console.log('addToolCall: fallback - found', assistantMessages.length, 'assistant message tool zones');
+        if (assistantMessages.length > 0) {
+            toolZone = assistantMessages[assistantMessages.length - 1];
+        }
+    }
+
+    if (!toolZone) {
+        console.warn('addToolCall: no tool zone found for messageId', messageId);
+        return;
+    }
+
+    const element = createToolCallElement(toolName, args, toolCallId, null);
+    toolZone.appendChild(element);
+
+    // Track in messageStore
+    const storeMessageId = messageId || toolZone.dataset.messageId;
+    if (storeMessageId) {
+        messageStore.addToolCall(storeMessageId, toolCallId, toolName, args);
+    }
+
     scrollToBottom();
 }
 
 function completeToolCall(toolCallId, result) {
-    const id = toolCallId ? 'tool-' + toolCallId : currentToolCallId;
-    const container = document.getElementById(id);
+    if (!toolCallId) {
+        console.warn('completeToolCall: missing toolCallId');
+        return;
+    }
 
-    if (container) {
-        // Update status icon
-        const statusIcon = container.querySelector('.tool-call-status');
-        if (statusIcon) {
-            statusIcon.classList.remove('running');
-            statusIcon.classList.add('completed');
-        }
+    const container = document.getElementById('tool-' + toolCallId);
+    if (!container) {
+        console.warn('completeToolCall: container not found for', toolCallId);
+        return;
+    }
 
-        // Update output content
-        const outputContent = container.querySelector('.tool-call-output pre');
-        if (outputContent && result !== undefined) {
-            const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+    // Update container class
+    container.classList.remove('running');
+    container.classList.add('completed');
+
+    // Update status icon
+    const statusIcon = container.querySelector('.tool-call-status');
+    if (statusIcon) {
+        statusIcon.classList.remove('running');
+        statusIcon.classList.add('completed');
+    }
+
+    // Update output content
+    const outputContent = container.querySelector('.tool-call-output pre');
+    if (outputContent && result !== undefined) {
+        const resultStr = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
+        if (resultStr && resultStr.length > 0) {
             outputContent.textContent = resultStr.length > 2000
                 ? resultStr.substring(0, 2000) + '\n... (truncated)'
                 : resultStr;
+            outputContent.classList.remove('tool-output-placeholder');
+        } else {
+            outputContent.textContent = '(completed)';
+            outputContent.classList.add('tool-output-placeholder');
         }
     }
 
-    currentToolCallId = null;
+    // Update messageStore tracking
+    messageStore.completeToolCall(toolCallId, result);
 }
 
 function toggleToolCall(container) {

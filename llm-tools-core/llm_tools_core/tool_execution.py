@@ -5,6 +5,7 @@ event emission and error handling.
 """
 
 import asyncio
+import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, Optional, Protocol
 
@@ -34,6 +35,7 @@ async def execute_tool_call(
     implementations: Dict[str, Callable],
     emit: EventEmitter,
     arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+    message_id: Optional[str] = None,
 ) -> ToolResult:
     """Execute a single tool call and return the result.
 
@@ -43,13 +45,16 @@ async def execute_tool_call(
         emit: Async callback to emit events (tool_start, tool_done)
         arg_overrides: Optional dict mapping tool names to argument overrides.
                        Example: {"search_google": {"sources": False}}
+        message_id: Optional ID of the parent message for this tool call.
+                    Used by clients to associate tool calls with messages.
 
     Returns:
         ToolResult with the execution output
     """
     tool_name = (tool_call.name or "").lower().strip()
     tool_args = tool_call.arguments if isinstance(tool_call.arguments, dict) else {}
-    tool_call_id = tool_call.tool_call_id
+    # Generate tool_call_id if model doesn't provide one (prevents None IDs)
+    tool_call_id = tool_call.tool_call_id or f"tc-{uuid.uuid4().hex[:8]}"
 
     # Apply argument overrides if specified for this tool
     if arg_overrides and tool_name in arg_overrides:
@@ -61,6 +66,7 @@ async def execute_tool_call(
         "tool": tool_name,
         "args": tool_args,
         "tool_call_id": tool_call_id,
+        "messageId": message_id,
     })
 
     # Check if we have an implementation
@@ -71,6 +77,7 @@ async def execute_tool_call(
             "tool": tool_name,
             "result": error_output,
             "tool_call_id": tool_call_id,
+            "messageId": message_id,
         })
         return ToolResult(
             name=tool_call.name,
@@ -106,6 +113,7 @@ async def execute_tool_call(
             "tool": tool_name,
             "result": output[:500] if len(output) > 500 else output,
             "tool_call_id": tool_call_id,
+            "messageId": message_id,
         })
 
         return ToolResult(
@@ -121,6 +129,7 @@ async def execute_tool_call(
             "tool": tool_name,
             "result": error_msg,
             "tool_call_id": tool_call_id,
+            "messageId": message_id,
         })
 
         return ToolResult(

@@ -85,6 +85,15 @@ class ConversationSummary:
 
 
 @dataclass
+class ToolCallData:
+    """Structured tool call data."""
+    id: Optional[str]
+    name: str
+    args: dict
+    result: Optional[str]
+
+
+@dataclass
 class Message:
     """A single message in a conversation."""
     id: str
@@ -93,6 +102,7 @@ class Message:
     datetime_utc: str
     input_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
+    tool_calls: Optional[List['ToolCallData']] = None
 
 
 @dataclass
@@ -287,9 +297,10 @@ class ConversationHistory:
                 response_id = row["id"]
 
                 # Try using llm.Response.from_row() for proper reconstruction
+                tool_calls = []
                 try:
                     response = llm.Response.from_row(db, row)
-                    prompt_text = response.prompt.prompt
+                    prompt_text = response.prompt.prompt if response.prompt else row.get("prompt")
                     response_text = response.text()
                     tool_calls = [
                         {"name": tc.name, "arguments": tc.arguments, "tool_call_id": tc.tool_call_id}
@@ -297,13 +308,19 @@ class ConversationHistory:
                     ]
                     input_tokens = response.input_tokens
                     output_tokens = response.output_tokens
-                except llm.UnknownModelError:
-                    # Fall back to manual extraction if model isn't installed
+                except Exception:
+                    # Fall back to manual extraction if model isn't installed or any error occurs
                     prompt_text = row.get("prompt")
                     response_text = row.get("response")
                     tool_calls = _get_tool_calls_fallback().get(response_id, [])
                     input_tokens = row.get("input_tokens")
                     output_tokens = row.get("output_tokens")
+
+                # If Response.from_row() succeeded but returned no tool calls, check DB fallback
+                if not tool_calls:
+                    db_tool_calls = _get_tool_calls_fallback().get(response_id, [])
+                    if db_tool_calls:
+                        tool_calls = db_tool_calls
 
                 # Convert to Message format for display
                 # User message (prompt)
@@ -317,31 +334,39 @@ class ConversationHistory:
                     ))
 
                 # Assistant message (response + tool calls)
-                content_parts = []
-                if response_text:
-                    content_parts.append(response_text)
-
-                # Format tool calls with results using shared function
-                for tc in tool_calls:
+                # Build structured tool calls with results
+                structured_tool_calls = []
+                for idx, tc in enumerate(tool_calls):
                     tc_id = tc.get("tool_call_id")
                     result_output = None
                     if tc_id:
                         results = _get_tool_results_fallback()
                         result_output = results.get(tc_id)
 
-                    content_parts.append(format_tool_call_markdown(
+                    # Generate fallback ID if tool_call_id is None
+                    display_id = tc_id or f"tc-{response_id}-{idx}"
+
+                    args = tc.get("arguments")
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except (json.JSONDecodeError, TypeError):
+                            args = {}
+                    structured_tool_calls.append(ToolCallData(
+                        id=display_id,
                         name=tc["name"],
-                        arguments=tc.get("arguments"),
+                        args=args if isinstance(args, dict) else {},
                         result=result_output,
                     ))
 
-                if content_parts:
+                if response_text or structured_tool_calls:
                     messages.append(Message(
                         id=f"{response_id}_assistant",
                         role="assistant",
-                        content="".join(content_parts),
+                        content=response_text or "",
                         datetime_utc=row.get("datetime_utc") or "",
                         output_tokens=output_tokens,
+                        tool_calls=structured_tool_calls if structured_tool_calls else None,
                     ))
 
             return FullConversation(

@@ -1559,6 +1559,23 @@ pre code {
    Collapsible Tool Calls (Accordion)
    ============================================================================ */
 
+/* Container for tool calls within a message */
+.message-tool-calls {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0;
+}
+
+.message-tool-calls:empty {
+    display: none;
+}
+
+/* Remove margin when inside container (gap handles spacing) */
+.message-tool-calls .tool-call {
+    margin: 0;
+}
+
 .tool-call {
     background: var(--tool-bg);
     border-radius: 6px;
@@ -1667,6 +1684,11 @@ pre code {
     max-height: 250px;
     overflow-y: auto;
     overflow-x: auto;
+}
+
+.tool-output-placeholder {
+    color: var(--text-muted);
+    font-style: italic;
 }
 
 /* ============================================================================

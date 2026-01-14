@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Optional, Set
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Optional, Set
 
 from aiohttp import web
 import llm
@@ -566,9 +566,10 @@ class WebUIServer:
     async def _execute_tool_call(
         self,
         tool_call,
-        implementations: Dict[str, callable],
+        implementations: Dict[str, Callable],
         ws: web.WebSocketResponse,
         arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
+        message_id: Optional[str] = None,
     ) -> ToolResult:
         """Execute a single tool call and return the result.
 
@@ -577,7 +578,9 @@ class WebUIServer:
         async def emit(event: dict) -> None:
             await self._safe_send_json(ws, event)
 
-        return await execute_tool_call(tool_call, implementations, emit, arg_overrides)
+        return await execute_tool_call(
+            tool_call, implementations, emit, arg_overrides, message_id=message_id
+        )
 
     async def _handle_query(
         self,
@@ -725,6 +728,15 @@ class WebUIServer:
                 "microsoft_sources": {"sources": sources},
             }
 
+            # Ensure message container exists before tool execution
+            # (handles case where model goes straight to tool calls without initial text)
+            if tool_calls and not accumulated_text:
+                await self._safe_send_json(ws, {
+                    "type": "text",
+                    "content": "",
+                    "messageId": message_id,
+                })
+
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
@@ -743,7 +755,8 @@ class WebUIServer:
                 tool_results = []
                 for tool_call in tool_calls:
                     result = await self._execute_tool_call(
-                        tool_call, implementations, ws, arg_overrides
+                        tool_call, implementations, ws, arg_overrides,
+                        message_id=message_id
                     )
                     tool_results.append(result)
 
@@ -1389,29 +1402,37 @@ class WebUIServer:
                     if prompt_text.strip():
                         messages.append({"role": "user", "content": prompt_text.strip()})
 
-                # Build assistant content with tool calls (same format as history.py)
-                content_parts = []
-                assistant_text = r.text()
-                if assistant_text and assistant_text.strip():
-                    content_parts.append(assistant_text)
+                # Build assistant message with structured tool calls
+                assistant_text = r.text() or ""
+                structured_tool_calls = []
 
-                # Include tool calls with results using shared formatting function
+                # Extract tool calls with results as structured data
                 try:
                     tool_calls = list(r.tool_calls())
+                    if tool_calls:
+                        logger.debug(f"_handle_get_history: found {len(tool_calls)} tool calls in response")
 
-                    for tc in tool_calls:
+                    for idx, tc in enumerate(tool_calls):
+                        # Generate fallback ID if tool_call_id is None
+                        tc_id = tc.tool_call_id or f"tc-hist-{idx}"
                         # Look up result by tool_call_id (flat dict keyed by tool_call_id)
-                        result = tool_results_by_call_id.get(tc.tool_call_id)
-                        content_parts.append(format_tool_call_markdown(
-                            name=tc.name,
-                            arguments=tc.arguments,
-                            result=result,
-                        ))
-                except Exception:
+                        result = tool_results_by_call_id.get(tc.tool_call_id) if tc.tool_call_id else None
+                        # Historical tool calls are always completed - use empty string if no result
+                        structured_tool_calls.append({
+                            "id": tc_id,
+                            "name": tc.name,
+                            "args": tc.arguments if isinstance(tc.arguments, dict) else {},
+                            "result": result if result is not None else "",
+                        })
+                except Exception as e:
+                    logger.debug(f"_handle_get_history: error extracting tool calls: {e}")
                     pass  # No tool calls or error accessing them
 
-                if content_parts:
-                    messages.append({"role": "assistant", "content": "".join(content_parts)})
+                if assistant_text.strip() or structured_tool_calls:
+                    msg_data = {"role": "assistant", "content": assistant_text.strip()}
+                    if structured_tool_calls:
+                        msg_data["toolCalls"] = structured_tool_calls
+                    messages.append(msg_data)
 
         await ws.send_json({"type": "history", "messages": messages})
 
@@ -1611,19 +1632,35 @@ class WebUIServer:
             if conversation is None:
                 return web.json_response({"error": "Conversation not found"}, status=404)
 
+            # Build messages with structured tool calls
+            messages_data = []
+            for m in conversation.messages:
+                msg_data = {
+                    "id": m.id,
+                    "role": m.role,
+                    "content": m.content,
+                    "datetime_utc": m.datetime_utc,
+                }
+                # Include structured tool calls if present
+                if m.tool_calls:
+                    logger.debug(f"handle_api_history_item: message {m.id} has {len(m.tool_calls)} tool calls")
+                    msg_data["toolCalls"] = [
+                        {
+                            "id": tc.id,
+                            "name": tc.name,
+                            "args": tc.args,
+                            # Historical tool calls are always completed - use empty string if no result
+                            "result": tc.result if tc.result is not None else "",
+                        }
+                        for tc in m.tool_calls
+                    ]
+                messages_data.append(msg_data)
+
             return web.json_response({
                 "id": conversation.id,
                 "name": conversation.name,
                 "source": conversation.source,
-                "messages": [
-                    {
-                        "id": m.id,
-                        "role": m.role,
-                        "content": m.content,
-                        "datetime_utc": m.datetime_utc,
-                    }
-                    for m in conversation.messages
-                ],
+                "messages": messages_data,
             })
         except Exception as e:
             return web.json_response({"error": str(e)}, status=500)
