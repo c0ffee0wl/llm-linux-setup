@@ -2,8 +2,8 @@
 
 This module provides AGENTS.md-style memory functionality:
 - Global AGENTS.md from config dir (~/.config/llm-assistant/AGENTS.md)
-- Local AGENTS.md from cwd (./AGENTS.md)
-- # command for writing memories
+- Local AGENTS.md from cwd (./AGENTS.md) for project-specific notes
+- # command for writing memories (default: global, use "# local" for cwd)
 - /memory command for viewing and managing memories
 """
 
@@ -198,22 +198,22 @@ class MemoryMixin:
     def _handle_hash_command(self, args: str) -> bool:
         """Handle # command for writing memories.
 
-        # <note>        - Write to local AGENTS.md
-        # global <note> - Write to global AGENTS.md
+        # <note>       - Write to global AGENTS.md (~/.config/llm-assistant/)
+        # local <note> - Write to local AGENTS.md (current directory)
 
         Returns True to continue REPL.
         """
         if not args:
-            ConsoleHelper.warning(self.console, "Usage: # <note> or # global <note>")
+            ConsoleHelper.warning(self.console, "Usage: # <note> or # local <note>")
             return True
 
-        # Check for "global" prefix
-        if args.lower().startswith("global "):
-            note = args[7:].strip()
-            target = "global"
+        # Check for "local" prefix
+        if args.lower().startswith("local "):
+            note = args[6:].strip()
+            target = "local"
         else:
             note = args
-            target = "local"
+            target = "global"
 
         if self._write_memory(note, target):
             target_desc = "global AGENTS.md" if target == "global" else "local AGENTS.md"

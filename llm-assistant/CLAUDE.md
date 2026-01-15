@@ -120,8 +120,8 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/memory reload` - Reload AGENTS.md files from disk
 - `/memory global` - Show only global memory
 - `/memory local` - Show only project memory
-- `# <note>` - Add note to local AGENTS.md (## Notes section)
-- `# global <note>` - Add note to global AGENTS.md
+- `# <note>` - Add note to global AGENTS.md (## Notes section)
+- `# local <note>` - Add note to local AGENTS.md (current directory)
 - `/mcp` - List MCP servers and their status
 - `/mcp load <server>` - Load MCP server (enable its tools)
 - `/mcp unload <server>` - Unload MCP server (disable its tools)
@@ -246,11 +246,11 @@ The assistant supports AGENTS.md-style persistent memory for storing project con
 
 **Usage**:
 ```bash
-# Quick note (saves to local AGENTS.md in current directory)
+# Quick note (saves to global ~/.config/llm-assistant/AGENTS.md)
 # remember to use pytest for this project
 
-# Global note (saves to ~/.config/llm-assistant/AGENTS.md)
-# global always use vim for editing
+# Local note (saves to ./AGENTS.md in current directory)
+# local this project uses poetry instead of uv
 
 # View loaded memory
 /memory
