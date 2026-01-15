@@ -79,8 +79,18 @@ def get_sessions_dir(subdir: str) -> Path:
     Returns:
         Path to /tmp/llm-assistant-{UID}/sessions/{subdir}/
     """
-    sessions_dir = get_socket_dir() / "sessions" / subdir
-    sessions_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    # Ensure base directory exists with correct permissions first
+    # (mkdir parents=True doesn't apply mode to intermediate directories)
+    socket_dir = ensure_socket_dir()
+
+    # Create sessions/ with proper permissions
+    sessions_base = socket_dir / "sessions"
+    sessions_base.mkdir(mode=0o700, exist_ok=True)
+
+    # Create the specific subdirectory
+    sessions_dir = sessions_base / subdir
+    sessions_dir.mkdir(mode=0o700, exist_ok=True)
+
     return sessions_dir
 
 
