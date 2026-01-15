@@ -421,7 +421,13 @@ class HeadlessSession(
         # Append memory content (AGENTS.md) - before KB
         memory_content = self._get_memory_content()
         if memory_content:
-            prompt = f"{prompt}\n\n<memory>\n# Persistent Memory\n\n{memory_content}\n</memory>"
+            memory_instructions = """## Persistent Memory (AGENTS.md)
+
+The `<memory>` section below contains user preferences and project-specific notes that persist across sessions.
+- Apply these preferences to personalize responses and follow user conventions
+- Project Memory takes precedence over Global Memory for project-specific topics
+- Treat memory entries as authoritative user instructions"""
+            prompt = f"{prompt}\n\n{memory_instructions}\n\n<memory>\n{memory_content}\n</memory>"
 
         # Append KB content if any loaded
         kb_content = self._get_loaded_kb_content()
