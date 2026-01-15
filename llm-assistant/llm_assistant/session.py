@@ -2810,8 +2810,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     self._update_system_prompt()
                     self._start_watch_mode_thread()
                 ConsoleHelper.success(self.console, "Watch mode enabled")
-                self.console.print(f"Goal: {self.watch_goal}")
-                self.console.print(f"Monitoring all terminals (event-driven, {self.watch_interval}s timeout)...")
+                ConsoleHelper.dim(self.console, f"Goal: {self.watch_goal}")
+                ConsoleHelper.info(self.console, f"Monitoring all terminals (event-driven, {self.watch_interval}s timeout)...")
                 self._broadcast_status("watch")
             return True
 
