@@ -12,7 +12,11 @@ are imported from llm_tools_core and re-exported here for backward compatibility
 import os
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable, List, Optional, Tuple
+from typing import Any, Callable, List, Optional, Tuple, Type, TypeVar, Union, overload
+
+from pydantic import BaseModel, ValidationError
+
+T = TypeVar('T', bound=BaseModel)
 
 # Import shared utilities from llm-tools-core
 from llm_tools_core import ConsoleHelper
@@ -100,6 +104,104 @@ def parse_comma_list(text: str) -> List[str]:
         parse_comma_list("")           # Returns []
     """
     return [n.strip() for n in text.split(",") if n.strip()]
+
+
+# =============================================================================
+# Schema Response Parsing
+# =============================================================================
+
+
+def _extract_json(response_text: str) -> Optional[dict]:
+    """Extract JSON dict from response text, handling markdown code blocks.
+
+    Tries multiple strategies:
+    1. Direct JSON parse
+    2. Extract from markdown code blocks (```json ... ``` or ``` ... ```)
+    3. Find raw JSON object in surrounding text
+
+    Args:
+        response_text: Raw response text from model
+
+    Returns:
+        Parsed dict if successful, None if extraction fails
+    """
+    import json
+    import re
+
+    # Strategy 1: Direct JSON parse
+    try:
+        return json.loads(response_text)
+    except json.JSONDecodeError:
+        pass
+
+    # Strategy 2: Extract from markdown code blocks ```json ... ``` or ``` ... ```
+    json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', response_text, re.DOTALL)
+    if json_match:
+        try:
+            return json.loads(json_match.group(1))
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 3: Find JSON object in text using JSONDecoder (handles nested braces)
+    decoder = json.JSONDecoder()
+    # Try each '{' position to find valid JSON
+    for i, char in enumerate(response_text):
+        if char == '{':
+            try:
+                obj, _ = decoder.raw_decode(response_text, i)
+                if isinstance(obj, dict):
+                    return obj
+            except json.JSONDecodeError:
+                continue
+
+    return None
+
+
+@overload
+def parse_schema_response(response_text: str, schema_class: Type[T]) -> Optional[T]: ...
+
+@overload
+def parse_schema_response(response_text: str, schema_class: None = None) -> Optional[dict]: ...
+
+def parse_schema_response(
+    response_text: str,
+    schema_class: Optional[Type[T]] = None
+) -> Union[Optional[T], Optional[dict]]:
+    """Parse and validate JSON from a schema response.
+
+    Handles markdown code blocks that models sometimes wrap JSON in.
+    When schema_class is provided, returns a validated Pydantic model instance.
+
+    Args:
+        response_text: Raw response text from model
+        schema_class: Optional Pydantic model class for validation
+
+    Returns:
+        - If schema_class provided: Validated model instance or None
+        - If schema_class is None: Parsed dict or None
+
+    Examples:
+        # Get typed model instance
+        result = parse_schema_response(text, SafetySchema)
+        if result:
+            print(result.safe)  # Type-safe attribute access
+
+        # Get raw dict (backward compatibility)
+        result = parse_schema_response(text)
+        if result:
+            print(result.get('safe'))
+    """
+    data = _extract_json(response_text)
+    if data is None:
+        return None
+
+    if schema_class is not None:
+        try:
+            return schema_class.model_validate(data)
+        except ValidationError:
+            return None
+
+    return data
 
 
 # =============================================================================

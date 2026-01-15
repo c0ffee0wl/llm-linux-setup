@@ -8,7 +8,6 @@ This module provides background terminal monitoring:
 """
 
 import asyncio
-import json
 import re
 import threading
 from typing import TYPE_CHECKING, List, Optional
@@ -19,7 +18,7 @@ from rich.panel import Panel
 from llm_tools_core import PromptDetector
 from .schemas import WatchResponseSchema
 from .templates import render
-from .utils import ConsoleHelper
+from .utils import ConsoleHelper, parse_schema_response
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -252,17 +251,13 @@ class WatchMixin:
                         feedback_text = response_text
 
                         # Try to parse as schema response first
-                        try:
-                            parsed = json.loads(response_text)
-                            if isinstance(parsed, dict) and 'has_actionable_feedback' in parsed:
-                                # Schema response - use structured fields
-                                has_feedback = parsed.get('has_actionable_feedback', False)
-                                feedback_text = parsed.get('feedback', '')
-                            else:
-                                # Not a schema response, use fallback
-                                has_feedback = None  # Will use fallback logic
-                        except (json.JSONDecodeError, TypeError):
-                            # Not JSON, use fallback pattern matching
+                        parsed = parse_schema_response(response_text, WatchResponseSchema)
+                        if parsed:
+                            # Schema response - use structured fields
+                            has_feedback = parsed.has_actionable_feedback
+                            feedback_text = parsed.feedback
+                        else:
+                            # Not a schema response or parsing failed, use fallback
                             has_feedback = None
 
                         # Fallback: regex pattern for non-schema responses

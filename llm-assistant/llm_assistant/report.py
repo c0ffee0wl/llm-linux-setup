@@ -20,7 +20,7 @@ import yaml
 
 from .schemas import FindingSchema
 from .templates import render
-from .utils import get_config_dir, validate_language_code, md_table_escape, yaml_escape, parse_command, ConsoleHelper
+from .utils import get_config_dir, validate_language_code, md_table_escape, yaml_escape, parse_command, ConsoleHelper, parse_schema_response
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -494,10 +494,13 @@ language_name: {language_name}
                 schema=FindingSchema,
                 attachments=attachments_to_pass  # Include screenshots/images if supported
             )
-            return json.loads(response.text())
-        else:
-            # Fallback with JSON instructions
-            json_prompt = f"""{prompt}
+            result = parse_schema_response(response.text(), FindingSchema)
+            if result:
+                return result.model_dump()  # Convert validated model to dict
+            # Fall through to fallback if parsing failed
+
+        # Fallback with JSON instructions (no schema support or schema parsing failed)
+        json_prompt = f"""{prompt}
 
 Respond with a JSON object containing these fields:
 - suggested_title: concise vulnerability title (max 60 chars) in {language}
@@ -505,26 +508,21 @@ Respond with a JSON object containing these fields:
 - severity_rationale: brief explanation in {language}
 - description: expanded technical description in {language}
 - remediation: step-by-step recommendations in {language}"""
-            response = model.prompt(
-                json_prompt,
-                system=system_prompt,
-                attachments=attachments_to_pass
-            )
-            # Try to extract JSON from response
-            text = response.text()
-            # Handle markdown code blocks
-            if "```json" in text:
-                text = text.split("```json")[1].split("```")[0]
-            elif "```" in text:
-                text = text.split("```")[1].split("```")[0]
-            result = json.loads(text.strip())
-            # Validate and clamp severity to 1-9 range (no schema enforcement)
-            if 'severity' in result:
-                try:
-                    result['severity'] = max(1, min(9, int(result['severity'])))
-                except (ValueError, TypeError):
-                    result['severity'] = 5  # Default to medium if invalid
-            return result
+        response = model.prompt(
+            json_prompt,
+            system=system_prompt,
+            attachments=attachments_to_pass
+        )
+        result = parse_schema_response(response.text())
+        if result is None:
+            raise ValueError("Could not parse finding response as JSON")
+        # Validate and clamp severity to 1-9 range (no schema enforcement)
+        if 'severity' in result:
+            try:
+                result['severity'] = max(1, min(9, int(result['severity'])))
+            except (ValueError, TypeError):
+                result['severity'] = 5  # Default to medium if invalid
+        return result
 
     def _capture_report_evidence(self, finding_id: str, project_dir: Path) -> List[Dict]:
         """Capture evidence (terminal context) for a finding."""

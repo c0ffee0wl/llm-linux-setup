@@ -84,7 +84,7 @@ from .config import (
 from .schemas import SafetySchema
 from .utils import (
     strip_markdown, get_config_dir, get_temp_dir, get_logs_db_path, logs_on,
-    get_model_context_limit, get_judge_model, ConsoleHelper,
+    get_model_context_limit, get_judge_model, ConsoleHelper, parse_schema_response,
 )
 from .templates import render
 from .cli import resolve_model_query
@@ -1936,9 +1936,14 @@ The `<memory>` section below contains user preferences and project-specific note
                 return (False, "dangerous", f"Model {model.model_id} doesn't support schema - auto mode disabled")
 
             response = model.prompt(judge_prompt, schema=SafetySchema, temperature=0.2)
-            result = json.loads(response.text())
+            result = parse_schema_response(response.text(), SafetySchema)
+
+            if result is None:
+                self._debug(f"Could not parse safety response: {response.text()[:200]}")
+                return (False, "dangerous", "Safety check failed: could not parse response")
+
             # CoT: analysis for reasoning, reason for display
-            return (result.get("safe", False), result.get("risk_level", "dangerous"), result.get("reason", ""))
+            return (result.safe, result.risk_level, result.reason)
 
         except Exception as e:
             self._debug(f"Safety judge error: {e}")
