@@ -254,6 +254,7 @@ update_tracked_config() {
 
 # Update or add a single export in ~/.profile (idempotent)
 # Uses grep to check existence, sed to update in place, or appends if new
+# Also handles commented-out entries (e.g., "# export FOO=bar") by uncommenting them
 #
 # Usage: update_profile_export <var_name> <var_value>
 #   var_name:  Environment variable name (e.g., AZURE_OPENAI_API_KEY)
@@ -282,8 +283,11 @@ update_profile_export() {
     sed_value="${sed_value//&/\\&}"              # & -> \&
 
     if grep -q "^export ${var_name}=" "$profile_file" 2>/dev/null; then
-        # Update existing export in place
+        # Update existing active export in place
         sed -i "s|^export ${var_name}=.*|export ${var_name}=\"${sed_value}\"|" "$profile_file"
+    elif grep -q "^#[[:space:]]*export ${var_name}=" "$profile_file" 2>/dev/null; then
+        # Uncomment and update existing commented-out export
+        sed -i "s|^#[[:space:]]*export ${var_name}=.*|export ${var_name}=\"${sed_value}\"|" "$profile_file"
     else
         # Append new export
         echo "export ${var_name}=\"${escaped_value}\"" >> "$profile_file"
