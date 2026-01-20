@@ -2228,18 +2228,17 @@ if [ "$IS_WSL" = true ]; then
 # Non-WSL mode: Install claudo, CCR (auto), Codex CLI
 else
 
-# Install/update claudo (Claude in Podman) if Podman is installed
-if command -v podman &> /dev/null; then
-    log "Installing/updating claudo (Claude Code in Podman)..."
-    mkdir -p "$HOME/.local/bin"
-    if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$HOME/.local/bin/claudo"; then
-        chmod +x "$HOME/.local/bin/claudo"
-        log "claudo installed to ~/.local/bin/claudo"
-    else
-        warn "Failed to download claudo"
-    fi
+# Install/update claudo (Claude in Podman)
+# Ensure Podman is installed first
+install_apt_package podman
+
+log "Installing/updating claudo (Claude Code in Podman)..."
+mkdir -p "$HOME/.local/bin"
+if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$HOME/.local/bin/claudo"; then
+    chmod +x "$HOME/.local/bin/claudo"
+    log "claudo installed to ~/.local/bin/claudo"
 else
-    log "Skipping claudo installation (Podman not installed)"
+    warn "Failed to download claudo"
 fi
 
 # Install/update Claude Code Router with flexible provider support
