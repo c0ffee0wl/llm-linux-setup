@@ -2180,7 +2180,7 @@ else
     fi
 fi
 
-# WSL mode: Prompt for CCR with systemd service, skip claudo/Codex
+# WSL mode: Prompt for CCR with systemd service, skip blaude/Codex
 if [ "$IS_WSL" = true ]; then
     log ""
     log "========================================"
@@ -2225,20 +2225,17 @@ if [ "$IS_WSL" = true ]; then
         fi
     fi
 
-# Non-WSL mode: Install claudo, CCR (auto), Codex CLI
+# Non-WSL mode: Install blaude, CCR (auto), Codex CLI
 else
 
-# Install/update claudo (Claude in Podman)
-# Ensure Podman is installed first
-install_apt_package podman
-
-log "Installing/updating claudo (Claude Code in Podman)..."
+# Install/update blaude (bubblewrap sandbox for Claude Code)
+log "Installing/updating blaude (bubblewrap sandbox for Claude Code)..."
 mkdir -p "$HOME/.local/bin"
-if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$HOME/.local/bin/claudo"; then
-    chmod +x "$HOME/.local/bin/claudo"
-    log "claudo installed to ~/.local/bin/claudo"
+if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
+    chmod +x "$HOME/.local/bin/blaude"
+    log "blaude installed to ~/.local/bin/blaude"
 else
-    warn "Failed to download claudo"
+    warn "Failed to download blaude"
 fi
 
 # Install/update Claude Code Router with flexible provider support
@@ -2356,11 +2353,11 @@ if command -v claude &>/dev/null; then
     fi
 fi
 
-# Update claudo if already installed (no automatic installation in minimal mode)
-CLAUDO_BIN="$HOME/.local/bin/claudo"
-if [ "$INSTALL_MODE" != "full" ] && [ -x "$CLAUDO_BIN" ]; then
-    log "Updating claudo..."
-    curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/claudo/main/claudo -o "$CLAUDO_BIN" || warn "claudo update failed, continuing..."
+# Update blaude if already installed (no automatic installation in minimal mode)
+BLAUDE_BIN="$HOME/.local/bin/blaude"
+if [ "$INSTALL_MODE" != "full" ] && [ -x "$BLAUDE_BIN" ]; then
+    log "Updating blaude..."
+    curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$BLAUDE_BIN" || warn "blaude update failed, continuing..."
 fi
 
 # Update npm-based tools if npm is available (skip silently if npm not installed)
@@ -2437,7 +2434,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - Session recording (asciinema)"
     log "    - Shell integration (llm-integration.bash/zsh)"
     log "    - Desktop tools (Handy, espanso, Ulauncher)"
-    log "    - claudo, Codex CLI"
+    log "    - blaude, Codex CLI"
     log ""
 elif [ "$INSTALL_MODE" = "full" ]; then
     log "Installed tools (full mode):"
@@ -2448,7 +2445,7 @@ elif [ "$INSTALL_MODE" = "full" ]; then
     log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
     log "    - Claude Code      Anthropic's agentic coding CLI"
     log "    - Claude Code skills  Custom skills installed to ~/.claude/skills/"
-    log "    - claudo           Claude Code in Docker (if Docker installed)"
+    log "    - blaude           Bubblewrap sandbox for Claude Code"
     log "    - Claude Code Router  Multi-provider proxy for Claude Code"
     log "    - Codex CLI        OpenAI's coding agent (if Azure configured)"
     log ""
