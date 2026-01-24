@@ -90,6 +90,60 @@ __llm_smart_at() {
 zle -N __llm_smart_at
 bindkey '@' __llm_smart_at
 
+# Custom accept-line that handles @ queries without shell quoting issues
+# When line starts with "@ ", passes the raw text directly to avoid quote parsing
+__llm_accept_line() {
+  if [[ "$BUFFER" == "@ "* ]]; then
+    # Extract query after "@ " (raw text, no parsing)
+    local query="${BUFFER#@ }"
+
+    # Skip if empty query
+    if [[ -z "${query// /}" ]]; then
+      zle .accept-line
+      return
+    fi
+
+    # Check if llm-inlineassistant is installed
+    if ! command -v llm-inlineassistant &> /dev/null; then
+      zle -M "Error: llm-inlineassistant not installed. Run install-llm-tools.sh"
+      return
+    fi
+
+    # Print the command for visual feedback (like normal command execution)
+    zle -I
+    echo
+
+    # Set up terminal ID (same logic as @() function in llm-common.sh)
+    local terminal_id=""
+    if [[ -n "$TMUX_PANE" ]]; then
+      terminal_id="tmux:$TMUX_PANE"
+    elif [[ -n "$TERM_SESSION_ID" ]]; then
+      terminal_id="iterm:$TERM_SESSION_ID"
+    elif [[ -n "$KONSOLE_DBUS_SESSION" ]]; then
+      terminal_id="konsole:$KONSOLE_DBUS_SESSION"
+    elif [[ -n "$WINDOWID" ]]; then
+      terminal_id="x11:$WINDOWID"
+    elif [[ -n "$SESSION_LOG_FILE" ]]; then
+      terminal_id="asciinema:$(basename "$SESSION_LOG_FILE" .cast)"
+    else
+      terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
+    fi
+    export TERMINAL_SESSION_ID="$terminal_id"
+
+    # Call llm-inlineassistant with query passed via stdin to avoid ALL shell parsing
+    # This handles quotes, $(), backticks, and any other special characters
+    printf '%s' "$query" | llm-inlineassistant --stdin
+
+    # Clear buffer and reset
+    BUFFER=""
+    zle reset-prompt
+  else
+    # Normal command - use default accept-line
+    zle .accept-line
+  fi
+}
+zle -N accept-line __llm_accept_line
+
 # Tab completion for @ prefix commands
 _llm_at_complete() {
   local prefix="${words[2,-1]}"

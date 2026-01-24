@@ -421,12 +421,15 @@ def get_completions(prefix: str, model: Optional[str] = None, cwd: Optional[str]
               help='Get completions for prefix (outputs tab-separated list)')
 @click.option('--complete-json', is_flag=True,
               help='Get completions as JSON')
+@click.option('--stdin', 'from_stdin', is_flag=True,
+              help='Read query from stdin (avoids shell quoting issues)')
 def main(
     query_args: Tuple[str, ...],
     model: Optional[str],
     no_stream: bool,
     complete: bool,
     complete_json: bool,
+    from_stdin: bool,
 ):
     """Inline LLM assistant.
 
@@ -449,6 +452,15 @@ def main(
                     print(f"{text}\t{desc}")
                 else:
                     print(text)
+        return
+
+    # Read query from stdin if --stdin flag is set
+    if from_stdin:
+        import sys
+        prompt = sys.stdin.read()
+        if not prompt.strip():
+            return
+        send_query(prompt, model=model, stream=not no_stream)
         return
 
     if not query_args:

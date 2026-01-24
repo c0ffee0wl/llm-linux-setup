@@ -296,6 +296,10 @@ class HeadlessSession(
 
         # Skills state (SkillsMixin)
         self.loaded_skills: Dict[str, Tuple[Path, any]] = {}  # name -> (path, props)
+        self._skill_invoke_tool: Optional[Tool] = None
+        self._skill_load_file_tool: Optional[Tool] = None
+        self._skill_invoke_impl = None
+        self._skill_load_file_impl = None
 
         # Memory state (MemoryMixin)
         self._global_memory: str = ""
