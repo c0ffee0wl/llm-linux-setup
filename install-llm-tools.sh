@@ -1081,6 +1081,11 @@ if [ "$INSTALL_MODE" = "full" ]; then
 
     # Detect if npm needs sudo for global installs
     detect_npm_permissions
+
+    # Install bun and pnpm package managers
+    log "Installing/updating JavaScript package managers..."
+    install_or_upgrade_npm_global bun
+    install_or_upgrade_npm_global pnpm
 fi
 
 #############################################################################

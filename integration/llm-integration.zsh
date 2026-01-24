@@ -109,9 +109,8 @@ __llm_accept_line() {
       return
     fi
 
-    # Print the command for visual feedback (like normal command execution)
-    zle -I
-    echo
+    # Print the command line and move to new line (like normal command execution)
+    print -r -- "$BUFFER"
 
     # Set up terminal ID (same logic as @() function in llm-common.sh)
     local terminal_id=""
