@@ -133,8 +133,6 @@ Commands executed in the Exec terminal use **prompt-based completion detection**
 - `/voice status` - Show voice input status
 - `/voice clean` - Show/re-enable AI transcript cleanup (auto-enabled for Gemini/Vertex)
 - `/voice clean off` - Disable transcript cleanup
-- `/voice loop` - Start continuous VAD listening (hands-free)
-- `/voice loop off` - Stop continuous listening
 - `/screenshot [mode] [delay|-] [prompt]` - Capture screenshot (window/region/full/rdp/annotate)
 - `/copy` - Copy last response to clipboard (markdown stripped)
 - `/copy [n]` - Copy last n responses
@@ -345,16 +343,6 @@ MCP Servers:
 - `/voice status` - show voice input status
 - `/voice clean` - show/re-enable AI transcript cleanup (auto-enabled for Gemini/Vertex)
 - `/voice clean off` - disable transcript cleanup
-- `/voice loop` - hands-free continuous listening with VAD (Voice Activity Detection)
-- `/voice loop off` - stop continuous listening
-
-**Voice Loop Mode (VAD):**
-- Uses Silero VAD ONNX model for automatic speech detection
-- No button press needed - VAD detects when you start/stop speaking
-- 800ms silence triggers transcription
-- After transcription, text is auto-submitted to AI
-- Waits for AI response, then loops back to listening
-- **VAD model location**: `~/.cache/llm-assistant/models/silero_vad.onnx`
 
 **Speech Output (TTS):**
 - Available only when using Vertex models (`vertex/*`)

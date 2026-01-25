@@ -1,15 +1,14 @@
 """Voice input (speech-to-text) using onnx-asr and sounddevice.
 
 This module provides the VoiceInput class for recording and transcribing
-speech input via Ctrl+Space keybinding, with optional voice loop mode
-using VAD (Voice Activity Detection).
+speech input via Ctrl+Space keybinding.
 """
 
 import os
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional, Tuple
+from typing import Optional, Tuple
 
 from .utils import ConsoleHelper, is_handy_running
 
@@ -88,12 +87,6 @@ class VoiceInput:
         # Post-processing (set by session.py when using Gemini/Vertex)
         self.post_process_enabled = False
         self.post_process_model = "gemini-2.5-flash-lite"  # Default, overridden by session
-        # Voice loop mode with VAD
-        self.loop_mode = False
-        self._loop_stop_event = threading.Event()
-        self._loop_thread = None
-        self._vad = None
-        self._loop_callback = None  # Callback to submit transcribed text
 
     def _animate(self, frames, state: str):
         """Background thread that cycles animation frames."""
@@ -292,198 +285,4 @@ class VoiceInput:
         except Exception:
             # Fallback to original text on any error
             return text
-
-    # Voice loop mode with VAD
-    VAD_THRESHOLD = 0.5  # Speech probability threshold
-    SILENCE_DURATION_MS = 800  # Silence duration to end speech
-    VAD_CHUNK_SAMPLES = 512  # Silero VAD requires 512 samples at 16kHz (32ms)
-
-    def _lazy_load_vad(self) -> bool:
-        """Load VAD model on first use."""
-        if self._vad is not None:
-            return True
-
-        try:
-            from .vad import SileroVAD
-            self._vad = SileroVAD(threshold=self.VAD_THRESHOLD, sample_rate=self.sample_rate, debug=self.debug)
-            return self._vad.preload()
-        except Exception as e:
-            ConsoleHelper.error(self.console, f"VAD load error: {e}")
-            return False
-
-    def start_loop(self, callback: Callable[[str], None]) -> bool:
-        """Start voice loop mode with VAD.
-
-        Args:
-            callback: Function to call with transcribed text
-
-        Returns:
-            True if loop started successfully
-        """
-        if not VOICE_AVAILABLE:
-            ConsoleHelper.error(self.console, "Voice input unavailable")
-            return False
-
-        if self.loop_mode:
-            return False  # Already running
-
-        if not self._lazy_load_vad():
-            ConsoleHelper.error(self.console, "Failed to load VAD model")
-            return False
-
-        self._loop_callback = callback
-        self._loop_stop_event.clear()
-        self.loop_mode = True
-
-        self._loop_thread = threading.Thread(target=self._voice_loop, daemon=True)
-        self._loop_thread.start()
-        return True
-
-    def stop_loop(self):
-        """Stop voice loop mode."""
-        if not self.loop_mode:
-            return
-
-        self.loop_mode = False
-        self._loop_stop_event.set()
-
-        if self._loop_thread:
-            self._loop_thread.join(timeout=2.0)
-            self._loop_thread = None
-
-        self._loop_callback = None
-
-    def _voice_loop(self):
-        """Main voice loop thread - continuous listening with VAD.
-
-        Architecture (per sounddevice best practices):
-        1. Audio callback: ONLY copies data to queue (non-blocking, real-time safe)
-        2. This thread: Reads queue, runs VAD, accumulates speech, transcribes
-
-        Reference: https://python-sounddevice.readthedocs.io/en/latest/usage.html
-        """
-        import queue
-
-        chunk_samples = self.VAD_CHUNK_SAMPLES  # 512 samples = 32ms at 16kHz
-        chunk_ms = (chunk_samples / self.sample_rate) * 1000  # 32ms
-        silence_chunks = int(self.SILENCE_DURATION_MS / chunk_ms)  # ~25 chunks for 800ms
-
-        # Thread-safe queue for audio chunks (callback -> processing thread)
-        audio_queue = queue.Queue()
-
-        callback_count = [0]  # Mutable container for closure
-
-        def audio_callback(indata, frames, time_info, status):
-            """Callback runs in PortAudio's audio thread - must be non-blocking!"""
-            if self._loop_stop_event.is_set():
-                raise sd.CallbackStop()
-            # Only copy data to queue - no processing here!
-            audio_queue.put_nowait(indata.copy())
-            if self.debug:
-                callback_count[0] += 1
-                if callback_count[0] % 100 == 0:  # Print every 100 callbacks (~3 sec)
-                    print(f"[DEBUG] Callback count: {callback_count[0]}, queue size: {audio_queue.qsize()}")
-
-        # Create callback-based stream
-        devnull_fd, old_stderr_fd = _suppress_stderr()
-        try:
-            stream = sd.InputStream(
-                samplerate=self.sample_rate,
-                channels=1,
-                dtype=np.float32,
-                blocksize=chunk_samples,
-                callback=audio_callback
-            )
-            stream.start()
-        except Exception as e:
-            _restore_stderr(devnull_fd, old_stderr_fd)
-            ConsoleHelper.error(self.console, f"Failed to open audio stream: {e}")
-            self.loop_mode = False
-            return
-        finally:
-            _restore_stderr(devnull_fd, old_stderr_fd)
-
-        try:
-            while not self._loop_stop_event.is_set():
-                try:
-                    # Reset for new utterance
-                    audio_chunks = []
-                    speech_started = False
-                    silent_count = 0
-                    self._vad.reset()
-
-                    ConsoleHelper.dim(self.console, "🎤 Listening...")
-
-                    # Process audio from queue (VAD runs here, not in callback)
-                    while not self._loop_stop_event.is_set():
-                        try:
-                            # Get chunk from queue with timeout
-                            chunk = audio_queue.get(timeout=0.1)
-                            chunk = chunk.flatten()
-
-                            # Run VAD here in processing thread (not callback!)
-                            is_speech = self._vad.is_speech(chunk)
-                            if is_speech and self.debug:
-                                print("[DEBUG] VAD: speech detected!")
-
-                            if is_speech:
-                                if not speech_started:
-                                    speech_started = True
-                                    ConsoleHelper.dim(self.console, "● Recording...")
-                                audio_chunks.append(chunk)
-                                silent_count = 0
-                            elif speech_started:
-                                audio_chunks.append(chunk)
-                                silent_count += 1
-                                if silent_count >= silence_chunks:
-                                    if self.debug:
-                                        print(f"[DEBUG] Silence detected, breaking. Chunks: {len(audio_chunks)}")
-                                    break  # Utterance complete
-
-                        except queue.Empty:
-                            continue
-
-                    if self.debug:
-                        print(f"[DEBUG] Inner loop exited. stop_event={self._loop_stop_event.is_set()}, chunks={len(audio_chunks)}")
-                    if self._loop_stop_event.is_set():
-                        break
-
-                    if not audio_chunks:
-                        if self.debug:
-                            print("[DEBUG] No audio chunks, continuing...")
-                        continue
-
-                    if self.debug:
-                        print(f"[DEBUG] Got {len(audio_chunks)} chunks, concatenating...")
-                    audio = np.concatenate(audio_chunks, axis=0)
-                    if self.debug:
-                        print(f"[DEBUG] Audio shape: {audio.shape}, transcribing...")
-
-                    # Transcribe
-                    ConsoleHelper.dim(self.console, "⟳ Transcribing...")
-
-                    if not self._lazy_load_model():
-                        continue
-
-                    try:
-                        result = self.model.recognize(audio, sample_rate=self.sample_rate)
-                        text = result.strip() if result else None
-                    except Exception:
-                        text = None
-
-                    if text and self._loop_callback:
-                        if self.post_process_enabled:
-                            ConsoleHelper.dim(self.console, "✨ Cleaning transcript...")
-                        text = self.post_process_transcript(text)
-                        self._loop_callback(text)
-
-                except Exception as e:
-                    ConsoleHelper.error(self.console, f"Voice loop error: {e}")
-        finally:
-            # Clean up stream when loop ends
-            try:
-                stream.stop()
-                stream.close()
-            except Exception:
-                pass
 
