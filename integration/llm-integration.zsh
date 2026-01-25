@@ -109,7 +109,7 @@ __llm_accept_line() {
       return
     fi
 
-    # Clear the "Tab for completions" message and move to new line
+    # Clear the "Tab for completions" message
     zle -M ""
     print
 
@@ -134,13 +134,11 @@ __llm_accept_line() {
     # This handles quotes, $(), backticks, and any other special characters
     printf '%s' "$query" | llm-inlineassistant --stdin
 
-    # Print newline to ensure prompt appears below output
-    # (prevents zle reset-prompt from overwriting Rich console output)
+    # Print empty line and invalidate screen state before accept-line
     print
-
-    # Clear buffer and reset
+    zle -I
     BUFFER=""
-    zle reset-prompt
+    zle .accept-line
   else
     # Normal command - use default accept-line
     zle .accept-line

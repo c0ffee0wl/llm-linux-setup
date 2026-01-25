@@ -332,11 +332,15 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
         active_tool = None
         error_message = None
 
-        # Stream with Live display (transient=False so final state persists)
-        with Live(console=console, refresh_per_second=10) as live:
+        # Stream with Live display
+        # Start transient=True (clear on exit if no content), switch to False once content arrives
+        with Live(Markdown(""), console=console, refresh_per_second=10, transient=True) as live:
             for event_type, data in stream_request(prompt):
                 if event_type == "text":
                     accumulated_text += data
+                    # Once we have content, make it persistent (don't clear on exit)
+                    if accumulated_text.strip():
+                        live.transient = False
                 elif event_type == "tool_start":
                     active_tool = data
                 elif event_type == "tool_done":
@@ -359,10 +363,6 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
         # Show error if any
         if error_message:
             console.print(f"[red]Error: {error_message}[/]")
-
-        # Add empty line after response
-        if accumulated_text or error_message:
-            print(flush=True)
 
         return accumulated_text
 
