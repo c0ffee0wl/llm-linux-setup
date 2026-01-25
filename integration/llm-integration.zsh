@@ -109,9 +109,9 @@ __llm_accept_line() {
       return
     fi
 
-    # Print the command for visual feedback (like normal command execution)
-    zle -I
-    echo
+    # Clear the "Tab for completions" message and move to new line
+    zle -M ""
+    print
 
     # Set up terminal ID (same logic as @() function in llm-common.sh)
     local terminal_id=""
@@ -133,6 +133,10 @@ __llm_accept_line() {
     # Call llm-inlineassistant with query passed via stdin to avoid ALL shell parsing
     # This handles quotes, $(), backticks, and any other special characters
     printf '%s' "$query" | llm-inlineassistant --stdin
+
+    # Print newline to ensure prompt appears below output
+    # (prevents zle reset-prompt from overwriting Rich console output)
+    print
 
     # Clear buffer and reset
     BUFFER=""

@@ -332,7 +332,8 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
         active_tool = None
         error_message = None
 
-        with Live(refresh_per_second=10) as live:
+        # Stream with Live display (transient=False so final state persists)
+        with Live(console=console, refresh_per_second=10) as live:
             for event_type, data in stream_request(prompt):
                 if event_type == "text":
                     accumulated_text += data
@@ -348,16 +349,20 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
                     action = get_action_verb(active_tool)
                     spinner_text = Text(f"{action}...", style="cyan")
                     live.update(Group(
-                        Markdown(accumulated_text),
+                        Markdown(accumulated_text) if accumulated_text else Text(""),
                         Spinner("dots", text=spinner_text, style="cyan")
                     ))
                     live.refresh()  # Force immediate display for fast tools
-                else:
+                elif accumulated_text:
                     live.update(Markdown(accumulated_text))
 
         # Show error if any
         if error_message:
             console.print(f"[red]Error: {error_message}[/]")
+
+        # Add empty line after response
+        if accumulated_text or error_message:
+            print(flush=True)
 
         return accumulated_text
 
@@ -372,6 +377,7 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
 
         if accumulated_text:
             console.print(Markdown(accumulated_text))
+            console.print()  # Add empty line after response
 
         return accumulated_text
 

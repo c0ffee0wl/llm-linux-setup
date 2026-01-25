@@ -2301,7 +2301,6 @@ log "Setting environment defaults..."
 update_profile_export "DO_NOT_TRACK" "1"
 # Claude Code
 update_profile_export "DISABLE_TELEMETRY" "1"
-update_profile_export "DISABLE_AUTOUPDATER" "1"
 update_profile_export "DISABLE_ERROR_REPORTING" "1"
 update_profile_export "DISABLE_BUG_COMMAND" "1"
 update_profile_export "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY" "1"
@@ -2355,6 +2354,36 @@ if command -v claude &>/dev/null; then
         done
 
         log "Claude Code skills installed to $SKILLS_DEST_DIR"
+    fi
+
+    # Install Claude Code statusline (Kali-style prompt with model/context info)
+    STATUSLINE_SOURCE="$SCRIPT_DIR/integration/claude-statusline/statusline.sh"
+    STATUSLINE_DEST="$HOME/.claude/statusline.sh"
+    SETTINGS_FILE="$HOME/.claude/settings.json"
+
+    if [ -f "$STATUSLINE_SOURCE" ]; then
+        log "Installing Claude Code statusline..."
+        mkdir -p "$HOME/.claude"
+        cp -f "$STATUSLINE_SOURCE" "$STATUSLINE_DEST"
+        chmod +x "$STATUSLINE_DEST"
+
+        # Update settings.json with statusLine config (preserving existing settings)
+        if [ -f "$SETTINGS_FILE" ]; then
+            # Merge statusLine into existing settings using jq
+            jq '.statusLine = {"type": "command", "command": "~/.claude/statusline.sh"}' \
+                "$SETTINGS_FILE" > "${SETTINGS_FILE}.tmp" && mv "${SETTINGS_FILE}.tmp" "$SETTINGS_FILE"
+        else
+            # Create new settings file
+            cat > "$SETTINGS_FILE" << 'SETTINGS_EOF'
+{
+  "statusLine": {
+    "type": "command",
+    "command": "~/.claude/statusline.sh"
+  }
+}
+SETTINGS_EOF
+        fi
+        log "Claude Code statusline installed"
     fi
 fi
 
