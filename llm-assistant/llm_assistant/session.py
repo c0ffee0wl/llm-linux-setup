@@ -140,7 +140,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
     def __init__(self, model_name: Optional[str] = None, debug: bool = False, max_context_size: Optional[int] = None,
                  continue_: bool = False, conversation_id: Optional[str] = None, no_log: bool = False,
-                 agent_mode: bool = False, no_exec: bool = False):
+                 no_exec: bool = False):
         self.console = Console()
 
         # Debug mode flag
@@ -200,9 +200,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         self._init_conversation()
 
-        # Operating mode must be set BEFORE rendering system prompt
-        # (Jinja2 template uses mode to conditionally include agent/assistant content)
-        self.mode: str = "agent" if agent_mode else "assistant"
+        # Operating mode (always agent - assistant mode removed)
+        self.mode: str = "agent"
 
         # Source citations (default: enabled)
         self._sources_enabled = True
@@ -2993,30 +2992,6 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
         elif cmd == "/skill":
             return self._handle_skill_command(args)
 
-        elif cmd == "/assistant":
-            if self.mode == "assistant":
-                ConsoleHelper.dim(self.console, "Already in assistant mode")
-            else:
-                self.mode = "assistant"
-                # Re-render system prompt and notify web companion
-                self._update_system_prompt(broadcast_type="session")
-                self.original_system_prompt = self.system_prompt
-                ConsoleHelper.enabled(self.console, "Switched to assistant mode - conservative (10 tool iterations)")
-                ConsoleHelper.dim(self.console, "/agent for agentic mode (100 iterations)")
-            return True
-
-        elif cmd == "/agent":
-            if self.mode == "agent":
-                ConsoleHelper.dim(self.console, "Already in agent mode")
-            else:
-                self.mode = "agent"
-                # Re-render system prompt and notify web companion
-                self._update_system_prompt(broadcast_type="session")
-                self.original_system_prompt = self.system_prompt
-                ConsoleHelper.enabled(self.console, "Switched to agent mode - agentic (100 tool iterations)")
-                ConsoleHelper.dim(self.console, "/assistant for conservative mode (10 iterations)")
-            return True
-
         elif cmd == "/screenshot":
             # Parse: /screenshot [mode] [delay] [prompt...]
             # delay can be a number (0-30) or "-" for default
@@ -4071,16 +4046,8 @@ Type !fragment <name> [...] to insert fragments""",
 
                             # After processing all tool calls, send results back to model
                             # Loop to handle multi-round tool calling
-                            # Tool iteration limits:
-                            # - auto mode: 1000 (unlimited, overrides mode)
-                            # - agent mode: 100 (agentic)
-                            # - assistant mode: 10 (conservative)
-                            if self.auto_mode:
-                                MAX_TOOL_ITERATIONS = 1000
-                            elif self.mode == "agent":
-                                MAX_TOOL_ITERATIONS = 100
-                            else:  # assistant mode
-                                MAX_TOOL_ITERATIONS = 10
+                            # Tool iteration limit: 1000 for auto mode, 100 for normal
+                            MAX_TOOL_ITERATIONS = 1000 if self.auto_mode else 100
                             iteration = 0
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:

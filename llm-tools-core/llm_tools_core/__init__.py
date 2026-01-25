@@ -79,7 +79,6 @@ from .daemon import (
     IDLE_TIMEOUT_MINUTES,
     WORKER_IDLE_MINUTES,
     MAX_TOOL_ITERATIONS,
-    MAX_TOOL_ITERATIONS_AGENT,
 )
 
 # Daemon client utilities
@@ -244,7 +243,6 @@ __all__ = [
     "IDLE_TIMEOUT_MINUTES",
     "WORKER_IDLE_MINUTES",
     "MAX_TOOL_ITERATIONS",
-    "MAX_TOOL_ITERATIONS_AGENT",
     # Daemon client utilities
     "is_daemon_running",
     "start_daemon",

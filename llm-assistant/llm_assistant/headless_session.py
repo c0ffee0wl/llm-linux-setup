@@ -7,7 +7,7 @@ Unlike TerminatorAssistantSession, HeadlessSession:
 - Captures context from asciinema logs (not VTE terminals)
 - Cannot execute commands directly (suggest_command for CLI tools, excluded for GUI)
 - Does not support watch mode (requires D-Bus monitoring)
-- Does not support agent mode (requires execute_in_terminal)
+- Uses agent mode behavior (agentic prompts, 100 tool iterations)
 """
 
 import os
@@ -260,8 +260,8 @@ class HeadlessSession(
         # Conversation
         self.conversation: Optional[llm.Conversation] = None
 
-        # Mode (only assistant supported in headless)
-        self.mode = 'assistant'
+        # Mode (always agent)
+        self.mode = 'agent'
 
         # Source citations (default: enabled)
         self._sources_enabled = True

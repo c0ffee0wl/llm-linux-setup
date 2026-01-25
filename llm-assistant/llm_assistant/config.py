@@ -31,8 +31,6 @@ SLASH_COMMANDS = {
     "/voice": {"subcommands": ["auto", "off", "status", "clean", "clean on", "clean off", "loop", "loop off"], "dynamic": None, "description": "Voice input control"},
     "/speech": {"subcommands": ["on", "off", "status"], "dynamic": None, "description": "TTS output control"},
     "/rag": {"subcommands": ["add", "search", "rebuild", "delete", "off", "status", "top-k", "mode"], "dynamic": "rag_collections", "description": "RAG search integration"},
-    "/assistant": {"subcommands": [], "dynamic": None, "description": "Switch to assistant mode (conservative)"},
-    "/agent": {"subcommands": [], "dynamic": None, "description": "Switch to agent mode (agentic)"},
     "/copy": {"subcommands": ["raw", "all"], "dynamic": None, "description": "Copy response(s) to clipboard"},
     "/web": {"subcommands": ["stop", "off"], "dynamic": None, "description": "Open web companion"},
     "/screenshot": {"subcommands": ["window", "region", "full", "rdp", "annotate"], "dynamic": None, "description": "Capture screenshot with optional prompt"},
@@ -74,9 +72,6 @@ from llm_tools_core import TUI_COMMANDS, is_tui_command  # noqa: F401 (re-export
 # Note: 'llm-tools-mcp' is NOT included here - MCP tools are added dynamically
 # via _add_dynamic_tools() based on active_mcp_servers filtering
 EXTERNAL_TOOL_PLUGINS = ('search_google', 'fetch_url', 'fragment_bridge', 'fabric', 'sandboxed_python', 'capture_screen')
-
-# Tools available only in agent mode (schema sent to model only in /agent)
-AGENT_MODE_TOOLS = ()
 
 # Tools that require Terminator/D-Bus exec terminal (disabled in --no-exec mode)
 EXEC_DEPENDENT_TOOLS = {

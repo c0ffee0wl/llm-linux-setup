@@ -16,7 +16,6 @@ from llm import Tool
 
 from .config import (
     EXTERNAL_TOOL_PLUGINS,
-    AGENT_MODE_TOOLS,
     OPTIONAL_TOOL_PLUGINS,
     GEMINI_ONLY_TOOL_NAMES,
     EXEC_DEPENDENT_TOOLS,
@@ -185,15 +184,7 @@ EXTERNAL_TOOLS = {
     and getattr(tool, 'plugin', None) in EXTERNAL_TOOL_PLUGINS
 }
 
-# Separate dispatch dicts for conditional tools (agent-mode and optional)
-AGENT_EXTERNAL_TOOLS = {
-    name: tool.implementation
-    for name, tool in _all_tools.items()
-    if isinstance(tool, Tool)
-    and hasattr(tool, 'implementation') and tool.implementation is not None
-    and getattr(tool, 'plugin', None) in AGENT_MODE_TOOLS
-}
-
+# Dispatch dict for optional tools (loaded via /imagemage, etc.)
 OPTIONAL_EXTERNAL_TOOLS = {
     name: tool.implementation
     for name, tool in _all_tools.items()
@@ -209,7 +200,6 @@ class MCPMixin:
     Expects these attributes on self:
     - console: Rich Console for output
     - model_name: str (current model ID)
-    - mode: str ("agent" or "assistant")
 
     Provides (via _mcp_init):
     - active_mcp_servers: set of active MCP server names
@@ -222,7 +212,6 @@ class MCPMixin:
     # Type hints for attributes provided by main class
     console: 'Console'
     model_name: str
-    mode: str
 
     # Type hints for attributes initialized by _mcp_init
     active_mcp_servers: Set[str]
@@ -330,11 +319,10 @@ class MCPMixin:
         return tools
 
     def _get_active_tools(self) -> list:
-        """Get currently active tools based on mode, model, and loaded state.
+        """Get currently active tools based on model and loaded state.
 
         Returns tools that should be offered to the model. Includes:
         - Base ASSISTANT_TOOLS (always available, includes capture_screen)
-        - Agent-mode tools when in /agent mode (currently none)
         - MCP tools from active servers
         - Optional tools (imagemage) when manually loaded via /imagemage
         - Gemini-only tools (view_youtube_native) when using Gemini/Vertex model
@@ -355,15 +343,6 @@ class MCPMixin:
 
         existing_names = {t.name for t in tools}
 
-        # Add agent-mode tools if in agent mode (TUI-specific)
-        if getattr(self, 'mode', None) == "agent":
-            for plugin_name in AGENT_MODE_TOOLS:
-                for tool in _all_tools.values():
-                    if isinstance(tool, Tool) and getattr(tool, 'plugin', None) == plugin_name:
-                        if tool.name not in existing_names:
-                            tools.append(tool)
-                            existing_names.add(tool.name)
-
         # Add dynamic tools (MCP, optional, Gemini-only, skills) via shared helper
         return self._add_dynamic_tools(tools, existing_names)
 
@@ -373,7 +352,6 @@ class MCPMixin:
         Returns tool implementations for auto-dispatch. Includes:
         - Base EXTERNAL_TOOLS (always available)
         - MCP tools from active servers
-        - Agent-mode tools when in /agent mode
         - Optional tools when manually loaded
 
         MCP tools are filtered by active_mcp_servers set - only tools from
@@ -396,10 +374,6 @@ class MCPMixin:
         # Filter out exec-dependent tools in no-exec mode
         if self.no_exec_mode:
             tools = {name: impl for name, impl in tools.items() if name not in EXEC_DEPENDENT_TOOLS}
-
-        # Add agent-mode tools if in agent mode
-        if self.mode == "agent":
-            tools.update(AGENT_EXTERNAL_TOOLS)
 
         # Add optional tools if loaded
         for plugin_name in self.loaded_optional_tools:

@@ -43,8 +43,6 @@ def resolve_model_query(queries: List[str]) -> Optional[str]:
               help='Continue conversation with given ID')
 @click.option('--no-log', is_flag=True,
               help='Disable conversation logging to database')
-@click.option('--agent', is_flag=True,
-              help='Start in agent mode (agentic, 100 tool iterations)')
 @click.option('--no-exec', is_flag=True,
               help='Run without exec terminal (works in any terminal, uses asciinema context)')
 @click.option('--daemon', is_flag=True,
@@ -63,7 +61,6 @@ def main(
     continue_: bool,
     conversation_id: Optional[str],
     no_log: bool,
-    agent: bool,
     no_exec: bool,
     daemon: bool,
     foreground: bool,
@@ -101,7 +98,6 @@ def main(
         continue_=continue_,
         conversation_id=conversation_id,
         no_log=no_log,
-        agent_mode=agent,
         no_exec=no_exec
     )
     session.run()

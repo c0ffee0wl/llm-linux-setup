@@ -408,15 +408,6 @@ class AssistantDaemon:
             if handled:
                 return
 
-        # Reject agent mode in headless
-        if mode == 'agent':
-            await self._emit_error(
-                writer,
-                ErrorCode.INVALID_MODE,
-                "Agent mode is not available in headless mode (requires Terminator)"
-            )
-            return
-
         # Get session state
         state = self.get_session_state(tid, session_log)
         state.touch()

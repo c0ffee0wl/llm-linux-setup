@@ -27,9 +27,8 @@ RECV_BUFFER_SIZE = 8192
 IDLE_TIMEOUT_MINUTES = 30  # Daemon auto-terminates after this
 WORKER_IDLE_MINUTES = 5  # Per-terminal worker cleanup
 
-# Tool execution limits
-MAX_TOOL_ITERATIONS = 10  # Default (assistant mode)
-MAX_TOOL_ITERATIONS_AGENT = 100  # Agent mode
+# Tool execution limit
+MAX_TOOL_ITERATIONS = 100
 
 
 def get_socket_dir() -> Path:
