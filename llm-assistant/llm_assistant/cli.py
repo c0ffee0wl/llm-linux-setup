@@ -53,6 +53,10 @@ def resolve_model_query(queries: List[str]) -> Optional[str]:
               help='PID file path for daemon (default: ~/.local/run/llm-assistant.pid)')
 @click.option('--logfile', default=None,
               help='Log file path for daemon (default: ~/.local/log/llm-assistant.log)')
+@click.option('--service', is_flag=True,
+              help='Install and enable systemd user service for faster daemon startup')
+@click.option('--uninstall-service', is_flag=True,
+              help='Stop, disable, and remove systemd user service')
 def main(
     model: Optional[str],
     query: Tuple[str, ...],
@@ -66,8 +70,19 @@ def main(
     foreground: bool,
     pidfile: Optional[str],
     logfile: Optional[str],
+    service: bool,
+    uninstall_service: bool,
 ):
     """Terminator LLM Assistant - Terminal assistant for pair programming."""
+    # Handle systemd service management first
+    if service or uninstall_service:
+        from .systemd_service import install_service, uninstall_service as do_uninstall
+        if uninstall_service:
+            success = do_uninstall()
+        else:
+            success = install_service()
+        raise SystemExit(0 if success else 1)
+
     # Resolve model: -m flag > query > default
     model_name = model
     if not model_name and query:

@@ -998,6 +998,12 @@ fi
 stop_assistant_processes() {
     local stopped=false
 
+    # Stop systemd service first (if enabled) - this also stops the daemon process
+    if command -v systemctl &> /dev/null && systemctl --user is-active llm-assistant.service &> /dev/null; then
+        log "Stopping llm-assistant systemd service..."
+        systemctl --user stop llm-assistant.service && stopped=true
+    fi
+
     graceful_stop_process "llm-assistant.*--daemon" 10 "llm-assistant daemon" && stopped=true
     graceful_stop_process "llm-guiassistant" 10 "llm-guiassistant" && stopped=true
     graceful_stop_process "python.*llm_assistant.*--daemon" 10 "Python llm-assistant" && stopped=true
@@ -1700,6 +1706,16 @@ fi
 
 # Create daemon socket directory for llm-assistant
 mkdir -p "/tmp/llm-assistant-$(id -u)"
+
+# Enable systemd user service for faster daemon startup (if systemd available)
+if command -v systemctl &> /dev/null && systemctl --user status &> /dev/null 2>&1; then
+    log "Installing llm-assistant systemd user service..."
+    if "$HOME/.local/bin/llm-assistant" --service 2>/dev/null; then
+        log "llm-assistant systemd service enabled (faster @ command startup)"
+    else
+        warn "Could not install systemd service, using traditional daemon mode"
+    fi
+fi
 
 if has_desktop_environment; then
     # Audio-related installations (STT/TTS) - only if soundcard available

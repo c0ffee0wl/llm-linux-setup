@@ -454,11 +454,23 @@ The `<memory>` section below contains user preferences and project-specific note
         Returns:
             Formatted context string
         """
+        # Determine effective log path
+        effective_log = session_log if session_log else self.session_log
+
+        if not effective_log:
+            # Clear env var to prevent stale values from affecting other code
+            os.environ.pop('SESSION_LOG_FILE', None)
+            return ""
+
+        # Validate file exists (prevents using stale paths from previous sessions)
+        if not os.path.exists(effective_log):
+            # Clear env var to prevent stale values from affecting other code
+            os.environ.pop('SESSION_LOG_FILE', None)
+            return ""
+
         # Set SESSION_LOG_FILE for context capture
-        if session_log:
-            os.environ['SESSION_LOG_FILE'] = session_log
-        elif self.session_log:
-            os.environ['SESSION_LOG_FILE'] = self.session_log
+        # This is required by llm_tools_context.get_command_blocks()
+        os.environ['SESSION_LOG_FILE'] = effective_log
 
         context, self.context_hashes = capture_shell_context(self.context_hashes)
 

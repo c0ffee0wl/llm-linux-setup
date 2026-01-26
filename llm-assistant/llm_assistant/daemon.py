@@ -413,9 +413,9 @@ class AssistantDaemon:
         state.touch()
         session = state.session
 
-        # Update session log if provided
-        if session_log:
-            session.session_log = session_log
+        # Always update session_log from request (empty = no context available)
+        # Prevents stale paths when terminal_id is reused across sessions
+        session.session_log = session_log if session_log else None
 
         # Capture context with deduplication
         context = session.capture_context(session_log)

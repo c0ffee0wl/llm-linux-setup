@@ -54,18 +54,71 @@ def is_daemon_running() -> bool:
         return False
 
 
+def _is_systemd_service_enabled() -> bool:
+    """Check if llm-assistant systemd user service is enabled.
+
+    Returns:
+        True if service is enabled, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "is-enabled", "llm-assistant.service"],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False
+
+
+def _start_via_systemctl() -> bool:
+    """Start daemon via systemctl --user start.
+
+    Returns:
+        True if started successfully, False otherwise.
+    """
+    try:
+        result = subprocess.run(
+            ["systemctl", "--user", "start", "llm-assistant.service"],
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        return result.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+        return False
+
+
 def start_daemon(model: Optional[str] = None) -> bool:
     """Start the llm-assistant daemon in background.
+
+    If systemd user service is enabled, uses systemctl --user start for
+    faster startup. Otherwise, falls back to subprocess.Popen method.
 
     Tries absolute path first (for espanso and GUI apps where PATH
     may not include ~/.local/bin), then falls back to PATH lookup.
 
     Args:
-        model: Optional model to use (passed via -m flag)
+        model: Optional model to use (passed via -m flag, only used with subprocess method)
 
     Returns:
         True if daemon started successfully, False otherwise.
     """
+    socket_path = get_socket_path()
+
+    # Try systemd first if service is enabled
+    if _is_systemd_service_enabled():
+        if _start_via_systemctl():
+            # Wait for socket to appear
+            start_time = time.time()
+            while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
+                if socket_path.exists() and is_daemon_running():
+                    return True
+                time.sleep(0.1)
+        # Fall through to subprocess method if systemctl failed
+
+    # Fallback: subprocess method
     # Try absolute path first (for espanso and GUI apps)
     daemon_path = Path.home() / ".local" / "bin" / "llm-assistant"
     if daemon_path.exists():
@@ -86,7 +139,6 @@ def start_daemon(model: Optional[str] = None) -> bool:
         )
 
         # Wait for socket to appear
-        socket_path = get_socket_path()
         start_time = time.time()
 
         while time.time() - start_time < DAEMON_STARTUP_TIMEOUT:
