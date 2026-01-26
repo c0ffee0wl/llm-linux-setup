@@ -168,8 +168,13 @@ wut() {
     fi
 
     # Get terminal session ID for conversation tracking
+    # SESSION_LOG_FILE takes priority when available - it's unique per asciinema session
+    # and prevents context bleeding when panes are reused or recreated
     local terminal_id=""
-    if [ -n "$TMUX_PANE" ]; then
+    if [ -n "$SESSION_LOG_FILE" ]; then
+        # Most reliable: unique per asciinema recording session
+        terminal_id="session:$(basename "$SESSION_LOG_FILE" .cast)"
+    elif [ -n "$TMUX_PANE" ]; then
         terminal_id="tmux:$TMUX_PANE"
     elif [ -n "$TERM_SESSION_ID" ]; then
         terminal_id="iterm:$TERM_SESSION_ID"
@@ -177,8 +182,6 @@ wut() {
         terminal_id="konsole:$KONSOLE_DBUS_SESSION"
     elif [ -n "$WINDOWID" ]; then
         terminal_id="x11:$WINDOWID"
-    elif [ -n "$SESSION_LOG_FILE" ]; then
-        terminal_id="asciinema:$(basename "$SESSION_LOG_FILE" .cast)"
     else
         terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
     fi

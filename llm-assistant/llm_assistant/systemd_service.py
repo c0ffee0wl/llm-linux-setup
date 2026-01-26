@@ -28,6 +28,10 @@ ExecStart={executable} --foreground
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# Disable filesystem isolation - daemon needs access to user's /tmp for:
+# - Session logs in /tmp/session_logs/asciinema/
+# - Socket in /tmp/llm-assistant-{UID}/
+PrivateTmp=no
 
 [Install]
 WantedBy=default.target

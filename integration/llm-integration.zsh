@@ -114,8 +114,11 @@ __llm_accept_line() {
     print
 
     # Set up terminal ID (same logic as @() function in llm-common.sh)
+    # SESSION_LOG_FILE takes priority - unique per asciinema session, prevents context bleeding
     local terminal_id=""
-    if [[ -n "$TMUX_PANE" ]]; then
+    if [[ -n "$SESSION_LOG_FILE" ]]; then
+      terminal_id="session:$(basename "$SESSION_LOG_FILE" .cast)"
+    elif [[ -n "$TMUX_PANE" ]]; then
       terminal_id="tmux:$TMUX_PANE"
     elif [[ -n "$TERM_SESSION_ID" ]]; then
       terminal_id="iterm:$TERM_SESSION_ID"
@@ -123,8 +126,6 @@ __llm_accept_line() {
       terminal_id="konsole:$KONSOLE_DBUS_SESSION"
     elif [[ -n "$WINDOWID" ]]; then
       terminal_id="x11:$WINDOWID"
-    elif [[ -n "$SESSION_LOG_FILE" ]]; then
-      terminal_id="asciinema:$(basename "$SESSION_LOG_FILE" .cast)"
     else
       terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
     fi

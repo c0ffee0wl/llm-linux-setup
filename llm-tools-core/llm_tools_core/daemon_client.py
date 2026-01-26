@@ -177,11 +177,11 @@ def get_terminal_session_id() -> str:
 
     Checks these environment variables in priority order:
     1. TERMINAL_SESSION_ID - set by @() shell function (preferred)
-    2. TMUX_PANE - tmux pane identifier
-    3. TERM_SESSION_ID - iTerm2
-    4. KONSOLE_DBUS_SESSION - Konsole
-    5. WINDOWID - X11 window ID
-    6. SESSION_LOG_FILE - asciinema recording path (fallback)
+    2. SESSION_LOG_FILE - asciinema recording path (most unique, prevents context bleeding)
+    3. TMUX_PANE - tmux pane identifier
+    4. TERM_SESSION_ID - iTerm2
+    5. KONSOLE_DBUS_SESSION - Konsole
+    6. WINDOWID - X11 window ID
     7. $(tty) - TTY device (last resort)
 
     Returns:
@@ -189,23 +189,24 @@ def get_terminal_session_id() -> str:
 
     Examples:
         >>> get_terminal_session_id()
-        'TMUX_PANE:%1'  # in tmux
+        'session:2025-01-26_10-30-45-123_12345'  # with asciinema
     """
     # First check if shell function already set the ID
     terminal_id = os.environ.get('TERMINAL_SESSION_ID')
     if terminal_id:
         return terminal_id
 
+    # SESSION_LOG_FILE takes priority - unique per asciinema session
+    # Prevents context bleeding when panes are reused
+    session_log = os.environ.get('SESSION_LOG_FILE')
+    if session_log:
+        return f"session:{Path(session_log).stem}"
+
     # Check terminal-specific environment variables
     for var in ['TMUX_PANE', 'TERM_SESSION_ID', 'KONSOLE_DBUS_SESSION', 'WINDOWID']:
         value = os.environ.get(var)
         if value:
             return f"{var}:{value}"
-
-    # Fallback to asciinema session log file
-    session_log = os.environ.get('SESSION_LOG_FILE')
-    if session_log:
-        return f"asciinema:{Path(session_log).stem}"
 
     # Last resort: TTY device
     try:
