@@ -2201,6 +2201,16 @@ else
     fi
 fi
 
+# Update claudechic if installed (stylish terminal UI for Claude Code)
+if uv tool list 2>/dev/null | grep -q "^claudechic "; then
+    install_or_upgrade_uv_tool claudechic
+fi
+
+# Update notebooklm-mcp-server if installed (MCP server for NotebookLM integration)
+if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-server "; then
+    install_or_upgrade_uv_tool notebooklm-mcp-server
+fi
+
 # WSL mode: Skip blaude/Codex, CCR only with --ccr flag
 if [ "$IS_WSL" = true ]; then
     if [ "$CCR_FLAG" = true ]; then
