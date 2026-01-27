@@ -2201,49 +2201,24 @@ else
     fi
 fi
 
-# WSL mode: Prompt for CCR with systemd service, skip blaude/Codex
+# WSL mode: Skip blaude/Codex, CCR only with --ccr flag
 if [ "$IS_WSL" = true ]; then
-    log ""
-    log "========================================"
-    log "WSL INTEGRATION"
-    log "========================================"
-
-    # Check if CCR is already installed
-    ccr_installed=false
-    if npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null; then
-        ccr_installed=true
-    fi
-
-    echo ""
-    log "WSL environment detected."
-    log "Claude Code Router enables Obsidian and other external clients"
-    log "to use your configured LLM providers (Azure/Gemini)."
-    echo ""
-
-    if [ "$ccr_installed" = true ]; then
-        # Check if service is already running properly
-        if systemctl --user is-active claude-code-router &>/dev/null; then
-            # Service is running - default to skip reconfiguration
-            if ask_yes_no "Claude Code Router is running. Update/reconfigure anyway?" "N"; then
-                configure_ccr
-            else
-                log "Keeping existing Claude Code Router configuration"
-            fi
-        else
-            # Installed but not running - likely needs fixing, default to yes
-            if ask_yes_no "Claude Code Router is installed but not running. Reconfigure?" "Y"; then
-                configure_ccr
-            else
-                log "Keeping existing Claude Code Router configuration"
-            fi
-        fi
-    else
-        # Fresh install - default to yes since user chose WSL mode
-        if ask_yes_no "Install Claude Code Router for external client integration?" "Y"; then
+    if [ "$CCR_FLAG" = true ]; then
+        # --ccr flag: install/configure CCR with systemd service
+        if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
+            log "Setting up Claude Code Router for WSL..."
             configure_ccr
         else
-            log "Skipping Claude Code Router installation"
+            warn "Cannot configure CCR: no providers configured (run --azure or --gemini first)"
         fi
+    elif npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null; then
+        if systemctl --user is-active claude-code-router &>/dev/null; then
+            log "Claude Code Router is running (use --ccr to reconfigure)"
+        else
+            log "Claude Code Router is installed but not running (use --ccr to reconfigure)"
+        fi
+    else
+        log "Claude Code Router not installed (use --ccr to install)"
     fi
 
 # Non-WSL mode: Install blaude, CCR (auto), Codex CLI
@@ -2474,7 +2449,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     else
         log "  WSL Integration:"
         log "    - Claude Code Router was not installed"
-        log "    - Re-run with --wsl to configure CCR for external clients"
+        log "    - Run with --ccr to install CCR for external clients"
         log ""
         log "  Next steps:"
         log "    1. Test Claude Code: claude"
