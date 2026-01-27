@@ -2157,22 +2157,11 @@ fi  # End of INSTALL_MODE = "full" block for Phase 6
 # Full mode: Install agentic CLI tools
 if [ "$INSTALL_MODE" = "full" ]; then
 
-# Install/update Claude Code using native installation (both WSL and non-WSL)
+# Install Claude Code if not present (bootstrap via npm, then native install)
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
 NPM_CLAUDE="$NPM_PREFIX/bin/claude"
 
-if [ -x "$NATIVE_CLAUDE" ]; then
-    # Native version exists - just update
-    log "Updating Claude Code (native)..."
-    "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
-
-    # Clean up npm version if it still exists (migration from older script)
-    if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
-        log "Removing legacy npm Claude Code package..."
-        npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove legacy npm package, continuing..."
-    fi
-else
-    # First run: bootstrap via npm, then install native, then remove npm version
+if [ ! -x "$NATIVE_CLAUDE" ]; then
     log "Installing Claude Code (native bootstrap)..."
 
     # Check if npm version exists (for migration from previous installs)
@@ -2199,16 +2188,6 @@ else
     else
         warn "Native Claude installation failed, keeping npm version"
     fi
-fi
-
-# Update claudechic if installed (stylish terminal UI for Claude Code)
-if uv tool list 2>/dev/null | grep -q "^claudechic "; then
-    install_or_upgrade_uv_tool claudechic
-fi
-
-# Update notebooklm-mcp-server if installed (MCP server for NotebookLM integration)
-if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-server "; then
-    install_or_upgrade_uv_tool notebooklm-mcp-server
 fi
 
 # WSL mode: CCR only with --ccr flag, skip Codex
@@ -2309,19 +2288,32 @@ update_profile_export "UV_NO_TELEMETRY" "1"
 update_profile_export "SCARF_ANALYTICS" "false"
 ensure_zprofile_sources_profile
 
-# Clean up package caches to reclaim disk space (runs regardless of install mode)
-clear_package_caches
-
 #############################################################################
 # Update existing CLI tools (regardless of install mode)
 # This ensures tools installed previously get updates even in minimal mode
 #############################################################################
 
-# Update Claude Code if already installed (native version)
+# Update Claude Code if installed (native version)
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
-if [ "$INSTALL_MODE" != "full" ] && [ -x "$NATIVE_CLAUDE" ]; then
+if [ -x "$NATIVE_CLAUDE" ]; then
     log "Updating Claude Code (native)..."
     "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
+
+    # Clean up npm version if it still exists (migration from older script)
+    if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
+        log "Removing legacy npm Claude Code package..."
+        npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove legacy npm package, continuing..."
+    fi
+fi
+
+# Update claudechic if installed (stylish terminal UI for Claude Code)
+if uv tool list 2>/dev/null | grep -q "^claudechic "; then
+    install_or_upgrade_uv_tool claudechic
+fi
+
+# Update notebooklm-mcp-server if installed (MCP server for NotebookLM integration)
+if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-server "; then
+    install_or_upgrade_uv_tool notebooklm-mcp-server
 fi
 
 # Install Claude Code skills from repository (regardless of install mode)
@@ -2406,6 +2398,9 @@ if command -v npm &>/dev/null; then
         upgrade_npm_global_if_installed @openai/codex
     fi
 fi
+
+# Clean up package caches to reclaim disk space (runs regardless of install mode)
+clear_package_caches
 
 #############################################################################
 # COMPLETE
