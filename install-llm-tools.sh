@@ -2211,7 +2211,7 @@ if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-server "; then
     install_or_upgrade_uv_tool notebooklm-mcp-server
 fi
 
-# WSL mode: Skip blaude/Codex, CCR only with --ccr flag
+# WSL mode: CCR only with --ccr flag, skip Codex
 if [ "$IS_WSL" = true ]; then
     if [ "$CCR_FLAG" = true ]; then
         # --ccr flag: install/configure CCR with systemd service
@@ -2231,18 +2231,8 @@ if [ "$IS_WSL" = true ]; then
         log "Claude Code Router not installed (use --ccr to install)"
     fi
 
-# Non-WSL mode: Install blaude, CCR (auto), Codex CLI
+# Non-WSL mode: CCR (auto), Codex CLI
 else
-
-# Install/update blaude (bubblewrap sandbox for Claude Code)
-log "Installing/updating blaude (bubblewrap sandbox for Claude Code)..."
-mkdir -p "$HOME/.local/bin"
-if curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
-    chmod +x "$HOME/.local/bin/blaude"
-    log "blaude installed to ~/.local/bin/blaude"
-else
-    warn "Failed to download blaude"
-fi
 
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
@@ -2388,11 +2378,14 @@ SETTINGS_EOF
     fi
 fi
 
-# Update blaude if already installed (no automatic installation in minimal mode)
-BLAUDE_BIN="$HOME/.local/bin/blaude"
-if [ "$INSTALL_MODE" != "full" ] && [ -x "$BLAUDE_BIN" ]; then
-    log "Updating blaude..."
-    curl -fsSL https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$BLAUDE_BIN" || warn "blaude update failed, continuing..."
+# Install/update blaude (bubblewrap sandbox for Claude Code)
+log "Installing/updating blaude..."
+mkdir -p "$HOME/.local/bin"
+if curl -fsSL -H "Cache-Control: no-cache" https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
+    chmod +x "$HOME/.local/bin/blaude"
+    log "blaude installed to ~/.local/bin/blaude"
+else
+    warn "Failed to download blaude"
 fi
 
 # Update npm-based tools if npm is available (skip silently if npm not installed)
@@ -2469,7 +2462,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - Session recording (asciinema)"
     log "    - Shell integration (llm-integration.bash/zsh)"
     log "    - Desktop tools (Handy, espanso, Ulauncher)"
-    log "    - blaude, Codex CLI"
+    log "    - Codex CLI"
     log ""
 elif [ "$INSTALL_MODE" = "full" ]; then
     log "Installed tools (full mode):"
