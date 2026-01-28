@@ -859,6 +859,39 @@ upgrade_npm_global_if_installed() {
     fi
 }
 
+# Fast version check for Claude Code using GitHub CHANGELOG.md or npm registry
+# Returns 0 if update available, 1 if up-to-date, 2 if check failed
+# Usage: if check_claude_code_update_available "$NATIVE_CLAUDE"; then "$NATIVE_CLAUDE" update; fi
+check_claude_code_update_available() {
+    local claude_bin="$1"
+    local installed_version latest_version
+
+    # Get installed version
+    installed_version=$("$claude_bin" --version 2>/dev/null | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+') || return 2
+
+    # Method 1: GitHub CHANGELOG.md (fastest, ~0.2s)
+    latest_version=$(curl -sS --max-time 5 \
+        "https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md" 2>/dev/null \
+        | head -50 | grep -oP '## \K[0-9]+\.[0-9]+\.[0-9]+' | head -1) || latest_version=""
+
+    # Method 2: npm registry with fields filter (fallback, ~0.7s)
+    if [ -z "$latest_version" ]; then
+        latest_version=$(curl -sS --max-time 5 \
+            "https://registry.npmjs.org/@anthropic-ai%2Fclaude-code?fields=dist-tags" 2>/dev/null \
+            | grep -oP '"latest"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+') || latest_version=""
+    fi
+
+    [ -z "$latest_version" ] && return 2
+
+    if [ "$installed_version" = "$latest_version" ]; then
+        log "Claude Code is up to date ($installed_version)"
+        return 1
+    else
+        log "Claude Code update available: $installed_version -> $latest_version"
+        return 0
+    fi
+}
+
 #############################################################################
 # UV Package Manager
 #############################################################################

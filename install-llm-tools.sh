@@ -2296,8 +2296,17 @@ ensure_zprofile_sources_profile
 # Update Claude Code if installed (native version)
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
 if [ -x "$NATIVE_CLAUDE" ]; then
-    log "Updating Claude Code (native)..."
-    "$NATIVE_CLAUDE" update || warn "Claude Code update check failed (network issue?), continuing..."
+    # Fast pre-check avoids slow 'claude update' (~60s) when already up-to-date
+    # Returns: 0=update available, 1=up-to-date, 2=check failed (fallback to update)
+    # Temporarily disable set -e since non-zero returns are expected
+    set +e
+    check_claude_code_update_available "$NATIVE_CLAUDE"
+    check_result=$?
+    set -e
+    if [ $check_result -eq 0 ] || [ $check_result -eq 2 ]; then
+        [ $check_result -eq 2 ] && warn "Fast update check failed, falling back to native update..."
+        "$NATIVE_CLAUDE" update || warn "Claude Code update failed, continuing..."
+    fi
 
     # Clean up npm version if it still exists (migration from older script)
     if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
