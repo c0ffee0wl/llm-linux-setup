@@ -2325,6 +2325,16 @@ if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-cli "; then
     install_or_upgrade_uv_tool notebooklm-mcp-cli
 fi
 
+# Update youtube-transcript-api if installed (YouTube transcript extraction)
+if uv tool list 2>/dev/null | grep -q "^youtube-transcript-api "; then
+    install_or_upgrade_uv_tool youtube-transcript-api
+fi
+
+# Update yt-dlp if installed (YouTube video/audio downloader)
+if uv tool list 2>/dev/null | grep -q "^yt-dlp "; then
+    install_or_upgrade_uv_tool yt-dlp
+fi
+
 # Install Claude Code skills from repository (regardless of install mode)
 # Skills are copied on every run to ensure latest versions are always available
 if command -v claude &>/dev/null; then
