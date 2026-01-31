@@ -2320,9 +2320,9 @@ if uv tool list 2>/dev/null | grep -q "^claudechic "; then
     install_or_upgrade_uv_tool claudechic
 fi
 
-# Update notebooklm-mcp-server if installed (MCP server for NotebookLM integration)
-if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-server "; then
-    install_or_upgrade_uv_tool notebooklm-mcp-server
+# Update notebooklm-mcp-cli if installed (MCP server for NotebookLM integration)
+if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-cli "; then
+    install_or_upgrade_uv_tool notebooklm-mcp-cli
 fi
 
 # Install Claude Code skills from repository (regardless of install mode)
