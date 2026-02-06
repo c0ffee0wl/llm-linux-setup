@@ -2341,6 +2341,12 @@ if command -v claude &>/dev/null; then
     SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
     SKILLS_DEST_DIR="$HOME/.claude/skills"
 
+    # Fetch/update external skills before copying
+    if [ -x "$SKILLS_SOURCE_DIR/update-external-skills.sh" ]; then
+        log "Updating external skills..."
+        "$SKILLS_SOURCE_DIR/update-external-skills.sh"
+    fi
+
     if [ -d "$SKILLS_SOURCE_DIR" ] && [ -n "$(ls -A "$SKILLS_SOURCE_DIR" 2>/dev/null)" ]; then
         log "Installing Claude Code skills..."
         mkdir -p "$SKILLS_DEST_DIR"

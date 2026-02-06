@@ -1,0 +1,7 @@
+# External skills (cloned by update-external-skills.sh)
+# Do not commit these - they are fetched from upstream repos
+.repo-cache/
+content-research-writer/
+humanizer/
+last30days-skill/
+pretty-mermaid/

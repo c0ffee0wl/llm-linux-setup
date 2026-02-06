@@ -1,0 +1,29 @@
+# External Skills Manifest
+# Skills from external GitHub repositories, cloned directly into skills/<name>/
+# The install script copies all skills/* to ~/.claude/skills/
+#
+# Format:
+#   - name: skill name (directory name, becomes /command in Claude Code)
+#     repo: GitHub repository (owner/repo or full URL)
+#     ref: branch, tag, or commit (optional, defaults to main)
+#     path: subdirectory within repo containing SKILL.md (optional)
+#
+# After adding skills, run: ./skills/update-external-skills.sh
+
+skills:
+  - name: humanizer
+    repo: blader/humanizer
+    ref: main
+
+  - name: content-research-writer
+    repo: ComposioHQ/awesome-claude-skills
+    ref: master
+    path: content-research-writer
+
+  - name: last30days-skill
+    repo: mvanhorn/last30days-skill
+    ref: main
+
+  - name: pretty-mermaid
+    repo: imxv/Pretty-mermaid-skills
+    ref: main
