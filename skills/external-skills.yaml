@@ -28,6 +28,10 @@ skills:
     repo: imxv/Pretty-mermaid-skills
     ref: main
 
+  - name: smart-illustrator
+    repo: c0ffee0wl/smart-illustrator
+    ref: main
+
   - name: content-creation
     repo: anthropics/knowledge-work-plugins
     ref: main
