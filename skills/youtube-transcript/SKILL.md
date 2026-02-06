@@ -27,11 +27,37 @@ Extract the video ID from various YouTube URL formats:
 
 The video ID is the 11-character alphanumeric string.
 
+## Proxy Support
+
+If `WEBSHARE_PROXY_USERNAME` and `WEBSHARE_PROXY_PASSWORD` environment variables are set, **always** add proxy flags to avoid IP-based rate limiting:
+
+```bash
+youtube_transcript_api VIDEO_ID \
+  --languages en de es \
+  --webshare-proxy-username "$WEBSHARE_PROXY_USERNAME" \
+  --webshare-proxy-password "$WEBSHARE_PROXY_PASSWORD"
+```
+
+Check before each invocation:
+```bash
+if [ -n "$WEBSHARE_PROXY_USERNAME" ] && [ -n "$WEBSHARE_PROXY_PASSWORD" ]; then
+  # Use --webshare-proxy-username and --webshare-proxy-password flags
+fi
+```
+
+If the variables are **not set**, run commands without proxy flags.
+
 ## Commands
 
 ### Fetch Transcript
 ```bash
+# Without proxy
 youtube_transcript_api VIDEO_ID
+
+# With proxy (preferred — use when env vars are set)
+youtube_transcript_api VIDEO_ID \
+  --webshare-proxy-username "$WEBSHARE_PROXY_USERNAME" \
+  --webshare-proxy-password "$WEBSHARE_PROXY_PASSWORD"
 ```
 
 ### Specify Language (with fallback)
@@ -76,10 +102,11 @@ youtube_transcript_api VIDEO_ID --exclude-manually-created
 
 ## Workflow
 
-1. Extract video ID from URL
-2. List available transcripts to check languages: `--list-transcripts`
-3. Fetch transcript in preferred language
-4. Process the output (summarize, analyze, extract quotes)
+1. Check if `$WEBSHARE_PROXY_USERNAME` and `$WEBSHARE_PROXY_PASSWORD` are set
+2. Extract video ID from URL
+3. List available transcripts to check languages: `--list-transcripts`
+4. Fetch transcript in preferred language (with proxy flags if env vars are set)
+5. Process the output (summarize, analyze, extract quotes)
 
 ## Output Structure
 

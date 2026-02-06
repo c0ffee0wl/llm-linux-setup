@@ -1160,6 +1160,112 @@ install_github_deb_package() {
 }
 
 #############################################################################
+# GitHub Release Binary Management
+#############################################################################
+
+# Install or upgrade a pre-built binary from GitHub releases (tarball)
+# Queries the GitHub API for the latest release tag, downloads the tarball,
+# extracts the binary, and installs to ~/.local/bin.
+# Tracks installed version via tag in $LLM_TOOLS_CONFIG_DIR/{tool}-version.
+#
+# Usage: install_or_upgrade_github_release tool_name github_repo tarball_suffix
+#
+# Parameters:
+#   tool_name       - Name of the binary (used for tracking and command check)
+#   github_repo     - GitHub owner/repo (e.g., "letientai299/md2cb")
+#   tarball_suffix  - Tarball filename suffix (e.g., "linux-x64.tar.gz")
+#
+# Returns: 0 on success or skip, 1 on failure
+#
+# Example:
+#   install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz"
+#
+install_or_upgrade_github_release() {
+    local tool_name="$1"
+    local github_repo="$2"
+    local tarball_suffix="$3"
+    local version_file="$LLM_TOOLS_CONFIG_DIR/${tool_name}-version"
+    local install_dir="$HOME/.local/bin"
+
+    # Check architecture
+    local current_arch=$(uname -m)
+    if [ "$current_arch" != "x86_64" ]; then
+        log "Skipping $tool_name: only x86_64 binary available (current: $current_arch)"
+        return 0
+    fi
+
+    # Query GitHub API for latest release tag
+    local api_url="https://api.github.com/repos/${github_repo}/releases/latest"
+    local latest_tag
+    latest_tag=$(curl -sS --max-time 10 "$api_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+
+    if [ -z "$latest_tag" ]; then
+        warn "Could not fetch latest release for $tool_name from GitHub. Skipping."
+        return 1
+    fi
+
+    # Check if already installed and up to date
+    local installed_tag=$(cat "$version_file" 2>/dev/null || echo "")
+
+    if command -v "$tool_name" &> /dev/null && [ "$latest_tag" = "$installed_tag" ]; then
+        log "$tool_name is up to date ($latest_tag)"
+        return 0
+    fi
+
+    if command -v "$tool_name" &> /dev/null && [ -n "$installed_tag" ]; then
+        log "Upgrading $tool_name from $installed_tag to $latest_tag..."
+    else
+        log "Installing $tool_name $latest_tag..."
+    fi
+
+    # Build download URL: {tool_name}-{tarball_suffix}
+    local tarball_name="${tool_name}-${tarball_suffix}"
+    local download_url="https://github.com/${github_repo}/releases/download/${latest_tag}/${tarball_name}"
+
+    # Download tarball
+    local tmp_dir=$(mktemp -d)
+    local tarball_path="${tmp_dir}/${tarball_name}"
+
+    if ! curl -fSL --max-time 60 "$download_url" -o "$tarball_path" 2>/dev/null; then
+        warn "Failed to download $tool_name from $download_url"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # Extract tarball
+    if ! tar xzf "$tarball_path" -C "$tmp_dir" 2>/dev/null; then
+        warn "Failed to extract $tool_name tarball"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # Find the binary in extracted contents
+    local binary_path
+    binary_path=$(find "$tmp_dir" -name "$tool_name" -type f ! -path "$tarball_path" | head -1)
+
+    if [ -z "$binary_path" ]; then
+        warn "Could not find $tool_name binary in extracted tarball"
+        rm -rf "$tmp_dir"
+        return 1
+    fi
+
+    # Install binary
+    mkdir -p "$install_dir"
+    chmod +x "$binary_path"
+    mv "$binary_path" "$install_dir/$tool_name"
+
+    # Track installed version
+    mkdir -p "$(dirname "$version_file")"
+    echo "$latest_tag" > "$version_file"
+
+    # Cleanup
+    rm -rf "$tmp_dir"
+
+    log "$tool_name $latest_tag installed to $install_dir/$tool_name"
+    return 0
+}
+
+#############################################################################
 # Make/Git-based Tool Management
 #############################################################################
 

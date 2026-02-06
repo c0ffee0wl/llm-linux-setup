@@ -81,6 +81,7 @@ Helper functions are split between two files:
 | `ask_yes_no(prompt, default)` | Interactive prompts |
 | `install_or_upgrade_uv_tool(src)` | Unified uv tool management (auto-detects git) |
 | `install_or_upgrade_cargo_git_tool(name, url)` | Cargo tools with commit tracking |
+| `install_or_upgrade_github_release(name, repo, suffix)` | GitHub release binary with tag tracking |
 | `install_or_upgrade_rust()` | Rust version management |
 | `install_or_upgrade_nodejs()` | Node.js version management |
 
@@ -210,6 +211,7 @@ Most plugins are installed from `git+https://github.com/c0ffee0wl/...` forks. Ke
 | files-to-prompt | c0ffee0wl/files-to-prompt | Dan Mackinlay's fork |
 | llm-templates-fabric | c0ffee0wl/llm-templates-fabric | Damon McMinn's fork |
 | asciinema | cargo git install | Session recording (Rust) |
+| md2cb | letientai299/md2cb | Markdown to rich HTML clipboard |
 
 Other git-based plugins include: llm-gemini, llm-vertex, llm-cmd, llm-tools-*, llm-fragments-*, llm-arxiv, etc. See `REMOTE_PLUGINS` array in `install-llm-tools.sh` for the complete list.
 

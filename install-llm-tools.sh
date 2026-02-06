@@ -2089,6 +2089,9 @@ fi
 # Requires Python 3.14 - installs with isolated Python environment
 install_or_upgrade_uv_tool toko 3.14
 
+# Install/update md2cb (Markdown to rich HTML clipboard)
+install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz"
+
 # Additional tools only in full mode
 if [ "$INSTALL_MODE" = "full" ]; then
     # Configure VS Code for local LLM mode (if any VS Code variant is installed)
@@ -2456,6 +2459,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - llm-observability  Log viewer for llm conversations"
     log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
     log "    - toko             LLM token counter with cost estimation"
+    log "    - md2cb            Markdown to rich HTML clipboard"
     log ""
     if npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null 2>&1; then
         log "  WSL Integration:"
@@ -2516,6 +2520,7 @@ elif [ "$INSTALL_MODE" = "full" ]; then
     log "    - argc             Bash CLI framework"
     log "    - asciinema        Terminal session recorder"
     log "    - transcribe       Speech-to-text (25 European languages)"
+    log "    - md2cb            Markdown to rich HTML clipboard"
     log "    - micro            Terminal text editor with LLM plugin"
     log "    - context          Terminal history extractor"
     log ""
@@ -2565,6 +2570,7 @@ else
     log "    - llm-observability  Log viewer for llm conversations"
     log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
     log "    - toko             LLM token counter with cost estimation"
+    log "    - md2cb            Markdown to rich HTML clipboard"
     log ""
     log "Next steps:"
     log "  1. Test llm: llm 'Hello, how are you?'"
