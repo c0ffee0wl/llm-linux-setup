@@ -196,13 +196,24 @@ update_skills() {
         else
             # Root mode: clone directly (existing behavior)
             if [[ -d "$target_dir/.git" ]]; then
-                log_info "  Updating existing clone..."
-                (
-                    cd "$target_dir"
-                    git fetch --depth 1 origin "$ref"
-                    git checkout "$ref" 2>/dev/null || git checkout "origin/$ref"
-                    git pull --depth 1 --ff-only origin "$ref" 2>/dev/null || true
-                )
+                # Check if remote URL has changed in manifest
+                local current_remote
+                current_remote=$(git -C "$target_dir" remote get-url origin 2>/dev/null || echo "")
+                if [[ "$current_remote" != "$repo" ]]; then
+                    log_warn "  Remote URL changed: $current_remote -> $repo"
+                    log_info "  Re-cloning from new remote..."
+                    rm -rf "$target_dir"
+                    git clone --depth 1 --branch "$ref" "$repo" "$target_dir" 2>/dev/null || \
+                    git clone --depth 1 "$repo" "$target_dir"
+                else
+                    log_info "  Updating existing clone..."
+                    (
+                        cd "$target_dir"
+                        git fetch --depth 1 origin "$ref"
+                        git checkout "$ref" 2>/dev/null || git checkout "origin/$ref"
+                        git pull --depth 1 --ff-only origin "$ref" 2>/dev/null || true
+                    )
+                fi
             elif [[ -d "$target_dir" ]]; then
                 log_warn "  Directory exists but is not a git repo: $target_dir"
                 log_warn "  Remove it manually to re-clone"

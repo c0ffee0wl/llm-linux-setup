@@ -25,7 +25,7 @@ skills:
     ref: main
 
   - name: pretty-mermaid
-    repo: imxv/Pretty-mermaid-skills
+    repo: c0ffee0wl/Pretty-mermaid-skills
     ref: main
 
   - name: smart-illustrator
