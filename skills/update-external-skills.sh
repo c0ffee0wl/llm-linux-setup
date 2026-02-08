@@ -105,6 +105,30 @@ EOF
     fi
 }
 
+# Migrate from old_name to new name (removes old directories and gitignore entries)
+migrate_old_name() {
+    local old_name="$1"
+    local new_name="$2"
+    local old_dir="$SCRIPT_DIR/$old_name"
+    local old_dest="$HOME/.claude/skills/$old_name"
+
+    if [[ -d "$old_dir" ]]; then
+        log_info "  Migrating: removing old directory $old_name/"
+        rm -rf "$old_dir"
+    fi
+
+    if [[ -d "$old_dest" ]]; then
+        log_info "  Migrating: removing old installed skill $old_dest"
+        rm -rf "$old_dest"
+    fi
+
+    # Remove old name from .gitignore
+    if [[ -f "$GITIGNORE" ]] && grep -q "^${old_name}/$" "$GITIGNORE" 2>/dev/null; then
+        sed -i "/^${old_name}\/$/d" "$GITIGNORE"
+        log_info "  Migrating: removed $old_name/ from .gitignore"
+    fi
+}
+
 # Get cache key for a repo (used as directory name)
 repo_cache_key() {
     local repo="$1"
@@ -161,10 +185,16 @@ update_skills() {
         repo=$(yaml_skill_field "$MANIFEST" "$i" "repo" "")
         ref=$(yaml_skill_field "$MANIFEST" "$i" "ref" "main")
         path=$(yaml_skill_field "$MANIFEST" "$i" "path" "")
+        old_name=$(yaml_skill_field "$MANIFEST" "$i" "old_name" "")
 
         if [[ -z "$name" ]] || [[ -z "$repo" ]]; then
             log_warn "Skipping skill $i: missing name or repo"
             continue
+        fi
+
+        # Handle rename migration
+        if [[ -n "$old_name" ]]; then
+            migrate_old_name "$old_name" "$name"
         fi
 
         # Expand short repo format to full URL

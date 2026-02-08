@@ -7,6 +7,7 @@
 #     repo: GitHub repository (owner/repo or full URL)
 #     ref: branch, tag, or commit (optional, defaults to main)
 #     path: subdirectory within repo containing SKILL.md (optional)
+#     old_name: previous directory name to migrate from (optional)
 #
 # After adding skills, run: ./skills/update-external-skills.sh
 
@@ -20,9 +21,10 @@ skills:
     ref: master
     path: content-research-writer
 
-  - name: last30days-skill
+  - name: last30days
     repo: mvanhorn/last30days-skill
     ref: main
+    old_name: last30days-skill
 
   - name: pretty-mermaid
     repo: c0ffee0wl/Pretty-mermaid-skills
