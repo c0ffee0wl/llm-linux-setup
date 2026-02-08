@@ -1764,7 +1764,7 @@ if has_desktop_environment; then
         # Install Handy (system-wide STT) via .deb package
         install_github_deb_package "handy" "0.6.10" \
             "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
-            "handy" "x86_64"
+            "handy" "x86_64" || true
 
         # Configure Handy settings (Handy overwrites settings on first start, so we must let it create them first)
         if command -v handy &>/dev/null; then
@@ -1867,7 +1867,7 @@ if settings_file.exists():
 
     install_github_deb_package "espanso" "$ESPANSO_VERSION" \
         "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
-        "espanso" "x86_64"
+        "espanso" "x86_64" || true
 
     # Install espanso-llm package (uses llm-inlineassistant daemon, no external dependencies)
     if command -v espanso &>/dev/null; then
@@ -1908,7 +1908,7 @@ if settings_file.exists():
     # Install Ulauncher (application launcher)
     install_github_deb_package "ulauncher" "5.15.15" \
         "https://github.com/Ulauncher/Ulauncher/releases/download/{VERSION}/ulauncher_{VERSION}_all.deb" \
-        "" ""  # No process kill needed, architecture-independent
+        "" "" || true  # No process kill needed, architecture-independent
 
     # Install ulauncher-llm extension (symlink to repository)
     if command -v ulauncher &>/dev/null; then
@@ -2090,7 +2090,7 @@ fi
 install_or_upgrade_uv_tool toko 3.14
 
 # Install/update md2cb (Markdown to rich HTML clipboard)
-install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz"
+install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz" || true
 
 # Additional tools only in full mode
 if [ "$INSTALL_MODE" = "full" ]; then

@@ -180,7 +180,7 @@ update_skills() {
     log_info "Found $skill_count external skill(s) in manifest"
 
     for ((i=0; i<skill_count; i++)); do
-        local name repo ref path
+        local name repo ref path old_name
         name=$(yaml_skill_field "$MANIFEST" "$i" "name" "")
         repo=$(yaml_skill_field "$MANIFEST" "$i" "repo" "")
         ref=$(yaml_skill_field "$MANIFEST" "$i" "ref" "main")
