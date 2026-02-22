@@ -767,7 +767,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             self.speech_output.stop()
 
         # Show spinner while waiting for first token, then switch to markdown
-        thinking = RichSpinner("dots", text=Text(" Thinking…", style="dim"), style="cyan")
+        thinking = RichSpinner("dots", text=Text(" Thinking…", style="cyan"), style="cyan")
         has_content = False
 
         with Live(thinking, refresh_per_second=10, console=self.console, transient=True) as live:
