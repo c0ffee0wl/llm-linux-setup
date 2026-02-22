@@ -56,6 +56,7 @@ from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.prompt import Prompt
+from rich.spinner import Spinner as RichSpinner
 from rich.status import Status
 from rich.text import Text
 from typing import List, Optional, Tuple, Dict, Union, Set
@@ -765,14 +766,18 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         if tts_enabled and self.speech_output:
             self.speech_output.stop()
 
-        # Use transient=True initially, switch to False only if we have content
-        with Live(Markdown(""), refresh_per_second=10, console=self.console, transient=True) as live:
+        # Show spinner while waiting for first token, then switch to markdown
+        thinking = RichSpinner("dots", text=Text(" Thinking…", style="dim"), style="cyan")
+        has_content = False
+
+        with Live(thinking, refresh_per_second=10, console=self.console, transient=True) as live:
             for chunk in response:
                 accumulated_text += chunk
-                live.update(Markdown(accumulated_text))
-                # Once we have content, make it persistent
-                if accumulated_text.strip():
+                if not has_content and accumulated_text.strip():
+                    has_content = True
                     live.transient = False
+                if has_content:
+                    live.update(Markdown(accumulated_text))
 
                 # Broadcast to web companion (non-blocking)
                 if self.web_clients:
