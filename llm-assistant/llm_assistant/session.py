@@ -698,11 +698,16 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 print(f"Warning during shutdown: {e}", file=sys.stderr)
 
     def _get_default_model(self) -> str:
-        """Get default model from llm configuration.
+        """Get default model with priority: config > system default.
 
-        Delegates to centralized get_assistant_default_model() which applies
-        upgrade rules (e.g., azure/gpt-4.1-mini -> azure/gpt-4.1).
+        Checks assistant-config.yaml for a persistent default_model first,
+        then falls back to centralized get_assistant_default_model() which
+        applies upgrade rules (e.g., azure/gpt-4.1-mini -> azure/gpt-4.1).
         """
+        config = self._load_config()
+        config_model = config.get("default_model")
+        if config_model:
+            return config_model
         return get_assistant_default_model()
 
     def _is_vertex_model(self) -> bool:
@@ -1007,6 +1012,24 @@ The `<memory>` section below contains user preferences and project-specific note
             except Exception:
                 return {}
         return {}
+
+    def _save_config_key(self, key: str, value=None):
+        """Set or remove a single key in assistant-config.yaml.
+
+        Args:
+            key: The config key to set or remove.
+            value: The value to set. If None, the key is removed.
+        """
+        import yaml
+        config_file = self._get_config_file()
+        config = self._load_config()
+        if value is None:
+            config.pop(key, None)
+        else:
+            config[key] = value
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, 'w') as f:
+            yaml.safe_dump(config, f, default_flow_style=False)
 
     # KB, RAG, Skills, Terminal, Context, Watch methods are now in mixin classes
 
@@ -2757,6 +2780,29 @@ Screenshot size: {file_size} bytes"""
                 for model in llm.get_models():
                     current = " [green](current)[/]" if model.model_id == self.model_name else ""
                     self.console.print(f"  - {model.model_id}{current}")
+            elif args == "default" or args.startswith("default "):
+                # /model default — manage persistent default model
+                default_args = args[len("default"):].strip()
+                if default_args == "--clear":
+                    config = self._load_config()
+                    old = config.get("default_model")
+                    self._save_config_key("default_model", None)
+                    if old:
+                        ConsoleHelper.success(self.console, f"Cleared default model (was: {old})")
+                    else:
+                        ConsoleHelper.warning(self.console, "No default model was set")
+                elif default_args:
+                    self._save_config_key("default_model", default_args)
+                    ConsoleHelper.success(self.console, f"Default model set to: {default_args}")
+                else:
+                    # Show current default
+                    config = self._load_config()
+                    config_model = config.get("default_model")
+                    system_model = get_assistant_default_model()
+                    if config_model:
+                        ConsoleHelper.bold(self.console, f"Default model: {config_model} (assistant config)")
+                    else:
+                        ConsoleHelper.bold(self.console, f"Default model: {system_model} (system default)")
             elif args.startswith("-q") or args.startswith("--query"):
                 # Query-based selection: /model -q haiku -q claude
                 query_parts = args.split()[1:]  # Remove -q/--query prefix

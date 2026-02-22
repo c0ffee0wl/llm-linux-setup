@@ -53,6 +53,10 @@ def resolve_model_query(queries: List[str]) -> Optional[str]:
               help='PID file path for daemon (default: ~/.local/run/llm-assistant.pid)')
 @click.option('--logfile', default=None,
               help='Log file path for daemon (default: ~/.local/log/llm-assistant.log)')
+@click.option('--set-default', metavar='MODEL',
+              help='Set persistent default model for llm-assistant and exit')
+@click.option('--clear-default', is_flag=True,
+              help='Remove persistent default model (fall back to system default) and exit')
 @click.option('--service', is_flag=True,
               help='Install and enable systemd user service for faster daemon startup')
 @click.option('--uninstall-service', is_flag=True,
@@ -66,6 +70,8 @@ def main(
     conversation_id: Optional[str],
     no_log: bool,
     no_exec: bool,
+    set_default: Optional[str],
+    clear_default: bool,
     daemon: bool,
     foreground: bool,
     pidfile: Optional[str],
@@ -74,6 +80,36 @@ def main(
     uninstall_service: bool,
 ):
     """Terminator LLM Assistant - Terminal assistant for pair programming."""
+    # Handle default model management
+    if set_default or clear_default:
+        import yaml
+        from .utils import get_config_dir
+        config_file = get_config_dir() / "assistant-config.yaml"
+        # Load existing config
+        config = {}
+        if config_file.exists():
+            try:
+                with open(config_file) as f:
+                    config = yaml.safe_load(f) or {}
+            except Exception:
+                pass
+        if clear_default:
+            removed = config.pop("default_model", None)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_file, 'w') as f:
+                yaml.safe_dump(config, f, default_flow_style=False)
+            if removed:
+                click.echo(f"Cleared default model (was: {removed})")
+            else:
+                click.echo("No default model was set")
+        else:
+            config["default_model"] = set_default
+            config_file.parent.mkdir(parents=True, exist_ok=True)
+            with open(config_file, 'w') as f:
+                yaml.safe_dump(config, f, default_flow_style=False)
+            click.echo(f"Default model set to: {set_default}")
+        raise SystemExit(0)
+
     # Handle systemd service management first
     if service or uninstall_service:
         from .systemd_service import install_service, uninstall_service as do_uninstall
