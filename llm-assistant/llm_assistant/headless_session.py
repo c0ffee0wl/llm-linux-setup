@@ -10,6 +10,7 @@ Unlike TerminatorAssistantSession, HeadlessSession:
 - Uses agent mode behavior (agentic prompts, 100 tool iterations)
 """
 
+import asyncio
 import os
 import platform
 import subprocess
@@ -86,23 +87,49 @@ def _get_command_blocks_subprocess(n_commands: int = 3) -> List[str]:
 
         return blocks
 
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except Exception as e:
+        import sys
+        print(f"[context] Subprocess fallback failed: {e}", file=sys.stderr)
         return []
 
 
-def get_command_blocks(n_commands: int = 3) -> List[str]:
-    """Get command blocks from asciinema recording."""
-    if _get_command_blocks_func is not None:
-        try:
-            return _get_command_blocks_func(n_commands=n_commands)
-        except Exception:
-            pass
-    return _get_command_blocks_subprocess(n_commands)
+def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -> List[str]:
+    """Get command blocks from asciinema recording.
+
+    Args:
+        n_commands: Number of recent prompt blocks to extract.
+        session_log: Path to session log file. If provided, temporarily sets
+            SESSION_LOG_FILE for the duration of the call to avoid global state mutation.
+    """
+    # Temporarily set SESSION_LOG_FILE for the library call if a path is provided
+    old_value = os.environ.get('SESSION_LOG_FILE')
+    if session_log:
+        os.environ['SESSION_LOG_FILE'] = session_log
+    try:
+        if _get_command_blocks_func is not None:
+            try:
+                return _get_command_blocks_func(n_commands=n_commands)
+            except Exception as e:
+                import sys
+                print(f"[context] Library get_command_blocks failed: {e}", file=sys.stderr)
+        return _get_command_blocks_subprocess(n_commands)
+    finally:
+        # Restore previous value
+        if session_log:
+            if old_value is not None:
+                os.environ['SESSION_LOG_FILE'] = old_value
+            else:
+                os.environ.pop('SESSION_LOG_FILE', None)
 
 
-def capture_shell_context(prev_hashes: Set[str]) -> Tuple[str, Set[str]]:
-    """Capture context from asciinema with block-level deduplication."""
-    blocks = get_command_blocks(n_commands=3)
+def capture_shell_context(prev_hashes: Set[str], session_log: Optional[str] = None) -> Tuple[str, Set[str]]:
+    """Capture context from asciinema with block-level deduplication.
+
+    Args:
+        prev_hashes: Set of hashes from previous capture for deduplication.
+        session_log: Path to session log file to read context from.
+    """
+    blocks = get_command_blocks(n_commands=3, session_log=session_log)
 
     if not blocks:
         return "", prev_hashes
@@ -445,8 +472,11 @@ The `<memory>` section below contains user preferences and project-specific note
 
         return prompt
 
-    def capture_context(self, session_log: Optional[str] = None) -> str:
+    async def capture_context(self, session_log: Optional[str] = None) -> str:
         """Capture terminal context from asciinema log.
+
+        Runs the blocking context extraction (asciinema convert subprocess)
+        in a thread to avoid blocking the asyncio event loop.
 
         Args:
             session_log: Path to asciinema session file (uses SESSION_LOG_FILE if not provided)
@@ -460,19 +490,23 @@ The `<memory>` section below contains user preferences and project-specific note
         if not effective_log:
             # Clear env var to prevent stale values from affecting other code
             os.environ.pop('SESSION_LOG_FILE', None)
+            self._debug("Context capture skipped: no session log path available")
             return ""
 
         # Validate file exists (prevents using stale paths from previous sessions)
         if not os.path.exists(effective_log):
             # Clear env var to prevent stale values from affecting other code
             os.environ.pop('SESSION_LOG_FILE', None)
+            self._debug(f"Context capture skipped: session log not found: {effective_log}")
             return ""
 
-        # Set SESSION_LOG_FILE for context capture
-        # This is required by llm_tools_context.get_command_blocks()
-        os.environ['SESSION_LOG_FILE'] = effective_log
-
-        context, self.context_hashes = capture_shell_context(self.context_hashes)
+        # Run blocking context capture in thread to avoid blocking the event loop
+        # (capture_shell_context calls asciinema convert via subprocess)
+        prev_hashes = self.context_hashes
+        context, new_hashes = await asyncio.to_thread(
+            capture_shell_context, prev_hashes, session_log=effective_log
+        )
+        self.context_hashes = new_hashes
 
         if not context:
             return ""

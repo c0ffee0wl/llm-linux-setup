@@ -417,8 +417,8 @@ class AssistantDaemon:
         # Prevents stale paths when terminal_id is reused across sessions
         session.session_log = session_log if session_log else None
 
-        # Capture context with deduplication
-        context = session.capture_context(session_log)
+        # Capture context with deduplication (async to avoid blocking event loop)
+        context = await session.capture_context(session_log)
 
         # RAG context retrieval (if RAG collection is active)
         rag_context = ""
@@ -713,11 +713,7 @@ class AssistantDaemon:
 
         # Commands normally handled by thin client - handle here for direct daemon usage
         elif cmd in ("/clear", "/reset", "/new"):
-            if session:
-                session.reset_conversation()
-                session.context_hashes = set()
-            await self._emit(writer, {"type": "text", "content": "[green]New conversation started.[/]"})
-            await self._emit(writer, {"type": "done"})
+            await self.handle_new(tid, writer)
             return True
 
         elif cmd in ("/info", "/status"):
@@ -916,6 +912,7 @@ class AssistantDaemon:
         if terminal_id in self.sessions:
             state = self.sessions[terminal_id]
             state.session.reset_conversation()
+            state.session.context_hashes = set()
             state.touch()
         await self._emit(writer, {"type": "text", "content": "New conversation started."})
         await self._emit(writer, {"type": "done"})

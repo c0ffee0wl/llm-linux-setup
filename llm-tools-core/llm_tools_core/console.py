@@ -64,3 +64,8 @@ class ConsoleHelper:
     def bold(console, message: str) -> None:
         """Print bold message."""
         console.print(f"[bold]{message}[/bold]")
+
+    @staticmethod
+    def debug(console, message: str) -> None:
+        """Print debug message in dim style."""
+        console.print(f"[dim]DEBUG: {message}[/]")

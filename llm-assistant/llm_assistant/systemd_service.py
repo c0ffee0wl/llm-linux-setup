@@ -16,6 +16,8 @@ from typing import Optional, Tuple
 
 
 # Service unit template (simple service, no socket activation)
+# Note: {path} is captured at install time to include user's full PATH
+# (e.g., ~/.cargo/bin for asciinema, ~/.local/bin for tools)
 SERVICE_UNIT_TEMPLATE = """\
 [Unit]
 Description=LLM Assistant Daemon
@@ -28,9 +30,11 @@ ExecStart={executable} --foreground
 Restart=on-failure
 RestartSec=5
 Environment=PYTHONUNBUFFERED=1
+# PATH captured at install time - needed for asciinema, context CLI, etc.
+Environment=PATH={path}
 # Disable filesystem isolation - daemon needs access to user's /tmp for:
 # - Session logs in /tmp/session_logs/asciinema/
-# - Socket in /tmp/llm-assistant-{UID}/
+# - Socket in /tmp/llm-assistant-{{UID}}/
 PrivateTmp=no
 
 [Install]
@@ -66,9 +70,14 @@ def get_executable() -> str:
 
 
 def generate_service_unit() -> str:
-    """Generate the .service unit file content."""
+    """Generate the .service unit file content.
+
+    Captures the current PATH at generation time so that the systemd service
+    can find tools like asciinema (in ~/.cargo/bin) and context CLI.
+    """
     executable = get_executable()
-    return SERVICE_UNIT_TEMPLATE.format(executable=executable)
+    current_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    return SERVICE_UNIT_TEMPLATE.format(executable=executable, path=current_path)
 
 
 def is_service_enabled() -> bool:
