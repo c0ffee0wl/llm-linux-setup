@@ -33,6 +33,9 @@ import hashlib
 import tempfile
 import asyncio
 import threading
+import termios
+import tty
+import select
 import dbus
 import fcntl
 import signal
@@ -167,6 +170,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Initialize shutdown state and lock file handle
         self._shutdown_initiated = False
         self._last_interrupt_time = 0.0  # For double-press exit protection
+        self._turn_cancelled = threading.Event()  # Escape-to-cancel flag
+        self._saved_termios = None  # Saved terminal settings for cbreak mode
         self.lock_file = None
 
         # Early D-Bus detection - require Terminator (unless --no-exec mode)
@@ -747,6 +752,44 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             f"Alerts: {self.watch_alerts_shown}"
         )
 
+    def _enter_cbreak_mode(self) -> bool:
+        """Enter cbreak mode for non-blocking single-keypress detection on stdin."""
+        try:
+            fd = sys.stdin.fileno()
+            self._saved_termios = termios.tcgetattr(fd)
+            tty.setcbreak(fd)
+            return True
+        except (termios.error, ValueError, OSError):
+            return False
+
+    def _restore_terminal_mode(self):
+        """Restore terminal mode from cbreak."""
+        if self._saved_termios is not None:
+            try:
+                termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self._saved_termios)
+            except (termios.error, ValueError, OSError):
+                pass
+            self._saved_termios = None
+
+    def _check_escape_pressed(self) -> bool:
+        """Non-blocking check if standalone Escape was pressed (requires cbreak mode)."""
+        try:
+            if not select.select([sys.stdin], [], [], 0)[0]:
+                return False
+            ch = sys.stdin.read(1)
+            if ch == '\x1b':
+                # Escape sequences (arrow keys etc.) send additional bytes immediately.
+                # Wait briefly to distinguish standalone Escape from a sequence.
+                if select.select([sys.stdin], [], [], 0.05)[0]:
+                    # Additional bytes followed → escape sequence, drain them
+                    while select.select([sys.stdin], [], [], 0)[0]:
+                        sys.stdin.read(1)
+                    return False
+                return True  # Standalone Escape
+            return False
+        except (OSError, ValueError):
+            return False
+
     def _stream_response_with_display(self, response, tts_enabled: bool = False) -> str:
         """
         Stream response with Live markdown display and optional TTS.
@@ -767,31 +810,49 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             self.speech_output.stop()
 
         # Show spinner while waiting for first token, then switch to markdown
-        thinking = RichSpinner("dots", text=Text("Thinking…", style="cyan"), style="cyan")
+        thinking_spinner = RichSpinner("dots", text=Text("Thinking…", style="cyan"), style="cyan")
         has_content = False
+        cancelled = False
 
-        with Live(thinking, refresh_per_second=10, console=self.console, transient=True) as live:
-            for chunk in response:
-                accumulated_text += chunk
-                if not has_content and accumulated_text.strip():
-                    has_content = True
-                    live.transient = False
-                if has_content:
-                    live.update(Markdown(accumulated_text))
+        # Enter cbreak mode for non-blocking Escape detection during streaming
+        cbreak_active = self._enter_cbreak_mode()
 
-                # Broadcast to web companion (non-blocking)
-                if self.web_clients:
-                    self._broadcast_to_web({
-                        "type": "assistant_chunk",
-                        "content": accumulated_text,
-                        "done": False
-                    })
+        try:
+            with Live(thinking_spinner, refresh_per_second=10, console=self.console, transient=True) as live:
+                for chunk in response:
+                    # Check for Escape keypress (non-blocking)
+                    if cbreak_active and self._check_escape_pressed():
+                        self._turn_cancelled.set()
+                    if self._turn_cancelled.is_set():
+                        cancelled = True
+                        break
 
-                # Queue TTS if enabled (non-blocking)
-                if tts_enabled and sentence_buffer:
-                    sentence = sentence_buffer.add(chunk)
-                    if sentence:
-                        self.speech_output.speak_sentence(sentence)
+                    accumulated_text += chunk
+                    if not has_content and accumulated_text.strip():
+                        has_content = True
+                        live.transient = False
+                    if has_content:
+                        live.update(Markdown(accumulated_text))
+
+                    # Broadcast to web companion (non-blocking)
+                    if self.web_clients:
+                        self._broadcast_to_web({
+                            "type": "assistant_chunk",
+                            "content": accumulated_text,
+                            "done": False
+                        })
+
+                    # Queue TTS if enabled (non-blocking)
+                    if tts_enabled and sentence_buffer:
+                        sentence = sentence_buffer.add(chunk)
+                        if sentence:
+                            self.speech_output.speak_sentence(sentence)
+        finally:
+            if cbreak_active:
+                self._restore_terminal_mode()
+
+        if cancelled:
+            ConsoleHelper.dim(self.console, "[Cancelled]")
 
         # Flush remaining TTS
         if tts_enabled and sentence_buffer:
@@ -2016,11 +2077,15 @@ The `<memory>` section below contains user preferences and project-specific note
         return await loop.run_in_executor(None, _sync_input)
 
     def _ask_confirmation(self, prompt_text: str, choices: List[str], default: str) -> str:
-        """Ask for confirmation, ensuring prompt renders on first call.
+        """Ask for confirmation with Escape-to-cancel support.
 
-        Works around Rich console.input() not rendering on first call after prompt_toolkit.
-        Uses Python's built-in input() with prompt - the most basic I/O approach.
+        Uses cbreak mode to detect individual keypresses including Escape.
+        Returns one of the choices, the default (on Enter), or "cancel" (on Escape).
         """
+        # If already cancelled, propagate immediately
+        if self._turn_cancelled.is_set():
+            return "cancel"
+
         # Build the prompt string with ANSI colors (cyan for choices, green for default)
         choice_str = "/".join(choices)
         full_prompt = f"{prompt_text} [\x1b[36m{choice_str}\x1b[0m] (\x1b[32m{default}\x1b[0m): "
@@ -2028,20 +2093,67 @@ The `<memory>` section below contains user preferences and project-specific note
         # Flush stdout before the prompt to ensure clean state
         sys.stdout.flush()
 
-        while True:
-            try:
-                # Use input() with prompt - this is the most basic approach
-                response = input(full_prompt).strip().lower()
-            except EOFError:
-                response = ""
+        cbreak_ok = self._enter_cbreak_mode()
+        if not cbreak_ok:
+            # Fallback to basic input() if cbreak unavailable
+            while True:
+                try:
+                    response = input(full_prompt).strip().lower()
+                except EOFError:
+                    response = ""
+                if not response:
+                    return default
+                if response in choices:
+                    return response
+                print(f"Please enter one of: {', '.join(choices)}")
+            return default
 
-            if not response:
-                return default
-            if response in choices:
-                return response
+        try:
+            buf = ""
+            sys.stdout.write(full_prompt)
+            sys.stdout.flush()
 
-            # Invalid choice - re-prompt
-            print(f"Please enter one of: {', '.join(choices)}")
+            while True:
+                ch = sys.stdin.read(1)
+                if ch == '\x1b':
+                    # Check for escape sequence (arrow keys etc.)
+                    if select.select([sys.stdin], [], [], 0.05)[0]:
+                        while select.select([sys.stdin], [], [], 0)[0]:
+                            sys.stdin.read(1)
+                        continue
+                    # Standalone Escape → cancel
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    self._turn_cancelled.set()
+                    ConsoleHelper.dim(self.console, "[Cancelled]")
+                    return "cancel"
+                elif ch in ('\r', '\n'):
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    response = buf.strip().lower()
+                    if not response:
+                        return default
+                    if response in choices:
+                        return response
+                    print(f"Please enter one of: {', '.join(choices)}")
+                    buf = ""
+                    sys.stdout.write(full_prompt)
+                    sys.stdout.flush()
+                elif ch in ('\x7f', '\b'):  # Backspace
+                    if buf:
+                        buf = buf[:-1]
+                        sys.stdout.write('\b \b')
+                        sys.stdout.flush()
+                elif ch == '\x03':  # Ctrl+C
+                    sys.stdout.write("\n")
+                    sys.stdout.flush()
+                    raise KeyboardInterrupt
+                elif ch >= ' ':
+                    buf += ch
+                    sys.stdout.write(ch)
+                    sys.stdout.flush()
+        finally:
+            self._restore_terminal_mode()
 
     def execute_command(self, command: str) -> Tuple[bool, str]:
         """
@@ -2082,7 +2194,7 @@ The `<memory>` section below contains user preferences and project-specific note
                 else:
                     self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
                     choice = self._ask_confirmation("Execute?", ["y", "n", "e"], "y")
-                    if choice == "n":
+                    if choice in ("n", "cancel"):
                         return (False, "")
                     if choice == "e":
                         edited = Prompt.ask("Edit command", default=command)
@@ -2091,7 +2203,7 @@ The `<memory>` section below contains user preferences and project-specific note
                 self.console.print(f"[{color}]{icon} {risk_level.upper()}[/] - {reason}")
                 ConsoleHelper.error(self.console, "BLOCKED - manual approval required")
                 choice = self._ask_confirmation("Override?", ["yes", "no", "edit"], "no")
-                if choice == "no":
+                if choice in ("no", "cancel"):
                     return (False, "")
                 if choice == "edit":
                     edited = Prompt.ask("Edit command", default=command)
@@ -2100,7 +2212,7 @@ The `<memory>` section below contains user preferences and project-specific note
             # MANUAL MODE: Original approval flow
             choice = self._ask_confirmation("Execute in Exec terminal?", ["y", "n", "e"], "y")
 
-            if choice == "n":
+            if choice in ("n", "cancel"):
                 return (False, "")
 
             if choice == "e":
@@ -2381,7 +2493,7 @@ Screenshot size: {file_size} bytes"""
         # Ask for approval
         choice = self._ask_confirmation("Send this key(s)?", ["y", "n", "e"], "y")
 
-        if choice == "n":
+        if choice in ("n", "cancel"):
             return False
 
         if choice == "e":
@@ -3862,6 +3974,7 @@ Type !fragment <name> [...] to insert fragments""",
                 # Pass system prompt on first interaction or when conversation is empty
                 response_text = ""
                 stream_success = False
+                self._turn_cancelled.clear()
 
                 try:
                     self.console.print()
@@ -3983,8 +4096,8 @@ Type !fragment <name> [...] to insert fragments""",
                     # Don't process commands or update conversation on stream failure
                     continue
 
-                # Only process tool calls if streaming succeeded
-                if stream_success:
+                # Only process tool calls if streaming succeeded and not cancelled
+                if stream_success and not self._turn_cancelled.is_set():
                     try:
                         # Process tool calls (structured output from model)
                         if tool_calls:
@@ -3996,10 +4109,16 @@ Type !fragment <name> [...] to insert fragments""",
                             tool_results = []
 
                             for i, tool_call in enumerate(tool_calls, 1):
+                                if self._turn_cancelled.is_set():
+                                    break
                                 if len(tool_calls) > 1:
                                     self.console.print()
                                     ConsoleHelper.bold(self.console, f"Tool {i}/{len(tool_calls)}: {tool_call.name}")
                                 tool_results.append(self._process_tool_call(tool_call))
+
+                            # Skip follow-up if cancelled during tool processing
+                            if self._turn_cancelled.is_set():
+                                tool_results = []
 
                             # After processing all tool calls, send results back to model
                             # Loop to handle multi-round tool calling
@@ -4008,6 +4127,8 @@ Type !fragment <name> [...] to insert fragments""",
                             iteration = 0
 
                             while tool_results and iteration < MAX_TOOL_ITERATIONS:
+                                if self._turn_cancelled.is_set():
+                                    break
                                 iteration += 1
                                 if self.debug:
                                     self.console.print()
@@ -4060,6 +4181,8 @@ Type !fragment <name> [...] to insert fragments""",
                                 tool_results = []
 
                                 for j, tool_call in enumerate(more_tool_calls, 1):
+                                    if self._turn_cancelled.is_set():
+                                        break
                                     if len(more_tool_calls) > 1:
                                         self.console.print()
                                         ConsoleHelper.bold(self.console, f"Tool {j}/{len(more_tool_calls)}: {tool_call.name}")
