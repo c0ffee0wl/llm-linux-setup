@@ -9,6 +9,7 @@ This module provides background terminal monitoring:
 
 import asyncio
 import re
+import time
 import threading
 from typing import TYPE_CHECKING, List, Optional
 
@@ -25,6 +26,13 @@ if TYPE_CHECKING:
 
 # Marker returned by capture_context when all terminals are unchanged
 CONTEXT_UNCHANGED_MARKER = "[Context: unchanged]"
+
+# Debounce settings for signal-based watch mode.
+# After a content change signal (e.g., keystroke), wait for typing to settle
+# before capturing. This prevents capturing mid-typing when shell
+# autosuggestions or partial commands are visible in the terminal buffer.
+_WATCH_DEBOUNCE_SETTLE = 1.0   # Seconds of silence before considering input settled
+_WATCH_DEBOUNCE_MAX = 5.0      # Max debounce duration (caps continuous output scenarios)
 
 # Fallback pattern for NoComment tag detection when schema not supported
 # Case-insensitive, forgiving of malformed XML
@@ -285,12 +293,25 @@ class WatchMixin:
 
                 # Wait for content change signal or timeout
                 if use_signals:
-                    # Use asyncio.to_thread to call blocking get_change from async context
-                    # This wakes immediately on content change or waits full interval
-                    await asyncio.to_thread(
+                    # Wait for initial content change or full interval timeout
+                    signal = await asyncio.to_thread(
                         self.content_change_receiver.get_change,
                         timeout=self.watch_interval
                     )
+                    # Debounce: when a signal arrives (e.g., keystroke), wait for
+                    # typing to settle before capturing. This prevents capturing
+                    # mid-typing when autosuggestions or partial commands are visible.
+                    if signal:
+                        debounce_start = time.monotonic()
+                        while time.monotonic() - debounce_start < _WATCH_DEBOUNCE_MAX:
+                            further = await asyncio.to_thread(
+                                self.content_change_receiver.get_change,
+                                timeout=_WATCH_DEBOUNCE_SETTLE
+                            )
+                            if further is None:
+                                break  # No activity for settle period - input settled
+                        # Drain any remaining queued signals
+                        self.content_change_receiver.get_all_changes()
                 else:
                     await asyncio.sleep(self.watch_interval)
         finally:

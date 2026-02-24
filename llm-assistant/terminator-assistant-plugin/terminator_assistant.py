@@ -395,8 +395,10 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
             # Calculate end row: use cursor position (where command output ends)
             # This allows dynamic expansion to capture full command output
+            # Also track cursor column to trim autosuggestion ghost text
+            cursor_col = None
             try:
-                _, cursor_row = vte.get_cursor_position()
+                cursor_col, cursor_row = vte.get_cursor_position()
                 if cursor_row >= 0:
                     capture_end = cursor_row
                 else:
@@ -438,6 +440,22 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                     lambda *a: True
                 )
                 content = result[0] if isinstance(result, tuple) else (result or '')
+
+            # Trim autosuggestion/ghost text on the cursor line.
+            # Shell plugins (zsh-autosuggestions, fish, etc.) render suggestion
+            # text beyond the cursor position in the VTE buffer. Since
+            # get_text_range_format captures full row width and strips color,
+            # this ghost text is indistinguishable from typed text. Trim the
+            # last line (cursor row) to the cursor column to exclude it.
+            if cursor_col is not None and cursor_col > 0 and capture_end == cursor_row:
+                lines_list = content.split('\n')
+                if lines_list:
+                    last_line = lines_list[-1]
+                    if len(last_line) > cursor_col:
+                        dbg(f'capture_from_row: trimming autosuggestion on cursor line '
+                            f'(col {cursor_col}, line len {len(last_line)})')
+                        lines_list[-1] = last_line[:cursor_col]
+                        content = '\n'.join(lines_list)
 
             dbg(f'capture_from_row: captured {len(content)} characters')
             return content
