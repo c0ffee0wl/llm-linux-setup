@@ -1379,16 +1379,22 @@ The `<memory>` section below contains user preferences and project-specific note
             context_parts = []
             attachments = []
 
+            self._debug(f"capture_context: found {len(terminals)} terminals in tab (include_exec={include_exec_output}, dedupe={dedupe_unchanged})")
+
             for term in terminals:
                 term_uuid = self._normalize_uuid(term['uuid'])
 
                 # Skip chat terminal (self-awareness)
                 if term_uuid == self.chat_terminal_uuid:
+                    self._debug(f"  Skipping chat terminal: {term['title']}")
                     continue
 
                 # Optionally skip exec terminal
                 if not include_exec_output and term_uuid == self.exec_terminal_uuid:
+                    self._debug(f"  Skipping exec terminal: {term['title']}")
                     continue
+
+                self._debug(f"  Capturing terminal: '{term['title']}' ({term_uuid[:8]})")
 
                 # Check if TUI is active in this terminal
                 is_tui = False
@@ -1427,6 +1433,18 @@ The `<memory>` section below contains user preferences and project-specific note
 
                 # Intelligent capture: get full last command output (not just viewport)
                 content = self._capture_last_command_output(term['uuid'])
+
+                # Fallback: if smart capture returns empty but terminal exists,
+                # try raw viewport capture. This handles edge cases where prompt
+                # detection returns empty (e.g., freshly opened terminal with
+                # content that _capture_last_command_output's heuristics miss).
+                if not content or content.startswith('ERROR'):
+                    self._debug(f"Smart capture returned empty for '{term['title']}' ({term_uuid[:8]}), trying viewport fallback")
+                    try:
+                        content = self.plugin_dbus.capture_terminal_content(term['uuid'], -1)
+                    except Exception as e:
+                        self._debug(f"Viewport fallback also failed: {e}")
+                        content = ""
 
                 if content and not content.startswith('ERROR'):
                     # Compute hash for change detection (normalize whitespace for stability)
@@ -1501,9 +1519,12 @@ The `<memory>` section below contains user preferences and project-specific note
             combined_context = "\n\n".join(context_parts)
             # Truncate if needed to prevent memory/token issues
             combined_context = self._truncate_capture_if_needed(combined_context, "terminal context")
+            self._debug(f"capture_context: {len(context_parts)} parts, {len(combined_context)} chars, {len(attachments)} attachments")
             return combined_context, attachments
         except Exception as e:
             ConsoleHelper.error(self.console, f"Error capturing context: {e}")
+            import traceback
+            self._debug(f"capture_context exception: {traceback.format_exc()}")
             return "", []
 
     def handle_rewind_command(self, args: str) -> bool:
@@ -2256,9 +2277,27 @@ The `<memory>` section below contains user preferences and project-specific note
             initial_content = None  # Fallback: skip change detection
 
         # Record cursor position BEFORE command (for smart full-output capture)
+        # For Kali two-line prompts, the cursor sits on the └─$ line but the
+        # prompt header ┌──(...) is on the line above. Adjust start row to
+        # include the header so tool results capture the complete first prompt.
         cmd_start_row = -1
         try:
             _, cmd_start_row = self.plugin_dbus.get_cursor_position(self.exec_terminal_uuid)
+            if cmd_start_row > 0:
+                probe = self.plugin_dbus.capture_from_row(
+                    self.exec_terminal_uuid, cmd_start_row - 1
+                )
+                if probe:
+                    first_line = probe.split('\n')[0]
+                    clean = PromptDetector.strip_tag_metadata(first_line)
+                    clean = clean.replace(
+                        PromptDetector.PROMPT_START_MARKER, ''
+                    ).replace(
+                        PromptDetector.INPUT_START_MARKER, ''
+                    )
+                    if PromptDetector.KALI_HEADER.search(clean):
+                        cmd_start_row -= 1
+                        self._debug(f"Adjusted cmd_start_row for Kali header: {cmd_start_row}")
             self._debug(f"Command start cursor row: {cmd_start_row}")
         except Exception as e:
             self._debug(f"Could not get cursor position: {e}")
@@ -4044,6 +4083,11 @@ Type !fragment <name> [...] to insert fragments""",
                             include_exec_output=True,
                             dedupe_unchanged=has_prior_context
                         )
+
+                        if not context and not tui_attachments:
+                            self._debug("WARNING: No terminal context captured for this turn")
+                        else:
+                            self._debug(f"Terminal context: {len(context)} chars, {len(tui_attachments)} screenshots")
 
                         # Process fragments if present
                         processed_input, fragments, fragment_attachments = self.process_fragments(user_input)
