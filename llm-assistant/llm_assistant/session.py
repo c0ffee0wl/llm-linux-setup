@@ -1170,8 +1170,10 @@ The `<memory>` section below contains user preferences and project-specific note
             _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
         except Exception:
             # Fallback to viewport capture
+            self._debug(f"_capture_last_command_output: cursor_position failed, viewport fallback")
             return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
+        self._debug(f"_capture_last_command_output: cursor_row={cursor_row}, initial_lines={initial_lines}")
         lines_to_capture = initial_lines
 
         while lines_to_capture <= MAX_LINES:
@@ -1180,13 +1182,18 @@ The `<memory>` section below contains user preferences and project-specific note
             try:
                 content = self.plugin_dbus.capture_from_row(terminal_uuid, start_row)
             except Exception:
+                self._debug(f"_capture_last_command_output: capture_from_row failed, viewport fallback")
                 return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
             if not content or content.startswith('ERROR'):
+                self._debug(f"_capture_last_command_output: capture_from_row returned empty/error, viewport fallback")
                 return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
+
+            self._debug(f"_capture_last_command_output: captured {len(content)} chars from row {start_row}")
 
             # Find prompt lines to identify command boundaries
             prompts = PromptDetector.find_all_prompts(content)
+            self._debug(f"_capture_last_command_output: find_all_prompts returned {len(prompts)} prompts")
 
             # Filter out false positives: in VTE terminals with Unicode markers,
             # only prompts containing INPUT_START_MARKER are real shell prompts.
@@ -1208,6 +1215,9 @@ The `<memory>` section below contains user preferences and project-specific note
                                 break
                     if has_marker:
                         real_prompts.append((line_num, line_content))
+                    else:
+                        self._debug(f"_capture_last_command_output: marker filter removed prompt at line {line_num}: {line_content[:60]!r}")
+                self._debug(f"_capture_last_command_output: after marker filter: {len(real_prompts)} prompts (was {len(prompts)})")
                 prompts = real_prompts
 
             # Check if we should return or continue expanding:
@@ -1223,16 +1233,23 @@ The `<memory>` section below contains user preferences and project-specific note
                     start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
                     start_line = prompts[start_idx][0]
                     lines = content.split('\n')
-                    return '\n'.join(lines[start_line:])
+                    result = '\n'.join(lines[start_line:])
+                    self._debug(f"_capture_last_command_output: returning {len(result)} chars from {len(prompts)} prompts (start_line={start_line})")
+                    return result
                 elif prompts:
                     lines = content.split('\n')
                     # Check if shell is waiting for input (prompt at end)
                     # If so, the single prompt is the END marker - return content BEFORE it
-                    if PromptDetector.detect_prompt_at_end(content):
-                        return '\n'.join(lines[:prompts[0][0]]).rstrip()
+                    prompt_at_end = PromptDetector.detect_prompt_at_end(content)
+                    if prompt_at_end:
+                        result = '\n'.join(lines[:prompts[0][0]]).rstrip()
+                        self._debug(f"_capture_last_command_output: 1 prompt at line {prompts[0][0]}, prompt_at_end=True, returning {len(result)} chars BEFORE prompt")
+                        return result
                     else:
-                        # Prompt at start or command running - return from prompt
-                        return '\n'.join(lines[prompts[0][0]:])
+                        result = '\n'.join(lines[prompts[0][0]:])
+                        self._debug(f"_capture_last_command_output: 1 prompt at line {prompts[0][0]}, prompt_at_end=False, returning {len(result)} chars FROM prompt")
+                        return result
+                self._debug(f"_capture_last_command_output: 0 prompts, returning full content ({len(content)} chars)")
                 return content
 
             # Not enough prompts and not at start - keep expanding
