@@ -21,51 +21,60 @@ class ConsoleHelper:
     """
 
     @staticmethod
+    def _escape(message: str) -> str:
+        """Escape Rich markup characters in message to prevent parsing errors.
+
+        Prevents strings like '[/opt/foo]' from being interpreted as
+        Rich closing tags.
+        """
+        return message.replace("[", "\\[")
+
+    @staticmethod
     def success(console, message: str) -> None:
         """Print success message with green checkmark."""
-        console.print(f"[green]\u2713[/] {message}")
+        console.print(f"[green]\u2713[/] {ConsoleHelper._escape(message)}")
 
     @staticmethod
     def error(console, message: str) -> None:
         """Print error message with red X."""
-        console.print(f"[red]\u2717[/] {message}")
+        console.print(f"[red]\u2717[/] {ConsoleHelper._escape(message)}")
 
     @staticmethod
     def warning(console, message: str) -> None:
         """Print warning message in yellow."""
-        console.print(f"[yellow]{message}[/]")
+        console.print(f"[yellow]{ConsoleHelper._escape(message)}[/]")
 
     @staticmethod
     def warn_icon(console, message: str) -> None:
         """Print warning with warning icon."""
-        console.print(f"[yellow]\u26a0[/] {message}")
+        console.print(f"[yellow]\u26a0[/] {ConsoleHelper._escape(message)}")
 
     @staticmethod
     def info(console, message: str) -> None:
         """Print info message in cyan."""
-        console.print(f"[cyan]{message}[/]")
+        console.print(f"[cyan]{ConsoleHelper._escape(message)}[/]")
 
     @staticmethod
     def dim(console, message: str) -> None:
         """Print dim/muted message."""
-        console.print(f"[dim]{message}[/]")
+        console.print(f"[dim]{ConsoleHelper._escape(message)}[/]")
 
     @staticmethod
     def enabled(console, message: str) -> None:
         """Print enabled/activated message in bold green."""
-        console.print(f"[bold green]{message}[/bold green]")
+        console.print(f"[bold green]{ConsoleHelper._escape(message)}[/bold green]")
 
     @staticmethod
     def disabled(console, message: str) -> None:
         """Print disabled/deactivated message in bold yellow."""
-        console.print(f"[bold yellow]{message}[/bold yellow]")
+        console.print(f"[bold yellow]{ConsoleHelper._escape(message)}[/bold yellow]")
 
     @staticmethod
     def bold(console, message: str) -> None:
         """Print bold message."""
-        console.print(f"[bold]{message}[/bold]")
+        console.print(f"[bold]{ConsoleHelper._escape(message)}[/bold]")
 
     @staticmethod
     def debug(console, message: str) -> None:
         """Print debug message in dim style."""
-        console.print(f"[dim]DEBUG: {message}[/]")
+        console.print(f"[dim]DEBUG: {ConsoleHelper._escape(message)}[/]")

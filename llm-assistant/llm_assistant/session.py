@@ -1169,11 +1169,8 @@ The `<memory>` section below contains user preferences and project-specific note
         try:
             _, cursor_row = self.plugin_dbus.get_cursor_position(terminal_uuid)
         except Exception:
-            # Fallback to viewport capture
-            self._debug(f"_capture_last_command_output: cursor_position failed, viewport fallback")
             return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
-        self._debug(f"_capture_last_command_output: cursor_row={cursor_row}, initial_lines={initial_lines}")
         lines_to_capture = initial_lines
 
         while lines_to_capture <= MAX_LINES:
@@ -1182,18 +1179,13 @@ The `<memory>` section below contains user preferences and project-specific note
             try:
                 content = self.plugin_dbus.capture_from_row(terminal_uuid, start_row)
             except Exception:
-                self._debug(f"_capture_last_command_output: capture_from_row failed, viewport fallback")
                 return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
 
             if not content or content.startswith('ERROR'):
-                self._debug(f"_capture_last_command_output: capture_from_row returned empty/error, viewport fallback")
                 return self.plugin_dbus.capture_terminal_content(terminal_uuid, -1)
-
-            self._debug(f"_capture_last_command_output: captured {len(content)} chars from row {start_row}")
 
             # Find prompt lines to identify command boundaries
             prompts = PromptDetector.find_all_prompts(content)
-            self._debug(f"_capture_last_command_output: find_all_prompts returned {len(prompts)} prompts")
 
             # Filter out false positives: in VTE terminals with Unicode markers,
             # only prompts containing INPUT_START_MARKER are real shell prompts.
@@ -1215,9 +1207,6 @@ The `<memory>` section below contains user preferences and project-specific note
                                 break
                     if has_marker:
                         real_prompts.append((line_num, line_content))
-                    else:
-                        self._debug(f"_capture_last_command_output: marker filter removed prompt at line {line_num}: {line_content[:60]!r}")
-                self._debug(f"_capture_last_command_output: after marker filter: {len(real_prompts)} prompts (was {len(prompts)})")
                 prompts = real_prompts
 
             # Check if we should return or continue expanding:
@@ -1233,23 +1222,27 @@ The `<memory>` section below contains user preferences and project-specific note
                     start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
                     start_line = prompts[start_idx][0]
                     lines = content.split('\n')
-                    result = '\n'.join(lines[start_line:])
-                    self._debug(f"_capture_last_command_output: returning {len(result)} chars from {len(prompts)} prompts (start_line={start_line})")
-                    return result
+                    return '\n'.join(lines[start_line:])
                 elif prompts:
                     lines = content.split('\n')
-                    # Check if shell is waiting for input (prompt at end)
-                    # If so, the single prompt is the END marker - return content BEFORE it
                     prompt_at_end = PromptDetector.detect_prompt_at_end(content)
                     if prompt_at_end:
-                        result = '\n'.join(lines[:prompts[0][0]]).rstrip()
-                        self._debug(f"_capture_last_command_output: 1 prompt at line {prompts[0][0]}, prompt_at_end=True, returning {len(result)} chars BEFORE prompt")
-                        return result
+                        # prompt_at_end=True means there's an idle prompt at the end.
+                        # The found prompt could be:
+                        # a) The idle prompt itself (at end) -> return content BEFORE it
+                        # b) A command prompt (not at end) -> the idle prompt's marker
+                        #    was trimmed by VTE (zero-width chars at line end). This is
+                        #    effectively a 2-prompt case: return FROM command prompt.
+                        prompt_line = prompts[0][0]
+                        total_lines = len(lines)
+                        # If the found prompt is in the first 2/3 of content, it's a
+                        # command prompt (case b), not the idle prompt at the end.
+                        if prompt_line < total_lines * 2 // 3:
+                            return '\n'.join(lines[prompt_line:])
+                        else:
+                            return '\n'.join(lines[:prompt_line]).rstrip()
                     else:
-                        result = '\n'.join(lines[prompts[0][0]:])
-                        self._debug(f"_capture_last_command_output: 1 prompt at line {prompts[0][0]}, prompt_at_end=False, returning {len(result)} chars FROM prompt")
-                        return result
-                self._debug(f"_capture_last_command_output: 0 prompts, returning full content ({len(content)} chars)")
+                        return '\n'.join(lines[prompts[0][0]:])
                 return content
 
             # Not enough prompts and not at start - keep expanding
@@ -1283,15 +1276,62 @@ The `<memory>` section below contains user preferences and project-specific note
             lines = content.split('\n')
             return '\n'.join(lines[prompts[start_idx][0]:])
         elif prompts:
-            # Single prompt - check if it's at the end (scrollback exceeded)
+            # Single prompt - same logic as main loop (VTE trailing marker trim)
             lines = content.split('\n')
             if PromptDetector.detect_prompt_at_end(content):
-                # Prompt at end = return content BEFORE it
-                return '\n'.join(lines[:prompts[0][0]]).rstrip()
+                prompt_line = prompts[0][0]
+                total_lines = len(lines)
+                if prompt_line < total_lines * 2 // 3:
+                    return '\n'.join(lines[prompt_line:])
+                else:
+                    return '\n'.join(lines[:prompt_line]).rstrip()
             else:
-                # Prompt at start or command running - return from prompt
                 return '\n'.join(lines[prompts[0][0]:])
         return content
+
+    @staticmethod
+    def _strip_trailing_idle_prompt(block: str) -> str:
+        """Remove trailing idle prompt from a block for consistent hashing.
+
+        The last captured block always includes the idle prompt at the end.
+        On the next turn, this block becomes a non-last block (new command added)
+        and the idle prompt moves to the new last block. Stripping it before
+        hashing ensures the same content hashes identically across turns.
+        """
+        if not PromptDetector.detect_prompt_at_end(block):
+            return block
+
+        lines = block.rstrip().split('\n')
+        if not lines:
+            return block
+
+        def _clean(line):
+            c = PromptDetector.strip_tag_metadata(line)
+            return c.replace(PromptDetector.PROMPT_START_MARKER, '').replace(PromptDetector.INPUT_START_MARKER, '')
+
+        # Check for Kali two-line prompt (header + prompt line) at end
+        if len(lines) >= 2:
+            clean_prev = _clean(lines[-2])
+            clean_last = _clean(lines[-1])
+            if PromptDetector.KALI_HEADER.search(clean_prev) and \
+               PromptDetector.KALI_EMPTY_PROMPT_LINE.search(clean_last):
+                end = len(lines) - 2
+                # Also strip blank lines before the prompt
+                while end > 0 and not lines[end - 1].strip():
+                    end -= 1
+                result = '\n'.join(lines[:end]).rstrip()
+                return result if result.strip() else block
+
+        # Check for single-line idle prompt at end
+        clean_last = _clean(lines[-1])
+        if any(p.search(clean_last) for p in PromptDetector.EMPTY_PROMPT_PATTERNS):
+            end = len(lines) - 1
+            while end > 0 and not lines[end - 1].strip():
+                end -= 1
+            result = '\n'.join(lines[:end]).rstrip()
+            return result if result.strip() else block
+
+        return block
 
     def _split_into_command_blocks(self, content: str) -> List[str]:
         """
@@ -1299,6 +1339,11 @@ The `<memory>` section below contains user preferences and project-specific note
 
         Each block contains: prompt + command + output (until next prompt).
         Used for granular deduplication - skip blocks that were in previous capture.
+
+        The trailing idle prompt is stripped from the last block to ensure
+        consistent hashing. Without this, the last block's hash would change
+        on the next turn when it becomes a non-last block (the idle prompt
+        moves to the new command's block).
 
         Args:
             content: Terminal content string
@@ -1308,7 +1353,9 @@ The `<memory>` section below contains user preferences and project-specific note
         """
         prompts = PromptDetector.find_all_prompts(content)
         if len(prompts) < 2:
-            return [content]  # Can't split meaningfully, return as-is
+            # Can't split, but strip trailing idle prompt for hash consistency
+            stripped = self._strip_trailing_idle_prompt(content)
+            return [stripped] if stripped.strip() else [content]
 
         lines = content.split('\n')
         blocks = []
@@ -1318,6 +1365,12 @@ The `<memory>` section below contains user preferences and project-specific note
             block = '\n'.join(lines[line_num:end])
             if block.strip():
                 blocks.append(block)
+
+        # Strip trailing idle prompt from last block for hash consistency
+        if blocks:
+            blocks[-1] = self._strip_trailing_idle_prompt(blocks[-1])
+            if not blocks[-1].strip():
+                blocks.pop()
 
         return blocks if blocks else [content]
 
@@ -1450,18 +1503,6 @@ The `<memory>` section below contains user preferences and project-specific note
 
                 # Intelligent capture: get full last command output (not just viewport)
                 content = self._capture_last_command_output(term['uuid'])
-
-                # Fallback: if smart capture returns empty but terminal exists,
-                # try raw viewport capture. This handles edge cases where prompt
-                # detection returns empty (e.g., freshly opened terminal with
-                # content that _capture_last_command_output's heuristics miss).
-                if not content or content.startswith('ERROR'):
-                    self._debug(f"Smart capture returned empty for '{term['title']}' ({term_uuid[:8]}), trying viewport fallback")
-                    try:
-                        content = self.plugin_dbus.capture_terminal_content(term['uuid'], -1)
-                    except Exception as e:
-                        self._debug(f"Viewport fallback also failed: {e}")
-                        content = ""
 
                 if content and not content.startswith('ERROR'):
                     # Compute hash for change detection (normalize whitespace for stability)
