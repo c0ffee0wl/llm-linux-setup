@@ -23,7 +23,6 @@ import os
 import math
 import threading
 import traceback
-import unicodedata
 import gi
 gi.require_version('Vte', '2.91')  # noqa: E402
 gi.require_version('Gdk', '3.0')  # noqa: E402
@@ -396,10 +395,8 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
             # Calculate end row: use cursor position (where command output ends)
             # This allows dynamic expansion to capture full command output
-            # Also track cursor column to trim autosuggestion ghost text
-            cursor_col = None
             try:
-                cursor_col, cursor_row = vte.get_cursor_position()
+                _, cursor_row = vte.get_cursor_position()
                 if cursor_row >= 0:
                     capture_end = cursor_row
                 else:
@@ -442,59 +439,12 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 )
                 content = result[0] if isinstance(result, tuple) else (result or '')
 
-            # Trim autosuggestion/ghost text on the cursor line.
-            # Shell plugins (zsh-autosuggestions, fish, etc.) render suggestion
-            # text beyond the cursor position in the VTE buffer. Since
-            # get_text_range_format captures full row width and strips color,
-            # this ghost text is indistinguishable from typed text. Trim the
-            # last line (cursor row) to the cursor column to exclude it.
-            #
-            # IMPORTANT: cursor_col counts visible terminal columns, but the
-            # Python string may contain zero-width Unicode characters (e.g.
-            # ZWS U+200B, ZWJ U+200D used as prompt markers). We must walk
-            # the string counting display widths to find the correct trim
-            # point, and preserve any trailing zero-width chars (markers)
-            # that sit between the prompt and the autosuggestion text.
-            if cursor_col is not None and cursor_col > 0 and capture_end == cursor_row:
-                lines_list = content.split('\n')
-                if lines_list:
-                    last_line = lines_list[-1]
-                    # Find trim point using visible column width
-                    visible_col = 0
-                    trim_index = len(last_line)
-                    i = 0
-                    while i < len(last_line):
-                        ch = last_line[i]
-                        cat = unicodedata.category(ch)
-                        # Zero-width: combining marks (Mn/Mc/Me) and format chars (Cf)
-                        # These include ZWS, ZWJ, ZWNJ, BOM, etc.
-                        if cat.startswith('M') or cat == 'Cf':
-                            i += 1
-                            continue
-                        # Wide/fullwidth chars (CJK) take 2 columns
-                        eaw = unicodedata.east_asian_width(ch)
-                        w = 2 if eaw in ('W', 'F') else 1
-                        if visible_col + w > cursor_col:
-                            trim_index = i
-                            break
-                        visible_col += w
-                        i += 1
-                        if visible_col >= cursor_col:
-                            # Reached cursor column - skip trailing zero-width
-                            # chars (prompt markers) before autosuggestion
-                            while i < len(last_line):
-                                c = unicodedata.category(last_line[i])
-                                if not (c.startswith('M') or c == 'Cf'):
-                                    break
-                                i += 1
-                            trim_index = i
-                            break
-                    if trim_index < len(last_line):
-                        dbg(f'capture_from_row: trimming autosuggestion on cursor line '
-                            f'(col {cursor_col}, visible_col {visible_col}, '
-                            f'trim_idx {trim_index}, line len {len(last_line)})')
-                        lines_list[-1] = last_line[:trim_index]
-                        content = '\n'.join(lines_list)
+            # NOTE: Autosuggestion ghost text (zsh-autosuggestions, fish, etc.)
+            # is NOT trimmed here. Shell suggestions render beyond the cursor
+            # in the VTE buffer, but trimming at cursor_col breaks Unicode
+            # prompt marker detection (zero-width chars misalign column counts
+            # vs Python string indices). Watch mode uses debounce instead
+            # (_WATCH_DEBOUNCE_SETTLE) to avoid capturing mid-typing.
 
             dbg(f'capture_from_row: captured {len(content)} characters')
             return content
