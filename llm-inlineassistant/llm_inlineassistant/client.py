@@ -6,8 +6,11 @@ Handles:
 - Slash commands (/new, /status, etc.)
 """
 
+from __future__ import annotations
+
 import json
 import os
+import signal
 import sys
 import unicodedata
 from typing import Iterator, Optional, Tuple
@@ -109,7 +112,11 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
             console.print("[yellow]RAG not available (llm-tools-rag not installed)[/]")
             return True
 
-        collections = handler.list_collections()
+        try:
+            collections = handler.list_collections()
+        except Exception as e:
+            console.print(f"[red]Failed to list collections: {e}[/]")
+            return True
         if not collections:
             console.print("[dim]No RAG collections found[/]")
             console.print("[dim]Add documents with: /rag add <collection> <path>[/]")
@@ -118,8 +125,9 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
         console.print("[bold]RAG Collections:[/]")
         for coll in collections:
             name = coll.get('name', 'unknown')
-            count = coll.get('count', 0)
-            console.print(f"  {name}: {count} documents")
+            docs = coll.get('documents', 0)
+            chunks = coll.get('chunks', 0)
+            console.print(f"  {name}: {docs} documents ({chunks} chunks)")
         return True
 
     subcommand = parts[1]
@@ -145,7 +153,11 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
             console.print("[yellow]RAG not available[/]")
             return True
 
-        results = handler.search(collection, query, top_k=5)
+        try:
+            results = handler.search(collection, query, top_k=5)
+        except Exception as e:
+            console.print(f"[red]Search failed: {e}[/]")
+            return True
         if not results:
             console.print(f"[dim]No results found in '{collection}'[/]")
             return True
@@ -181,7 +193,11 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
             console.print("[yellow]RAG not available[/]")
             return True
 
-        result = handler.add_documents(collection, path)
+        try:
+            result = handler.add_documents(collection, path)
+        except Exception as e:
+            console.print(f"[red]Failed to add documents: {e}[/]")
+            return True
         if result.status == "success":
             console.print(f"[green]Added {result.chunks} chunks to '{collection}'[/]")
         else:
@@ -198,14 +214,16 @@ def handle_rag_command(command: str, terminal_id: str, console: Console) -> bool
     }
 
     activated = False
+    had_error = False
     for event in stream_events(request):
         if event.get("type") == "text":
             console.print(event.get('content', ''))
             activated = True
         elif event.get("type") == "error":
             console.print(f"[red]{event.get('message', 'Unknown error')}[/]")
+            had_error = True
 
-    if not activated:
+    if not activated and not had_error:
         console.print(f"[green]RAG collection '{collection}' activated for this session[/]")
 
     return True
@@ -261,14 +279,15 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
                 console.print(event.get('content', ''))
         return True
 
-    elif command.startswith('/rag'):
+    elif command == '/rag' or command.startswith('/rag '):
         return handle_rag_command(command, terminal_id, console)
 
-    elif command.startswith('/copy'):
+    elif command == '/copy' or command.startswith('/copy '):
         # Parse /copy [raw] [all] [N]
         parts = command.split()
-        raw_mode = 'raw' in command.lower()
-        copy_all = 'all' in command.lower()
+        part_words = {p.lower() for p in parts[1:]}
+        raw_mode = 'raw' in part_words
+        copy_all = 'all' in part_words
         count = 1
         for p in parts[1:]:
             if p.isdigit():
@@ -307,7 +326,10 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
 
         # Strip markdown unless raw mode
         if not raw_mode:
-            combined = strip_markdown(combined)
+            try:
+                combined = strip_markdown(combined)
+            except Exception:
+                pass  # Fall back to unstripped text
 
         # Copy to clipboard
         try:
@@ -317,7 +339,7 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
             mode = "raw markdown" if raw_mode else "plain text"
             console.print(f"[green]Copied {what} to clipboard ({mode})[/]")
         except ImportError:
-            console.print("[red]pyperclip not installed. Install with: pip install pyperclip[/]")
+            console.print("[red]pyperclip not available. Install with: uv tool install --with pyperclip llm[/]")
         except Exception as e:
             console.print(f"[red]Clipboard error: {e}[/]")
 
@@ -355,46 +377,55 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
         accumulated_text = ""
         active_tool = None
         error_message = None
+        printed_separator = False
 
-        # Stream with Live display
-        # Start transient=True (clear on exit if no content), switch to False once content arrives
-        with Live(Markdown(""), console=console, refresh_per_second=10, transient=True) as live:
-            for event_type, data in stream_request(prompt):
-                if event_type == "text":
-                    accumulated_text += data
-                    # Once we have content, make it persistent (don't clear on exit)
-                    if accumulated_text.strip():
-                        live.transient = False
-                elif event_type == "tool_start":
-                    active_tool = data
-                elif event_type == "tool_done":
-                    active_tool = None
-                elif event_type == "error":
-                    error_message = data
+        try:
+            # Stream with Live display
+            # Start transient=True (clear on exit if no content), switch to False once content arrives
+            with Live(Markdown(""), console=console, refresh_per_second=10, transient=True) as live:
+                for event_type, data in stream_request(prompt):
+                    if event_type == "text":
+                        accumulated_text += data
+                        # Once we have content, make it persistent (don't clear on exit)
+                        if accumulated_text.strip() and not printed_separator:
+                            live.transient = False
+                            # Visual separator between the query and the response
+                            console.print()
+                            printed_separator = True
+                    elif event_type == "tool_start":
+                        active_tool = data
+                    elif event_type == "tool_done":
+                        active_tool = None
+                    elif event_type == "error":
+                        error_message = data
 
-                # Update display
-                if active_tool:
-                    action = get_action_verb(active_tool)
-                    spinner_text = Text(f"{action}...", style="cyan")
-                    live.update(Group(
-                        Markdown(accumulated_text) if accumulated_text else Text(""),
-                        Spinner("dots", text=spinner_text, style="cyan")
-                    ))
-                    live.refresh()  # Force immediate display for fast tools
-                elif accumulated_text:
+                    # Update display
+                    if active_tool:
+                        action = get_action_verb(active_tool)
+                        spinner_text = Text(f"{action}...", style="cyan")
+                        live.update(Group(
+                            Markdown(accumulated_text) if accumulated_text else Text(""),
+                            Spinner("dots", text=spinner_text, style="cyan")
+                        ))
+                        live.refresh()  # Force immediate display for fast tools
+                    elif accumulated_text:
+                        live.update(Markdown(accumulated_text))
+
+                # Strip trailing model artifacts (stray CJK/Unicode tokens)
+                accumulated_text = _strip_trailing_artifacts(accumulated_text)
+
+                # Final update to ensure the last chunk is fully rendered before Live exits
+                if accumulated_text:
                     live.update(Markdown(accumulated_text))
 
-            # Strip trailing model artifacts (stray CJK/Unicode tokens)
-            accumulated_text = _strip_trailing_artifacts(accumulated_text)
-
-            # Final update to ensure the last chunk is fully rendered before Live exits
-            if accumulated_text:
-                live.update(Markdown(accumulated_text))
-
-        # Eat the extra trailing blank line that Rich Markdown rendering adds
-        if accumulated_text:
-            sys.stdout.write("\033[A")
-            sys.stdout.flush()
+        except KeyboardInterrupt:
+            # Clean exit on Ctrl+C — Live context manager handles display cleanup
+            if accumulated_text.strip():
+                console.print()  # Ensure we're on a new line
+            # Show error even on interrupt so daemon errors aren't silently lost
+            if error_message:
+                console.print(f"[red]Error: {error_message}[/]")
+            return accumulated_text
 
         # Show error if any
         if error_message:
@@ -478,6 +509,9 @@ def main(
     \b
     Usage: @ <query>  or  llm-inlineassistant <query>
     """
+    # Handle SIGPIPE gracefully (e.g., `@ query | head`)
+    signal.signal(signal.SIGPIPE, signal.SIG_DFL)
+
     # Handle completion mode
     if complete or complete_json:
         prefix = ' '.join(query_args) if query_args else ''
@@ -498,7 +532,6 @@ def main(
 
     # Read query from stdin if --stdin flag is set
     if from_stdin:
-        import sys
         prompt = sys.stdin.read()
         if not prompt.strip():
             return

@@ -12,7 +12,6 @@ Usage:
     llm-guiassistant --with-selection
 """
 
-import argparse
 import os
 import sys
 
@@ -32,42 +31,42 @@ os.environ.setdefault("WEBKIT_DISABLE_DMABUF_RENDERER", "1")
 
 def main():
     """Main entry point for llm-guiassistant."""
-    parser = argparse.ArgumentParser(
-        description="GTK popup client for llm-assistant daemon"
-    )
-    parser.add_argument(
-        "--with-selection",
-        action="store_true",
-        help="Capture current selection and include in context"
-    )
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="Enable debug output"
-    )
-    parser.add_argument(
-        "--hidden",
-        action="store_true",
-        help="Start hidden (for autostart, window shown on next activation)"
-    )
-    parser.add_argument(
-        "--version",
-        action="version",
-        version="%(prog)s 0.2.0"
-    )
+    # Handle --help and --version before GTK takes over argv
+    if '--help' in sys.argv or '-h' in sys.argv:
+        print("usage: llm-guiassistant [--with-selection] [--debug] [--hidden] [--version]")
+        print()
+        print("GTK popup client for llm-assistant daemon")
+        print()
+        print("options:")
+        print("  --with-selection  Capture current selection and include in context")
+        print("  --debug           Enable debug output")
+        print("  --hidden          Start hidden (for autostart, window shown on next activation)")
+        print("  --version         Show version and exit")
+        return 0
 
-    args = parser.parse_args()
+    if '--version' in sys.argv:
+        print("llm-guiassistant 0.2.0")
+        return 0
+
+    # Parse flags locally for the primary instance's initial state.
+    # These are also parsed in do_command_line for remote activation.
+    with_selection = '--with-selection' in sys.argv
+    debug = '--debug' in sys.argv
+    hidden = '--hidden' in sys.argv
 
     # Import here to avoid slow startup for --help/--version
     from .popup import PopupApplication
 
     app = PopupApplication(
-        with_selection=args.with_selection,
-        debug=args.debug,
-        hidden=args.hidden
+        with_selection=with_selection,
+        debug=debug,
+        hidden=hidden
     )
     try:
-        return app.run(sys.argv[:1])  # Only pass program name to GTK
+        # Pass full sys.argv so GTK forwards arguments to the primary
+        # instance via D-Bus when a second instance is launched.
+        # This is critical for --with-selection to work on re-activation.
+        return app.run(sys.argv)
     except KeyboardInterrupt:
         # GTK's signal handler cleanup raises KeyboardInterrupt on Ctrl+C
         # This is expected behavior - exit cleanly

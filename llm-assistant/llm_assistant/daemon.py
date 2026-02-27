@@ -12,6 +12,8 @@ Architecture:
 - Supports completion endpoint for slash commands and fragments
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import os
@@ -57,6 +59,9 @@ from .utils import get_config_dir, get_logs_db_path, logs_on
 
 # GUI server (aiohttp - always available)
 from .web_ui_server import WebUIServer
+
+# Maximum request payload size (10 MB) - prevents unbounded memory consumption
+MAX_REQUEST_SIZE = 10 * 1024 * 1024
 
 
 def _get_default_pidfile() -> str:
@@ -148,15 +153,16 @@ def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
             os.makedirs(logfile_dir, exist_ok=True)
 
     # Prepare file handles (must be opened before daemonizing)
-    stdout_file = open(logfile_path, 'a+') if logfile_path else None
-    stderr_file = stdout_file  # Share the same file handle
+    # Use separate file handles so closing one doesn't invalidate the other
+    stdout_file = open(logfile_path, 'a') if logfile_path else None
+    stderr_file = open(logfile_path, 'a') if logfile_path else None
 
     # Create pidfile lock (TimeoutPIDLockFile with acquire_timeout=0 for immediate fail)
     pidfile_lock = daemon_pidfile.TimeoutPIDLockFile(pidfile_path, acquire_timeout=0) if pidfile_path else None
 
     context = daemon.DaemonContext(
         working_directory='/',
-        umask=0,
+        umask=0o077,
         pidfile=pidfile_lock,
         stdout=stdout_file,
         stderr=stderr_file,
@@ -165,8 +171,24 @@ def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
     try:
         context.open()
     except (AlreadyLocked, LockTimeout):
+        # Clean up opened file handles before exiting
+        for f in (stdout_file, stderr_file):
+            if f:
+                try:
+                    f.close()
+                except OSError:
+                    pass
         sys.stderr.write(f"Error: Daemon already running (pidfile locked: {pidfile_path})\n")
         sys.exit(1)
+    except Exception:
+        # Clean up file handles on unexpected errors to prevent fd leak
+        for f in (stdout_file, stderr_file):
+            if f:
+                try:
+                    f.close()
+                except OSError:
+                    pass
+        raise
     # Note: Don't close context - daemon runs until terminated
     # atexit handler is registered automatically by DaemonContext.open()
 
@@ -221,6 +243,10 @@ class AssistantDaemon:
         self.web_port = int(os.environ.get('LLM_GUI_PORT', 8741))
         self.web_server: Optional["WebUIServer"] = None
 
+    def _handle_signal(self):
+        """Signal handler for SIGTERM/SIGINT — stops the daemon gracefully."""
+        self.running = False
+
     def _log_request(self, tid: str, direction: str, info: str, duration: float = None):
         """Log request activity in foreground mode."""
         if not self.foreground:
@@ -268,8 +294,19 @@ class AssistantDaemon:
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
         """Handle a client connection with JSON protocol."""
         try:
-            # Read the JSON request
-            data = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+            # Read the JSON request (client sends SHUT_WR after writing, so read until EOF)
+            chunks = []
+            total_size = 0
+            while True:
+                chunk = await asyncio.wait_for(reader.read(65536), timeout=5.0)
+                if not chunk:
+                    break
+                total_size += len(chunk)
+                if total_size > MAX_REQUEST_SIZE:
+                    await self._emit_error(writer, ErrorCode.PARSE_ERROR, "Request too large")
+                    return
+                chunks.append(chunk)
+            data = b''.join(chunks)
             if not data:
                 return
 
@@ -308,12 +345,10 @@ class AssistantDaemon:
                 await self.handle_shutdown(writer)
             elif cmd == 'get_responses':
                 await self.handle_get_responses(tid, request, writer)
-            elif cmd == 'truncate':
-                await self.handle_truncate(tid, request, writer)
-            elif cmd == 'pop_response':
-                await self.handle_pop_response(tid, writer)
-            elif cmd == 'fork':
-                await self.handle_fork(tid, request, writer)
+            elif cmd in ('truncate', 'pop_response', 'fork'):
+                # Route conversation-mutating commands through worker queue
+                # to serialize with streaming queries and prevent data races
+                await self._queue_request(tid, request, writer)
             elif cmd == 'rag_activate':
                 await self.handle_rag_activate(tid, request, writer)
             else:
@@ -364,20 +399,29 @@ class AssistantDaemon:
                 self.worker_last_activity[tid] = datetime.now()
 
                 try:
-                    await self._process_query(tid, request, writer)
+                    # Dispatch based on command type — all commands in
+                    # the worker queue are serialized per terminal
+                    cmd = request.get('cmd', '')
+                    if cmd == 'truncate':
+                        await self.handle_truncate(tid, request, writer)
+                    elif cmd == 'pop_response':
+                        await self.handle_pop_response(tid, writer)
+                    elif cmd == 'fork':
+                        await self.handle_fork(tid, request, writer)
+                    else:
+                        await self._process_query(tid, request, writer)
                     future.set_result(True)
                 except Exception as e:
                     await self._emit_error(writer, ErrorCode.INTERNAL, str(e))
-                    future.set_exception(e)
+                    # Set result (not exception) — error already emitted to client,
+                    # re-raising would cause handle_client to emit a second error
+                    future.set_result(False)
 
         finally:
-            # Clean up worker
-            if tid in self.request_queues:
-                del self.request_queues[tid]
-            if tid in self.workers:
-                del self.workers[tid]
-            if tid in self.worker_last_activity:
-                del self.worker_last_activity[tid]
+            # Clean up worker — use pop() to avoid KeyError if already removed
+            self.request_queues.pop(tid, None)
+            self.workers.pop(tid, None)
+            self.worker_last_activity.pop(tid, None)
 
     async def _process_query(self, tid: str, request: dict, writer: asyncio.StreamWriter):
         """Process a query request with NDJSON streaming."""
@@ -435,7 +479,7 @@ class AssistantDaemon:
         prompt_parts = []
         if context and context != "<terminal_context>[Content unchanged]</terminal_context>":
             prompt_parts.append(context)
-        elif "[Content unchanged]" in context:
+        elif context and "[Content unchanged]" in context:
             prompt_parts.append("<terminal_context>[Terminal context unchanged from previous message]</terminal_context>")
 
         if rag_context:
@@ -460,6 +504,14 @@ class AssistantDaemon:
             implementations.update(active_impls)
 
         conversation = session.get_or_create_conversation()
+
+        # Initialize database once if logging is enabled
+        db = None
+        if self.logging_enabled:
+            db_path = get_logs_db_path()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite_utils.Database(db_path)
+            migrate(db)
 
         try:
             # Stream the response with system prompt, tools, and attachments
@@ -486,11 +538,7 @@ class AssistantDaemon:
             tool_calls = list(response.tool_calls())
 
             # Log initial response to database
-            if self.logging_enabled:
-                db_path = get_logs_db_path()
-                db_path.parent.mkdir(parents=True, exist_ok=True)
-                db = sqlite_utils.Database(db_path)
-                migrate(db)
+            if db:
                 response.log_to_db(db)
 
             # Process tool calls if any
@@ -528,7 +576,7 @@ class AssistantDaemon:
                 tool_calls = list(followup_response.tool_calls())
 
                 # Log follow-up response
-                if self.logging_enabled:
+                if db:
                     followup_response.log_to_db(db)
 
             # Signal completion
@@ -540,6 +588,9 @@ class AssistantDaemon:
             duration = time.time() - start_time
             self._log_request(tid, "out", f"error: {str(e)[:50]}", duration)
             await self._emit_error(writer, ErrorCode.MODEL_ERROR, str(e))
+        finally:
+            if db is not None and hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     async def _handle_slash_command(
         self,
@@ -938,7 +989,7 @@ class AssistantDaemon:
             "model": model_id,
             "conversation_id": conv.id if conv else None,
             "messages": len(conv.responses) if conv else 0,
-            "uptime_minutes": (datetime.now() - self.last_activity).seconds // 60,
+            "uptime_minutes": int((datetime.now() - self.start_time).total_seconds()) // 60,
             "tools": tool_names,
             "active_workers": len(self.workers),
             "active_sessions": len(self.sessions),
@@ -1163,13 +1214,25 @@ class AssistantDaemon:
         await self._emit(writer, {"type": "done"})
 
     async def idle_checker(self):
-        """Idle checker - currently disabled.
+        """Periodically clean up inactive sessions to prevent memory leaks.
 
         The daemon stays running indefinitely until explicitly stopped.
         GUI clients (llm-guiassistant) depend on persistent daemon availability.
+        Only idle sessions (no active worker, inactive for > IDLE_TIMEOUT_MINUTES)
+        are evicted.
         """
-        # Idle timeout disabled - daemon stays running until stopped
-        return
+        from llm_tools_core import IDLE_TIMEOUT_MINUTES
+        while self.running:
+            await asyncio.sleep(60)  # Check every minute
+            now = datetime.now()
+            stale_tids = []
+            # Snapshot items to avoid RuntimeError if dict changes between awaits
+            for tid, state in list(self.sessions.items()):
+                idle_minutes = (now - state.last_activity).total_seconds() / 60
+                if idle_minutes > IDLE_TIMEOUT_MINUTES and tid not in self.workers:
+                    stale_tids.append(tid)
+            for tid in stale_tids:
+                self.sessions.pop(tid, None)
 
     async def run(self):
         """Run the daemon server."""
@@ -1195,9 +1258,10 @@ class AssistantDaemon:
         # Ensure socket directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Write PID file (only in foreground mode, python-daemon handles it otherwise)
-        if not self.use_python_daemon:
-            write_pid_file()
+        # Always write PID file to /tmp path so is_daemon_process_alive() works
+        # in both foreground and daemon modes (python-daemon has its own pidfile
+        # at ~/.config/, but clients check the /tmp path)
+        write_pid_file()
 
         # Start server with secure permissions from the start
         # Use umask to ensure socket is created with 0o600 permissions (no race condition)
@@ -1217,8 +1281,9 @@ class AssistantDaemon:
             web_url = self.web_server.get_url()
         except Exception as e:
             web_url = None
-            if self.foreground:
-                self.console.print(f"[yellow]Web UI server failed: {e}[/]", highlight=False)
+            # Always log web UI failure (not just foreground) so daemon mode
+            # failures are visible in the log file
+            self.console.print(f"[yellow]Web UI server failed: {e}[/]", highlight=False)
 
         if self.foreground:
             self.console.print(
@@ -1236,6 +1301,15 @@ class AssistantDaemon:
             msg += "[/]"
             self.console.print(msg, highlight=False)
 
+        # Ignore SIGPIPE — clients may disconnect while we're writing,
+        # which is handled gracefully via writer.is_closing() checks
+        signal.signal(signal.SIGPIPE, signal.SIG_IGN)
+
+        # Register signal handlers with the event loop for proper asyncio integration
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, self._handle_signal)
+
         # Start idle checker
         idle_task = asyncio.create_task(self.idle_checker())
 
@@ -1250,10 +1324,13 @@ class AssistantDaemon:
                 pass
 
             # Cancel all workers and await them
-            for task in self.workers.values():
+            # Snapshot task list before cancelling — workers delete from self.workers
+            # in their finally blocks, so we must not iterate the live dict
+            worker_tasks = list(self.workers.values())
+            for task in worker_tasks:
                 task.cancel()
-            if self.workers:
-                await asyncio.gather(*self.workers.values(), return_exceptions=True)
+            if worker_tasks:
+                await asyncio.gather(*worker_tasks, return_exceptions=True)
             self.workers.clear()
 
             # Stop web UI server
@@ -1266,9 +1343,8 @@ class AssistantDaemon:
             # Clean up socket and PID file
             if self.socket_path.exists():
                 self.socket_path.unlink()
-            # Only remove PID file if not using python-daemon (it handles its own cleanup)
-            if not self.use_python_daemon:
-                remove_pid_file()
+            # Always remove /tmp PID file (python-daemon handles its own ~/.config/ pidfile)
+            remove_pid_file()
 
             self.console.print("[dim]llm-assistant daemon stopped[/]", highlight=False)
 
@@ -1307,13 +1383,7 @@ def main(
         use_python_daemon=use_python_daemon
     )
 
-    # Handle signals
-    def signal_handler(sig, frame):
-        daemon_instance.running = False
-
-    signal.signal(signal.SIGTERM, signal_handler)
-    signal.signal(signal.SIGINT, signal_handler)
-
+    # Signal handlers are registered inside run() via loop.add_signal_handler()
     try:
         asyncio.run(daemon_instance.run())
     except KeyboardInterrupt:

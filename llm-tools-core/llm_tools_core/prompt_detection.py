@@ -295,12 +295,13 @@ class PromptDetector:
         # Adjust for Kali two-line prompts (include header line)
         adjusted = []
         for line_num, line_content in prompt_lines:
-            # Strip tag metadata and Unicode markers before KALI_HEADER check
-            prev_line = cls.strip_tag_metadata(lines[line_num - 1])
-            prev_line = prev_line.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
-            if line_num > 0 and cls.KALI_HEADER.search(prev_line):
-                adjusted.append((line_num - 1, lines[line_num - 1]))
-            else:
-                adjusted.append((line_num, line_content))
+            if line_num > 0:
+                # Strip tag metadata and Unicode markers before KALI_HEADER check
+                prev_line = cls.strip_tag_metadata(lines[line_num - 1])
+                prev_line = prev_line.replace(cls.PROMPT_START_MARKER, '').replace(cls.INPUT_START_MARKER, '')
+                if cls.KALI_HEADER.search(prev_line):
+                    adjusted.append((line_num - 1, lines[line_num - 1]))
+                    continue
+            adjusted.append((line_num, line_content))
 
         return adjusted

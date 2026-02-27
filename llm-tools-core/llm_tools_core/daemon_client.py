@@ -13,13 +13,19 @@ Used by:
 - llm-guiassistant (GTK popup)
 """
 
+from __future__ import annotations
+
+import codecs
 import json
+import logging
 import os
 import socket
 import subprocess
 import time
 from pathlib import Path
 from typing import Iterator, Optional
+
+logger = logging.getLogger(__name__)
 
 from .daemon import (
     get_socket_path,
@@ -44,14 +50,15 @@ def is_daemon_running() -> bool:
     if not socket_path.exists():
         return False
 
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(SOCKET_CONNECT_TIMEOUT)
         sock.connect(str(socket_path))
-        sock.close()
         return True
     except (socket.error, OSError):
         return False
+    finally:
+        sock.close()
 
 
 def _is_systemd_service_enabled() -> bool:
@@ -68,7 +75,7 @@ def _is_systemd_service_enabled() -> bool:
             timeout=5
         )
         return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
 
 
@@ -86,7 +93,7 @@ def _start_via_systemctl() -> bool:
             timeout=10
         )
         return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
 
 
@@ -203,10 +210,17 @@ def get_terminal_session_id() -> str:
         return f"session:{Path(session_log).stem}"
 
     # Check terminal-specific environment variables
-    for var in ['TMUX_PANE', 'TERM_SESSION_ID', 'KONSOLE_DBUS_SESSION', 'WINDOWID']:
+    # Prefixes match the shell @() function in llm-common.sh for consistent terminal IDs
+    terminal_vars = {
+        'TMUX_PANE': 'tmux',
+        'TERM_SESSION_ID': 'iterm',
+        'KONSOLE_DBUS_SESSION': 'konsole',
+        'WINDOWID': 'x11',
+    }
+    for var, prefix in terminal_vars.items():
         value = os.environ.get(var)
         if value:
-            return f"{var}:{value}"
+            return f"{prefix}:{value}"
 
     # Last resort: TTY device
     try:
@@ -215,9 +229,13 @@ def get_terminal_session_id() -> str:
     except (OSError, AttributeError):
         pass
 
-    # Ultimate fallback: random ID (shouldn't happen)
-    import uuid
-    return f"fallback:{uuid.uuid4().hex[:8]}"
+    # Ultimate fallback: stable random ID per process (shouldn't happen).
+    # Cache so repeated calls return the same ID within a process,
+    # preserving conversation continuity.
+    if not hasattr(get_terminal_session_id, '_cached_fallback'):
+        import uuid
+        get_terminal_session_id._cached_fallback = f"fallback:{uuid.uuid4().hex[:8]}"
+    return get_terminal_session_id._cached_fallback
 
 
 def connect_to_daemon(timeout: float = REQUEST_TIMEOUT) -> socket.socket:
@@ -237,12 +255,13 @@ def connect_to_daemon(timeout: float = REQUEST_TIMEOUT) -> socket.socket:
     if not socket_path.exists():
         raise ConnectionError("Daemon socket does not exist")
 
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
-        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         sock.settimeout(timeout)
         sock.connect(str(socket_path))
         return sock
     except (socket.error, OSError) as e:
+        sock.close()
         raise ConnectionError(f"Failed to connect to daemon: {e}")
 
 
@@ -273,16 +292,23 @@ def stream_events(request: dict) -> Iterator[dict]:
 
         # Send JSON request
         sock.sendall(json.dumps(request).encode('utf-8'))
-        sock.shutdown(socket.SHUT_WR)
+        try:
+            sock.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass  # Connection already closed by peer
 
-        # Parse NDJSON response
+        # Parse NDJSON response using incremental UTF-8 decoder
+        # to handle multi-byte characters split across recv boundaries
+        decoder = codecs.getincrementaldecoder('utf-8')('replace')
         buffer = ""
         while True:
             try:
                 chunk = sock.recv(RECV_BUFFER_SIZE)
                 if not chunk:
+                    # Flush decoder with final=True to get any remaining bytes
+                    buffer += decoder.decode(b'', final=True)
                     break
-                buffer += chunk.decode('utf-8')
+                buffer += decoder.decode(chunk)
 
                 # Process complete lines
                 while '\n' in buffer:
@@ -295,12 +321,22 @@ def stream_events(request: dict) -> Iterator[dict]:
                         if event.get('type') == 'done':
                             return
                     except json.JSONDecodeError:
+                        logger.warning("Skipping malformed NDJSON line: %s", line[:200])
                         continue
 
             except socket.timeout:
                 yield {"type": "error", "message": "Request timed out"}
                 yield {"type": "done"}
                 return
+
+        # Process any remaining data in buffer after connection close
+        # (defensive: daemon always \n-terminates, but handle edge cases)
+        if buffer.strip():
+            try:
+                event = json.loads(buffer.strip())
+                yield event
+            except json.JSONDecodeError:
+                logger.warning("Skipping malformed trailing NDJSON: %s", buffer[:200])
 
     except socket.timeout:
         yield {"type": "error", "message": "Connection timed out"}

@@ -98,28 +98,16 @@ def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -
 
     Args:
         n_commands: Number of recent prompt blocks to extract.
-        session_log: Path to session log file. If provided, temporarily sets
-            SESSION_LOG_FILE for the duration of the call to avoid global state mutation.
+        session_log: Path to session log file. Passed directly to the library
+            function to avoid mutating global os.environ (thread-safety).
     """
-    # Temporarily set SESSION_LOG_FILE for the library call if a path is provided
-    old_value = os.environ.get('SESSION_LOG_FILE')
-    if session_log:
-        os.environ['SESSION_LOG_FILE'] = session_log
-    try:
-        if _get_command_blocks_func is not None:
-            try:
-                return _get_command_blocks_func(n_commands=n_commands)
-            except Exception as e:
-                import sys
-                print(f"[context] Library get_command_blocks failed: {e}", file=sys.stderr)
-        return _get_command_blocks_subprocess(n_commands)
-    finally:
-        # Restore previous value
-        if session_log:
-            if old_value is not None:
-                os.environ['SESSION_LOG_FILE'] = old_value
-            else:
-                os.environ.pop('SESSION_LOG_FILE', None)
+    if _get_command_blocks_func is not None:
+        try:
+            return _get_command_blocks_func(n_commands=n_commands, session_log=session_log)
+        except Exception as e:
+            import sys
+            print(f"[context] Library get_command_blocks failed: {e}", file=sys.stderr)
+    return _get_command_blocks_subprocess(n_commands)
 
 
 def capture_shell_context(prev_hashes: Set[str], session_log: Optional[str] = None) -> Tuple[str, Set[str]]:

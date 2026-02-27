@@ -8,7 +8,6 @@ dependencies = [
     "llm>=0.27",
     "llm-tools-core>=1.0.0",
     "rich>=13.0",
-    "jinja2>=3.0",
 ]
 
 [project.scripts]
@@ -27,5 +26,4 @@ packages = ["llm_inlineassistant"]
 [tool.hatch.build]
 include = [
     "llm_inlineassistant/**/*.py",
-    "llm_inlineassistant/templates/*.j2",
 ]

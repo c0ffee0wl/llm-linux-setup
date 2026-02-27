@@ -1792,6 +1792,8 @@ The `<memory>` section below contains user preferences and project-specific note
             conn.rollback()
             # Log but don't fail - rewind should still work
             ConsoleHelper.warning(self.console, f"Failed to delete responses from DB: {e}")
+        finally:
+            conn.close()
 
     def _restore_responses_to_db(self, responses: list) -> None:
         """Re-log responses to database after undo.
@@ -1990,6 +1992,7 @@ The `<memory>` section below contains user preferences and project-specific note
         Returns:
             (modified_prompt, fragments, attachments)
         """
+        db = None
         try:
             # Database already initialized in __init__
             db = sqlite_utils.Database(get_logs_db_path())
@@ -1998,6 +2001,9 @@ The `<memory>` section below contains user preferences and project-specific note
         except Exception as ex:
             ConsoleHelper.error(self.console, f"Fragment error: {ex}")
             return prompt, [], []
+        finally:
+            if db is not None and hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     def should_use_screenshot_capture(self, command: str) -> bool:
         """
@@ -3022,7 +3028,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                         if self.watch_task and not self.watch_task.done():
                             # Cancel the task gracefully (interrupts asyncio.sleep)
                             try:
-                                self.event_loop.call_soon_threadsafe(self.watch_task.cancel)
+                                if self.event_loop is not None and self.event_loop.is_running():
+                                    self.event_loop.call_soon_threadsafe(self.watch_task.cancel)
                             except RuntimeError:
                                 pass  # Loop already closed
                     # Wait for watch thread to finish (prevents multiple threads)

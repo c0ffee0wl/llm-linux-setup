@@ -8,6 +8,8 @@ Provides shared configuration for daemon communication used by:
 Socket path format: /tmp/llm-assistant-{UID}/daemon.sock
 """
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 
@@ -107,29 +109,91 @@ def ensure_socket_dir() -> Path:
     return socket_dir
 
 
+def _atomic_write(target: Path, content: str) -> None:
+    """Write content to a file atomically using temp file + rename.
+
+    Prevents partial reads by writing to a temporary file first,
+    then atomically replacing the target.
+    """
+    import tempfile
+
+    target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd = None
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(dir=target.parent)
+        os.write(fd, content.encode('utf-8'))
+        os.close(fd)
+        fd = None  # Mark as closed
+        os.replace(tmp_path, target)
+        tmp_path = None  # Mark as moved
+    finally:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+
+
 def write_suggested_command(command: str) -> None:
     """Write a suggested command for the shell to pick up.
+
+    Uses atomic write (temp file + rename) to prevent partial reads.
 
     Args:
         command: The command to suggest (placed on user's prompt via Ctrl+G)
     """
     ensure_socket_dir()
-    get_suggest_path().write_text(command)
+    _atomic_write(get_suggest_path(), command)
 
 
 def read_suggested_command() -> str | None:
-    """Read and clear the suggested command file.
+    """Read and clear the suggested command file atomically.
+
+    Uses rename-then-read to prevent TOCTOU races where concurrent
+    readers could both read the same command, or a new command written
+    between read and unlink gets lost.
 
     Returns:
         The suggested command if present, None otherwise.
-        Clears the file after reading.
     """
+    import tempfile
+
     path = get_suggest_path()
-    if path.exists():
-        command = path.read_text().strip()
-        path.unlink()  # Clear after reading
+    try:
+        # Atomically claim the file by renaming it — only one reader wins
+        fd, tmp_path = tempfile.mkstemp(dir=path.parent)
+        os.close(fd)
+        os.replace(str(path), tmp_path)
+    except FileNotFoundError:
+        # No suggest file exists
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return None
+    except OSError:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        return None
+
+    try:
+        command = Path(tmp_path).read_text().strip()
         return command if command else None
-    return None
+    except OSError:
+        return None
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
 
 
 # PID file for single-instance daemon
@@ -173,15 +237,21 @@ def is_daemon_process_alive() -> tuple[bool, int | None]:
     try:
         os.kill(pid, 0)  # Signal 0 just checks if process exists
         return True, pid
-    except OSError:
+    except PermissionError:
+        # Process exists but we lack permission to signal it — treat as alive
+        return True, pid
+    except ProcessLookupError:
         # Process doesn't exist - stale PID file
+        return False, pid
+    except OSError:
+        # Other OS errors - assume stale
         return False, pid
 
 
 def write_pid_file() -> None:
-    """Write current process PID to the PID file."""
+    """Write current process PID to the PID file atomically."""
     ensure_socket_dir()
-    get_pid_path().write_text(str(os.getpid()))
+    _atomic_write(get_pid_path(), str(os.getpid()))
 
 
 def remove_pid_file() -> None:

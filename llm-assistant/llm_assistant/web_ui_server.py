@@ -628,7 +628,15 @@ class WebUIServer:
         full_query = query
 
         # For guiassistant sessions: Capture fresh GUI context with deduplication
-        if session_id.startswith("guiassistant:"):
+        # "guiassistant-sel:" prefix means include X11 selection (--with-selection flag)
+        # "guiassistant:" prefix means no selection
+        is_gui_session = (
+            session_id.startswith("guiassistant:") or
+            session_id.startswith("guiassistant-sel:")
+        )
+        want_selection = session_id.startswith("guiassistant-sel:")
+
+        if is_gui_session:
             # Capture fresh context from X11 (run in executor with timeout)
             loop = asyncio.get_running_loop()
             try:
@@ -651,11 +659,12 @@ class WebUIServer:
                 else:
                     # Something changed - format with deduplication
                     new_windows = window_hashes - prev_windows
+                    # Include selection only on first message AND only if --with-selection
                     context_block = format_gui_context(
                         gui_context,
                         new_windows,
                         is_first=is_first,
-                        include_selection=is_first  # Selection only on first message
+                        include_selection=is_first and want_selection,
                     )
                     # Update state
                     self._gui_context_state[session_id] = window_hashes

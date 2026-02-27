@@ -3,13 +3,18 @@
 This module provides the main GTK application and window:
 - Single-instance D-Bus activated GTK application
 - Loads web UI from llm-assistant daemon's HTTP server
-- Context gathering from X11/Wayland desktop
 - Window state persistence
 - Drag-drop support for files and images
+
+Note: Context gathering (X11/Wayland desktop) is handled by the daemon
+directly on each query, not by this thin GTK shell.
 """
+
+from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -24,7 +29,6 @@ from gi.repository import Gtk, Gdk, Gio, GLib, WebKit2  # noqa: E402
 
 from llm_tools_core import (  # noqa: E402
     ensure_daemon,
-    gather_context,
 )
 
 
@@ -51,7 +55,7 @@ def load_window_state() -> dict:
             result["width"] = max(result["width"], min_size["width"])
             result["height"] = max(result["height"], min_size["height"])
             return result
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError, TypeError, ValueError):
         pass
     return defaults
 
@@ -73,12 +77,12 @@ class PopupWindow(Gtk.ApplicationWindow):
 
         self.debug = debug
         self.with_selection = with_selection
-        self.context = {}
         # Include timestamp in session ID to avoid collision on rapid crash/restart
-        self.session_id = f"guiassistant:{os.getpid()}-{int(time.time() * 1000)}"
+        # Encode with_selection in prefix so daemon knows whether to include X11 selection
+        prefix = "guiassistant-sel" if with_selection else "guiassistant"
+        self.session_id = f"{prefix}:{os.getpid()}-{int(time.time() * 1000)}"
         self.web_port = get_web_port()
         self._save_state_timeout_id = None
-        self._temp_files = []
         self._initializing = True  # Prevent state save during initialization
         self._load_retry_count = 0  # Initialize before _load_web_ui() to avoid race
 
@@ -93,15 +97,9 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Build UI
         self._build_ui()
 
-        # Gather initial context
-        self._gather_context()
-
-        # Ensure daemon is running
-        try:
-            ensure_daemon()
-        except Exception as e:
-            if self.debug:
-                print(f"[Daemon] Failed to start: {e}")
+        # Ensure daemon is running in background thread
+        # to avoid blocking GTK main thread
+        threading.Thread(target=self._ensure_daemon_background, daemon=True).start()
 
     def _build_ui(self):
         """Build the popup UI with WebKit view."""
@@ -162,11 +160,11 @@ class PopupWindow(Gtk.ApplicationWindow):
         Args:
             is_retry: True if this is a retry after daemon restart (don't reset counter)
         """
-        # Connect handlers (only once)
-        if not hasattr(self, '_handlers_connected'):
+        # Connect handlers (only once per webview instance)
+        if not getattr(self.webview, '_handlers_connected', False):
             self.webview.connect("load-failed", self._on_load_failed)
             self.webview.connect("load-changed", self._on_load_changed_internal)
-            self._handlers_connected = True
+            self.webview._handlers_connected = True
 
         # Reset retry count on fresh load (not on retry)
         if not is_retry:
@@ -195,8 +193,10 @@ class PopupWindow(Gtk.ApplicationWindow):
             }
             print(f"[WebKit] Load {event_names.get(load_event, load_event)}")
 
-        # Reset retry counter on successful load completion
-        if load_event == WebKit2.LoadEvent.FINISHED:
+        # Reset retry counter on successful page commit (server responded).
+        # Use COMMITTED rather than FINISHED because FINISHED also fires
+        # after load-failed, which would defeat the retry limit.
+        if load_event == WebKit2.LoadEvent.COMMITTED:
             self._load_retry_count = 0
 
     def _on_load_failed(self, webview, load_event, failing_uri, error):
@@ -211,11 +211,27 @@ class PopupWindow(Gtk.ApplicationWindow):
             if self.debug:
                 print(f"[WebKit] Attempting to restart daemon (attempt {self._load_retry_count})")
 
-            # Try to restart daemon
-            if ensure_daemon():
-                # Give daemon a moment to fully start, then retry
-                GLib.timeout_add(500, self._retry_load_web_ui)
-                return True
+            # Try to restart daemon in background thread to avoid blocking GTK.
+            # Use a weak reference to avoid calling methods on a destroyed window.
+            import weakref
+            weak_self = weakref.ref(self)
+
+            def _try_restart():
+                try:
+                    if ensure_daemon():
+                        def _schedule_retry():
+                            obj = weak_self()
+                            if obj is not None:
+                                GLib.timeout_add(500, obj._retry_load_web_ui)
+                            return False
+                        GLib.idle_add(_schedule_retry)
+                except Exception as e:
+                    obj = weak_self()
+                    if obj is not None and obj.debug:
+                        print(f"[Daemon] Restart failed: {e}", flush=True)
+
+            threading.Thread(target=_try_restart, daemon=True).start()
+            return True
 
         # Show fallback content after retries exhausted
         html = f"""
@@ -289,12 +305,13 @@ class PopupWindow(Gtk.ApplicationWindow):
         self.drag_dest_add_image_targets()
         self.connect("drag-data-received", self._on_drag_data_received)
 
-    def _gather_context(self):
-        """Gather desktop context."""
-        self.context = gather_context()
-        if not self.with_selection:
-            self.context['selection'] = None
-            self.context['selection_truncated'] = False
+    def _ensure_daemon_background(self):
+        """Ensure daemon is running (called from background thread)."""
+        try:
+            ensure_daemon()
+        except Exception as e:
+            if self.debug:
+                print(f"[Daemon] Failed to start: {e}")
 
     def _on_configure(self, widget, event):
         """Save window dimensions on resize (debounced)."""
@@ -324,7 +341,6 @@ class PopupWindow(Gtk.ApplicationWindow):
     def _on_delete(self, widget, event):
         """Handle window close - hide instead of destroy."""
         self._save_current_state()
-        self._cleanup_temp_files()
         self.hide()
         return True
 
@@ -341,22 +357,11 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Update cached state so subsequent shows use current size
         self._saved_state = {"width": alloc.width, "height": alloc.height}
 
-    def _cleanup_temp_files(self):
-        """Clean up temporary files created during session."""
-        for filepath in self._temp_files:
-            try:
-                if os.path.exists(filepath):
-                    os.unlink(filepath)
-            except OSError:
-                pass
-        self._temp_files.clear()
-
     def _on_key_press(self, widget, event):
         """Handle global key presses."""
         # Escape: Close window (same behavior as window close button)
         if event.keyval == Gdk.KEY_Escape:
             self._save_current_state()
-            self._cleanup_temp_files()
             self.hide()
             return True
 
@@ -365,47 +370,73 @@ class PopupWindow(Gtk.ApplicationWindow):
     def _on_drag_data_received(self, widget, drag_context, x, y, data, info, time):
         """Handle drag and drop - upload to daemon."""
         uris = data.get_uris()
+        file_paths = []
         if uris:
             for uri in uris:
                 try:
                     path = GLib.filename_from_uri(uri)[0]
                     if os.path.isfile(path):
-                        self._upload_file(path)
-                except Exception as e:
+                        file_paths.append(path)
+                except (GLib.Error, Exception) as e:
                     if self.debug:
                         print(f"[Drag] Error: {e}")
-        Gtk.drag_finish(drag_context, True, False, time)
 
-    def _upload_file(self, filepath: str):
-        """Upload a file to the daemon's /upload endpoint."""
+        if not file_paths:
+            Gtk.drag_finish(drag_context, False, False, time)
+            return
+
+        # Upload files in background; report actual success via GLib.idle_add
+        def _do_uploads():
+            any_success = False
+            for filepath in file_paths:
+                if self._upload_file_sync(filepath):
+                    any_success = True
+            GLib.idle_add(Gtk.drag_finish, drag_context, any_success, False, time)
+
+        threading.Thread(target=_do_uploads, daemon=True).start()
+
+    def _upload_file_sync(self, filepath: str) -> bool:
+        """Upload a file to the daemon's /upload endpoint (synchronous).
+
+        Must be called from a background thread, not the GTK main thread.
+
+        Returns:
+            True if upload succeeded, False otherwise.
+        """
         try:
             url = f"http://localhost:{self.web_port}/upload"
             with open(filepath, 'rb') as f:
                 files = {'file': (Path(filepath).name, f)}
                 response = requests.post(url, files=files, timeout=30)
                 if response.ok:
-                    result = response.json()
-                    # Notify web UI about the upload via JavaScript
+                    try:
+                        result = response.json()
+                    except (json.JSONDecodeError, ValueError):
+                        if self.debug:
+                            print(f"[Upload] Invalid JSON response for {filepath}")
+                        return False
+                    # Notify web UI about the upload via JavaScript (must run on GTK thread)
                     temp_path = result.get('path', '')
                     if temp_path:
-                        # Add to both pendingImages and attachmentPanel for proper sync
-                        js = f"""
-                            window.pendingImages = window.pendingImages || [];
-                            window.pendingImages.push({json.dumps(temp_path)});
-                            if (typeof attachmentPanel !== 'undefined') {{
-                                attachmentPanel.add({json.dumps(temp_path)}, 'upload');
-                            }}
-                        """
-                        self.webview.run_javascript(js, None, None, None)
+                        def _notify_ui():
+                            js = f"""
+                                window.pendingImages = window.pendingImages || [];
+                                window.pendingImages.push({json.dumps(temp_path)});
+                                if (typeof attachmentPanel !== 'undefined') {{
+                                    attachmentPanel.add({json.dumps(temp_path)}, 'upload');
+                                }}
+                            """
+                            self.webview.run_javascript(js, None, None)
+                            return False
+                        GLib.idle_add(_notify_ui)
                         if self.debug:
                             print(f"[Upload] Uploaded: {temp_path}")
+                    return True
+                return False
         except Exception as e:
             if self.debug:
                 print(f"[Upload] Error: {e}")
-
-    def refresh_context(self):
-        """Refresh local context (daemon captures fresh context on each query)."""
-        self._gather_context()
+            return False
 
     def _on_window_control_message(self, user_content_manager, js_result):
         """Handle window control messages from JavaScript."""
@@ -429,12 +460,41 @@ class PopupApplication(Gtk.Application):
     def __init__(self, with_selection: bool = False, debug: bool = False, hidden: bool = False):
         super().__init__(
             application_id="com.llm.guiassistant",
-            flags=Gio.ApplicationFlags.FLAGS_NONE
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE
         )
         self.with_selection = with_selection
         self.debug = debug
         self.start_hidden = hidden
         self.window: Optional[PopupWindow] = None
+
+    def do_command_line(self, command_line):
+        """Handle command-line activation (supports remote instance activation).
+
+        Parses arguments from second instances so --with-selection works
+        when the application is already running.
+        """
+        args = command_line.get_arguments()
+        if '--with-selection' in args:
+            self.with_selection = True
+            if self.window:
+                self.window.with_selection = True
+                # Re-generate session ID with selection prefix so daemon
+                # knows to include X11 selection in context.
+                # Also reload the web UI so the new session ID takes effect.
+                self.window.session_id = (
+                    f"guiassistant-sel:{os.getpid()}-{int(time.time() * 1000)}"
+                )
+                self.window._load_web_ui()
+        self.do_activate()
+        return 0
+
+    def _ensure_daemon_background(self):
+        """Start daemon in background thread (called from do_activate)."""
+        try:
+            ensure_daemon()
+        except Exception as e:
+            if self.debug:
+                print(f"[Daemon] Background start failed: {e}", flush=True)
 
     def do_activate(self):
         """Handle application activation."""
@@ -462,11 +522,8 @@ class PopupApplication(Gtk.Application):
                 self.window._saved_state["width"],
                 self.window._saved_state["height"]
             )
-            # Ensure daemon is still running (may have died while hidden)
-            try:
-                ensure_daemon()
-            except Exception:
-                pass  # Continue showing window even if daemon fails (web UI will show error)
+            # Ensure daemon is still running in background (may have died while hidden)
+            threading.Thread(target=self._ensure_daemon_background, daemon=True).start()
             self.window.show_all()
             self.window.present()
 

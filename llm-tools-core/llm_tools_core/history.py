@@ -522,12 +522,17 @@ class ConversationHistory:
                 placeholders = ",".join("?" * len(response_ids))
 
                 # Delete tool_results_attachments (via tool_results)
-                logs_conn.execute(f"""
-                    DELETE FROM tool_results_attachments
-                    WHERE tool_result_id IN (
-                        SELECT id FROM tool_results WHERE response_id IN ({placeholders})
-                    )
-                """, response_ids)
+                # Wrap each table deletion individually — tables may not exist
+                # in older databases
+                try:
+                    logs_conn.execute(f"""
+                        DELETE FROM tool_results_attachments
+                        WHERE tool_result_id IN (
+                            SELECT id FROM tool_results WHERE response_id IN ({placeholders})
+                        )
+                    """, response_ids)
+                except sqlite3.OperationalError:
+                    pass  # Table doesn't exist in this database version
 
                 # Delete from tables with response_id foreign key
                 for table in [
@@ -538,10 +543,13 @@ class ConversationHistory:
                     "prompt_fragments",
                     "system_fragments",
                 ]:
-                    logs_conn.execute(
-                        f"DELETE FROM {table} WHERE response_id IN ({placeholders})",
-                        response_ids
-                    )
+                    try:
+                        logs_conn.execute(
+                            f"DELETE FROM {table} WHERE response_id IN ({placeholders})",
+                            response_ids
+                        )
+                    except sqlite3.OperationalError:
+                        pass  # Table doesn't exist in this database version
 
             # Delete responses (FTS triggers handle responses_fts)
             logs_conn.execute(

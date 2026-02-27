@@ -111,34 +111,12 @@ __llm_accept_line() {
 
     # Clear the "Tab for completions" message
     zle -M ""
-    print
 
-    # Set up terminal ID (same logic as @() function in llm-common.sh)
-    # SESSION_LOG_FILE takes priority - unique per asciinema session, prevents context bleeding
-    local terminal_id=""
-    if [[ -n "$SESSION_LOG_FILE" ]]; then
-      terminal_id="session:$(basename "$SESSION_LOG_FILE" .cast)"
-    elif [[ -n "$TMUX_PANE" ]]; then
-      terminal_id="tmux:$TMUX_PANE"
-    elif [[ -n "$TERM_SESSION_ID" ]]; then
-      terminal_id="iterm:$TERM_SESSION_ID"
-    elif [[ -n "$KONSOLE_DBUS_SESSION" ]]; then
-      terminal_id="konsole:$KONSOLE_DBUS_SESSION"
-    elif [[ -n "$WINDOWID" ]]; then
-      terminal_id="x11:$WINDOWID"
-    else
-      terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
-    fi
-    export TERMINAL_SESSION_ID="$terminal_id"
-
-    # Call llm-inlineassistant with query passed via stdin to avoid ALL shell parsing
-    # This handles quotes, $(), backticks, and any other special characters
-    printf '%s' "$query" | llm-inlineassistant --stdin
-
-    # Invalidate screen state before accept-line
-    # (no extra print - Rich Markdown rendering already provides trailing spacing)
-    zle -I
-    BUFFER=""
+    # Execute via @() shell function (defined in llm-common.sh) outside ZLE.
+    # ${(qq)} single-quotes the query to prevent shell expansion of $(), ``, etc.
+    # Running outside ZLE means zsh properly tracks cursor position —
+    # the prompt redraws correctly without needing print/zle-I hacks.
+    BUFFER="@ ${(qq)query}"
     zle .accept-line
   else
     # Normal command - use default accept-line

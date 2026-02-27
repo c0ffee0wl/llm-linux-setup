@@ -187,8 +187,13 @@ wut() {
     fi
     export TERMINAL_SESSION_ID="$terminal_id"
 
-    # Pass all arguments to llm-inlineassistant
-    llm-inlineassistant "$@"
+    # Pass query via stdin to avoid shell parsing of special characters
+    # (matches zsh widget approach: printf | --stdin)
+    if [ $# -eq 0 ]; then
+        llm-inlineassistant
+    else
+        printf '%s' "$*" | llm-inlineassistant --stdin
+    fi
 }
 
 # Alias for Claude Code Router

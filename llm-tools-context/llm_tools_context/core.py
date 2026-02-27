@@ -281,7 +281,7 @@ def get_session_log_file() -> Optional[str]:
     return find_cast_file()
 
 
-def get_command_blocks(n_commands: int = 3) -> List[str]:
+def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -> List[str]:
     """
     Extract the last N command blocks from the current asciinema recording.
 
@@ -291,6 +291,8 @@ def get_command_blocks(n_commands: int = 3) -> List[str]:
     Args:
         n_commands: Number of recent prompt blocks to extract.
                    Use None for all blocks.
+        session_log: Path to session log file. If provided, used directly
+                    instead of checking SESSION_LOG_FILE env var.
 
     Returns:
         List of prompt block strings. Empty list if no session found
@@ -307,7 +309,10 @@ def get_command_blocks(n_commands: int = 3) -> List[str]:
         ...     print(block)
         ...     print("---")
     """
-    cast_file = find_cast_file()
+    if session_log and os.path.exists(session_log):
+        cast_file = session_log
+    else:
+        cast_file = find_cast_file()
     if not cast_file:
         return []
 

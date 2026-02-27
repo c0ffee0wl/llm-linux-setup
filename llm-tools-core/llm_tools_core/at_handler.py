@@ -688,6 +688,18 @@ class AtHandler:
 
         # Handle text files as fragments
         try:
+            # Guard against huge files (e.g. multi-GB logs) that would cause OOM
+            MAX_FILE_BYTES = 10 * 1024 * 1024  # 10 MB
+            file_size = file_path.stat().st_size
+            if file_size > MAX_FILE_BYTES:
+                return ResolvedReference(
+                    original=f"@{path}",
+                    type="fragment",
+                    content=None,
+                    path=str(file_path),
+                    loader="file",
+                    error=f"File too large ({file_size // (1024*1024)}MB, limit {MAX_FILE_BYTES // (1024*1024)}MB)"
+                )
             content = file_path.read_text()
             return ResolvedReference(
                 original=f"@{path}",

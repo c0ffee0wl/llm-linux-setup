@@ -46,12 +46,6 @@ Thin GTK shell with single-instance D-Bus activation:
 - No context posting - daemon captures GUI context directly on each query
 - No streaming logic - all handled by web UI via WebSocket
 
-### history.py (~120 lines)
-Shell-like input history with Up/Down arrow navigation:
-- Persists to `~/.config/llm-guiassistant/input-history.json`
-- 100 entry limit with deduplication
-- Preserves draft when navigating
-
 ### Web UI (served by daemon)
 Located in `llm-assistant/llm_assistant/static/`:
 - `conversation.html` - Main HTML template
@@ -244,7 +238,6 @@ This captures a specific window without user interaction, using `maim -i <window
 | Path | Purpose |
 |------|---------|
 | `~/.config/llm-guiassistant/state.json` | Window dimensions |
-| `~/.config/llm-guiassistant/input-history.json` | Input history |
 | `~/.config/autostart/llm-guiassistant.desktop` | XDG autostart entry |
 | `llm-assistant/llm_assistant/static/` | Web UI assets (HTML, JS, CSS) |
 | XFCE: `xfconf-query` | Keyboard shortcuts (stored in xfconf) |
