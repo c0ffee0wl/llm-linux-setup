@@ -8,6 +8,8 @@ Handles:
 
 import json
 import os
+import sys
+import unicodedata
 from typing import Iterator, Optional, Tuple
 
 import click
@@ -26,6 +28,28 @@ from llm_tools_core import (
     RAGHandler,
     strip_markdown,
 )
+
+
+def _strip_trailing_artifacts(text: str) -> str:
+    """Remove isolated non-Latin characters that models sometimes emit at end.
+
+    Some LLMs (especially multilingual ones) emit stray CJK or other Unicode
+    characters as trailing artifacts. This strips them when they appear as
+    isolated characters on the final line.
+    """
+    stripped = text.rstrip()
+    if not stripped:
+        return stripped
+    # Check if the last line is a single isolated character from a different script
+    lines = stripped.rsplit('\n', 1)
+    if len(lines) == 2 and len(lines[1].strip()) <= 2:
+        last_chars = lines[1].strip()
+        if last_chars and all(
+            unicodedata.category(c).startswith('Lo') for c in last_chars
+        ):
+            # Single "Other Letter" (CJK, etc.) on its own line - likely artifact
+            return lines[0].rstrip()
+    return stripped
 
 
 def stream_request(query: str, mode: str = "assistant", system_prompt: str = "") -> Iterator[Tuple[str, str]]:
@@ -359,6 +383,18 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
                     live.refresh()  # Force immediate display for fast tools
                 elif accumulated_text:
                     live.update(Markdown(accumulated_text))
+
+            # Strip trailing model artifacts (stray CJK/Unicode tokens)
+            accumulated_text = _strip_trailing_artifacts(accumulated_text)
+
+            # Final update to ensure the last chunk is fully rendered before Live exits
+            if accumulated_text:
+                live.update(Markdown(accumulated_text))
+
+        # Eat the extra trailing blank line that Rich Markdown rendering adds
+        if accumulated_text:
+            sys.stdout.write("\033[A")
+            sys.stdout.flush()
 
         # Show error if any
         if error_message:

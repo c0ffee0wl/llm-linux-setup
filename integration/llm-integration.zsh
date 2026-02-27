@@ -135,8 +135,8 @@ __llm_accept_line() {
     # This handles quotes, $(), backticks, and any other special characters
     printf '%s' "$query" | llm-inlineassistant --stdin
 
-    # Print empty line and invalidate screen state before accept-line
-    print
+    # Invalidate screen state before accept-line
+    # (no extra print - Rich Markdown rendering already provides trailing spacing)
     zle -I
     BUFFER=""
     zle .accept-line
