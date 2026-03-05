@@ -2416,6 +2416,9 @@ if command -v npm &>/dev/null; then
     # Update OpenCode if already installed (no automatic installation)
     upgrade_npm_global_if_installed opencode-ai
 
+    # Update Claude Agent ACP if already installed (no automatic installation)
+    upgrade_npm_global_if_installed @zed-industries/claude-agent-acp
+
     # Update Claude Code Router if already installed (no automatic installation in minimal mode)
     if [ "$INSTALL_MODE" != "full" ]; then
         upgrade_npm_global_if_installed @musistudio/claude-code-router
