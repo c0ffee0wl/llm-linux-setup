@@ -1187,7 +1187,6 @@ REMOTE_PLUGINS=(
     "git+https://github.com/c0ffee0wl/llm-fragments-pdf"
     "llm-fragments-github"
     "git+https://github.com/c0ffee0wl/llm-fragments-youtube-transcript"
-    "git+https://github.com/c0ffee0wl/llm-arxiv"
     "llm-fragments-dir"
 
     # Utility plugins
@@ -1335,10 +1334,6 @@ update_mcp_config() {
       "url": "https://knowledge-mcp.global.api.aws",
       "exclude_tools": ["*list_regions", "*get_regional_availability"],
       "optional": true
-    },
-    "arxiv": {
-      "command": "arxiv-mcp-server",
-      "optional": true
     }'"$chrome_devtools_config"'
   }
 }'
@@ -1351,9 +1346,6 @@ update_mcp_config() {
 if [ "$INSTALL_MODE" = "full" ]; then
     update_mcp_config
 
-    # Install/update arxiv-mcp-server (optional MCP server for arXiv paper search)
-    # This is installed for all users since MCP works with llm CLI, not just llm-assistant
-    install_or_upgrade_uv_tool arxiv-mcp-server
 fi
 
 #############################################################################
@@ -2530,7 +2522,6 @@ elif [ "$INSTALL_MODE" = "full" ]; then
     log "  MCP Servers:"
     log "    - microsoft-learn    Microsoft documentation search and fetch"
     log "    - aws-knowledge      AWS documentation and best practices"
-    log "    - arxiv-mcp-server   arXiv paper search and retrieval"
     log "    - chrome-devtools    Browser automation (if Chrome/Chromium detected)"
     log ""
     log "  Desktop Tools (if GUI detected):"
