@@ -1033,6 +1033,7 @@ install_apt_packages git jq xsel python3 pipx curl
 
 # Install bubblewrap (provides bwrap for sandboxing, used by llm-functions and code execution tools)
 install_apt_package bubblewrap bwrap
+configure_bwrap_apparmor
 
 # Check for sha256sum (required for template checksum tracking in Phase 4)
 install_apt_package coreutils sha256sum
@@ -1754,7 +1755,7 @@ if has_desktop_environment; then
         fi
 
         # Install Handy (system-wide STT) via .deb package
-        install_github_deb_package "handy" "0.7.7" \
+        install_github_deb_package "handy" "0.7.10" \
             "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
             "handy" "x86_64" || true
 

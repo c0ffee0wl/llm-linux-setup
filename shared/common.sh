@@ -489,6 +489,37 @@ install_apt_packages() {
     fi
 }
 
+# Configure AppArmor to allow bwrap to create user namespaces
+# Ubuntu 24.04+ restricts unprivileged user namespaces via AppArmor by default,
+# which breaks bwrap sandboxing (used by workflow engine and code execution tools)
+# Idempotent: only creates profile if not already present
+configure_bwrap_apparmor() {
+    if command -v apparmor_parser &> /dev/null && \
+       [ -d /sys/module/apparmor ] && \
+       [ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ] && \
+       [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns)" = "1" ] && \
+       [ ! -f /etc/apparmor.d/bwrap ]; then
+        log "Configuring AppArmor profile for bwrap..."
+        if sudo tee /etc/apparmor.d/bwrap > /dev/null <<'APPARMOR'
+abi <abi/4.0>,
+include <tunables/global>
+
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+
+  include if exists <local/bwrap>
+}
+APPARMOR
+        then
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap || warn "Failed to load AppArmor bwrap profile"
+        else
+            warn "Failed to write AppArmor bwrap profile"
+        fi
+    else
+        log "AppArmor bwrap profile already configured or not needed"
+    fi
+}
+
 #############################################################################
 # UV Tool Management
 #############################################################################
