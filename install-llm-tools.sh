@@ -1196,7 +1196,6 @@ REMOTE_PLUGINS=(
     "llm-git-commit"
     "llm-sort"
     "llm-classify"
-    "llm-consortium"
 )
 
 # Local plugins (in-repo packages that should always be reinstalled)
@@ -2448,7 +2447,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
     log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
     log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
-    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify"
     log ""
     log "  CLI Utilities:"
     log "    - gitingest        Git repository to LLM-friendly text"
@@ -2503,7 +2502,7 @@ elif [ "$INSTALL_MODE" = "full" ]; then
     log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
     log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
     log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
-    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify"
     log ""
     log "  CLI Utilities:"
     log "    - gitingest        Git repository to LLM-friendly text"
@@ -2558,7 +2557,7 @@ else
     log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
     log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
     log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
-    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify, consortium"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify"
     log ""
     log "  CLI Utilities:"
     log "    - gitingest        Git repository to LLM-friendly text"

@@ -337,7 +337,6 @@ routed-claude                    # Launch Claude Code through router (alias for 
 - **[llm-git-commit](https://github.com/ShamanicArts/llm-git-commit)** - AI-powered Git commit message generation with interactive refinement
 - **[llm-sort](https://github.com/vagos/llm-sort)** - Semantic sorting using LLM-based pairwise comparisons
 - **[llm-classify](https://github.com/irthomasthomas/llm-classify)** - Text classification with confidence scoring using logprobs
-- **[llm-consortium](https://github.com/irthomasthomas/llm-consortium)** - Multi-model orchestration for consensus-based problem solving
 
 ### LLM Templates
 
@@ -993,29 +992,6 @@ Results are returned as JSON arrays with `class`, `score` (0-1 confidence), and 
 - **Topic routing**: Route support tickets to appropriate departments
 - **Intent detection**: Classify user queries by intent type
 
-**Multi-Model Consensus with llm-consortium**
-
-Orchestrate multiple language models to collaboratively solve problems through parallel reasoning. Based on Karpathy's concept that asking all models and getting them to reach consensus produces optimal performance on complex problems:
-
-```bash
-# Simple query with default models
-llm consortium "Your complex question here"
-
-# Advanced: multiple model instances with custom arbiter
-llm consortium "Analyze this security vulnerability" \
-  -m o3-mini:1 -m gpt-4o:2 \
-  --arbiter claude-3-opus-20240229 \
-  --confidence-threshold 0.9 \
-  --max-iterations 4
-
-# Save configuration for reuse
-llm consortium "Query" --save my-consortium
-llm -m my-consortium "Use saved config"
-
-# Continue conversations
-llm -m my-consortium "Initial prompt"
-llm -c "Follow-up question"
-```
 
 **Key Options:**
 - `--arbiter`: Judge model for evaluating responses (default: claude-3-opus)
@@ -2658,7 +2634,7 @@ For issues, questions, or suggestions:
 - [Daniel Miessler](https://github.com/danielmiessler) - Original Fabric prompt patterns
 - [ShamanicArts](https://github.com/ShamanicArts) - llm-git-commit AI-powered commit messages
 - [vagos](https://github.com/vagos) - llm-sort semantic sorting
-- [irthomasthomas](https://github.com/irthomasthomas) - llm-classify text classification, llm-consortium multi-model orchestration
+- [irthomasthomas](https://github.com/irthomasthomas) - llm-classify text classification
 - [RKeelan](https://github.com/RKeelan) - llm-fragments-dir directory fragment loader
 
 ### Additional Tools
