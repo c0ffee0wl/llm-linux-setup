@@ -890,39 +890,6 @@ upgrade_npm_global_if_installed() {
     fi
 }
 
-# Fast version check for Claude Code using GitHub CHANGELOG.md or npm registry
-# Returns 0 if update available, 1 if up-to-date, 2 if check failed
-# Usage: if check_claude_code_update_available "$NATIVE_CLAUDE"; then "$NATIVE_CLAUDE" update; fi
-check_claude_code_update_available() {
-    local claude_bin="$1"
-    local installed_version latest_version
-
-    # Get installed version
-    installed_version=$("$claude_bin" --version 2>/dev/null | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+') || return 2
-
-    # Method 1: GitHub CHANGELOG.md (fastest, ~0.2s)
-    latest_version=$(curl -sS --max-time 5 \
-        "https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md" 2>/dev/null \
-        | head -50 | grep -oP '## \K[0-9]+\.[0-9]+\.[0-9]+' | head -1) || latest_version=""
-
-    # Method 2: npm registry with fields filter (fallback, ~0.7s)
-    if [ -z "$latest_version" ]; then
-        latest_version=$(curl -sS --max-time 5 \
-            "https://registry.npmjs.org/@anthropic-ai%2Fclaude-code?fields=dist-tags" 2>/dev/null \
-            | grep -oP '"latest"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+') || latest_version=""
-    fi
-
-    [ -z "$latest_version" ] && return 2
-
-    if [ "$installed_version" = "$latest_version" ]; then
-        log "Claude Code is up to date ($installed_version)"
-        return 1
-    else
-        log "Claude Code update available: $installed_version -> $latest_version"
-        return 0
-    fi
-}
-
 #############################################################################
 # UV Package Manager
 #############################################################################
@@ -1101,6 +1068,128 @@ detect_npm_permissions() {
         log "npm requires sudo for global installs"
     fi
     export NPM_NEEDS_SUDO NPM_PREFIX
+}
+
+#############################################################################
+# JavaScript Package Manager Detection & Wrappers
+#############################################################################
+
+# Detect whether bun or npm is available for global package management
+# Sets JS_PKG_MGR to "bun", "npm", or "" (none)
+detect_js_package_manager() {
+    if command -v bun &>/dev/null; then
+        JS_PKG_MGR="bun"
+        log "Detected bun as JavaScript package manager"
+    elif command -v npm &>/dev/null; then
+        JS_PKG_MGR="npm"
+        log "Using npm as JavaScript package manager"
+    else
+        JS_PKG_MGR=""
+        warn "No JavaScript package manager found"
+    fi
+    export JS_PKG_MGR
+}
+
+# Run bun without .env auto-loading (suppresses noisy timing output)
+# Usage: bun_global <args...>
+bun_global() {
+    BUN_DOT_ENV=0 bun "$@"
+}
+
+# Install a global package via bun or npm
+# Usage: pkg_install_global package_name
+pkg_install_global() {
+    local package="$1"
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        log "Installing $package via bun..."
+        bun_global add -g "${package}@latest"
+    elif [ "$JS_PKG_MGR" = "npm" ]; then
+        npm_install install -g "$package"
+    else
+        warn "No JS package manager available, cannot install $package"
+        return 1
+    fi
+}
+
+# Uninstall a global package via bun or npm
+# Usage: pkg_uninstall_global package_name [binary_name]
+pkg_uninstall_global() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        bun_global remove -g "$package" 2>/dev/null || true
+    elif [ "$JS_PKG_MGR" = "npm" ]; then
+        npm_uninstall_global "$package" "$bin_name"
+    fi
+}
+
+# Check if a global package is installed (bun or npm)
+# Usage: pkg_is_installed_global package_name [binary_name]
+pkg_is_installed_global() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        [ -x "$HOME/.bun/bin/$bin_name" ]
+    elif [ "$JS_PKG_MGR" = "npm" ]; then
+        npm list -g "$package" --depth=0 &>/dev/null
+    else
+        return 1
+    fi
+}
+
+# Install or upgrade a global package (with version check for both bun and npm)
+# Usage: install_or_upgrade_global package_name [binary_name]
+install_or_upgrade_global() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        # Check installed version via bun's global node_modules
+        local installed_version=""
+        local pkg_json="$HOME/.bun/install/global/node_modules/${package}/package.json"
+        if [ -f "$pkg_json" ]; then
+            installed_version=$(grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' "$pkg_json" 2>/dev/null || true)
+        fi
+
+        if [ -z "$installed_version" ]; then
+            log "Installing $package via bun..."
+            bun_global add -g "${package}@latest"
+        else
+            # Check latest version from npm registry
+            local latest_version
+            latest_version=$(curl -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
+
+            if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
+                log "Upgrading $package: $installed_version -> $latest_version"
+                bun_global add -g "${package}@latest"
+            else
+                log "$package is up to date ($installed_version)"
+            fi
+        fi
+    elif [ "$JS_PKG_MGR" = "npm" ]; then
+        install_or_upgrade_npm_global "$package"
+    else
+        warn "No JS package manager available, cannot install $package"
+        return 1
+    fi
+}
+
+# Upgrade a global package only if already installed (no new installation)
+# Usage: upgrade_global_if_installed package_name [binary_name]
+upgrade_global_if_installed() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        if [ -x "$HOME/.bun/bin/$bin_name" ]; then
+            log "Updating $package via bun..."
+            bun_global add -g "${package}@latest"
+        else
+            log "Skipping $package update (not installed)"
+        fi
+    elif [ "$JS_PKG_MGR" = "npm" ]; then
+        upgrade_npm_global_if_installed "$package"
+    else
+        log "Skipping $package update (no JS package manager)"
+    fi
 }
 
 #############################################################################

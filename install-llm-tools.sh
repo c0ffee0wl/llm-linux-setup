@@ -42,6 +42,7 @@ MINIMAL_FLAG=false
 FULL_FLAG=false
 WSL_FLAG=""  # "", "force", or "disable"
 CCR_FLAG=false
+NO_ADDITIONAL_TOOLS=false
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -77,6 +78,10 @@ while [[ $# -gt 0 ]]; do
             CCR_FLAG=true
             shift
             ;;
+        --no-additional-tools)
+            NO_ADDITIONAL_TOOLS=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -88,6 +93,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --wsl          Force WSL mode (skip session recording, prompt for CCR)"
             echo "  --no-wsl       Disable WSL auto-detection (run full install even in WSL)"
             echo "  --ccr          Full Claude Code Router setup (config, profile exports, systemd service)"
+            echo "  --no-additional-tools  Skip non-essential tools (Handy, Ulauncher, tldr, Codex, etc.)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
@@ -139,10 +145,25 @@ elif [ "$FULL_FLAG" = "true" ]; then
     INSTALL_MODE="full"
     mkdir -p "$LLM_TOOLS_CONFIG_DIR"
     echo "full" > "$INSTALL_MODE_FILE"
+    rm -f "$LLM_TOOLS_CONFIG_DIR/no-additional-tools"
     log "Installation mode: full (saved for future runs)"
 elif [ -f "$INSTALL_MODE_FILE" ]; then
     INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
     log "Using saved installation mode: $INSTALL_MODE (use --full to override)"
+fi
+
+#############################################################################
+# Additional Tools Mode Resolution
+#############################################################################
+
+NO_ADDITIONAL_TOOLS_FILE="$LLM_TOOLS_CONFIG_DIR/no-additional-tools"
+if [ "$NO_ADDITIONAL_TOOLS" = "true" ]; then
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    touch "$NO_ADDITIONAL_TOOLS_FILE"
+    log "Additional tools: disabled (saved for future runs)"
+elif [ -f "$NO_ADDITIONAL_TOOLS_FILE" ]; then
+    NO_ADDITIONAL_TOOLS=true
+    log "Using saved preference: no additional tools (use --full to re-enable)"
 fi
 
 #############################################################################
@@ -246,7 +267,7 @@ EOF
 configure_azure_openai() {
     log "Configuring Azure OpenAI API..."
     echo ""
-    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.openai.azure.com/openai/v1/): " AZURE_API_BASE
+    read -p "Enter your Azure Foundry resource URL (e.g., https://YOUR-RESOURCE.cognitiveservices.azure.com/openai/v1/): " AZURE_API_BASE
 
     # Validate URL is not empty and starts with https://
     if [ -z "$AZURE_API_BASE" ]; then
@@ -384,11 +405,16 @@ update_ccr_config() {
     local plugin_dir="$ccr_dir/plugins"
     local config_file="$ccr_dir/config.json"
     local plugin_file="$plugin_dir/strip-reasoning.js"
+    local websearch_plugin_file="$plugin_dir/web-search-inject.js"
 
     log "Configuring Claude Code Router..."
 
     # Create directories
     mkdir -p "$plugin_dir"
+
+    # Snapshot existing plugin content for change detection
+    local old_plugins_hash=""
+    [ -d "$plugin_dir" ] && old_plugins_hash=$(cat "$plugin_dir"/*.js 2>/dev/null | md5sum)
 
     # Check provider availability
     # Azure: use AZURE_CONFIGURED (ensures YAML file exists)
@@ -403,8 +429,8 @@ update_ccr_config() {
     local config_content
 
     if [ "$has_azure_key" = "true" ] && [ "$has_gemini_key" = "true" ]; then
-        # Dual-provider config: Azure primary + Gemini web search
-        log "Generating dual-provider config (Azure primary, Gemini web search)"
+        # Dual-provider config: Azure primary (Responses API), Gemini fallback
+        log "Generating dual-provider config (Azure primary, Azure web search)"
 
         # Create strip-reasoning.js plugin for Azure
         cat > "$plugin_file" <<'EOF'
@@ -421,7 +447,6 @@ class StripReasoningTransformer {
     return request;
   }
 
-  // Optional: transformResponseOut if needed for response transformation
   async transformResponseOut(response, provider) {
     return response;
   }
@@ -430,6 +455,52 @@ class StripReasoningTransformer {
 module.exports = StripReasoningTransformer;
 EOF
         log "Created strip-reasoning.js transformer plugin"
+
+        # Create web-search-inject.js plugin for Azure web search
+        cat > "$websearch_plugin_file" <<'EOF'
+class WebSearchInjectTransformer {
+  name = "web-search-inject";
+
+  async transformRequestIn(request, provider) {
+    // This plugin runs AFTER openai-responses in the chain:
+    //   ["openai-responses", "web-search-inject", "strip-reasoning"]
+    // So the request is already in Responses API format at this point.
+    //
+    // openai-responses maps Anthropic web_search -> {"type": "web_search"},
+    // but Azure only supports "web_search_preview". Rename it.
+    if (Array.isArray(request.tools)) {
+      for (const tool of request.tools) {
+        if (tool.type === "web_search") {
+          tool.type = "web_search_preview";
+        }
+      }
+    }
+    // If no web search tool exists yet, inject one so the model can search.
+    if (!request.tools) request.tools = [];
+    const hasWebSearch = request.tools.some(
+      (t) => t.type === "web_search_preview" || t.type === "web_search"
+    );
+    if (!hasWebSearch) {
+      request.tools.push({ type: "web_search_preview" });
+    }
+    return request;
+  }
+
+  async transformResponseOut(response, provider) {
+    return response;
+  }
+}
+
+module.exports = WebSearchInjectTransformer;
+EOF
+        log "Created web-search-inject.js transformer plugin"
+
+        # Detect plugin changes for restart tracking
+        local new_plugins_hash=$(cat "$plugin_dir"/*.js 2>/dev/null | md5sum)
+        if [ "$old_plugins_hash" != "$new_plugins_hash" ]; then
+            CCR_NEEDS_RESTART=true
+            log "CCR plugins updated"
+        fi
 
         # Extract Azure API base
         local azure_api_base=""
@@ -447,36 +518,12 @@ EOF
   "LOG_LEVEL": "warn",
   "Providers": [
     {
-      "name": "azure-gpt4",
-      "api_base_url": "${azure_api_base}/chat/completions",
-      "api_key": "\$AZURE_OPENAI_API_KEY",
-      "models": [
-        "gpt-4.1",
-        "gpt-4.1-mini"
-      ]
-    },
-    {
-      "name": "azure-gpt5",
-      "api_base_url": "${azure_api_base}/chat/completions",
-      "api_key": "\$AZURE_OPENAI_API_KEY",
-      "models": [
-        "gpt-5-mini",
-        "gpt-5-nano",
-        "gpt-5.1"
-      ],
-      "transformer": {
-        "use": [
-          "maxcompletiontokens",
-          "strip-reasoning"
-        ]
-      }
-    },
-    {
-      "name": "azure-codex",
+      "name": "azure",
       "api_base_url": "${azure_api_base}/responses",
       "api_key": "\$AZURE_OPENAI_API_KEY",
       "models": [
-        "gpt-5.1-codex"
+        "gpt-5.4",
+        "gpt-5.4-mini"
       ],
       "transformer": {
         "use": [
@@ -486,12 +533,26 @@ EOF
       }
     },
     {
+      "name": "azure-search",
+      "api_base_url": "${azure_api_base}/responses",
+      "api_key": "\$AZURE_OPENAI_API_KEY",
+      "models": [
+        "gpt-5.2"
+      ],
+      "transformer": {
+        "use": [
+          "openai-responses",
+          "web-search-inject",
+          "strip-reasoning"
+        ]
+      }
+    },
+    {
       "name": "gemini",
       "api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/",
       "api_key": "\$GEMINI_API_KEY",
       "models": [
-        "gemini-2.5-flash",
-        "gemini-2.5-pro"
+        "gemini-2.5-flash"
       ],
       "transformer": {
         "use": [
@@ -503,14 +564,17 @@ EOF
   "transformers": [
     {
       "path": "${HOME}/.claude-code-router/plugins/strip-reasoning.js"
+    },
+    {
+      "path": "${HOME}/.claude-code-router/plugins/web-search-inject.js"
     }
   ],
   "Router": {
-    "default": "azure-codex,gpt-5.1-codex",
-    "background": "azure-gpt4,gpt-4.1-mini",
-    "think": "azure-codex,gpt-5.1-codex",
-    "longContext": "azure-codex,gpt-5.1-codex",
-    "webSearch": "gemini,gemini-2.5-flash"
+    "default": "azure,gpt-5.4",
+    "background": "azure,gpt-5.4-mini",
+    "think": "azure,gpt-5.4",
+    "longContext": "azure,gpt-5.4",
+    "webSearch": "azure-search,gpt-5.2"
   },
   "NON_INTERACTIVE_MODE": false
 }
@@ -559,17 +623,35 @@ EOF
         return 1
     fi
 
+    # Track config content for restart detection
+    local old_config=""
+    [ -f "$config_file" ] && old_config=$(cat "$config_file")
+
     update_tracked_config "ccr-config" "$config_file" "$config_content" \
         "Claude Code Router config.json" "N" "true"
+
+    # Detect config changes for restart tracking
+    local new_config=""
+    [ -f "$config_file" ] && new_config=$(cat "$config_file")
+    if [ "$old_config" != "$new_config" ]; then
+        CCR_NEEDS_RESTART=true
+    fi
 }
 
 # Configure Claude Code Router (full setup including systemd service)
 # Sets up: CCR installation, config, profile environment, systemd service
 configure_ccr() {
     local CCR_PORT=3456
+    CCR_NEEDS_RESTART=false
+
+    # 0. Stop CCR before binary upgrade to prevent port/binary races
+    if systemctl --user is-active claude-code-router &>/dev/null; then
+        systemctl --user stop claude-code-router
+        log "CCR service stopped for upgrade"
+    fi
 
     # 1. Install/update Claude Code Router
-    install_or_upgrade_npm_global @musistudio/claude-code-router
+    install_or_upgrade_global @musistudio/claude-code-router
 
     # 2. Generate CCR config
     update_ccr_config
@@ -604,11 +686,22 @@ configure_ccr_profile() {
 
     # Create env file for systemd service (simple KEY=value format)
     mkdir -p "$(dirname "$env_file")"
+    local old_env=""
+    [ -f "$env_file" ] && old_env=$(cat "$env_file")
     : > "$env_file"  # Truncate/create
     chmod 600 "$env_file"  # Restrict permissions (contains secrets)
     [ -n "$azure_key" ] && echo "AZURE_OPENAI_API_KEY=${azure_key}" >> "$env_file"
     [ -n "$gemini_key" ] && echo "GEMINI_API_KEY=${gemini_key}" >> "$env_file"
-    log "Created CCR environment file: $env_file"
+    [ -n "$GOOGLE_CLOUD_PROJECT" ] && echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" >> "$env_file"
+    [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && echo "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}" >> "$env_file"
+    [ -n "$GOOGLE_CLOUD_LOCATION" ] && echo "GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}" >> "$env_file"
+    # Detect env file changes for restart tracking
+    if [ "$(cat "$env_file")" != "$old_env" ]; then
+        CCR_NEEDS_RESTART=true
+        log "CCR environment file updated"
+    else
+        log "CCR environment file unchanged"
+    fi
 
     # Add/update CCR routing exports to ~/.profile
     # Based on CCR's createEnvVariables.ts - set both auth vars for compatibility
@@ -632,7 +725,15 @@ configure_ccr_systemd_service() {
     local service_dir="$HOME/.config/systemd/user"
     local service_file="$service_dir/claude-code-router.service"
     # CCR is installed via npm global, so fallback to NPM_PREFIX if 'which' fails
-    local ccr_path=$(which ccr 2>/dev/null || echo "${NPM_PREFIX:-/usr/local}/bin/ccr")
+    local ccr_path
+    ccr_path=$(which ccr 2>/dev/null) || ccr_path=""
+    if [ -z "$ccr_path" ]; then
+        if [ "$JS_PKG_MGR" = "bun" ]; then
+            ccr_path="$HOME/.bun/bin/ccr"
+        else
+            ccr_path="${NPM_PREFIX:-/usr/local}/bin/ccr"
+        fi
+    fi
 
     mkdir -p "$service_dir"
 
@@ -679,9 +780,9 @@ WantedBy=default.target"
         log "Systemd service enabled"
     fi
 
-    # Start or restart service
+    # Start or restart service (restart if service file, config, plugins, or env changed)
     if systemctl --user is-active claude-code-router &>/dev/null; then
-        if [ "$needs_update" = true ]; then
+        if [ "$needs_update" = true ] || [ "$CCR_NEEDS_RESTART" = true ]; then
             systemctl --user restart claude-code-router
             log "Claude Code Router service restarted"
         else
@@ -1081,18 +1182,33 @@ if [ "$INSTALL_MODE" = "full" ] && [ "$IS_WSL" != true ]; then
     install_or_upgrade_cargo_git_tool asciinema https://github.com/asciinema/asciinema
 fi
 
-# Node.js - needed in full mode for Claude Code, and in WSL mode for CCR
+# Detect available JS package manager (bun or npm) — needed for all modes
+# because the upgrade section at end of script uses this in all modes
+detect_js_package_manager
+
+# Node.js/bun setup — only in full mode
 if [ "$INSTALL_MODE" = "full" ]; then
-    # Install/update Node.js (with intelligent version detection and nvm fallback)
-    install_or_upgrade_nodejs
+    if [ "$JS_PKG_MGR" = "bun" ]; then
+        log "Bun detected, skipping Node.js installation"
+        # Set NPM defaults for any code that references them
+        if command -v npm &>/dev/null; then
+            detect_npm_permissions
+        else
+            NPM_NEEDS_SUDO=false
+            NPM_PREFIX="${HOME}/.bun"
+            export NPM_NEEDS_SUDO NPM_PREFIX
+        fi
+    else
+        # Install/update Node.js (with intelligent version detection and nvm fallback)
+        install_or_upgrade_nodejs
 
-    # Detect if npm needs sudo for global installs
-    detect_npm_permissions
+        # Detect if npm needs sudo for global installs
+        detect_npm_permissions
 
-    # Install bun and pnpm package managers
-    log "Installing/updating JavaScript package managers..."
-    install_or_upgrade_npm_global bun
-    install_or_upgrade_npm_global pnpm
+        # Install bun via npm
+        log "Installing/updating bun..."
+        install_or_upgrade_npm_global bun
+    fi
 fi
 
 #############################################################################
@@ -1298,7 +1414,7 @@ update_mcp_config() {
     if command -v google-chrome &>/dev/null || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
         log "Chrome/Chromium detected, adding chrome-devtools MCP"
         # Pre-install chrome-devtools-mcp for faster first use (npx will use cached version)
-        install_or_upgrade_npm_global chrome-devtools-mcp
+        install_or_upgrade_global chrome-devtools-mcp
         chrome_devtools_config=',
     "chrome-devtools": {
       "command": "npx",
@@ -1370,7 +1486,7 @@ elif [ -f "$EXTRA_MODELS_FILE" ]; then
         AZURE_API_BASE="$EXISTING_API_BASE"
         log "Using existing API base: $AZURE_API_BASE"
     else
-        AZURE_API_BASE="https://REPLACE-ME.openai.azure.com/openai/v1/"
+        AZURE_API_BASE="https://REPLACE-ME.cognitiveservices.azure.com/openai/v1/"
         warn "Could not read existing API base, using placeholder"
     fi
     AZURE_CONFIGURED=true
@@ -1710,6 +1826,158 @@ if command -v systemctl &> /dev/null && systemctl --user status &> /dev/null 2>&
 fi
 
 if has_desktop_environment; then
+
+    # --- Always installed (regardless of --no-additional-tools) ---
+
+    # Install imagemage - Gemini image generation CLI (only if Gemini configured)
+    if command llm keys get gemini &>/dev/null; then
+        if command -v imagemage &>/dev/null; then
+            log "imagemage is already installed"
+        elif install_go; then
+            log "Installing imagemage (Gemini image generation CLI)..."
+            IMAGEMAGE_DIR="/tmp/imagemage-build"
+            rm -rf "$IMAGEMAGE_DIR"
+            git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
+            (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
+            rm -rf "$IMAGEMAGE_DIR"
+            log "imagemage installed to ~/.local/bin/imagemage"
+        fi
+    else
+        log "Skipping imagemage: Gemini not configured"
+    fi
+
+    # Install espanso (text expander) - X11 or Wayland variant
+    ESPANSO_VERSION="2.3.0"
+    if is_wayland; then
+        ESPANSO_DEB="espanso-debian-wayland-amd64.deb"
+    else
+        ESPANSO_DEB="espanso-debian-x11-amd64.deb"
+    fi
+
+    install_github_deb_package "espanso" "$ESPANSO_VERSION" \
+        "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
+        "espanso" "x86_64" || true
+
+    # Install espanso-llm package (uses llm-inlineassistant daemon, no external dependencies)
+    if command -v espanso &>/dev/null; then
+        # Get packages directory (with fallback to default path)
+        ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
+
+        # Create packages directory if it doesn't exist
+        mkdir -p "$ESPANSO_PACKAGES_DIR"
+
+        # Remove old espanso-llm-ask-llm if present (replaced by espanso-llm)
+        OLD_LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-llm"
+        if [ -d "$OLD_LLM_ASK_AI_DIR" ]; then
+            log "Removing old espanso-llm-ask-llm package (replaced by espanso-llm)..."
+            rm -rf "$OLD_LLM_ASK_AI_DIR"
+        fi
+
+        # Symlink espanso-llm package from repository
+        ESPANSO_LLM_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm"
+        if [ -L "$ESPANSO_LLM_DIR" ]; then
+            log "espanso-llm package already linked"
+        else
+            rm -rf "$ESPANSO_LLM_DIR"  # Remove if exists as directory
+            ln -sfn "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
+            log "Installed espanso-llm package (symlinked)"
+        fi
+
+        # Register and start espanso service if newly installed
+        if ! espanso status &>/dev/null; then
+            log "Registering espanso service..."
+            espanso service register || true
+            # Start in background to avoid blocking (espanso start opens a GUI window)
+            nohup espanso start &>/dev/null &
+            log "espanso started in background"
+        fi
+
+    fi
+
+    # llm-guiassistant (GTK popup for llm-assistant daemon)
+    # Only on X11 for now (uses xdotool, xclip, maim, xprop)
+    # Note: Package and llm-tools-capture-screen are installed via ALL_PLUGINS in Phase 2
+    if is_x11; then
+        log "Setting up llm-guiassistant..."
+
+        # Install X11 dependencies (xprop from x11-utils for window detection)
+        install_apt_package x11-utils xprop
+
+        # Create wrapper script
+        cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'
+#!/bin/bash
+exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_guiassistant "$@"
+EOF
+        chmod +x "$HOME/.local/bin/llm-guiassistant"
+
+        # JavaScript assets (marked.js, highlight.js, purify.min.js) are bundled in git
+        # at llm-assistant/llm_assistant/static/ - no runtime download needed
+
+        # Configure XFCE keyboard shortcuts for llm-guiassistant
+        if command -v xfconf-query &>/dev/null; then
+            log "Configuring XFCE keyboard shortcuts for llm-guiassistant..."
+
+            # Detect keyboard layout to choose appropriate shortcut key
+            # German/European keyboards: dead_circumflex (^ key, top-left)
+            # US keyboards fallback: grave (` backtick key, top-left)
+            LAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}')
+            if [[ "$LAYOUT" == "de" || "$LAYOUT" == "at" || "$LAYOUT" == "ch" ]]; then
+                SHORTCUT_KEY="dead_circumflex"
+                KEY_DISPLAY="Super+^"
+            else
+                SHORTCUT_KEY="grave"
+                KEY_DISPLAY="Super+\`"
+            fi
+
+            # Super+^ (or Super+`): Open llm-guiassistant
+            # Use full path because XFCE shortcuts don't inherit user's PATH
+            GUIASSISTANT_CMD="$HOME/.local/bin/llm-guiassistant"
+            if xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
+                -n -t string -s "$GUIASSISTANT_CMD" 2>/dev/null || \
+               xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
+                -s "$GUIASSISTANT_CMD" 2>/dev/null; then
+                log "  $KEY_DISPLAY: Open llm-guiassistant"
+            fi
+
+            # Super+Shift+^ (or Super+Shift+`): Open with selection
+            if xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
+                -n -t string -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null || \
+               xfconf-query -c xfce4-keyboard-shortcuts \
+                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
+                -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null; then
+                log "  ${KEY_DISPLAY/Super/Super+Shift}: Open with selection"
+            fi
+        else
+            log "llm-guiassistant installed (configure keyboard shortcut manually)"
+        fi
+
+        # Create XDG autostart entry for hidden start on login
+        # This pre-loads the GUI and daemon for instant activation via hotkey
+        AUTOSTART_DIR="$HOME/.config/autostart"
+        mkdir -p "$AUTOSTART_DIR"
+        cat > "$AUTOSTART_DIR/llm-guiassistant.desktop" << EOF
+[Desktop Entry]
+Type=Application
+Name=LLM GUI Assistant
+Comment=Pre-load LLM GUI Assistant and daemon on login
+Exec=$HOME/.local/bin/llm-guiassistant --hidden
+Icon=utilities-terminal
+Terminal=false
+Categories=Utility;
+StartupNotify=false
+X-GNOME-Autostart-enabled=true
+EOF
+        log "Installed llm-guiassistant autostart entry"
+    else
+        log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
+    fi
+
+    # --- Skippable desktop tools (skipped with --no-additional-tools) ---
+    if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+
     # Audio-related installations (STT/TTS) - only if soundcard available
     if has_soundcard; then
         # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
@@ -1832,71 +2100,6 @@ if settings_file.exists():
         log "No soundcard detected - skipping audio tools (Handy, Parakeet model)"
     fi
 
-    # Install imagemage - Gemini image generation CLI (only if Gemini configured)
-    if command llm keys get gemini &>/dev/null; then
-        if command -v imagemage &>/dev/null; then
-            log "imagemage is already installed"
-        elif install_go; then
-            log "Installing imagemage (Gemini image generation CLI)..."
-            IMAGEMAGE_DIR="/tmp/imagemage-build"
-            rm -rf "$IMAGEMAGE_DIR"
-            git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
-            (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
-            rm -rf "$IMAGEMAGE_DIR"
-            log "imagemage installed to ~/.local/bin/imagemage"
-        fi
-    else
-        log "Skipping imagemage: Gemini not configured"
-    fi
-
-    # Install espanso (text expander) - X11 or Wayland variant
-    ESPANSO_VERSION="2.3.0"
-    if is_wayland; then
-        ESPANSO_DEB="espanso-debian-wayland-amd64.deb"
-    else
-        ESPANSO_DEB="espanso-debian-x11-amd64.deb"
-    fi
-
-    install_github_deb_package "espanso" "$ESPANSO_VERSION" \
-        "https://github.com/espanso/espanso/releases/download/v{VERSION}/$ESPANSO_DEB" \
-        "espanso" "x86_64" || true
-
-    # Install espanso-llm package (uses llm-inlineassistant daemon, no external dependencies)
-    if command -v espanso &>/dev/null; then
-        # Get packages directory (with fallback to default path)
-        ESPANSO_PACKAGES_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/espanso/match/packages"
-
-        # Create packages directory if it doesn't exist
-        mkdir -p "$ESPANSO_PACKAGES_DIR"
-
-        # Remove old espanso-llm-ask-llm if present (replaced by espanso-llm)
-        OLD_LLM_ASK_AI_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm-ask-llm"
-        if [ -d "$OLD_LLM_ASK_AI_DIR" ]; then
-            log "Removing old espanso-llm-ask-llm package (replaced by espanso-llm)..."
-            rm -rf "$OLD_LLM_ASK_AI_DIR"
-        fi
-
-        # Symlink espanso-llm package from repository
-        ESPANSO_LLM_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm"
-        if [ -L "$ESPANSO_LLM_DIR" ]; then
-            log "espanso-llm package already linked"
-        else
-            rm -rf "$ESPANSO_LLM_DIR"  # Remove if exists as directory
-            ln -sfn "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
-            log "Installed espanso-llm package (symlinked)"
-        fi
-
-        # Register and start espanso service if newly installed
-        if ! espanso status &>/dev/null; then
-            log "Registering espanso service..."
-            espanso service register || true
-            # Start in background to avoid blocking (espanso start opens a GUI window)
-            nohup espanso start &>/dev/null &
-            log "espanso started in background"
-        fi
-
-    fi
-
     # Install Ulauncher (application launcher)
     install_github_deb_package "ulauncher" "5.15.15" \
         "https://github.com/Ulauncher/Ulauncher/releases/download/{VERSION}/ulauncher_{VERSION}_all.deb" \
@@ -1953,86 +2156,7 @@ else:
         fi
     fi
 
-    # llm-guiassistant (GTK popup for llm-assistant daemon)
-    # Only on X11 for now (uses xdotool, xclip, maim, xprop)
-    # Note: Package and llm-tools-capture-screen are installed via ALL_PLUGINS in Phase 2
-    if is_x11; then
-        log "Setting up llm-guiassistant..."
-
-        # Install X11 dependencies (xprop from x11-utils for window detection)
-        install_apt_package x11-utils xprop
-
-        # Create wrapper script
-        cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'
-#!/bin/bash
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_guiassistant "$@"
-EOF
-        chmod +x "$HOME/.local/bin/llm-guiassistant"
-
-        # JavaScript assets (marked.js, highlight.js, purify.min.js) are bundled in git
-        # at llm-assistant/llm_assistant/static/ - no runtime download needed
-
-        # Configure XFCE keyboard shortcuts for llm-guiassistant
-        if command -v xfconf-query &>/dev/null; then
-            log "Configuring XFCE keyboard shortcuts for llm-guiassistant..."
-
-            # Detect keyboard layout to choose appropriate shortcut key
-            # German/European keyboards: dead_circumflex (^ key, top-left)
-            # US keyboards fallback: grave (` backtick key, top-left)
-            LAYOUT=$(setxkbmap -query 2>/dev/null | grep layout | awk '{print $2}')
-            if [[ "$LAYOUT" == "de" || "$LAYOUT" == "at" || "$LAYOUT" == "ch" ]]; then
-                SHORTCUT_KEY="dead_circumflex"
-                KEY_DISPLAY="Super+^"
-            else
-                SHORTCUT_KEY="grave"
-                KEY_DISPLAY="Super+\`"
-            fi
-
-            # Super+^ (or Super+`): Open llm-guiassistant
-            # Use full path because XFCE shortcuts don't inherit user's PATH
-            GUIASSISTANT_CMD="$HOME/.local/bin/llm-guiassistant"
-            if xfconf-query -c xfce4-keyboard-shortcuts \
-                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
-                -n -t string -s "$GUIASSISTANT_CMD" 2>/dev/null || \
-               xfconf-query -c xfce4-keyboard-shortcuts \
-                -p "/commands/custom/<Super>$SHORTCUT_KEY" \
-                -s "$GUIASSISTANT_CMD" 2>/dev/null; then
-                log "  $KEY_DISPLAY: Open llm-guiassistant"
-            fi
-
-            # Super+Shift+^ (or Super+Shift+`): Open with selection
-            if xfconf-query -c xfce4-keyboard-shortcuts \
-                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
-                -n -t string -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null || \
-               xfconf-query -c xfce4-keyboard-shortcuts \
-                -p "/commands/custom/<Super><Shift>$SHORTCUT_KEY" \
-                -s "$GUIASSISTANT_CMD --with-selection" 2>/dev/null; then
-                log "  ${KEY_DISPLAY/Super/Super+Shift}: Open with selection"
-            fi
-        else
-            log "llm-guiassistant installed (configure keyboard shortcut manually)"
-        fi
-
-        # Create XDG autostart entry for hidden start on login
-        # This pre-loads the GUI and daemon for instant activation via hotkey
-        AUTOSTART_DIR="$HOME/.config/autostart"
-        mkdir -p "$AUTOSTART_DIR"
-        cat > "$AUTOSTART_DIR/llm-guiassistant.desktop" << EOF
-[Desktop Entry]
-Type=Application
-Name=LLM GUI Assistant
-Comment=Pre-load LLM GUI Assistant and daemon on login
-Exec=$HOME/.local/bin/llm-guiassistant --hidden
-Icon=utilities-terminal
-Terminal=false
-Categories=Utility;
-StartupNotify=false
-X-GNOME-Autostart-enabled=true
-EOF
-        log "Installed llm-guiassistant autostart entry"
-    else
-        log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
-    fi
+    fi  # End of NO_ADDITIONAL_TOOLS check for desktop tools
 fi
 
 fi  # End of INSTALL_MODE = "full" block for Phase 5
@@ -2043,11 +2167,10 @@ fi  # End of INSTALL_MODE = "full" block for Phase 5
 
 log "Installing/updating additional tools..."
 
+# --- Always installed (regardless of --no-additional-tools) ---
+
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
-
-# Install/update llm-observability (log viewer for llm conversations)
-install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
 
 # Install/update llm-server (OpenAI-compatible HTTP wrapper for llm library)
 # Requires systemd for socket activation - skip on systems without systemd
@@ -2077,6 +2200,12 @@ else
     log "Skipping llm-server (requires systemd)"
 fi
 
+# --- Skippable core tools (skipped with --no-additional-tools) ---
+if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+
+# Install/update llm-observability (log viewer for llm conversations)
+install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
+
 # Install/update toko (LLM token counter with cost estimation)
 # Requires Python 3.14 - installs with isolated Python environment
 install_or_upgrade_uv_tool toko 3.14
@@ -2084,8 +2213,13 @@ install_or_upgrade_uv_tool toko 3.14
 # Install/update md2cb (Markdown to rich HTML clipboard)
 install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz" || true
 
-# Additional tools only in full mode
+fi  # End of NO_ADDITIONAL_TOOLS check for core tools
+
+# Full mode tools
 if [ "$INSTALL_MODE" = "full" ]; then
+
+    # --- Always in full mode (regardless of --no-additional-tools) ---
+
     # Configure VS Code for local LLM mode (if any VS Code variant is installed)
     # configure-vscode disables telemetry and cloud-dependent features
     if command -v configure-vscode &>/dev/null; then
@@ -2097,6 +2231,32 @@ if [ "$INSTALL_MODE" = "full" ]; then
             configure-vscode --all || warn "Failed to configure VS Code settings, continuing..."
         fi
     fi
+
+    # Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
+    install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
+
+    # Install clipboard tooling
+    install_apt_package xclip
+
+    # Install Micro text editor
+    install_apt_package micro
+
+    # Install llm-micro plugin
+    log "Installing llm-micro plugin..."
+    MICRO_PLUGIN_DIR="$HOME/.config/micro/plug"
+    mkdir -p "$MICRO_PLUGIN_DIR"
+
+    if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
+        log "Cloning llm-micro plugin..."
+        git clone https://github.com/shamanicvocalarts/llm-micro "$MICRO_PLUGIN_DIR/llm"
+        log "llm-micro plugin installed to $MICRO_PLUGIN_DIR/llm"
+    else
+        log "llm-micro plugin already installed, checking for updates..."
+        (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
+    fi
+
+    # --- Skippable full-mode extras (skipped with --no-additional-tools) ---
+    if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
 
     # Install/update tldr (community-driven man pages with practical examples)
     install_or_upgrade_uv_tool tldr
@@ -2121,28 +2281,8 @@ if [ "$INSTALL_MODE" = "full" ]; then
     # Install/update argc (prerequisite for llm-functions if users want to install it)
     install_or_upgrade_cargo_tool argc
 
-    # Install/update yek (with commit-hash checking to avoid unnecessary rebuilds)
-    install_or_upgrade_cargo_git_tool yek https://github.com/bodo-run/yek
+    fi  # End of NO_ADDITIONAL_TOOLS check for full-mode extras
 
-    # Install clipboard tooling
-    install_apt_package xclip
-
-    # Install Micro text editor
-    install_apt_package micro
-
-    # Install llm-micro plugin
-    log "Installing llm-micro plugin..."
-    MICRO_PLUGIN_DIR="$HOME/.config/micro/plug"
-    mkdir -p "$MICRO_PLUGIN_DIR"
-
-    if [ ! -d "$MICRO_PLUGIN_DIR/llm" ]; then
-        log "Cloning llm-micro plugin..."
-        git clone https://github.com/shamanicvocalarts/llm-micro "$MICRO_PLUGIN_DIR/llm"
-        log "llm-micro plugin installed to $MICRO_PLUGIN_DIR/llm"
-    else
-        log "llm-micro plugin already installed, checking for updates..."
-        (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
-    fi
 fi  # End of INSTALL_MODE = "full" block for Phase 6
 
 #############################################################################
@@ -2152,37 +2292,20 @@ fi  # End of INSTALL_MODE = "full" block for Phase 6
 # Full mode: Install agentic CLI tools
 if [ "$INSTALL_MODE" = "full" ]; then
 
-# Install Claude Code if not present (bootstrap via npm, then native install)
+# Install or update Claude Code
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
-NPM_CLAUDE="$NPM_PREFIX/bin/claude"
+if [ -x "$NATIVE_CLAUDE" ]; then
+    log "Updating Claude Code..."
+    "$NATIVE_CLAUDE" update || warn "Claude Code update failed, continuing..."
+else
+    log "Installing Claude Code..."
+    curl --proto '=https' --tlsv1.2 -fsSL https://claude.ai/install.sh | bash
+fi
 
-if [ ! -x "$NATIVE_CLAUDE" ]; then
-    log "Installing Claude Code (native bootstrap)..."
-
-    # Check if npm version exists (for migration from previous installs)
-    if ! npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
-        # Install npm version temporarily to get the `claude install` command
-        log "Installing npm bootstrap package..."
-        npm_install install -g @anthropic-ai/claude-code
-    fi
-
-    # Verify npm binary exists before running
-    if [ ! -x "$NPM_CLAUDE" ]; then
-        warn "npm claude binary not found at $NPM_CLAUDE, cannot install native version"
-    # Run native installation (use full path, handle failure gracefully)
-    elif "$NPM_CLAUDE" install; then
-        # Verify native installation succeeded
-        if [ -x "$NATIVE_CLAUDE" ]; then
-            # Remove npm version
-            log "Removing npm bootstrap package..."
-            npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove npm bootstrap package, continuing..."
-            log "Claude Code native installation complete"
-        else
-            warn "Native Claude binary not found after install, keeping npm version"
-        fi
-    else
-        warn "Native Claude installation failed, keeping npm version"
-    fi
+# Clean up legacy npm version if it exists (migration from older installs)
+if command -v npm &>/dev/null && npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
+    log "Removing legacy npm Claude Code package..."
+    npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove legacy npm package"
 fi
 
 # WSL mode: CCR only with --ccr flag, skip Codex
@@ -2195,7 +2318,7 @@ if [ "$IS_WSL" = true ]; then
         else
             warn "Cannot configure CCR: no providers configured (run --azure or --gemini first)"
         fi
-    elif npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null; then
+    elif pkg_is_installed_global @musistudio/claude-code-router ccr; then
         if systemctl --user is-active claude-code-router &>/dev/null; then
             log "Claude Code Router is running (use --ccr to reconfigure)"
         else
@@ -2227,7 +2350,7 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
     else
         # Basic CCR install without profile exports
         log "Installing/updating Claude Code Router..."
-        install_or_upgrade_npm_global @musistudio/claude-code-router
+        install_or_upgrade_global @musistudio/claude-code-router
         update_ccr_config
         log "Claude Code Router installed"
         log "  Tip: Use --ccr flag to set up profile exports for VS Code integration"
@@ -2236,10 +2359,11 @@ else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi
 
-# Install/update Codex CLI if Azure is configured
+# Install/update Codex CLI if Azure is configured (skipped with --no-additional-tools)
+if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     log "Installing/updating Codex CLI..."
-    install_or_upgrade_npm_global @openai/codex
+    install_or_upgrade_global @openai/codex
 
     # Configure Codex CLI with Azure OpenAI credentials
     if [ ! -f "$HOME/.codex/config.toml" ]; then
@@ -2250,6 +2374,7 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
 else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
+fi  # End of NO_ADDITIONAL_TOOLS check for Codex
 
 fi  # End of WSL/non-WSL block
 
@@ -2288,28 +2413,6 @@ ensure_zprofile_sources_profile
 # This ensures tools installed previously get updates even in minimal mode
 #############################################################################
 
-# Update Claude Code if installed (native version)
-NATIVE_CLAUDE="$HOME/.local/bin/claude"
-if [ -x "$NATIVE_CLAUDE" ]; then
-    # Fast pre-check avoids slow 'claude update' (~60s) when already up-to-date
-    # Returns: 0=update available, 1=up-to-date, 2=check failed (fallback to update)
-    # Temporarily disable set -e since non-zero returns are expected
-    set +e
-    check_claude_code_update_available "$NATIVE_CLAUDE"
-    check_result=$?
-    set -e
-    if [ $check_result -eq 0 ] || [ $check_result -eq 2 ]; then
-        [ $check_result -eq 2 ] && warn "Fast update check failed, falling back to native update..."
-        "$NATIVE_CLAUDE" update || warn "Claude Code update failed, continuing..."
-    fi
-
-    # Clean up npm version if it still exists (migration from older script)
-    if npm list -g @anthropic-ai/claude-code --depth=0 &>/dev/null; then
-        log "Removing legacy npm Claude Code package..."
-        npm_uninstall_global @anthropic-ai/claude-code claude || warn "Failed to remove legacy npm package, continuing..."
-    fi
-fi
-
 # Update claudechic if installed (stylish terminal UI for Claude Code)
 if uv tool list 2>/dev/null | grep -q "^claudechic "; then
     install_or_upgrade_uv_tool claudechic
@@ -2330,9 +2433,9 @@ if uv tool list 2>/dev/null | grep -q "^yt-dlp "; then
     install_or_upgrade_uv_tool yt-dlp
 fi
 
-# Install Claude Code skills from repository (regardless of install mode)
+# Install Claude Code skills and statusline (skipped with --no-additional-tools)
 # Skills are copied on every run to ensure latest versions are always available
-if command -v claude &>/dev/null; then
+if command -v claude &>/dev/null && [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
     SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
     SKILLS_DEST_DIR="$HOME/.claude/skills"
 
@@ -2400,25 +2503,25 @@ else
     warn "Failed to download blaude"
 fi
 
-# Update npm-based tools if npm is available (skip silently if npm not installed)
-if command -v npm &>/dev/null; then
+# Update JS-based tools if a package manager is available
+if [ -n "$JS_PKG_MGR" ]; then
     # Update Gemini CLI if already installed (no automatic installation)
-    upgrade_npm_global_if_installed @google/gemini-cli
+    upgrade_global_if_installed @google/gemini-cli gemini
 
     # Update OpenCode if already installed (no automatic installation)
-    upgrade_npm_global_if_installed opencode-ai
+    upgrade_global_if_installed opencode-ai opencode
 
     # Update Claude Agent ACP if already installed (no automatic installation)
-    upgrade_npm_global_if_installed @zed-industries/claude-agent-acp
+    upgrade_global_if_installed @zed-industries/claude-agent-acp claude-agent-acp
 
     # Update Claude Code Router if already installed (no automatic installation in minimal mode)
     if [ "$INSTALL_MODE" != "full" ]; then
-        upgrade_npm_global_if_installed @musistudio/claude-code-router
+        upgrade_global_if_installed @musistudio/claude-code-router ccr
     fi
 
     # Update Codex CLI if already installed (no automatic installation in minimal mode)
     if [ "$INSTALL_MODE" != "full" ]; then
-        upgrade_npm_global_if_installed @openai/codex
+        upgrade_global_if_installed @openai/codex codex
     fi
 fi
 
@@ -2456,7 +2559,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - toko             LLM token counter with cost estimation"
     log "    - md2cb            Markdown to rich HTML clipboard"
     log ""
-    if npm list -g @musistudio/claude-code-router --depth=0 &>/dev/null 2>&1; then
+    if pkg_is_installed_global @musistudio/claude-code-router ccr; then
         log "  WSL Integration:"
         log "    - Claude Code Router  Multi-provider proxy (systemd service enabled)"
         log ""
