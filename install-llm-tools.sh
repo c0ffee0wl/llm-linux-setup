@@ -651,7 +651,7 @@ configure_ccr() {
     fi
 
     # 1. Install/update Claude Code Router
-    install_or_upgrade_global @musistudio/claude-code-router
+    install_or_upgrade_global @musistudio/claude-code-router ccr
 
     # 2. Generate CCR config
     update_ccr_config
@@ -2353,7 +2353,7 @@ if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/
     else
         # Basic CCR install without profile exports
         log "Installing/updating Claude Code Router..."
-        install_or_upgrade_global @musistudio/claude-code-router
+        install_or_upgrade_global @musistudio/claude-code-router ccr
         update_ccr_config
         log "Claude Code Router installed"
         log "  Tip: Use --ccr flag to set up profile exports for VS Code integration"

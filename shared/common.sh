@@ -1169,13 +1169,31 @@ _migrate_npm_to_bun() {
 
 # Check if a bun global package needs upgrading, and upgrade if so.
 # Returns 1 if the package is not installed.
-# Usage: _bun_check_and_upgrade_global package_name
+# Finds the installed version by following the binary symlink back to its
+# package.json, which works regardless of where bun stores global packages.
+# Usage: _bun_check_and_upgrade_global package_name [binary_name]
 _bun_check_and_upgrade_global() {
     local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+    local bin_link="$(_bun_prefix)/bin/$bin_name"
     local installed_version=""
-    local pkg_json="$(_bun_prefix)/install/global/node_modules/${package}/package.json"
-    if [ -f "$pkg_json" ]; then
-        installed_version=$(grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' "$pkg_json" 2>/dev/null || true)
+
+    # Follow the binary symlink to find the package's package.json
+    if [ -L "$bin_link" ]; then
+        local link_target
+        link_target=$(readlink "$bin_link")
+        # Resolve relative to the bin directory, walk up to find package.json
+        local target_dir
+        target_dir=$(cd "$(_bun_prefix)/bin" && cd "$(dirname "$link_target")" 2>/dev/null && pwd) || true
+        if [ -n "$target_dir" ]; then
+            local dir="$target_dir"
+            while [ "$dir" != "/" ] && [ ! -f "$dir/package.json" ]; do
+                dir=$(dirname "$dir")
+            done
+            if [ -f "$dir/package.json" ]; then
+                installed_version=$(grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' "$dir/package.json" 2>/dev/null || true)
+            fi
+        fi
     fi
 
     if [ -z "$installed_version" ]; then
@@ -1242,7 +1260,7 @@ install_or_upgrade_global() {
     local bin_name="${2:-$(basename "$package")}"
     if [ "$JS_PKG_MGR" = "bun" ]; then
         _migrate_npm_to_bun "$package" "$bin_name"
-        if ! _bun_check_and_upgrade_global "$package"; then
+        if ! _bun_check_and_upgrade_global "$package" "$bin_name"; then
             log "Installing $package via bun..."
             bun_global add -g "${package}@latest"
         fi
@@ -1261,7 +1279,7 @@ upgrade_global_if_installed() {
     local bin_name="${2:-$(basename "$package")}"
     if [ "$JS_PKG_MGR" = "bun" ]; then
         _migrate_npm_to_bun "$package" "$bin_name"
-        if ! _bun_check_and_upgrade_global "$package"; then
+        if ! _bun_check_and_upgrade_global "$package" "$bin_name"; then
             log "Skipping $package update (not installed)"
         fi
     elif [ "$JS_PKG_MGR" = "npm" ]; then
