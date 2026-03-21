@@ -1090,10 +1090,108 @@ detect_js_package_manager() {
     export JS_PKG_MGR
 }
 
-# Run bun without .env auto-loading (suppresses noisy timing output)
+# Install or upgrade bun using the official installer (not npm).
+# npm-installed bun lives in /usr/local and breaks bun's own global package
+# management. The official installer puts bun in ~/.bun/bin with proper
+# BUN_INSTALL setup.
+install_or_upgrade_bun() {
+    local bun_bin="$(_bun_prefix)/bin"
+
+    if command -v bun &>/dev/null; then
+        local bun_path
+        bun_path=$(command -v bun)
+
+        # If bun was installed via npm (lives in /usr/local or npm prefix),
+        # replace it with the official installer
+        if [[ "$bun_path" != "$bun_bin/bun" ]]; then
+            log "Bun found at $bun_path (npm install), replacing with official installer..."
+            if command -v npm &>/dev/null; then
+                npm_uninstall_global bun bun
+            fi
+            curl --proto '=https' --tlsv1.2 -fsSL https://bun.com/install | bash
+        else
+            # Already installed via official installer — use bun's built-in upgrade
+            log "Upgrading bun..."
+            bun upgrade
+        fi
+    else
+        log "Installing bun..."
+        curl --proto '=https' --tlsv1.2 -fsSL https://bun.com/install | bash
+    fi
+
+    # Ensure environment is set for this script session
+    export BUN_INSTALL="${BUN_INSTALL:-$HOME/.bun}"
+    export PATH="$bun_bin:$PATH"
+
+    # Create Node.js compatibility symlinks
+    if [ -x "$bun_bin/bun" ]; then
+        ln -sf "$bun_bin/bun" "$bun_bin/node"
+        ln -sf "$bun_bin/bunx" "$bun_bin/npx"
+        log "Bun installed at $bun_bin/bun ($(bun --version))"
+    else
+        warn "Bun installation may have failed — binary not found at $bun_bin/bun"
+    fi
+}
+
+# Get bun's user data directory (cached).
+# Uses $BUN_INSTALL if set, otherwise $HOME/.bun (bun's default for global
+# packages, bin links, and cache regardless of where the binary is installed).
+_bun_prefix() {
+    if [ -z "$_BUN_PREFIX_CACHE" ]; then
+        _BUN_PREFIX_CACHE="${BUN_INSTALL:-$HOME/.bun}"
+    fi
+    printf '%s' "$_BUN_PREFIX_CACHE"
+}
+
+# Run bun without automatic .env file loading (suppresses noisy timing output)
 # Usage: bun_global <args...>
 bun_global() {
-    BUN_DOT_ENV=0 bun "$@"
+    bun --no-env-file "$@"
+}
+
+# Remove a stale npm-installed global package when bun is the active manager.
+# This handles migration from npm → bun: if the package exists in npm's prefix
+# (/usr/local/lib/node_modules/...), uninstall it so bun's copy takes precedence.
+# Usage: _migrate_npm_to_bun package_name [binary_name]
+_migrate_npm_to_bun() {
+    local package="$1"
+    local bin_name="${2:-$(basename "$package")}"
+
+    # Check common npm global locations for a stale install
+    local npm_prefix="${NPM_PREFIX:-/usr/local}"
+    local npm_pkg_dir="${npm_prefix}/lib/node_modules/${package}"
+
+    if [ -d "$npm_pkg_dir" ] && command -v npm &>/dev/null; then
+        log "Migrating $package from npm to bun..."
+        npm_uninstall_global "$package" "$bin_name"
+    fi
+}
+
+# Check if a bun global package needs upgrading, and upgrade if so.
+# Returns 1 if the package is not installed.
+# Usage: _bun_check_and_upgrade_global package_name
+_bun_check_and_upgrade_global() {
+    local package="$1"
+    local installed_version=""
+    local pkg_json="$(_bun_prefix)/install/global/node_modules/${package}/package.json"
+    if [ -f "$pkg_json" ]; then
+        installed_version=$(grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' "$pkg_json" 2>/dev/null || true)
+    fi
+
+    if [ -z "$installed_version" ]; then
+        return 1
+    fi
+
+    # Check latest version from npm registry
+    local latest_version
+    latest_version=$(curl -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
+
+    if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
+        log "Upgrading $package: $installed_version -> $latest_version"
+        bun_global add -g "${package}@latest"
+    else
+        log "$package is up to date ($installed_version)"
+    fi
 }
 
 # Install a global package via bun or npm
@@ -1129,7 +1227,7 @@ pkg_is_installed_global() {
     local package="$1"
     local bin_name="${2:-$(basename "$package")}"
     if [ "$JS_PKG_MGR" = "bun" ]; then
-        [ -x "$HOME/.bun/bin/$bin_name" ]
+        [ -x "$(_bun_prefix)/bin/$bin_name" ]
     elif [ "$JS_PKG_MGR" = "npm" ]; then
         npm list -g "$package" --depth=0 &>/dev/null
     else
@@ -1143,27 +1241,10 @@ install_or_upgrade_global() {
     local package="$1"
     local bin_name="${2:-$(basename "$package")}"
     if [ "$JS_PKG_MGR" = "bun" ]; then
-        # Check installed version via bun's global node_modules
-        local installed_version=""
-        local pkg_json="$HOME/.bun/install/global/node_modules/${package}/package.json"
-        if [ -f "$pkg_json" ]; then
-            installed_version=$(grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' "$pkg_json" 2>/dev/null || true)
-        fi
-
-        if [ -z "$installed_version" ]; then
+        _migrate_npm_to_bun "$package" "$bin_name"
+        if ! _bun_check_and_upgrade_global "$package"; then
             log "Installing $package via bun..."
             bun_global add -g "${package}@latest"
-        else
-            # Check latest version from npm registry
-            local latest_version
-            latest_version=$(curl -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
-
-            if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
-                log "Upgrading $package: $installed_version -> $latest_version"
-                bun_global add -g "${package}@latest"
-            else
-                log "$package is up to date ($installed_version)"
-            fi
         fi
     elif [ "$JS_PKG_MGR" = "npm" ]; then
         install_or_upgrade_npm_global "$package"
@@ -1179,10 +1260,8 @@ upgrade_global_if_installed() {
     local package="$1"
     local bin_name="${2:-$(basename "$package")}"
     if [ "$JS_PKG_MGR" = "bun" ]; then
-        if [ -x "$HOME/.bun/bin/$bin_name" ]; then
-            log "Updating $package via bun..."
-            bun_global add -g "${package}@latest"
-        else
+        _migrate_npm_to_bun "$package" "$bin_name"
+        if ! _bun_check_and_upgrade_global "$package"; then
             log "Skipping $package update (not installed)"
         fi
     elif [ "$JS_PKG_MGR" = "npm" ]; then

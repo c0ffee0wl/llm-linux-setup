@@ -729,7 +729,7 @@ configure_ccr_systemd_service() {
     ccr_path=$(which ccr 2>/dev/null) || ccr_path=""
     if [ -z "$ccr_path" ]; then
         if [ "$JS_PKG_MGR" = "bun" ]; then
-            ccr_path="$HOME/.bun/bin/ccr"
+            ccr_path="$(_bun_prefix)/bin/ccr"
         else
             ccr_path="${NPM_PREFIX:-/usr/local}/bin/ccr"
         fi
@@ -1195,7 +1195,7 @@ if [ "$INSTALL_MODE" = "full" ]; then
             detect_npm_permissions
         else
             NPM_NEEDS_SUDO=false
-            NPM_PREFIX="${HOME}/.bun"
+            NPM_PREFIX="$(_bun_prefix)"
             export NPM_NEEDS_SUDO NPM_PREFIX
         fi
     else
@@ -1205,9 +1205,12 @@ if [ "$INSTALL_MODE" = "full" ]; then
         # Detect if npm needs sudo for global installs
         detect_npm_permissions
 
-        # Install bun via npm
-        log "Installing/updating bun..."
-        install_or_upgrade_npm_global bun
+        # Install/update bun via official installer (not npm — npm-installed bun
+        # breaks bun's own global package management)
+        install_or_upgrade_bun
+
+        # Re-detect package manager now that bun is available
+        detect_js_package_manager
     fi
 fi
 
