@@ -29,6 +29,8 @@ Type=simple
 ExecStart={executable} --foreground
 Restart=on-failure
 RestartSec=5
+# Daemon handles SIGTERM via asyncio signal handler; 10s is plenty
+TimeoutStopSec=10
 Environment=PYTHONUNBUFFERED=1
 # PATH captured at install time - needed for asciinema, context CLI, etc.
 Environment=PATH={path}

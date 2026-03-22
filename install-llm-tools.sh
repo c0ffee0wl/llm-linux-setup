@@ -1100,14 +1100,19 @@ stop_assistant_processes() {
     local stopped=false
 
     # Stop systemd service first (if enabled) - this also stops the daemon process
+    local systemd_stopped=false
     if command -v systemctl &> /dev/null && systemctl --user is-active llm-assistant.service &> /dev/null; then
         log "Stopping llm-assistant systemd service..."
-        systemctl --user stop llm-assistant.service && stopped=true
+        systemctl --user stop llm-assistant.service && systemd_stopped=true && stopped=true
     fi
 
-    graceful_stop_process "llm-assistant.*--daemon" 10 "llm-assistant daemon" && stopped=true
+    # Only kill daemon processes manually if systemd didn't handle it
+    if [ "$systemd_stopped" = "false" ]; then
+        graceful_stop_process "llm-assistant.*--daemon" 10 "llm-assistant daemon" && stopped=true
+        graceful_stop_process "python.*llm_assistant.*--daemon" 10 "Python llm-assistant" && stopped=true
+    fi
+
     graceful_stop_process "llm-guiassistant" 10 "llm-guiassistant" && stopped=true
-    graceful_stop_process "python.*llm_assistant.*--daemon" 10 "Python llm-assistant" && stopped=true
     graceful_stop_process "python.*llm_guiassistant" 10 "Python llm-guiassistant" && stopped=true
 
     if [ "$stopped" = "true" ]; then
@@ -2298,8 +2303,16 @@ if [ "$INSTALL_MODE" = "full" ]; then
 # Install or update Claude Code
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
 if [ -x "$NATIVE_CLAUDE" ]; then
-    log "Updating Claude Code..."
-    "$NATIVE_CLAUDE" update || warn "Claude Code update failed, continuing..."
+    # Fast pre-check avoids slow 'claude update' (~60s) when already up-to-date
+    # Returns: 0=update available, 1=up-to-date, 2=check failed (fallback to update)
+    set +e
+    check_claude_code_update_available "$NATIVE_CLAUDE"
+    check_result=$?
+    set -e
+    if [ $check_result -eq 0 ] || [ $check_result -eq 2 ]; then
+        [ $check_result -eq 2 ] && warn "Fast update check failed, falling back to native update..."
+        "$NATIVE_CLAUDE" update || warn "Claude Code update failed, continuing..."
+    fi
 else
     log "Installing Claude Code..."
     curl --proto '=https' --tlsv1.2 -fsSL https://claude.ai/install.sh | bash
