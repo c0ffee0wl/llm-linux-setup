@@ -1242,7 +1242,7 @@ _bun_check_and_upgrade_global() {
     latest_version=$(curl -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
 
     if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
-        log "Upgrading $package: $installed_version -> $latest_version"
+        log "Upgrading $package: $installed_version -> $latest_version (bun staletime may prevent actual upgrade)"
         bun_global add -g "${package}@latest"
     else
         log "$package is up to date ($installed_version)"
