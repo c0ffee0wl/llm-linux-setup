@@ -38,6 +38,7 @@ fi
 FORCE_AZURE_CONFIG=false
 FORCE_GEMINI_CONFIG=false
 CLEAR_CACHE=false
+FORCE_LLM=false
 MINIMAL_FLAG=false
 FULL_FLAG=false
 WSL_FLAG=""  # "", "force", or "disable"
@@ -60,6 +61,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --clear-cache)
             CLEAR_CACHE=true
+            shift
+            ;;
+        --force-llm)
+            FORCE_LLM=true
             shift
             ;;
         --minimal)
@@ -100,6 +105,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --no-additional-tools  Skip non-essential tools (Handy, Ulauncher, tldr, Codex, etc.)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
+            echo "  --force-llm    Force LLM reinstall even if plugins/sources haven't changed"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
             echo "  --help         Show this help message"
             echo ""
@@ -888,146 +894,6 @@ update_template_file() {
         "${template_name}.yaml template" "N" "false"
 }
 
-# Extract normalized plugin name from various source formats
-# Git URLs: git+https://github.com/user/llm-foo → llm-foo
-# Local paths: /path/to/llm-foo → llm-foo
-# PyPI names: llm-foo → llm-foo (passthrough)
-# Usage: extract_plugin_name "source"
-extract_plugin_name() {
-    local source="$1"
-
-    if [[ "$source" =~ ^git\+ ]]; then
-        # Git URL: extract repo name from URL
-        # git+https://github.com/user/llm-foo → llm-foo
-        echo "$source" | sed 's|.*[/]||; s|\.git$||'
-    elif [[ "$source" =~ ^/ ]]; then
-        # Local path: extract directory name
-        # /path/to/llm-foo → llm-foo
-        basename "$source"
-    else
-        # PyPI name: passthrough
-        echo "$source"
-    fi
-}
-
-# Clean up stale local paths from both tracking files:
-# 1. uv-tool-packages.json - llm-uv-tool's tracking (for llm install interception)
-# 2. uv-receipt.toml - uv's internal tracking (for uv tool upgrade)
-# Must be called BEFORE llm upgrade, otherwise uv tries to reinstall missing local paths
-cleanup_stale_local_plugin_paths() {
-    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
-    local uv_receipt_file="$HOME/.local/share/uv/tools/llm/uv-receipt.toml"
-
-    # Clean up uv-tool-packages.json (llm-uv-tool tracking)
-    if [ -f "$uv_packages_file" ]; then
-        local stale_paths=()
-        while IFS= read -r entry; do
-            # Check if it's a local path (starts with /)
-            if [[ "$entry" =~ ^/ ]]; then
-                # Stale if: doesn't exist OR missing pyproject.toml/setup.py (not a valid Python project)
-                if [ ! -d "$entry" ] || { [ ! -f "$entry/pyproject.toml" ] && [ ! -f "$entry/setup.py" ]; }; then
-                    stale_paths+=("$entry")
-                    log "Removing stale local path from uv-tool-packages.json: $entry"
-                fi
-            fi
-        done < <(jq -r '.[]' "$uv_packages_file" 2>/dev/null)
-
-        # Remove stale entries from JSON (both path and derived plugin name)
-        for path in "${stale_paths[@]}"; do
-            # Extract plugin name from path (basename)
-            local plugin_name
-            plugin_name=$(basename "$path")
-
-            # Remove both the path and the name from JSON
-            jq --arg path "$path" --arg name "$plugin_name" \
-                'map(select(. != $path and . != $name))' \
-                "$uv_packages_file" > "${uv_packages_file}.tmp" && \
-                mv "${uv_packages_file}.tmp" "$uv_packages_file"
-
-            log "Also removing plugin name from tracking: $plugin_name"
-        done
-    fi
-
-    # Clean up uv-receipt.toml (uv's internal tracking)
-    # Two-pass approach: first identify stale plugins, then remove ALL their entries
-    # Note: TOML has name and directory on separate lines, so we track state across lines
-    if [ -f "$uv_receipt_file" ]; then
-        local stale_plugins=()
-        local current_name=""
-
-        # Pass 1: Find plugins with stale local paths
-        while IFS= read -r line; do
-            # Track plugin name (comes before directory in TOML)
-            if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-                current_name="${BASH_REMATCH[1]}"
-            fi
-            # Check if directory is a valid Python project (directory line comes after name line)
-            if [[ "$line" =~ directory[[:space:]]*=[[:space:]]*\"([^\"]+)\" ]]; then
-                local dir_path="${BASH_REMATCH[1]}"
-                # Stale if: doesn't exist OR missing pyproject.toml/setup.py (not a valid Python project)
-                if [ -n "$current_name" ]; then
-                    if [ ! -d "$dir_path" ] || { [ ! -f "$dir_path/pyproject.toml" ] && [ ! -f "$dir_path/setup.py" ]; }; then
-                        log "Found stale local path for $current_name: $dir_path"
-                        stale_plugins+=("$current_name")
-                    fi
-                fi
-            fi
-        done < "$uv_receipt_file"
-
-        # Pass 2: Remove lines containing stale plugin names
-        # Handles both inline tables { name = "..." } and multi-line entries
-        if [ ${#stale_plugins[@]} -gt 0 ]; then
-            local temp_file="${uv_receipt_file}.tmp"
-
-            while IFS= read -r line || [ -n "$line" ]; do
-                local skip_line=false
-                for plugin in "${stale_plugins[@]}"; do
-                    # Match: name = "plugin-name" (with optional surrounding content)
-                    if [[ "$line" =~ name[[:space:]]*=[[:space:]]*\"${plugin}\" ]]; then
-                        log "Removing line for stale plugin: $plugin"
-                        skip_line=true
-                        break
-                    fi
-                done
-                if [ "$skip_line" = false ]; then
-                    printf '%s\n' "$line"
-                fi
-            done < "$uv_receipt_file" > "$temp_file"
-
-            mv "$temp_file" "$uv_receipt_file"
-            log "Cleaned ${#stale_plugins[@]} stale plugin(s) from uv-receipt.toml"
-        fi
-    fi
-}
-
-# Remove a specific plugin from both tracking files by name
-# Must clean both files to prevent llm-uv-tool from re-adding entries
-# Usage: remove_plugin_from_tracking "plugin-name"
-remove_plugin_from_tracking() {
-    local plugin_name="$1"
-    local uv_packages_file="$HOME/.config/io.datasette.llm/uv-tool-packages.json"
-    local uv_receipt_file="$HOME/.local/share/uv/tools/llm/uv-receipt.toml"
-
-    # Remove from uv-tool-packages.json (llm-uv-tool tracking)
-    if [ -f "$uv_packages_file" ]; then
-        if jq -e --arg name "$plugin_name" 'any(. == $name or endswith("/" + $name))' "$uv_packages_file" >/dev/null 2>&1; then
-            jq --arg name "$plugin_name" 'map(select(. != $name and (. | tostring | endswith("/" + $name) | not)))' \
-                "$uv_packages_file" > "${uv_packages_file}.tmp" && \
-                mv "${uv_packages_file}.tmp" "$uv_packages_file"
-            log "Removed $plugin_name from uv-tool-packages.json"
-        fi
-    fi
-
-    # Remove from uv-receipt.toml (uv internal tracking)
-    if [ -f "$uv_receipt_file" ]; then
-        if grep -q "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file"; then
-            grep -v "name[[:space:]]*=[[:space:]]*\"${plugin_name}\"" "$uv_receipt_file" > "${uv_receipt_file}.tmp"
-            mv "${uv_receipt_file}.tmp" "$uv_receipt_file"
-            log "Removed $plugin_name from uv-receipt.toml"
-        fi
-    fi
-}
-
 # Run cache cleanup if requested as standalone operation
 if [ "$CLEAR_CACHE" = "true" ]; then
     clear_package_caches
@@ -1246,27 +1112,6 @@ GEMINI_CONFIGURED=false
 # Installed via uv tool from git repository with llm-uv-tool bundled
 # llm-uv-tool intercepts `llm install` commands to make plugins persist across LLM upgrades
 
-# Clear uv cache to remove stale build artifacts (e.g., renamed local plugins)
-uv cache clean --quiet 2>/dev/null || true
-
-# Clean up stale local plugin paths before upgrade (handles migration from local to git)
-cleanup_stale_local_plugin_paths
-
-# Remove old llm plugin from both tracking files
-# Must clean BEFORE any llm operations - invalid local paths cause failures
-remove_plugin_from_tracking "llm-tools-sidechat"
-
-# Remove llm-azure plugin (deprecated - using OpenAI-compatible endpoint for embeddings)
-remove_plugin_from_tracking "llm-azure"
-
-# Remove local packages that depend on llm-tools-core from tracking before llm upgrade
-# llm-tools-core is a local package not on PyPI, so dependencies can't be resolved during upgrade
-# These will be reinstalled after llm-tools-core is available
-remove_plugin_from_tracking "llm-tools-core"
-remove_plugin_from_tracking "llm-tools-context"
-remove_plugin_from_tracking "llm-assistant"
-remove_plugin_from_tracking "llm-inlineassistant"
-
 # Install llm-tools-core to user site-packages BEFORE llm upgrade
 # This is needed by: terminator plugin (system Python)
 log "Installing llm-tools-core to user site-packages..."
@@ -1336,8 +1181,8 @@ REMOTE_PLUGINS=(
     "llm-classify"
 )
 
-# Local plugins (in-repo packages that should always be reinstalled)
-# These use --reinstall-package to force rebuild on every run
+# Local plugins (in-repo packages)
+# These use --reinstall-package to force rebuild when an install is triggered
 LOCAL_PLUGINS=(
     "$SCRIPT_DIR/llm-tools-core"
     "$SCRIPT_DIR/llm-tools-context"
@@ -1371,41 +1216,80 @@ ALL_PLUGINS=("${REMOTE_PLUGINS[@]}" "${LOCAL_PLUGINS[@]}")
 # Install/Update LLM with ALL Plugins (consolidated for performance)
 #############################################################################
 
-log "Installing/upgrading LLM with all plugins..."
+LLM_SOURCE="git+https://github.com/c0ffee0wl/llm"
 
-# Build --with flags from ALL plugins
-WITH_FLAGS=""
-for plugin in "${ALL_PLUGINS[@]}"; do
-    WITH_FLAGS+=" --with \"$plugin\""
-done
+# Compute a fingerprint of everything that affects the install command.
+# If unchanged since last run, skip the expensive reinstall.
+compute_llm_install_fingerprint() {
+    local hash_input=""
 
-# Build --reinstall-package flags for local plugins
-# This forces uv to always rebuild in-repo packages regardless of version number
-REINSTALL_FLAGS=""
-for local_path in "${LOCAL_PLUGINS[@]}"; do
-    # Extract package name from path (last directory component, replace - with _)
-    pkg_name=$(basename "$local_path")
-    # Convert package name to Python package format (hyphens to underscores)
-    pkg_name_normalized="${pkg_name//-/_}"
-    REINSTALL_FLAGS+=" --reinstall-package $pkg_name_normalized"
-done
+    # LLM source URL
+    hash_input+="llm:$LLM_SOURCE"$'\n'
 
-# Install llm with all plugins
-# --force: required because uv tool upgrade doesn't support --with flags
-# --reinstall-package: forces rebuild of local plugins even if version unchanged
-log "Installing llm with ${#ALL_PLUGINS[@]} plugins (${#LOCAL_PLUGINS[@]} local)..."
-eval "uv tool install --force $REINSTALL_FLAGS $WITH_FLAGS \"git+https://github.com/c0ffee0wl/llm\""
+    # All plugin sources (sorted for deterministic hashing)
+    for plugin in $(printf '%s\n' "${ALL_PLUGINS[@]}" | sort); do
+        hash_input+="plugin:$plugin"$'\n'
+    done
 
-# Update uv-tool-packages.json for llm-uv-tool compatibility
-LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"
-PACKAGES_FILE="$LLM_CONFIG_DIR_TEMP/uv-tool-packages.json"
-mkdir -p "$LLM_CONFIG_DIR_TEMP"
+    # Hash of local plugin source files (detect code changes)
+    for local_path in "${LOCAL_PLUGINS[@]}"; do
+        if [ -d "$local_path" ]; then
+            local dir_hash
+            dir_hash=$(find "$local_path" -path '*/build' -prune -o -path '*/__pycache__' -prune -o -path '*.egg-info' -prune -o \( -name '*.py' -o -name 'pyproject.toml' \) -print | sort | xargs cat 2>/dev/null | sha256sum | awk '{print $1}')
+            hash_input+="local:$local_path:$dir_hash"$'\n'
+        fi
+    done
 
-# Generate JSON array using jq (skip llm-uv-tool itself from tracking)
-# jq handles special characters in paths correctly
-printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool" | jq -R . | jq -s . > "$PACKAGES_FILE"
+    printf '%s' "$hash_input" | sha256sum | awk '{print $1}'
+}
 
-log "LLM and plugins ready"
+LLM_INSTALL_FINGERPRINT=$(compute_llm_install_fingerprint)
+LLM_FINGERPRINT_FILE="$LLM_TOOLS_CONFIG_DIR/llm-install-fingerprint"
+STORED_FINGERPRINT=$(cat "$LLM_FINGERPRINT_FILE" 2>/dev/null || echo "")
+
+if [ "$FORCE_LLM" = "false" ] && \
+   [ "$LLM_INSTALL_FINGERPRINT" = "$STORED_FINGERPRINT" ] && \
+   command -v llm &>/dev/null; then
+    log "LLM and plugins are up to date (no changes detected), skipping reinstall"
+else
+    # Build --with flags from ALL plugins
+    WITH_FLAGS=""
+    for plugin in "${ALL_PLUGINS[@]}"; do
+        WITH_FLAGS+=" --with \"$plugin\""
+    done
+
+    # Build --reinstall-package flags for local plugins
+    # This forces uv to always rebuild in-repo packages regardless of version number
+    REINSTALL_FLAGS=""
+    for local_path in "${LOCAL_PLUGINS[@]}"; do
+        # Extract package name from path (last directory component, replace - with _)
+        pkg_name=$(basename "$local_path")
+        # Convert package name to Python package format (hyphens to underscores)
+        pkg_name_normalized="${pkg_name//-/_}"
+        REINSTALL_FLAGS+=" --reinstall-package $pkg_name_normalized"
+    done
+
+    # Install llm with all plugins
+    # --force: required because uv tool upgrade doesn't support --with flags
+    # --reinstall-package: forces rebuild of local plugins even if version unchanged
+    log "Installing llm with ${#ALL_PLUGINS[@]} plugins (${#LOCAL_PLUGINS[@]} local)..."
+    eval "uv tool install --force $REINSTALL_FLAGS $WITH_FLAGS \"$LLM_SOURCE\""
+
+    # Update uv-tool-packages.json for llm-uv-tool compatibility
+    LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"
+    PACKAGES_FILE="$LLM_CONFIG_DIR_TEMP/uv-tool-packages.json"
+    mkdir -p "$LLM_CONFIG_DIR_TEMP"
+
+    # Generate JSON array using jq (skip llm-uv-tool itself from tracking)
+    # jq handles special characters in paths correctly
+    printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool" | jq -R . | jq -s . > "$PACKAGES_FILE"
+
+    # Store fingerprint after successful install
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    echo "$LLM_INSTALL_FINGERPRINT" > "$LLM_FINGERPRINT_FILE"
+
+    log "LLM and plugins ready"
+fi
 
 # Define the extra models file path early so we can check/preserve existing config
 LLM_CONFIG_DIR="$(get_llm_config_dir)"
@@ -2558,8 +2442,8 @@ fi
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
 clear_package_caches
 
-# Final CCR health verification — catch regressions from later phases
-if pkg_is_installed_global @musistudio/claude-code-router ccr; then
+# Final CCR health verification — only if the systemd service is enabled
+if systemctl --user is-enabled claude-code-router &>/dev/null; then
     verify_ccr_or_recover
 fi
 

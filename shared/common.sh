@@ -1674,32 +1674,6 @@ install_go_tool() {
 # Utility Functions
 #############################################################################
 
-# Extract normalized plugin name from various source formats
-# Examples:
-#   "git+https://github.com/c0ffee0wl/llm-vertex" -> "llm-vertex"
-#   "/opt/llm-linux-setup/llm-tools-context" -> "llm-tools-context"
-#   "llm-gemini" -> "llm-gemini"
-extract_plugin_name() {
-    local source="$1"
-
-    # Git URL: git+https://github.com/user/llm-foo -> llm-foo
-    # Note: Use [+] not \+ for ERE compatibility in bash
-    if [[ "$source" =~ ^git[+]https:// ]]; then
-        # Extract last path component, strip optional .git suffix
-        echo "$source" | sed 's|.*/||; s|\.git$||'
-        return
-    fi
-
-    # Local path: /path/to/llm-foo -> llm-foo
-    if [[ "$source" =~ ^/ ]]; then
-        basename "$source"
-        return
-    fi
-
-    # PyPI name: llm-foo -> llm-foo
-    echo "$source"
-}
-
 # Apply PipeWire VM audio fix (WirePlumber configuration)
 # Increases buffer size to prevent audio stuttering in virtual machines
 # Reference: https://gitlab.freedesktop.org/pipewire/pipewire/-/wikis/Troubleshooting#stuttering-audio-in-virtual-machine
