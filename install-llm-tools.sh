@@ -420,24 +420,8 @@ update_ccr_config() {
     local old_plugins_hash=""
     [ -d "$plugin_dir" ] && old_plugins_hash=$(cat "$plugin_dir"/*.js 2>/dev/null | md5sum)
 
-    # Check provider availability
-    # Azure: use AZURE_CONFIGURED (ensures YAML file exists)
-    # Gemini: check key store directly (no file dependency)
-    local has_azure_key="$AZURE_CONFIGURED"
-    local has_gemini_key=false
-    if command llm keys get gemini &>/dev/null; then
-        has_gemini_key=true
-    fi
-
-    # Generate config based on available providers (use actual key existence)
-    local config_content
-
-    if [ "$has_azure_key" = "true" ] && [ "$has_gemini_key" = "true" ]; then
-        # Dual-provider config: Azure primary (Responses API), Gemini fallback
-        log "Generating dual-provider config (Azure primary, Azure web search)"
-
-        # Create strip-reasoning.js plugin for Azure
-        cat > "$plugin_file" <<'EOF'
+    # Always write transformer plugins (ensures they exist for any config variant that references them)
+    cat > "$plugin_file" <<'EOF'
 class StripReasoningTransformer {
   name = "strip-reasoning";
 
@@ -458,10 +442,8 @@ class StripReasoningTransformer {
 
 module.exports = StripReasoningTransformer;
 EOF
-        log "Created strip-reasoning.js transformer plugin"
 
-        # Create web-search-inject.js plugin for Azure web search
-        cat > "$websearch_plugin_file" <<'EOF'
+    cat > "$websearch_plugin_file" <<'EOF'
 class WebSearchInjectTransformer {
   name = "web-search-inject";
 
@@ -497,14 +479,29 @@ class WebSearchInjectTransformer {
 
 module.exports = WebSearchInjectTransformer;
 EOF
-        log "Created web-search-inject.js transformer plugin"
 
-        # Detect plugin changes for restart tracking
-        local new_plugins_hash=$(cat "$plugin_dir"/*.js 2>/dev/null | md5sum)
-        if [ "$old_plugins_hash" != "$new_plugins_hash" ]; then
-            CCR_NEEDS_RESTART=true
-            log "CCR plugins updated"
-        fi
+    # Detect plugin changes for restart tracking
+    local new_plugins_hash=$(cat "$plugin_dir"/*.js 2>/dev/null | md5sum)
+    if [ "$old_plugins_hash" != "$new_plugins_hash" ]; then
+        CCR_NEEDS_RESTART=true
+        log "CCR plugins updated"
+    fi
+
+    # Check provider availability
+    # Azure: use AZURE_CONFIGURED (ensures YAML file exists)
+    # Gemini: check key store directly (no file dependency)
+    local has_azure_key="$AZURE_CONFIGURED"
+    local has_gemini_key=false
+    if command llm keys get gemini &>/dev/null; then
+        has_gemini_key=true
+    fi
+
+    # Generate config based on available providers (use actual key existence)
+    local config_content
+
+    if [ "$has_azure_key" = "true" ] && [ "$has_gemini_key" = "true" ]; then
+        # Dual-provider config: Azure primary (Responses API), Gemini fallback
+        log "Generating dual-provider config (Azure primary, Azure web search)"
 
         # Extract Azure API base
         local azure_api_base=""
@@ -648,6 +645,12 @@ configure_ccr() {
     local CCR_PORT=3456
     CCR_NEEDS_RESTART=false
 
+    # Skip CCR update if Claude Code is actively running to avoid session disruption
+    if pgrep -x "claude" &>/dev/null; then
+        warn "Claude Code is running — skipping CCR update to avoid session disruption"
+        return 0
+    fi
+
     # 0. Stop CCR before binary upgrade to prevent port/binary races
     if systemctl --user is-active claude-code-router &>/dev/null; then
         systemctl --user stop claude-code-router
@@ -741,6 +744,16 @@ configure_ccr_systemd_service() {
 
     mkdir -p "$service_dir"
 
+    # Enable lingering BEFORE any systemctl --user commands.
+    # On first install, the user systemd manager may not be running without lingering.
+    if command -v loginctl > /dev/null 2>&1; then
+        if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
+            sudo loginctl enable-linger "$USER" 2>/dev/null || \
+                warn "Could not enable lingering. CCR may not auto-start on WSL boot."
+            sleep 2  # Brief wait for user manager to start
+        fi
+    fi
+
     # Capture current PATH (includes NVM, cargo, etc.) for systemd
     # Systemd services don't inherit shell environment, so we must pass PATH explicitly
     local current_path="$PATH"
@@ -757,6 +770,8 @@ Type=simple
 ExecStart=${ccr_path} start
 Restart=on-failure
 RestartSec=5
+StartLimitBurst=5
+StartLimitIntervalSec=60
 Environment=PORT=${port}
 Environment=PATH=${current_path}
 EnvironmentFile=${env_file}
@@ -800,13 +815,8 @@ WantedBy=default.target"
         fi
     fi
 
-    # Enable lingering so service starts without login (idempotent)
-    if command -v loginctl > /dev/null 2>&1; then
-        if ! loginctl show-user "$USER" 2>/dev/null | grep -q "Linger=yes"; then
-            sudo loginctl enable-linger "$USER" 2>/dev/null || \
-                warn "Could not enable lingering. CCR may not auto-start on WSL boot."
-        fi
-    fi
+    # Verify CCR is actually serving requests
+    wait_for_ccr "$port" || warn "CCR may not be ready — Claude CLI calls could fail until it starts"
 }
 
 # Set or migrate default model (handles automatic migration from old defaults)
@@ -2547,6 +2557,11 @@ fi
 
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
 clear_package_caches
+
+# Final CCR health verification — catch regressions from later phases
+if pkg_is_installed_global @musistudio/claude-code-router ccr; then
+    verify_ccr_or_recover
+fi
 
 #############################################################################
 # COMPLETE

@@ -1825,3 +1825,36 @@ graceful_stop_process() {
     fi
     return 0
 }
+
+#############################################################################
+# CCR Service Readiness
+#############################################################################
+
+# Poll CCR health endpoint until it responds (max ~10s).
+# Usage: wait_for_ccr [port]
+wait_for_ccr() {
+    local port="${1:-3456}"
+    local url="http://127.0.0.1:${port}/health"
+    local max_attempts=20
+    local i
+
+    for ((i=1; i<=max_attempts; i++)); do
+        if curl -sf --max-time 1 "$url" &>/dev/null; then
+            log "CCR is responding on port ${port}"
+            return 0
+        fi
+        sleep 0.5
+    done
+    warn "CCR not responding on port ${port} after 10s"
+    return 1
+}
+
+# Final CCR availability check — catch regressions from later phases
+verify_ccr_or_recover() {
+    local port="${1:-3456}"
+    if ! curl -sf --max-time 1 "http://127.0.0.1:${port}/health" &>/dev/null; then
+        warn "CCR not responding — attempting recovery restart..."
+        systemctl --user restart claude-code-router 2>/dev/null || true
+        wait_for_ccr "$port" || warn "CCR recovery failed. Run: systemctl --user restart claude-code-router"
+    fi
+}
