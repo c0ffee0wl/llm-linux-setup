@@ -199,9 +199,6 @@ wut() {
 # Alias for Claude Code Router
 alias routed-claude='ccr code'
 
-# Alias claude to use blaude (Claude Code wrapper with enhanced features)
-alias claude='blaude --git'
-
 # Linux version of macOS pbcopy and pbpaste
 alias pbcopy='xsel --clipboard --input'
 alias pbpaste='xsel --clipboard --output'

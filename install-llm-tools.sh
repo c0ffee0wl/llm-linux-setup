@@ -1152,9 +1152,6 @@ REMOTE_PLUGINS=(
     # Provider plugins
     "git+https://github.com/c0ffee0wl/llm-gemini"
     "git+https://github.com/c0ffee0wl/llm-vertex"
-    "git+https://github.com/c0ffee0wl/llm-openai-plugin"
-    "llm-openrouter"
-    "llm-anthropic"
 
     # Command plugins
     "git+https://github.com/c0ffee0wl/llm-cmd"
@@ -1190,6 +1187,15 @@ REMOTE_PLUGINS=(
     "llm-sort"
     "llm-classify"
 )
+
+# Optional plugins (skipped with --no-additional-tools)
+if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+    REMOTE_PLUGINS+=(
+        "llm-openrouter"
+        "llm-anthropic"
+        "git+https://github.com/c0ffee0wl/llm-tools-fragment-bridge"
+    )
+fi
 
 # Local plugins (in-repo packages)
 # These use --reinstall-package to force rebuild when an install is triggered
