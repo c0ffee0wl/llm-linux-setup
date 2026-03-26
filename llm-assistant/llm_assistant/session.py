@@ -297,6 +297,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Per-terminal block hashes from previous capture (for delta diffing)
         # Only send command blocks that weren't in the previous capture
         self.previous_capture_block_hashes: Dict[str, Set[str]] = {}  # uuid -> set of block hashes
+        # Per-terminal INPUT_START_MARKER count for watch mode execution detection
+        # If marker count hasn't increased, no new command was executed (user is
+        # just scrolling, typing without executing, or browsing history)
+        self.terminal_marker_counts: Dict[str, int] = {}  # uuid -> marker count
 
         # D-Bus connections
         self.dbus_service = None
@@ -379,6 +383,17 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Set session reference for slash command completer (dynamic completions need access to self)
         if hasattr(self.prompt_session, 'completer') and self.prompt_session.completer:
             self.prompt_session.completer.set_session(self)
+
+    def _clear_dedup_state(self) -> None:
+        """Clear all per-terminal deduplication tracking state.
+
+        Called when context needs fresh capture: rewind, /clear, /reset,
+        tool execution refresh, or model switch.
+        """
+        self.terminal_content_hashes.clear()
+        self.toolresult_hash_updated.clear()
+        self.previous_capture_block_hashes.clear()
+        self.terminal_marker_counts.clear()
 
     def _create_prompt_session(self) -> PromptSession:
         """Create prompt_toolkit session with voice toggle keybinding and slash command completion."""
@@ -1261,6 +1276,44 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         return content
 
     @staticmethod
+    def _strip_pending_input(content: str) -> str:
+        """Strip typed-but-not-executed text from the end of captured content.
+
+        When the user types a command but hasn't pressed Enter, the VTE buffer
+        contains the typed text after INPUT_START_MARKER on the last prompt line.
+        This looks identical to an executed command that produced no output,
+        causing watch mode to misinterpret it as an executed command.
+
+        Detection: if the last INPUT_START_MARKER has non-whitespace text after
+        it AND no subsequent markers (no command output followed by a new prompt),
+        the text is pending input — strip the entire prompt line.
+        """
+        if not PromptDetector.has_unicode_markers(content):
+            return content
+
+        last_marker_pos = content.rfind(PromptDetector.INPUT_START_MARKER)
+        if last_marker_pos == -1:
+            return content
+
+        after_marker = content[last_marker_pos + len(PromptDetector.INPUT_START_MARKER):]
+        if not after_marker.strip():
+            return content  # Idle prompt — nothing to strip
+
+        # Executed commands have subsequent prompts (markers); pending input doesn't
+        if PromptDetector.has_unicode_markers(after_marker):
+            return content
+
+        # Pending input detected — strip from start of this prompt line onwards.
+        # Use PROMPT_START_MARKER if available, else INPUT_START_MARKER line.
+        before_marker = content[:last_marker_pos]
+        prompt_pos = before_marker.rfind(PromptDetector.PROMPT_START_MARKER)
+        search_end = prompt_pos if prompt_pos != -1 else len(before_marker)
+        line_start = before_marker.rfind('\n', 0, search_end)
+        stripped = content[:line_start].rstrip() if line_start != -1 else ''
+
+        return stripped if stripped.strip() else content
+
+    @staticmethod
     def _strip_trailing_idle_prompt(block: str) -> str:
         """Remove trailing idle prompt from a block for consistent hashing.
 
@@ -1476,6 +1529,26 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 content = self._capture_last_command_output(term['uuid'])
 
                 if content and not content.startswith('ERROR'):
+                    # Marker count check (cheap): if no new command was executed
+                    # since last capture, skip this terminal. Each executed command
+                    # produces a new prompt with INPUT_START_MARKER.
+                    has_markers = dedupe_unchanged and PromptDetector.has_unicode_markers(content)
+                    if has_markers:
+                        current_marker_count = content.count(PromptDetector.INPUT_START_MARKER)
+                        prev_marker_count = self.terminal_marker_counts.get(term_uuid, 0)
+                        self.terminal_marker_counts[term_uuid] = current_marker_count
+                        if prev_marker_count > 0 and current_marker_count <= prev_marker_count:
+                            self._debug(f"  Marker count unchanged ({current_marker_count}) for {term_uuid[:8]} — no new command executed")
+                            context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
+[Content unchanged]
+</terminal>''')
+                            continue
+
+                    # Strip typed-but-not-executed text (user typed but hasn't
+                    # pressed Enter). Only effective in VTE terminals with markers.
+                    if has_markers:
+                        content = self._strip_pending_input(content)
+
                     # Compute hash for change detection (normalize whitespace for stability)
                     content_hash = hashlib.sha256(content.strip().encode()).hexdigest()
 
@@ -1806,10 +1879,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Clear pending summary (may be stale)
         self.pending_summary = None
 
-        # Clear deduplication hashes
-        self.terminal_content_hashes.clear()
-        self.toolresult_hash_updated.clear()
-        self.previous_capture_block_hashes.clear()
+        self._clear_dedup_state()
 
         # Broadcast to web companion
         if self.web_clients:
@@ -2650,10 +2720,7 @@ Screenshot size: {file_size} bytes"""
                 self.conversation = llm.Conversation(model=self.model)
                 # Set source for origin tracking (not a constructor parameter)
                 self.conversation.source = "tui"
-                # Clear per-terminal content hashes (AI needs fresh context)
-                self.terminal_content_hashes.clear()
-                self.toolresult_hash_updated.clear()
-                self.previous_capture_block_hashes.clear()
+                self._clear_dedup_state()
                 # Clear rewind undo buffer (fresh start = no undo)
                 self.rewind_undo_buffer = None
                 # Broadcast clear to web companion
@@ -2691,10 +2758,7 @@ Screenshot size: {file_size} bytes"""
                 if hasattr(self, 'plugin_dbus') and self.plugin_dbus:
                     self.plugin_dbus.clear_cache()
 
-                # Clear per-terminal content hashes (AI needs fresh context)
-                self.terminal_content_hashes.clear()
-                self.toolresult_hash_updated.clear()
-                self.previous_capture_block_hashes.clear()
+                self._clear_dedup_state()
 
                 # Clear rewind undo buffer (full reset = no undo)
                 self.rewind_undo_buffer = None
@@ -2797,10 +2861,7 @@ Screenshot size: {file_size} bytes"""
             except Exception:
                 pass
 
-            # Clear per-terminal content hashes to ensure full fresh capture
-            self.terminal_content_hashes.clear()
-            self.toolresult_hash_updated.clear()
-            self.previous_capture_block_hashes.clear()
+            self._clear_dedup_state()
             # Also clear asciinema hashes for no-exec mode
             self._asciinema_prev_hashes.clear()
 
@@ -3437,6 +3498,10 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                             block_hashes = {hashlib.sha256(b.strip().encode()).hexdigest()
                                             for b in blocks if b.strip()}
                             self.previous_capture_block_hashes[self.exec_terminal_uuid] = block_hashes
+                            # Update marker count so watch mode knows about this execution
+                            if PromptDetector.has_unicode_markers(current_content):
+                                self.terminal_marker_counts[self.exec_terminal_uuid] = \
+                                    current_content.count(PromptDetector.INPUT_START_MARKER)
                     except Exception:
                         pass  # Non-critical - deduplication is optimization only
 
@@ -3590,10 +3655,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 except Exception:
                     pass
 
-                # Clear per-terminal content hashes to ensure full fresh context
-                self.terminal_content_hashes.clear()
-                self.toolresult_hash_updated.clear()
-                self.previous_capture_block_hashes.clear()
+                self._clear_dedup_state()
 
                 # Capture fresh context (no deduplication - user/AI explicitly requested refresh)
                 context_text, tui_attachments_refresh = self.capture_context(include_exec_output=True)
