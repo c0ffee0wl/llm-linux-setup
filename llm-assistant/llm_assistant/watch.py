@@ -281,8 +281,15 @@ class WatchMixin:
                                 title="[bold yellow]Watch Mode Alert[/]",
                                 border_style="yellow"
                             ))
-                            # Print visual prompt hint (actual input handled by prompt_toolkit)
-                            self.console.print("[dim]> [/dim]", end="")
+                            # Print a fake prompt that prompt_toolkit will overwrite
+                            # when it redraws. This sacrificial line protects the Panel's
+                            # bottom border from being overwritten. Use cyan bold to match
+                            # prompt_toolkit's 'class:prompt' style (ansicyan bold).
+                            self.console.file.write("\n\033[1;36m> \033[0m")
+                            self.console.file.flush()
+                            # Trigger prompt_toolkit redraw to replace our fake prompt
+                            if hasattr(self, 'prompt_session') and hasattr(self.prompt_session, 'app') and self.prompt_session.app:
+                                self.prompt_session.app.invalidate()
 
                 except Exception as e:
                     ConsoleHelper.error(self.console, f"Watch mode error: {e}")
