@@ -1229,77 +1229,86 @@ ALL_PLUGINS=("${REMOTE_PLUGINS[@]}" "${LOCAL_PLUGINS[@]}")
 
 LLM_SOURCE="git+https://github.com/c0ffee0wl/llm"
 
-# Compute a fingerprint of everything that affects the install command.
-# If unchanged since last run, skip the expensive reinstall.
-compute_llm_install_fingerprint() {
-    local hash_input=""
-
-    # LLM source URL
-    hash_input+="llm:$LLM_SOURCE"$'\n'
-
-    # All plugin sources (sorted for deterministic hashing)
-    for plugin in $(printf '%s\n' "${ALL_PLUGINS[@]}" | sort); do
-        hash_input+="plugin:$plugin"$'\n'
-    done
-
-    # Hash of local plugin source files (detect code changes)
-    for local_path in "${LOCAL_PLUGINS[@]}"; do
-        if [ -d "$local_path" ]; then
-            local dir_hash
-            dir_hash=$(find "$local_path" -path '*/build' -prune -o -path '*/__pycache__' -prune -o -path '*.egg-info' -prune -o \( -name '*.py' -o -name 'pyproject.toml' \) -print | sort | xargs cat 2>/dev/null | sha256sum | awk '{print $1}')
-            hash_input+="local:$local_path:$dir_hash"$'\n'
-        fi
-    done
-
-    printf '%s' "$hash_input" | sha256sum | awk '{print $1}'
+# Fingerprint of the plugin list + source URL (not local code).
+# Changes only when plugins are added/removed/changed — triggers full reinstall.
+# Local code changes are handled by `uv tool upgrade --reinstall-package`.
+compute_plugin_list_fingerprint() {
+    { printf 'llm:%s\n' "$LLM_SOURCE"
+      printf '%s\n' "${ALL_PLUGINS[@]}" | sort
+    } | sha256sum | awk '{print $1}'
 }
 
-LLM_INSTALL_FINGERPRINT=$(compute_llm_install_fingerprint)
+# Detect user-installed plugins (added via `llm install`, not in ALL_PLUGINS).
+# Reads uv-tool-packages.json before we overwrite it.
+detect_user_plugins() {
+    USER_PLUGINS=()
+    local packages_file
+    packages_file="$(get_llm_config_dir)/uv-tool-packages.json"
+    [ -f "$packages_file" ] || return 0
+
+    local -A managed
+    for p in "${ALL_PLUGINS[@]}"; do managed["$p"]=1; done
+    managed["git+https://github.com/c0ffee0wl/llm-uv-tool"]=1
+
+    while IFS= read -r pkg; do
+        [ -z "$pkg" ] && continue
+        [ -z "${managed[$pkg]+_}" ] && USER_PLUGINS+=("$pkg")
+    done < <(jq -r '.[]' "$packages_file" 2>/dev/null)
+
+    if [ ${#USER_PLUGINS[@]} -gt 0 ]; then
+        log "Preserving ${#USER_PLUGINS[@]} user-installed plugin(s)"
+    fi
+}
+
+LLM_PLUGIN_FINGERPRINT=$(compute_plugin_list_fingerprint)
 LLM_FINGERPRINT_FILE="$LLM_TOOLS_CONFIG_DIR/llm-install-fingerprint"
 STORED_FINGERPRINT=$(cat "$LLM_FINGERPRINT_FILE" 2>/dev/null || echo "")
 
-if [ "$FORCE_LLM" = "false" ] && \
-   [ "$LLM_INSTALL_FINGERPRINT" = "$STORED_FINGERPRINT" ] && \
-   command -v llm &>/dev/null; then
-    log "LLM and plugins are up to date (no changes detected), skipping reinstall"
-else
-    # Build --with flags from ALL plugins
+if [ "$FORCE_LLM" = "true" ] || ! command -v llm &>/dev/null || \
+   [ "$LLM_PLUGIN_FINGERPRINT" != "$STORED_FINGERPRINT" ]; then
+
+    # Full install: plugin list changed, first run, or forced
+    detect_user_plugins
+
     WITH_FLAGS=""
-    for plugin in "${ALL_PLUGINS[@]}"; do
+    for plugin in "${ALL_PLUGINS[@]}" "${USER_PLUGINS[@]}"; do
         WITH_FLAGS+=" --with \"$plugin\""
     done
 
-    # Build --reinstall-package flags for local plugins
-    # This forces uv to always rebuild in-repo packages regardless of version number
     REINSTALL_FLAGS=""
     for local_path in "${LOCAL_PLUGINS[@]}"; do
-        # Extract package name from path (last directory component, replace - with _)
         pkg_name=$(basename "$local_path")
-        # Convert package name to Python package format (hyphens to underscores)
-        pkg_name_normalized="${pkg_name//-/_}"
-        REINSTALL_FLAGS+=" --reinstall-package $pkg_name_normalized"
+        REINSTALL_FLAGS+=" --reinstall-package ${pkg_name//-/_}"
     done
 
-    # Install llm with all plugins
-    # --force: required because uv tool upgrade doesn't support --with flags
-    # --reinstall-package: forces rebuild of local plugins even if version unchanged
-    log "Installing llm with ${#ALL_PLUGINS[@]} plugins (${#LOCAL_PLUGINS[@]} local)..."
+    log "Installing llm with $(( ${#ALL_PLUGINS[@]} + ${#USER_PLUGINS[@]} )) plugins (${#LOCAL_PLUGINS[@]} local)..."
     eval "uv tool install --force $REINSTALL_FLAGS $WITH_FLAGS \"$LLM_SOURCE\""
 
-    # Update uv-tool-packages.json for llm-uv-tool compatibility
+    # Update uv-tool-packages.json preserving user plugins
     LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"
     PACKAGES_FILE="$LLM_CONFIG_DIR_TEMP/uv-tool-packages.json"
     mkdir -p "$LLM_CONFIG_DIR_TEMP"
+    {
+        printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool"
+        [ ${#USER_PLUGINS[@]} -gt 0 ] && printf '%s\n' "${USER_PLUGINS[@]}"
+    } | sort -u | jq -R . | jq -s . > "$PACKAGES_FILE"
 
-    # Generate JSON array using jq (skip llm-uv-tool itself from tracking)
-    # jq handles special characters in paths correctly
-    printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool" | jq -R . | jq -s . > "$PACKAGES_FILE"
-
-    # Store fingerprint after successful install
     mkdir -p "$LLM_TOOLS_CONFIG_DIR"
-    echo "$LLM_INSTALL_FINGERPRINT" > "$LLM_FINGERPRINT_FILE"
-
+    echo "$LLM_PLUGIN_FINGERPRINT" > "$LLM_FINGERPRINT_FILE"
     log "LLM and plugins ready"
+
+else
+    # Incremental upgrade: pull latest git commits, update PyPI packages,
+    # and rebuild local plugins — no venv recreation
+    REINSTALL_FLAGS=""
+    for local_path in "${LOCAL_PLUGINS[@]}"; do
+        pkg_name=$(basename "$local_path")
+        REINSTALL_FLAGS+=" --reinstall-package ${pkg_name//-/_}"
+    done
+
+    log "Upgrading llm and plugins..."
+    uv tool upgrade $REINSTALL_FLAGS llm
+    log "LLM and plugins upgraded"
 fi
 
 # Define the extra models file path early so we can check/preserve existing config
