@@ -40,6 +40,17 @@ YES_MODE=${YES_MODE:-false}
 NO_MODE=${NO_MODE:-false}
 
 #############################################################################
+# Hardened curl
+#############################################################################
+
+# Hardened curl for external HTTPS requests — enforces TLS 1.2+ and HTTPS-only
+# Usage: curl_secure [curl options...] URL
+# Do NOT use for localhost/health checks (plain HTTP)
+curl_secure() {
+    curl --proto '=https' --tlsv1.2 "$@"
+}
+
+#############################################################################
 # Logging Functions
 #############################################################################
 
@@ -629,7 +640,7 @@ install_rust_via_rustup() {
     log "Installing Rust via rustup (official Rust installer)..."
 
     # Download and run rustup-init
-    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
+    curl_secure -sSf https://sh.rustup.rs | sh -s -- -y --default-toolchain stable
 
     # Source cargo environment for this script
     export CARGO_HOME="$HOME/.cargo"
@@ -905,13 +916,13 @@ check_claude_code_update_available() {
     installed_version=$("$claude_bin" --version 2>/dev/null | grep -oP '^[0-9]+\.[0-9]+\.[0-9]+') || return 2
 
     # Method 1: GitHub CHANGELOG.md (fastest, ~0.2s)
-    latest_version=$(curl -sS --max-time 5 \
+    latest_version=$(curl_secure -sS --max-time 5 \
         "https://raw.githubusercontent.com/anthropics/claude-code/refs/heads/main/CHANGELOG.md" 2>/dev/null \
         | head -50 | grep -oP '## \K[0-9]+\.[0-9]+\.[0-9]+' | head -1) || latest_version=""
 
     # Method 2: npm registry with fields filter (fallback, ~0.7s)
     if [ -z "$latest_version" ]; then
-        latest_version=$(curl -sS --max-time 5 \
+        latest_version=$(curl_secure -sS --max-time 5 \
             "https://registry.npmjs.org/@anthropic-ai%2Fclaude-code?fields=dist-tags" 2>/dev/null \
             | grep -oP '"latest"\s*:\s*"\K[0-9]+\.[0-9]+\.[0-9]+') || latest_version=""
     fi
@@ -931,16 +942,27 @@ check_claude_code_update_available() {
 # UV Package Manager
 #############################################################################
 
-# Install or upgrade uv via pipx
+# Install or upgrade uv (pipx only installed on-demand for fresh installs)
 # Sets up PATH and configures uv to prefer system Python
 install_or_upgrade_uv() {
     export PATH=$HOME/.local/bin:$PATH
     if ! command -v uv &> /dev/null; then
-        log "Installing uv..."
+        log "Installing uv via pipx..."
+        # Install pipx as bootstrap (only needed for fresh uv install)
+        if ! command -v pipx &> /dev/null; then
+            sudo apt-get install -y -qq pipx
+        fi
         pipx install uv
     else
         log "uv is already installed, upgrading..."
-        pipx upgrade uv
+        if command -v pipx &> /dev/null; then
+            pipx upgrade uv 2>/dev/null || {
+                log "Upgrading uv via standalone installer..."
+                curl_secure -LsSf https://astral.sh/uv/install.sh | sh
+            }
+        else
+            curl_secure -LsSf https://astral.sh/uv/install.sh | sh
+        fi
     fi
 
     # Configure uv to prefer system Python (prevents issues with Python 3.14+ lacking package wheels)
@@ -1049,7 +1071,7 @@ install_or_upgrade_nodejs() {
             # Install nvm
             if [ ! -d "$HOME/.nvm" ]; then
                 log "Installing nvm..."
-                curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash
+                curl_secure -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
 
                 # Source nvm immediately for this script
                 export NVM_DIR="$HOME/.nvm"
@@ -1073,7 +1095,7 @@ install_or_upgrade_nodejs() {
         # If current version is < 20, warn user
         if version_less_than "$current_node_version" "$MINIMUM_NODE_VERSION"; then
             warn "Installed Node.js version $current_node_version is < $MINIMUM_NODE_VERSION. Consider upgrading to Node 22 via nvm."
-            warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.3/install.sh | bash"
+            warn "Run: curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash"
             warn "Then: nvm install 22 && nvm use 22 && nvm alias default 22"
         fi
 
@@ -1145,7 +1167,7 @@ install_or_upgrade_bun() {
             if command -v npm &>/dev/null; then
                 npm_uninstall_global bun bun
             fi
-            curl --proto '=https' --tlsv1.2 -fsSL https://bun.com/install | bash
+            curl_secure -fsSL https://bun.com/install | bash
         else
             # Already installed via official installer — use bun's built-in upgrade
             log "Upgrading bun..."
@@ -1153,7 +1175,7 @@ install_or_upgrade_bun() {
         fi
     else
         log "Installing bun..."
-        curl --proto '=https' --tlsv1.2 -fsSL https://bun.com/install | bash
+        curl_secure -fsSL https://bun.com/install | bash
     fi
 
     # Ensure environment is set for this script session
@@ -1239,7 +1261,7 @@ _bun_check_and_upgrade_global() {
 
     # Check latest version from npm registry
     local latest_version
-    latest_version=$(curl -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
+    latest_version=$(curl_secure -sS --max-time 5 "https://registry.npmjs.org/${package}/latest" 2>/dev/null | grep -oP '"version"\s*:\s*"\K[0-9][0-9.]*' | head -1) || latest_version=""
 
     if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
         log "Upgrading $package: $installed_version -> $latest_version (bun staletime may prevent actual upgrade)"
@@ -1397,7 +1419,7 @@ install_github_deb_package() {
 
     # Download and install
     local deb_file="/tmp/${package_name}_${version}_${arch_deb}.deb"
-    curl -fL "$github_url" -o "$deb_file"
+    curl_secure -fL "$github_url" -o "$deb_file"
 
     if [ -f "$deb_file" ]; then
         # dpkg -i may leave package unconfigured if dependencies are missing
@@ -1451,7 +1473,7 @@ install_or_upgrade_github_release() {
     # Query GitHub API for latest release tag
     local api_url="https://api.github.com/repos/${github_repo}/releases/latest"
     local latest_tag
-    latest_tag=$(curl -sS --max-time 10 "$api_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
+    latest_tag=$(curl_secure -sS --max-time 10 "$api_url" 2>/dev/null | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"//;s/".*//')
 
     if [ -z "$latest_tag" ]; then
         warn "Could not fetch latest release for $tool_name from GitHub. Skipping."
@@ -1480,7 +1502,7 @@ install_or_upgrade_github_release() {
     local tmp_dir=$(mktemp -d)
     local tarball_path="${tmp_dir}/${tarball_name}"
 
-    if ! curl -fSL --max-time 60 "$download_url" -o "$tarball_path" 2>/dev/null; then
+    if ! curl_secure -fSL --max-time 60 "$download_url" -o "$tarball_path" 2>/dev/null; then
         warn "Failed to download $tool_name from $download_url"
         rm -rf "$tmp_dir"
         return 1

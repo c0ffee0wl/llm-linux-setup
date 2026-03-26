@@ -1015,7 +1015,12 @@ sudo apt-get update
 
 # Install basic prerequisites (batch install for efficiency)
 log "Installing basic prerequisites..."
-install_apt_packages git jq xsel python3 pipx curl
+install_apt_packages git jq python3 curl
+
+# Clipboard support (X11 only — degrades gracefully if absent)
+if [ "$IS_WSL" != true ]; then
+    install_apt_package xsel
+fi
 
 # Install bubblewrap (provides bwrap for sandboxing, used by llm-functions and code execution tools)
 install_apt_package bubblewrap bwrap
@@ -1024,10 +1029,15 @@ configure_bwrap_apparmor
 # Check for sha256sum (required for template checksum tracking in Phase 4)
 install_apt_package coreutils sha256sum
 
-# Install document processors
-log "Installing document processors..."
+# PDF text extraction (used by llm-fragments-pdf plugin, installed in all modes)
 install_apt_package poppler-utils pdftotext
-install_apt_packages pandoc ffmpeg
+
+# Heavy document processors — only needed for full mode features
+if [ "$INSTALL_MODE" = "full" ]; then
+    # pandoc: report export to Word (llm-assistant, Terminator-only feature)
+    # ffmpeg: audio/video processing (speech-to-text, desktop integration)
+    install_apt_packages pandoc ffmpeg
+fi
 
 # Install PyGObject and build dependencies for Terminator assistant integration (conditional)
 if [ "$TERMINATOR_INSTALLED" = "true" ]; then
@@ -1911,7 +1921,7 @@ EOF
             download_failed=false
             for file in "${MODEL_FILES[@]}"; do
                 log "  Downloading $file..."
-                if ! curl -fL --progress-bar "$HF_BASE/$file" -o "$MODEL_DIR/$file"; then
+                if ! curl_secure -fL --progress-bar "$HF_BASE/$file" -o "$MODEL_DIR/$file"; then
                     warn "  Failed to download $file"
                     download_failed=true
                 elif [ ! -s "$MODEL_DIR/$file" ]; then
@@ -1928,7 +1938,7 @@ EOF
         fi
 
         # Install Handy (system-wide STT) via .deb package
-        install_github_deb_package "handy" "0.7.10" \
+        install_github_deb_package "handy" "0.8.1" \
             "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
             "handy" "x86_64" || true
 
@@ -2213,7 +2223,7 @@ if [ -x "$NATIVE_CLAUDE" ]; then
     fi
 else
     log "Installing Claude Code..."
-    curl --proto '=https' --tlsv1.2 -fsSL https://claude.ai/install.sh | bash
+    curl_secure -fsSL https://claude.ai/install.sh | bash
 fi
 
 # Clean up legacy npm version if it exists (migration from older installs)
@@ -2410,7 +2420,7 @@ fi
 # Install/update blaude (bubblewrap sandbox for Claude Code)
 log "Installing/updating blaude..."
 mkdir -p "$HOME/.local/bin"
-if curl -fsSL -H "Cache-Control: no-cache" https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
+if curl_secure -fsSL -H "Cache-Control: no-cache" https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
     chmod +x "$HOME/.local/bin/blaude"
     log "blaude installed to ~/.local/bin/blaude"
 else
