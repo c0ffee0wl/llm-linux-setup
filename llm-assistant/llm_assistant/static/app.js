@@ -2539,7 +2539,13 @@ function applyCodeBlockEnhancements(container) {
 
         try {
             const { svg } = await mermaid.render('mermaid-' + Date.now() + '-' + Math.random().toString(36).substr(2, 9), originalCode);
-            mermaidDiv.innerHTML = svg;
+            mermaidDiv.innerHTML = DOMPurify.sanitize(svg, {
+                USE_PROFILES: { svg: true, svgFilters: true },
+                ADD_TAGS: ['style'],
+                ADD_ATTR: ['xmlns', 'viewBox', 'class', 'id', 'style', 'transform',
+                    'marker-end', 'marker-start', 'font-size', 'font-family',
+                    'text-anchor', 'dominant-baseline', 'aria-roledescription', 'role']
+            });
             pre.remove();
 
             // Add copy button for original mermaid code

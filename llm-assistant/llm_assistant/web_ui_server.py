@@ -157,11 +157,16 @@ class WebUIServer:
             db_path = get_logs_db_path()
             db_path.parent.mkdir(parents=True, exist_ok=True)
             db = sqlite_utils.Database(db_path)
-            # Configure for concurrent access
-            db.execute("PRAGMA journal_mode=WAL")
-            db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe durability
-            db.execute("PRAGMA busy_timeout=5000")   # Wait 5s for locks
-            migrations.migrate(db)
+            try:
+                # Configure for concurrent access
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("PRAGMA synchronous=NORMAL")  # WAL-safe durability
+                db.execute("PRAGMA busy_timeout=5000")   # Wait 5s for locks
+                migrations.migrate(db)
+            except Exception:
+                if hasattr(db, 'conn') and db.conn:
+                    db.conn.close()
+                raise
             return db
 
         # Main thread: use cached connection
@@ -232,7 +237,7 @@ class WebUIServer:
                 if tc_id:
                     results[tc_id] = output or ""
         except Exception:
-            pass  # Table might not exist in older databases
+            logger.debug("Could not load tool results (table may not exist in older databases)", exc_info=True)
         finally:
             if db is not None and hasattr(db, 'conn') and db.conn:
                 db.conn.close()
@@ -2312,7 +2317,8 @@ class WebUIServer:
         if self.runner:
             await self.runner.cleanup()
         # Shutdown the dedicated LLM executor (wait for pending tasks to complete)
-        self._llm_executor.shutdown(wait=True)
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, self._llm_executor.shutdown, True)
         # Clean up all temp files from all sessions
         for session_id, temp_files in self._session_temp_files.items():
             for temp_path in temp_files:

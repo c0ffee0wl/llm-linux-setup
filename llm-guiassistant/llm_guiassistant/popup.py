@@ -55,7 +55,7 @@ def load_window_state() -> dict:
             result["width"] = max(result["width"], min_size["width"])
             result["height"] = max(result["height"], min_size["height"])
             return result
-    except (json.JSONDecodeError, OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError):
         pass
     return defaults
 
@@ -85,6 +85,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         self._save_state_timeout_id = None
         self._initializing = True  # Prevent state save during initialization
         self._load_retry_count = 0  # Initialize before _load_web_ui() to avoid race
+        self._handlers_connected = False  # Track if WebView signal handlers are connected
 
         # Window setup - store state for later use
         self._saved_state = load_window_state()
@@ -108,7 +109,6 @@ class PopupWindow(Gtk.ApplicationWindow):
 
         # Header bar
         header = Gtk.HeaderBar()
-        header.set_show_close_button(True)
         header.set_title("LLM GUI Assistant")
         self.set_titlebar(header)
 
@@ -161,10 +161,10 @@ class PopupWindow(Gtk.ApplicationWindow):
             is_retry: True if this is a retry after daemon restart (don't reset counter)
         """
         # Connect handlers (only once per webview instance)
-        if not getattr(self.webview, '_handlers_connected', False):
+        if not self._handlers_connected:
             self.webview.connect("load-failed", self._on_load_failed)
             self.webview.connect("load-changed", self._on_load_changed_internal)
-            self.webview._handlers_connected = True
+            self._handlers_connected = True
 
         # Reset retry count on fresh load (not on retry)
         if not is_retry:
@@ -404,14 +404,14 @@ class PopupWindow(Gtk.ApplicationWindow):
             True if upload succeeded, False otherwise.
         """
         try:
-            url = f"http://localhost:{self.web_port}/upload"
+            url = f"http://localhost:{self.web_port}/upload?session={self.session_id}"
             with open(filepath, 'rb') as f:
                 files = {'file': (Path(filepath).name, f)}
                 response = requests.post(url, files=files, timeout=30)
                 if response.ok:
                     try:
                         result = response.json()
-                    except (json.JSONDecodeError, ValueError):
+                    except ValueError:
                         if self.debug:
                             print(f"[Upload] Invalid JSON response for {filepath}")
                         return False
