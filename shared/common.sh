@@ -1848,6 +1848,10 @@ wait_for_ccr() {
 # Final CCR availability check — catch regressions from later phases
 verify_ccr_or_recover() {
     local port="${1:-3456}"
+    # Skip entirely when CCR is not installed
+    if ! pkg_is_installed_global @musistudio/claude-code-router ccr; then
+        return 0
+    fi
     if ! curl -sf --max-time 1 "http://127.0.0.1:${port}/health" &>/dev/null; then
         warn "CCR not responding — attempting recovery restart..."
         systemctl --user restart claude-code-router 2>/dev/null || true

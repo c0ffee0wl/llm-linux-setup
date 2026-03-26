@@ -2455,8 +2455,9 @@ fi
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
 clear_package_caches
 
-# Final CCR health verification — only if the systemd service is enabled
-if systemctl --user is-enabled claude-code-router &>/dev/null; then
+# Final CCR health verification — only if installed and the systemd service is enabled
+if pkg_is_installed_global @musistudio/claude-code-router ccr && \
+   systemctl --user is-enabled claude-code-router &>/dev/null; then
     verify_ccr_or_recover
 fi
 
