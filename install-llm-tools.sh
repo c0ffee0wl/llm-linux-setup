@@ -524,9 +524,9 @@ EOF
     # Generate config based on available providers (use actual key existence)
     local config_content
 
-    if [ "$has_azure_key" = "true" ] && [ "$has_gemini_key" = "true" ]; then
-        # Dual-provider config: Azure primary (Responses API), Gemini fallback
-        log "Generating dual-provider config (Azure primary, Azure web search)"
+    if [ "$has_azure_key" = "true" ]; then
+        # Azure config: Azure primary (Responses API), Azure web search
+        log "Generating Azure config (Azure primary, Azure web search)"
 
         local azure_api_base=$(get_azure_api_base)
         azure_api_base="${azure_api_base%/}"
@@ -563,19 +563,6 @@ EOF
           "openai-responses",
           "web-search-inject",
           "strip-reasoning"
-        ]
-      }
-    },
-    {
-      "name": "gemini",
-      "api_base_url": "https://generativelanguage.googleapis.com/v1beta/models/",
-      "api_key": "\$GEMINI_API_KEY",
-      "models": [
-        "gemini-2.5-flash"
-      ],
-      "transformer": {
-        "use": [
-          "gemini"
         ]
       }
     }
