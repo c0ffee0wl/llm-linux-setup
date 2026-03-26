@@ -39,11 +39,9 @@ FORCE_AZURE_CONFIG=false
 FORCE_GEMINI_CONFIG=false
 CLEAR_CACHE=false
 FORCE_LLM=false
-MINIMAL_FLAG=false
-FULL_FLAG=false
-WSL_FLAG=""  # "", "force", or "disable"
+INSTALL_LEVEL=""  # 1=minimal, 2=standard, 3=full (empty=use saved/default)
+WSL_FLAG=""       # "", "force", or "disable"
 CCR_FLAG=false
-NO_ADDITIONAL_TOOLS=false
 
 # Preserve original args before parsing consumes them via shift.
 # Used by self-update (exec "$0") to re-run with the same flags.
@@ -68,11 +66,15 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --minimal)
-            MINIMAL_FLAG=true
+            INSTALL_LEVEL=1
+            shift
+            ;;
+        --standard|--no-additional-tools)
+            INSTALL_LEVEL=2
             shift
             ;;
         --full)
-            FULL_FLAG=true
+            INSTALL_LEVEL=3
             shift
             ;;
         --wsl)
@@ -87,22 +89,19 @@ while [[ $# -gt 0 ]]; do
             CCR_FLAG=true
             shift
             ;;
-        --no-additional-tools)
-            NO_ADDITIONAL_TOOLS=true
-            shift
-            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
             echo "LLM Tools Installation Script for Linux (Debian/Ubuntu/Kali)"
             echo ""
             echo "Options:"
-            echo "  --minimal      Install only LLM core tools (persists for future runs)"
-            echo "  --full         Install all tools (overrides saved --minimal preference)"
+            echo "  --minimal      Level 1: LLM core tools only (persists for future runs)"
+            echo "  --standard     Level 2: Core + agentic tools, skip extras (persists)"
+            echo "  --full         Level 3: Everything (default, persists)"
+            echo "  --no-additional-tools  Alias for --standard (backward compatibility)"
             echo "  --wsl          Force WSL mode (skip session recording, prompt for CCR)"
             echo "  --no-wsl       Disable WSL auto-detection (run full install even in WSL)"
             echo "  --ccr          Full Claude Code Router setup (config, profile exports, systemd service)"
-            echo "  --no-additional-tools  Skip non-essential tools (Handy, Ulauncher, tldr, Codex, etc.)"
             echo "  --azure        Force (re)configuration of Azure OpenAI, even if already configured"
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --force-llm    Force LLM reinstall even if plugins/sources haven't changed"
@@ -110,12 +109,12 @@ while [[ $# -gt 0 ]]; do
             echo "  --help         Show this help message"
             echo ""
             echo "Examples:"
-            echo "  $0              # Normal installation/update"
-            echo "  $0 --minimal    # Install only LLM core tools"
-            echo "  $0 --full       # Install all tools (override saved minimal mode)"
+            echo "  $0              # Normal installation/update (level 3)"
+            echo "  $0 --minimal    # Install only LLM core tools (level 1)"
+            echo "  $0 --standard   # Core + agentic tools, skip extras (level 2)"
+            echo "  $0 --full       # Install everything (level 3)"
             echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
             echo "  $0 --gemini     # Reconfigure Google Gemini settings"
-            echo "  $0 --clear-cache  # Clear all package caches"
             exit 0
             ;;
         *)
@@ -133,57 +132,56 @@ if [ "$FORCE_AZURE_CONFIG" = "true" ] && [ "$FORCE_GEMINI_CONFIG" = "true" ]; th
     exit 1
 fi
 
-if [ "$MINIMAL_FLAG" = "true" ] && [ "$FULL_FLAG" = "true" ]; then
-    error "Cannot specify both --minimal and --full flags simultaneously."
-    exit 1
+# Note: --minimal/--standard/--full all set INSTALL_LEVEL; last flag wins.
+# This is safe — no conflict possible since they write to the same variable.
+
+#############################################################################
+# Installation Level Resolution (1=minimal, 2=standard, 3=full)
+#############################################################################
+
+INSTALL_LEVEL_FILE="$LLM_TOOLS_CONFIG_DIR/install-level"
+
+# Migrate old format (install-mode + no-additional-tools files)
+OLD_MODE_FILE="$LLM_TOOLS_CONFIG_DIR/install-mode"
+OLD_NAT_FILE="$LLM_TOOLS_CONFIG_DIR/no-additional-tools"
+if [ -z "$INSTALL_LEVEL" ] && [ ! -f "$INSTALL_LEVEL_FILE" ] && [ -f "$OLD_MODE_FILE" ]; then
+    old_mode=$(cat "$OLD_MODE_FILE")
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    if [ "$old_mode" = "minimal" ]; then
+        echo "1" > "$INSTALL_LEVEL_FILE"
+    elif [ -f "$OLD_NAT_FILE" ]; then
+        echo "2" > "$INSTALL_LEVEL_FILE"
+    else
+        echo "3" > "$INSTALL_LEVEL_FILE"
+    fi
+    rm -f "$OLD_MODE_FILE" "$OLD_NAT_FILE"
+    log "Migrated install preferences to new format"
+fi
+
+# Resolve: CLI flag > persisted file > default (3=full)
+if [ -n "$INSTALL_LEVEL" ]; then
+    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
+    echo "$INSTALL_LEVEL" > "$INSTALL_LEVEL_FILE"
+    log "Installation level: $INSTALL_LEVEL (saved for future runs)"
+elif [ -f "$INSTALL_LEVEL_FILE" ]; then
+    INSTALL_LEVEL=$(cat "$INSTALL_LEVEL_FILE")
+    log "Using saved installation level: $INSTALL_LEVEL (use --full to override)"
+else
+    INSTALL_LEVEL=3
+fi
+
+# Validate
+if ! [[ "$INSTALL_LEVEL" =~ ^[123]$ ]]; then
+    warn "Invalid install level '$INSTALL_LEVEL', defaulting to 3 (full)"
+    INSTALL_LEVEL=3
 fi
 
 #############################################################################
-# Installation Mode Resolution
+# Environment Detection (cached for use throughout script)
 #############################################################################
 
-INSTALL_MODE_FILE="$LLM_TOOLS_CONFIG_DIR/install-mode"
-INSTALL_MODE="full"  # Default to full installation
-
-# Determine installation mode (flag takes precedence over saved mode)
-if [ "$MINIMAL_FLAG" = "true" ]; then
-    INSTALL_MODE="minimal"
-    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
-    echo "minimal" > "$INSTALL_MODE_FILE"
-    log "Installation mode: minimal (saved for future runs)"
-elif [ "$FULL_FLAG" = "true" ]; then
-    INSTALL_MODE="full"
-    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
-    echo "full" > "$INSTALL_MODE_FILE"
-    rm -f "$LLM_TOOLS_CONFIG_DIR/no-additional-tools"
-    log "Installation mode: full (saved for future runs)"
-elif [ -f "$INSTALL_MODE_FILE" ]; then
-    INSTALL_MODE=$(cat "$INSTALL_MODE_FILE")
-    log "Using saved installation mode: $INSTALL_MODE (use --full to override)"
-fi
-
-#############################################################################
-# Additional Tools Mode Resolution
-#############################################################################
-
-NO_ADDITIONAL_TOOLS_FILE="$LLM_TOOLS_CONFIG_DIR/no-additional-tools"
-if [ "$NO_ADDITIONAL_TOOLS" = "true" ]; then
-    mkdir -p "$LLM_TOOLS_CONFIG_DIR"
-    touch "$NO_ADDITIONAL_TOOLS_FILE"
-    log "Additional tools: disabled (saved for future runs)"
-elif [ -f "$NO_ADDITIONAL_TOOLS_FILE" ]; then
-    NO_ADDITIONAL_TOOLS=true
-    log "Using saved preference: no additional tools (use --full to re-enable)"
-fi
-
-#############################################################################
-# WSL Mode Detection
-#############################################################################
-
-# WSL mode detection with override
-# Note: IS_WSL is independent of INSTALL_MODE - allows WSL+full or WSL+minimal
+# WSL detection with override
 IS_WSL=false
-
 if [ "$WSL_FLAG" = "force" ]; then
     IS_WSL=true
     log "WSL mode forced via --wsl flag"
@@ -193,6 +191,24 @@ elif [ "$WSL_FLAG" = "disable" ]; then
 elif is_wsl; then
     IS_WSL=true
     log "WSL environment auto-detected (session recording will be skipped)"
+fi
+
+# Desktop environment detection (only in standard/full mode, non-WSL)
+HAS_DESKTOP=false
+HAS_X11=false
+HAS_SOUNDCARD=false
+TERMINATOR_INSTALLED=false
+
+if [ "$INSTALL_LEVEL" -ge 2 ] && [ "$IS_WSL" != true ]; then
+    has_desktop_environment && HAS_DESKTOP=true
+    is_x11 && HAS_X11=true
+    has_soundcard && HAS_SOUNDCARD=true
+    if command -v terminator &> /dev/null; then
+        TERMINATOR_INSTALLED=true
+        log "Terminator detected - will install assistant integration"
+    else
+        log "Terminator not found - skipping assistant components"
+    fi
 fi
 
 #############################################################################
@@ -929,23 +945,6 @@ else
     warn "Not running from a git repository. Self-update disabled."
 fi
 
-#############################################################################
-# Detect Terminator Installation
-#############################################################################
-
-# Check if Terminator is installed (used for conditional assistant installation)
-TERMINATOR_INSTALLED=false
-if command -v terminator &> /dev/null; then
-    TERMINATOR_INSTALLED=true
-    if [ "$INSTALL_MODE" = "full" ]; then
-        log "Terminator detected - will install assistant integration"
-    fi
-else
-    if [ "$INSTALL_MODE" = "full" ]; then
-        log "Terminator not found - skipping assistant components"
-    fi
-fi
-
 # Detect VM environment (for PipeWire audio fix)
 IS_VM=false
 if command -v systemd-detect-virt &>/dev/null; then
@@ -996,8 +995,8 @@ stop_assistant_processes() {
     fi
 }
 
-# Only stop processes in full mode (assistant components)
-if [ "$INSTALL_MODE" = "full" ]; then
+# Only stop processes at level 2+ (assistant components)
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
     stop_assistant_processes
 fi
 
@@ -1029,7 +1028,7 @@ install_apt_package coreutils sha256sum
 install_apt_package poppler-utils pdftotext
 
 # Heavy document processors — only needed for full mode features
-if [ "$INSTALL_MODE" = "full" ]; then
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
     # pandoc: report export to Word (llm-assistant, Terminator-only feature)
     # ffmpeg: audio/video processing (speech-to-text, desktop integration)
     install_apt_packages pandoc ffmpeg
@@ -1065,7 +1064,7 @@ install_or_upgrade_uv
 
 # Session recording tools - only in full mode and NOT in WSL
 # (Rust is only needed for asciinema, skip both in WSL)
-if [ "$INSTALL_MODE" = "full" ] && [ "$IS_WSL" != true ]; then
+if [ "$INSTALL_LEVEL" -ge 2 ] && [ "$IS_WSL" != true ]; then
     # Install/update Rust (with intelligent version detection and rustup fallback)
     install_or_upgrade_rust
 
@@ -1077,8 +1076,8 @@ fi
 # because the upgrade section at end of script uses this in all modes
 detect_js_package_manager
 
-# Node.js/bun setup — only in full mode
-if [ "$INSTALL_MODE" = "full" ]; then
+# Node.js/bun setup — level 2+ only
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
     if [ "$JS_PKG_MGR" = "bun" ]; then
         log "Bun detected, skipping Node.js installation"
         # Set NPM defaults for any code that references them
@@ -1184,8 +1183,8 @@ REMOTE_PLUGINS=(
     "llm-classify"
 )
 
-# Optional plugins (skipped with --no-additional-tools)
-if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+# Optional plugins (level 3 only)
+if [ "$INSTALL_LEVEL" -ge 3 ]; then
     REMOTE_PLUGINS+=(
         "llm-openrouter"
         "llm-anthropic"
@@ -1201,7 +1200,7 @@ LOCAL_PLUGINS=(
 )
 
 # Full mode plugins
-if [ "$INSTALL_MODE" = "full" ]; then
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
     # Core assistant packages (always in full mode)
     LOCAL_PLUGINS+=(
         "$SCRIPT_DIR/llm-assistant"
@@ -1209,7 +1208,7 @@ if [ "$INSTALL_MODE" = "full" ]; then
     )
 
     # X11 desktop-only plugins
-    if has_desktop_environment && is_x11; then
+    if [ "$HAS_X11" = "true" ]; then
         REMOTE_PLUGINS+=("git+https://github.com/c0ffee0wl/llm-tools-capture-screen")
         LOCAL_PLUGINS+=("$SCRIPT_DIR/llm-guiassistant")
     fi
@@ -1376,8 +1375,8 @@ update_mcp_config() {
         "MCP configuration" "Y" "false"
 }
 
-# MCP servers only in full mode
-if [ "$INSTALL_MODE" = "full" ]; then
+# MCP servers — level 2+ only
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
     update_mcp_config
 
 fi
@@ -1672,7 +1671,7 @@ prompt_for_session_log_silent() {
 
 # Shell integration and assistant tools are only in full mode and NOT in WSL
 # (WSL mode skips session recording/logging and desktop assistant tools)
-if [ "$INSTALL_MODE" = "full" ] && [ "$IS_WSL" != true ]; then
+if [ "$INSTALL_LEVEL" -ge 2 ] && [ "$IS_WSL" != true ]; then
     # Update shell RC files
     update_shell_rc_file "$HOME/.bashrc" "$SCRIPT_DIR/integration/llm-integration.bash" ".bashrc"
     update_shell_rc_file "$HOME/.zshrc" "$SCRIPT_DIR/integration/llm-integration.zsh" ".zshrc"
@@ -1748,9 +1747,9 @@ if command -v systemctl &> /dev/null && systemctl --user status &> /dev/null 2>&
     fi
 fi
 
-if has_desktop_environment; then
+if [ "$HAS_DESKTOP" = "true" ]; then
 
-    # --- Always installed (regardless of --no-additional-tools) ---
+    # --- Always installed at level 2+ ---
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
     if [ "$HAS_GEMINI_KEY" = "true" ]; then
@@ -1820,7 +1819,7 @@ if has_desktop_environment; then
     # llm-guiassistant (GTK popup for llm-assistant daemon)
     # Only on X11 for now (uses xdotool, xclip, maim, xprop)
     # Note: Package and llm-tools-capture-screen are installed via ALL_PLUGINS in Phase 2
-    if is_x11; then
+    if [ "$HAS_X11" = "true" ]; then
         log "Setting up llm-guiassistant..."
 
         # Install X11 dependencies (xprop from x11-utils for window detection)
@@ -1898,11 +1897,11 @@ EOF
         log "Skipping llm-guiassistant: X11 required (Wayland support planned)"
     fi
 
-    # --- Skippable desktop tools (skipped with --no-additional-tools) ---
-    if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+    # --- Level 3 only: desktop extras ---
+    if [ "$INSTALL_LEVEL" -ge 3 ]; then
 
     # Audio-related installations (STT/TTS) - only if soundcard available
-    if has_soundcard; then
+    if [ "$HAS_SOUNDCARD" = "true" ]; then
         # Download INT8 Parakeet model to shared location (used by Handy and llm-assistant)
         MODEL_DIR="$HOME/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8"
         HF_BASE="https://huggingface.co/istupakov/parakeet-tdt-0.6b-v3-onnx/resolve/main"
@@ -2079,10 +2078,10 @@ else:
         fi
     fi
 
-    fi  # End of NO_ADDITIONAL_TOOLS check for desktop tools
+    fi  # End of INSTALL_LEVEL >= 3 check for desktop tools
 fi
 
-fi  # End of INSTALL_MODE = "full" block for Phase 5
+fi  # End of INSTALL_LEVEL >= 2 block for Phase 5
 
 #############################################################################
 # PHASE 6: Additional Tools
@@ -2090,7 +2089,7 @@ fi  # End of INSTALL_MODE = "full" block for Phase 5
 
 log "Installing/updating additional tools..."
 
-# --- Always installed (regardless of --no-additional-tools) ---
+# --- Always installed at level 2+ ---
 
 # Install/update gitingest
 install_or_upgrade_uv_tool gitingest
@@ -2123,8 +2122,8 @@ else
     log "Skipping llm-server (requires systemd)"
 fi
 
-# --- Skippable core tools (skipped with --no-additional-tools) ---
-if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+# --- Level 3 only: core extras ---
+if [ "$INSTALL_LEVEL" -ge 3 ]; then
 
 # Install/update llm-observability (log viewer for llm conversations)
 install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
@@ -2133,15 +2132,17 @@ install_or_upgrade_uv_tool "git+https://github.com/c0ffee0wl/llm-observability"
 # Requires Python 3.14 - installs with isolated Python environment
 install_or_upgrade_uv_tool toko 3.14
 
-# Install/update md2cb (Markdown to rich HTML clipboard)
-install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz" || true
+# Install/update md2cb (Markdown to rich HTML clipboard, requires X11)
+if [ "$IS_WSL" != true ]; then
+    install_or_upgrade_github_release "md2cb" "letientai299/md2cb" "linux-x64.tar.gz" || true
+fi
 
-fi  # End of NO_ADDITIONAL_TOOLS check for core tools
+fi  # End of INSTALL_LEVEL >= 3 check for core tools
 
 # Full mode tools
-if [ "$INSTALL_MODE" = "full" ]; then
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
 
-    # --- Always in full mode (regardless of --no-additional-tools) ---
+    # --- Always installed at level 2+ ---
 
     # Configure VS Code for local LLM mode (if any VS Code variant is installed)
     # configure-vscode disables telemetry and cloud-dependent features
@@ -2178,14 +2179,14 @@ if [ "$INSTALL_MODE" = "full" ]; then
         (cd "$MICRO_PLUGIN_DIR/llm" && git pull)
     fi
 
-    # --- Skippable full-mode extras (skipped with --no-additional-tools) ---
-    if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+    # --- Level 3 only: full-mode extras ---
+    if [ "$INSTALL_LEVEL" -ge 3 ]; then
 
     # Install/update tldr (community-driven man pages with practical examples)
     install_or_upgrade_uv_tool tldr
 
     # Install transcribe script (uses onnx-asr from llm environment) - only if soundcard available
-    if has_soundcard; then
+    if [ "$HAS_SOUNDCARD" = "true" ]; then
         log "Installing transcribe script..."
         if [ -f "$SCRIPT_DIR/scripts/transcribe" ]; then
             # Copy script with modified shebang to use llm environment Python
@@ -2204,16 +2205,16 @@ if [ "$INSTALL_MODE" = "full" ]; then
     # Install/update argc (prerequisite for llm-functions if users want to install it)
     install_or_upgrade_cargo_tool argc
 
-    fi  # End of NO_ADDITIONAL_TOOLS check for full-mode extras
+    fi  # End of INSTALL_LEVEL >= 3 check for full-mode extras
 
-fi  # End of INSTALL_MODE = "full" block for Phase 6
+fi  # End of INSTALL_LEVEL >= 2 block for Phase 6
 
 #############################################################################
 # PHASE 7: Agentic CLI (coding) tools
 #############################################################################
 
-# Full mode: Install agentic CLI tools
-if [ "$INSTALL_MODE" = "full" ]; then
+# Level 2+: Install agentic CLI tools
+if [ "$INSTALL_LEVEL" -ge 2 ]; then
 
 # Install or update Claude Code
 NATIVE_CLAUDE="$HOME/.local/bin/claude"
@@ -2290,8 +2291,8 @@ else
     log "Skipping Claude Code Router installation (no providers configured)"
 fi
 
-# Install/update Codex CLI if Azure is configured (skipped with --no-additional-tools)
-if [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+# Install/update Codex CLI if Azure is configured (level 3 only)
+if [ "$INSTALL_LEVEL" -ge 3 ]; then
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     log "Installing/updating Codex CLI..."
     install_or_upgrade_global @openai/codex
@@ -2305,11 +2306,11 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
 else
     log "Skipping Codex installation (Azure OpenAI not configured)"
 fi
-fi  # End of NO_ADDITIONAL_TOOLS check for Codex
+fi  # End of INSTALL_LEVEL >= 3 check for Codex
 
 fi  # End of WSL/non-WSL block
 
-fi  # End of INSTALL_MODE = "full" block for Phase 7
+fi  # End of INSTALL_LEVEL >= 2 block for Phase 7
 
 #############################################################################
 # Global environment defaults (regardless of install mode)
@@ -2352,9 +2353,9 @@ for optional_tool in claudechic notebooklm-mcp-cli youtube-transcript-api yt-dlp
     fi
 done
 
-# Install Claude Code skills and statusline (skipped with --no-additional-tools)
+# Install Claude Code skills and statusline (level 3 only)
 # Skills are copied on every run to ensure latest versions are always available
-if command -v claude &>/dev/null && [ "$NO_ADDITIONAL_TOOLS" != "true" ]; then
+if command -v claude &>/dev/null && [ "$INSTALL_LEVEL" -ge 3 ]; then
     SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
     SKILLS_DEST_DIR="$HOME/.claude/skills"
 
@@ -2433,15 +2434,9 @@ if [ -n "$JS_PKG_MGR" ]; then
     # Update Claude Agent ACP if already installed (no automatic installation)
     upgrade_global_if_installed @zed-industries/claude-agent-acp claude-agent-acp
 
-    # Update Claude Code Router if already installed (no automatic installation in minimal mode)
-    if [ "$INSTALL_MODE" != "full" ]; then
-        upgrade_global_if_installed @musistudio/claude-code-router ccr
-    fi
-
-    # Update Codex CLI if already installed (no automatic installation in minimal mode)
-    if [ "$INSTALL_MODE" != "full" ]; then
-        upgrade_global_if_installed @openai/codex codex
-    fi
+    # Update Claude Code Router and Codex CLI if already installed
+    upgrade_global_if_installed @musistudio/claude-code-router ccr
+    upgrade_global_if_installed @openai/codex codex
 fi
 
 # Clean up package caches to reclaim disk space (runs regardless of install mode)
@@ -2462,7 +2457,7 @@ log "Installation/Update Complete!"
 log "============================================="
 log ""
 
-if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
+if [ "$IS_WSL" = true ] && [ "$INSTALL_LEVEL" -ge 2 ]; then
     log "Installed tools (WSL mode):"
     log ""
     log "  AI Assistants:"
@@ -2470,7 +2465,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - Claude Code      Anthropic's agentic coding CLI"
     log ""
     log "  LLM Plugins:"
-    log "    - Providers: gemini, vertex, openrouter, anthropic"
+    log "    - Providers: gemini, vertex"
     log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
     log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
     log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
@@ -2478,10 +2473,7 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log ""
     log "  CLI Utilities:"
     log "    - gitingest        Git repository to LLM-friendly text"
-    log "    - llm-observability  Log viewer for llm conversations"
     log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
-    log "    - toko             LLM token counter with cost estimation"
-    log "    - md2cb            Markdown to rich HTML clipboard"
     log ""
     if pkg_is_installed_global @musistudio/claude-code-router ccr; then
         log "  WSL Integration:"
@@ -2510,8 +2502,8 @@ if [ "$IS_WSL" = true ] && [ "$INSTALL_MODE" = "full" ]; then
     log "    - Desktop tools (Handy, espanso, Ulauncher)"
     log "    - Codex CLI"
     log ""
-elif [ "$INSTALL_MODE" = "full" ]; then
-    log "Installed tools (full mode):"
+elif [ "$INSTALL_LEVEL" -ge 3 ]; then
+    log "Installed tools (level 3 — full):"
     log ""
     log "  AI Assistants:"
     log "    - llm              Simon Willison's LLM CLI tool"
@@ -2572,32 +2564,61 @@ elif [ "$INSTALL_MODE" = "full" ]; then
     log "      they were stopped for the update. Restart them as needed:"
     log "        llm-assistant --daemon   # Start daemon"
     log "        llm-guiassistant         # Open GUI assistant"
-else
-    log "Installed tools (minimal mode):"
+elif [ "$INSTALL_LEVEL" -ge 2 ]; then
+    log "Installed tools (level 2 — standard):"
     log ""
-    log "  Core LLM:"
+    log "  AI Assistants:"
     log "    - llm              Simon Willison's LLM CLI tool"
+    log "    - llm-inlineassistant  Inline AI assistant (@ syntax)"
+    log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
+    log "    - Claude Code      Anthropic's agentic coding CLI"
+    log "    - blaude           Bubblewrap sandbox for Claude Code"
+    log "    - Claude Code Router  Multi-provider proxy for Claude Code"
     log ""
     log "  LLM Plugins:"
-    log "    - Providers: gemini, vertex, openrouter, anthropic"
+    log "    - Providers: gemini, vertex"
     log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
     log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
-    log "    - Tools: capture-screen, imagemage, fragment-bridge, llm-functions"
     log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
     log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify"
     log ""
     log "  CLI Utilities:"
     log "    - gitingest        Git repository to LLM-friendly text"
-    log "    - llm-observability  Log viewer for llm conversations"
+    log "    - yek              Fast repository to LLM-friendly text"
     log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
-    log "    - toko             LLM token counter with cost estimation"
-    log "    - md2cb            Markdown to rich HTML clipboard"
+    log "    - asciinema        Terminal session recorder"
+    log "    - micro            Terminal text editor with LLM plugin"
+    log "    - context          Terminal history extractor"
+    log ""
+    log "Shell integration: $SCRIPT_DIR/integration/"
+    log ""
+    log "Next steps:"
+    log "  1. Restart your shell or run: source ~/.bashrc (or ~/.zshrc)"
+    log "  2. Test llm: llm 'Hello, how are you?'"
+    log "  3. Test Claude Code Router: routed-claude"
+    log ""
+    log "To install everything: ./install-llm-tools.sh --full"
+else
+    log "Installed tools (level 1 — minimal):"
+    log ""
+    log "  Core LLM:"
+    log "    - llm              Simon Willison's LLM CLI tool"
+    log ""
+    log "  LLM Plugins:"
+    log "    - Providers: gemini, vertex"
+    log "    - Tools: sandboxed-shell, sandboxed-python, patch, quickjs, sqlite"
+    log "    - Tools: context, google-search, web-fetch, fabric, mcp, rag, skills"
+    log "    - Fragments: pdf, github, youtube-transcript, site-text, dir"
+    log "    - Utilities: cmd, cmd-comp, jq, git-commit, sort, classify"
+    log ""
+    log "  CLI Utilities:"
+    log "    - gitingest        Git repository to LLM-friendly text"
+    log "    - llm-server       OpenAI-compatible HTTP wrapper (if systemd detected)"
     log ""
     log "Next steps:"
     log "  1. Test llm: llm 'Hello, how are you?'"
     log ""
-    log "To install all tools (Claude Code, llm-assistant, MCP servers, shell integration, etc.):"
-    log "  ./install-llm-tools.sh --full"
+    log "To install all tools: ./install-llm-tools.sh --full"
 fi
 log ""
 log "To update all tools in the future, simply re-run this script:"
