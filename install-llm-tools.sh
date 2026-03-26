@@ -273,6 +273,13 @@ EOF
     fi
 }
 
+# Extract Azure API base URL from extra-openai-models.yaml
+# Returns empty string on failure
+get_azure_api_base() {
+    local extra_models_file="$(get_llm_config_dir)/extra-openai-models.yaml"
+    grep -m 1 "^\s*api_base:" "$extra_models_file" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true
+}
+
 # Configure Azure OpenAI with prompts
 configure_azure_openai() {
     log "Configuring Azure OpenAI API..."
@@ -324,9 +331,7 @@ configure_gemini() {
 configure_codex_cli() {
     log "Configuring Codex CLI with Azure OpenAI..."
 
-    # Extract api_base from extra-openai-models.yaml
-    local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
-    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
+    local api_base=$(get_azure_api_base)
 
     if [ -z "$api_base" ]; then
         log "WARNING: Could not extract Azure API base from llm config"
@@ -364,9 +369,7 @@ EOF
 export_azure_env_vars() {
     log "Exporting Azure environment variables..."
 
-    # Extract api_base and resource name
-    local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
-    local api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
+    local api_base=$(get_azure_api_base)
 
     if [ -z "$api_base" ]; then
         log "WARNING: Could not extract Azure API base for environment variables"
@@ -509,14 +512,7 @@ EOF
         # Dual-provider config: Azure primary (Responses API), Gemini fallback
         log "Generating dual-provider config (Azure primary, Azure web search)"
 
-        # Extract Azure API base
-        local azure_api_base=""
-        local EXTRA_MODELS_FILE="$(get_llm_config_dir)/extra-openai-models.yaml"
-        if [ -f "$EXTRA_MODELS_FILE" ]; then
-            azure_api_base=$(grep -m 1 "^\s*api_base:" "$EXTRA_MODELS_FILE" 2>/dev/null | sed 's/.*api_base:\s*//;s/\s*$//' || true)
-        fi
-
-        # Strip trailing slash if present
+        local azure_api_base=$(get_azure_api_base)
         azure_api_base="${azure_api_base%/}"
 
         config_content=$(cat <<EOF
@@ -1588,6 +1584,12 @@ elif [ "$GEMINI_CONFIGURED" = "true" ]; then
     command llm embed-models default gemini-embedding-001-1536
 fi
 
+# Cache provider key existence for Phases 4-7 (avoid repeated subprocess calls)
+HAS_AZURE_KEY=false
+HAS_GEMINI_KEY=false
+command llm keys get azure &>/dev/null && HAS_AZURE_KEY=true
+command llm keys get gemini &>/dev/null && HAS_GEMINI_KEY=true
+
 #############################################################################
 # PHASE 4: Install/Update LLM Templates
 #############################################################################
@@ -1709,7 +1711,6 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
     if [ -L "$HOME/.config/terminator/plugins/terminator_assistant.py" ]; then
         log "Terminator assistant plugin already linked"
     else
-        rm -f "$HOME/.config/terminator/plugins/terminator_assistant.py"
         ln -sfn "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
            "$HOME/.config/terminator/plugins/terminator_assistant.py"
         log "Terminator assistant plugin installed (symlinked)"
@@ -1752,7 +1753,7 @@ if has_desktop_environment; then
     # --- Always installed (regardless of --no-additional-tools) ---
 
     # Install imagemage - Gemini image generation CLI (only if Gemini configured)
-    if command llm keys get gemini &>/dev/null; then
+    if [ "$HAS_GEMINI_KEY" = "true" ]; then
         if command -v imagemage &>/dev/null; then
             log "imagemage is already installed"
         elif install_go; then
@@ -2242,7 +2243,7 @@ fi
 if [ "$IS_WSL" = true ]; then
     if [ "$CCR_FLAG" = true ]; then
         # --ccr flag: install/configure CCR with systemd service
-        if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
+        if [ "$HAS_AZURE_KEY" = "true" ] || [ "$HAS_GEMINI_KEY" = "true" ]; then
             log "Setting up Claude Code Router for WSL..."
             configure_ccr
         else
@@ -2263,13 +2264,13 @@ else
 
 # Install/update Claude Code Router with flexible provider support
 # Only install CCR if at least one provider key exists
-if command llm keys get azure &>/dev/null || command llm keys get gemini &>/dev/null; then
+if [ "$HAS_AZURE_KEY" = "true" ] || [ "$HAS_GEMINI_KEY" = "true" ]; then
     # Export environment variables for providers with keys
     if [ "$AZURE_CONFIGURED" = "true" ]; then
         export_azure_env_vars
     fi
 
-    if command llm keys get gemini &>/dev/null; then
+    if [ "$HAS_GEMINI_KEY" = "true" ]; then
         export_gemini_env_vars
     fi
 
@@ -2343,25 +2344,13 @@ ensure_zprofile_sources_profile
 # This ensures tools installed previously get updates even in minimal mode
 #############################################################################
 
-# Update claudechic if installed (stylish terminal UI for Claude Code)
-if uv tool list 2>/dev/null | grep -q "^claudechic "; then
-    install_or_upgrade_uv_tool claudechic
-fi
-
-# Update notebooklm-mcp-cli if installed (MCP server for NotebookLM integration)
-if uv tool list 2>/dev/null | grep -q "^notebooklm-mcp-cli "; then
-    install_or_upgrade_uv_tool notebooklm-mcp-cli
-fi
-
-# Update youtube-transcript-api if installed (YouTube transcript extraction)
-if uv tool list 2>/dev/null | grep -q "^youtube-transcript-api "; then
-    install_or_upgrade_uv_tool youtube-transcript-api
-fi
-
-# Update yt-dlp if installed (YouTube video/audio downloader)
-if uv tool list 2>/dev/null | grep -q "^yt-dlp "; then
-    install_or_upgrade_uv_tool yt-dlp
-fi
+# Update optional uv tools if already installed (single uv tool list call)
+UV_TOOLS_INSTALLED=$(uv tool list 2>/dev/null || true)
+for optional_tool in claudechic notebooklm-mcp-cli youtube-transcript-api yt-dlp; do
+    if echo "$UV_TOOLS_INSTALLED" | grep -q "^${optional_tool} "; then
+        install_or_upgrade_uv_tool "$optional_tool"
+    fi
+done
 
 # Install Claude Code skills and statusline (skipped with --no-additional-tools)
 # Skills are copied on every run to ensure latest versions are always available
