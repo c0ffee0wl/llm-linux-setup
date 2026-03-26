@@ -43,6 +43,9 @@ class ContextMixin:
     - pending_summary: Optional[str] for squash summary
     - _get_active_tools: method to get active tools
     - _render_system_prompt: method to render system prompt
+    - _get_memory_content: method to get AGENTS.md content
+    - _get_loaded_kb_content: method to get KB content
+    - _get_workflow_context: method to get workflow context
     - _debug: method for debug output
     """
 
@@ -296,6 +299,37 @@ class ContextMixin:
         except Exception as e:
             ConsoleHelper.error(self.console, f"Error squashing context: {e}")
 
+    def _build_system_prompt(self) -> str:
+        """Build system prompt with memory, KB, and workflow context appended.
+
+        The base system prompt is rendered by _render_system_prompt() at init/mode change.
+        This method appends memory, KB, and workflow context for the current request.
+        """
+        prompt = self.system_prompt
+
+        # Append memory content (AGENTS.md) - before KB
+        memory_content = self._get_memory_content()
+        if memory_content:
+            memory_instructions = """## Persistent Memory (AGENTS.md)
+
+The `<memory>` section below contains user preferences and project-specific notes that persist across sessions.
+- Apply these preferences to personalize responses and follow user conventions
+- Project Memory takes precedence over Global Memory for project-specific topics
+- Treat memory entries as authoritative user instructions"""
+            prompt = f"{prompt}\n\n{memory_instructions}\n\n<memory>\n{memory_content}\n</memory>"
+
+        # Append KB content if any loaded
+        kb_content = self._get_loaded_kb_content()
+        if kb_content:
+            prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
+
+        # Append workflow context if a workflow is active (from WorkflowMixin)
+        workflow_context = self._get_workflow_context()
+        if workflow_context:
+            prompt = f"{prompt}\n\n{workflow_context}"
+
+        return prompt
+
     def _strip_context(self, prompt_text):
         """Remove injected context sections from prompt for clean display.
 
@@ -367,7 +401,7 @@ class ContextMixin:
         Stores link in llm's config directory (squash-links.json)
         to allow tracking conversation history across squash boundaries.
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
         links_path = get_config_dir() / 'squash-links.json'
 
         links = {}
@@ -377,7 +411,7 @@ class ContextMixin:
             except (json.JSONDecodeError, OSError):
                 pass  # Start fresh if file is corrupted
 
-        links[new_id] = {'previous': old_id, 'squashed_at': datetime.utcnow().isoformat()}
+        links[new_id] = {'previous': old_id, 'squashed_at': datetime.now(timezone.utc).isoformat()}
         links_path.write_text(json.dumps(links, indent=2))
 
     def _load_squash_chain_info(self, conversation_id):

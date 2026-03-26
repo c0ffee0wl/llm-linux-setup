@@ -216,42 +216,38 @@ class WatchMixin:
                             # All terminals unchanged and no new TUI screenshots
                             should_skip = True
                         else:
-                            # Have new content - call AI
+                            # Have new content - prepare prompt data under lock
                             self.previous_watch_iteration_count += 1
+                            self.watch_ai_calls += 1
 
-                            # Build prompt - content already filtered to only new blocks
-                            # Wrap in <watch_prompt> tag for filtering in web companion
-                            prompt = '<watch_prompt>' + render('prompts/watch_prompt.j2',
-                                iteration_count=self.previous_watch_iteration_count,
-                                goal=self.watch_goal,
-                                exec_status=exec_status,
-                                context=context,
-                            ) + '</watch_prompt>'
+                    # AI call OUTSIDE lock to avoid blocking main thread
+                    # Uses model.prompt() (isolated call) instead of self._prompt()
+                    # (conversation) since watch responses don't need conversation history
+                    if not should_skip:
+                        # Build prompt - content already filtered to only new blocks
+                        # Wrap in <watch_prompt> tag for filtering in web companion
+                        prompt = '<watch_prompt>' + render('prompts/watch_prompt.j2',
+                            iteration_count=self.previous_watch_iteration_count,
+                            goal=self.watch_goal,
+                            exec_status=exec_status,
+                            context=context,
+                        ) + '</watch_prompt>'
 
-                            try:
-                                # Include TUI screenshots if any were captured
-                                # Always pass system prompt on every call (required for Gemini/Vertex
-                                # which is stateless - systemInstruction must be sent on every request)
-                                #
-                                # IMPORTANT: stream=False minimizes lock hold time by getting the
-                                # complete response in one call. Lock is necessary because the
-                                # conversation object is not thread-safe and is shared with main thread.
-                                self.watch_ai_calls += 1
-
-                                # Use schema if model supports it for reliable parsing
-                                use_schema = getattr(self.model, 'supports_schema', False)
-                                response = self._prompt(
-                                    prompt,
-                                    system=self._build_system_prompt(),
-                                    attachments=tui_attachments if tui_attachments else None,
-                                    stream=False,  # Reduce lock hold time
-                                    schema=WatchResponseSchema if use_schema else None
-                                )
-                                response_text = response.text()
-                                # Log watch mode response to database
-                                self._log_response(response)
-                            except Exception as response_error:
-                                ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
+                        try:
+                            # Use schema if model supports it for reliable parsing
+                            use_schema = getattr(self.model, 'supports_schema', False)
+                            response = self.model.prompt(
+                                prompt,
+                                system=self._build_system_prompt(),
+                                attachments=tui_attachments if tui_attachments else None,
+                                stream=False,
+                                schema=WatchResponseSchema if use_schema else None
+                            )
+                            response_text = response.text()
+                            # Log watch mode response to database
+                            self._log_response(response)
+                        except Exception as response_error:
+                            ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
 
                     # Only show if AI has actionable feedback - outside lock
                     if not should_skip and response_text and response_text.strip():

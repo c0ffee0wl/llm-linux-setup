@@ -962,36 +962,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
             exec=not self.no_exec_mode,
         )
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with memory, KB, and workflow context appended.
-
-        The base system prompt is rendered by Jinja2 at init/mode change.
-        This method appends memory, KB, and workflow context for the current request.
-        """
-        prompt = self.system_prompt
-
-        # Append memory content (AGENTS.md) - before KB
-        memory_content = self._get_memory_content()
-        if memory_content:
-            memory_instructions = """## Persistent Memory (AGENTS.md)
-
-The `<memory>` section below contains user preferences and project-specific notes that persist across sessions.
-- Apply these preferences to personalize responses and follow user conventions
-- Project Memory takes precedence over Global Memory for project-specific topics
-- Treat memory entries as authoritative user instructions"""
-            prompt = f"{prompt}\n\n{memory_instructions}\n\n<memory>\n{memory_content}\n</memory>"
-
-        # Append KB content if any loaded
-        kb_content = self._get_loaded_kb_content()
-        if kb_content:
-            prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
-
-        # Append workflow context if a workflow is active (from WorkflowMixin)
-        workflow_context = self._get_workflow_context()
-        if workflow_context:
-            prompt = f"{prompt}\n\n{workflow_context}"
-
-        return prompt
+    # _build_system_prompt is inherited from ContextMixin
 
     # =========================================================================
     # Configuration
@@ -1187,6 +1158,9 @@ The `<memory>` section below contains user preferences and project-specific note
             # Find prompt lines to identify command boundaries
             prompts = PromptDetector.find_all_prompts(content)
 
+            # Split once for reuse in marker filtering and result extraction
+            lines = content.split('\n')
+
             # Filter out false positives: in VTE terminals with Unicode markers,
             # only prompts containing INPUT_START_MARKER are real shell prompts.
             # Command output (like README content) won't have markers.
@@ -1194,7 +1168,6 @@ The `<memory>` section below contains user preferences and project-specific note
             # but INPUT_START_MARKER is on the next line, so check line and line+1.
             # DON'T check line-1: that would find markers from PREVIOUS commands.
             if PromptDetector.has_unicode_markers(content):
-                lines = content.split('\n')
                 real_prompts = []
                 for line_num, line_content in prompts:
                     # Check this line and next line for marker (handles Kali header → prompt)
@@ -1221,10 +1194,8 @@ The `<memory>` section below contains user preferences and project-specific note
                     # At least one complete command - extract last N
                     start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
                     start_line = prompts[start_idx][0]
-                    lines = content.split('\n')
                     return '\n'.join(lines[start_line:])
                 elif prompts:
-                    lines = content.split('\n')
                     prompt_at_end = PromptDetector.detect_prompt_at_end(content)
                     if prompt_at_end:
                         # prompt_at_end=True means there's an idle prompt at the end.
@@ -1253,17 +1224,19 @@ The `<memory>` section below contains user preferences and project-specific note
         content = self.plugin_dbus.capture_from_row(terminal_uuid, fallback_start)
         prompts = PromptDetector.find_all_prompts(content)
 
+        # Split once for reuse in marker filtering and result extraction
+        lines = content.split('\n')
+
         # Filter out false positives using Unicode markers (same as main loop)
         if PromptDetector.has_unicode_markers(content):
-            lines_list = content.split('\n')
             real_prompts = []
             for line_num, line_content in prompts:
                 # Check this line and next line for marker (handles Kali header → prompt)
                 has_marker = False
                 for offset in [0, 1]:  # Don't check -1: would find previous command's marker
                     check_line = line_num + offset
-                    if 0 <= check_line < len(lines_list):
-                        if PromptDetector.INPUT_START_MARKER in lines_list[check_line]:
+                    if 0 <= check_line < len(lines):
+                        if PromptDetector.INPUT_START_MARKER in lines[check_line]:
                             has_marker = True
                             break
                 if has_marker:
@@ -1273,11 +1246,9 @@ The `<memory>` section below contains user preferences and project-specific note
         if len(prompts) >= 2:
             # Extract last N commands (same logic as main loop)
             start_idx = max(0, len(prompts) - (MAX_RECENT_COMMANDS + 1))
-            lines = content.split('\n')
             return '\n'.join(lines[prompts[start_idx][0]:])
         elif prompts:
             # Single prompt - same logic as main loop (VTE trailing marker trim)
-            lines = content.split('\n')
             if PromptDetector.detect_prompt_at_end(content):
                 prompt_line = prompts[0][0]
                 total_lines = len(lines)
@@ -1947,6 +1918,8 @@ The `<memory>` section below contains user preferences and project-specific note
             response.log_to_db(db)
         finally:
             response.prompt._prompt = original_prompt
+            if hasattr(db, 'conn') and db.conn:
+                db.conn.close()
 
     def _init_conversation(self):
         """Initialize conversation, optionally loading from database.

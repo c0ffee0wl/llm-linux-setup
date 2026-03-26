@@ -791,6 +791,7 @@ class ContentChangeReceiver:
         self._thread = None
         self._change_queue = queue.Queue()
         self._running = False
+        self._ready_event = threading.Event()
         self._debug = debug_callback or (lambda x: None)
         self._bus = None
 
@@ -802,6 +803,8 @@ class ContentChangeReceiver:
         """
         if self._running:
             return True
+
+        self._ready_event.clear()
 
         try:
             # Import GLib here to avoid import errors if not available
@@ -825,17 +828,19 @@ class ContentChangeReceiver:
 
                     self._debug("ContentChangeReceiver: mainloop started")
                     self._running = True
+                    self._ready_event.set()
                     self._loop.run()
                 except Exception as e:
                     self._debug(f"ContentChangeReceiver: mainloop error: {e}")
                 finally:
                     self._running = False
+                    self._ready_event.set()  # Unblock waiter on failure too
 
             self._thread = threading.Thread(target=run_mainloop, daemon=True)
             self._thread.start()
 
-            # Wait briefly for thread to start
-            time.sleep(0.1)
+            # Wait for thread to signal ready (or fail), with timeout
+            self._ready_event.wait(timeout=2.0)
             return self._running
 
         except ImportError as e:

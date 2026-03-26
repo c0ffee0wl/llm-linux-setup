@@ -335,11 +335,27 @@ class HeadlessSession(
         # Now render system prompt (after mixins initialized)
         self.system_prompt = self._render_system_prompt()
 
+    def _load_config(self) -> dict:
+        """Load assistant-config.yaml if it exists."""
+        config_file = get_config_dir() / "assistant-config.yaml"
+        if config_file.exists():
+            try:
+                import yaml
+                with open(config_file) as f:
+                    return yaml.safe_load(f) or {}
+            except Exception:
+                return {}
+        return {}
+
     def _init_mixins(self):
         """Initialize mixin-specific state."""
         # MemoryMixin - load AGENTS.md files
         if hasattr(self, '_load_memories'):
             self._load_memories()
+
+        # KnowledgeBaseMixin - load auto-load KBs from config
+        if hasattr(self, '_load_auto_kbs'):
+            self._load_auto_kbs()
 
         # MCPMixin (headless mode = no_exec_mode=True)
         if hasattr(MCPMixin, '_mcp_init'):
@@ -428,37 +444,7 @@ class HeadlessSession(
         """
         return self.get_system_prompt(gui=(self.source == "gui"))
 
-    def _build_system_prompt(self) -> str:
-        """Build system prompt with memory, KB, and workflow context appended.
-
-        Required by WebMixin for web companion and debug info.
-        The base system prompt is rendered by _render_system_prompt().
-        This method appends memory, KB, and workflow context for the current request.
-        """
-        prompt = self.system_prompt
-
-        # Append memory content (AGENTS.md) - before KB
-        memory_content = self._get_memory_content()
-        if memory_content:
-            memory_instructions = """## Persistent Memory (AGENTS.md)
-
-The `<memory>` section below contains user preferences and project-specific notes that persist across sessions.
-- Apply these preferences to personalize responses and follow user conventions
-- Project Memory takes precedence over Global Memory for project-specific topics
-- Treat memory entries as authoritative user instructions"""
-            prompt = f"{prompt}\n\n{memory_instructions}\n\n<memory>\n{memory_content}\n</memory>"
-
-        # Append KB content if any loaded
-        kb_content = self._get_loaded_kb_content()
-        if kb_content:
-            prompt = f"{prompt}\n\n<knowledge>\n# Knowledge Base\n\n{kb_content}\n</knowledge>"
-
-        # Append workflow context if a workflow is active (from WorkflowMixin)
-        workflow_context = self._get_workflow_context()
-        if workflow_context:
-            prompt = f"{prompt}\n\n{workflow_context}"
-
-        return prompt
+    # _build_system_prompt is inherited from ContextMixin
 
     async def capture_context(self, session_log: Optional[str] = None) -> str:
         """Capture terminal context from asciinema log.

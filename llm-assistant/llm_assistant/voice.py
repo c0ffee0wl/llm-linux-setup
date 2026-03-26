@@ -216,12 +216,16 @@ class VoiceInput:
         # Start transcribing animation
         self._start_animation(self.TRANSCRIBING_FRAMES, "Transcribing")
 
-        # Helper to poll while rendering animation
+        # Helper to poll while rendering animation.
+        # NOTE: This blocks the prompt_toolkit event loop (runs inside a keybinding
+        # handler). Direct renderer.render() is needed because the event loop can't
+        # process invalidate() callbacks while blocked. Keyboard input is unresponsive
+        # during transcription. A proper fix would require async prompt_toolkit integration.
         def poll_future(future):
             while not future.done():
                 if self._app:
                     self._app.renderer.render(self._app, self._app.layout)
-                time.sleep(0.1)
+                time.sleep(0.05)
             return future.result()
 
         # Run model loading and transcription in background to allow animation

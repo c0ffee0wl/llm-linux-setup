@@ -404,27 +404,6 @@ def yaml_escape(value) -> str:
     return s
 
 
-def is_watch_response_dismissive(response_text: str) -> bool:
-    """Determine if response indicates no action needed."""
-    if not response_text:
-        return True
-    normalized = response_text.strip().lower().rstrip('.')
-    dismissive_exact = {
-        'ok', 'okay', 'k', 'no comment', 'no issues', 'nothing to report',
-        'nothing new', 'all good', 'looks good', 'no action needed',
-        'no changes', 'nothing notable', 'nothing unusual', 'all normal',
-    }
-    if normalized in dismissive_exact:
-        return True
-    # Short positive responses (1-3 words) are likely dismissive
-    words = normalized.split()
-    if len(words) <= 3:
-        positive = {'ok', 'okay', 'good', 'fine', 'normal', 'clear', 'stable'}
-        if any(word in positive for word in words):
-            return True
-    return False
-
-
 # =============================================================================
 # Judge Model Selection
 # =============================================================================

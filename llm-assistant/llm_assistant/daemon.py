@@ -431,6 +431,7 @@ class AssistantDaemon:
         session_log = request.get('log', '')
         mode = request.get('mode', 'assistant')
         custom_system_prompt = request.get('sys', '')
+        source = request.get('source')  # Origin: "gui", "tui", "cli", "api"
         image_paths = request.get('images', [])  # List of image file paths
 
         # Create attachments from image paths
@@ -452,8 +453,8 @@ class AssistantDaemon:
             if handled:
                 return
 
-        # Get session state
-        state = self.get_session_state(tid, session_log)
+        # Get session state (pass source so GUI clients get correct behavior)
+        state = self.get_session_state(tid, session_log, source=source)
         state.touch()
         session = state.session
 

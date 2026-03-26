@@ -1451,7 +1451,8 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 err(f'Invalid regex pattern "{pattern}": {e}')
                 return []
 
-            # Search line by line
+            # Search line by line (cap at 100 results to avoid unbounded memory usage)
+            MAX_RESULTS = 100
             matches = []
             lines = content.split('\n')
             for line_num, line in enumerate(lines):
@@ -1462,6 +1463,10 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                         'start_col': dbus.Int32(match.start()),
                         'end_col': dbus.Int32(match.end())
                     })
+                    if len(matches) >= MAX_RESULTS:
+                        break
+                if len(matches) >= MAX_RESULTS:
+                    break
 
             dbg(f'search_in_scrollback for {terminal_uuid}: found {len(matches)} matches')
             return matches

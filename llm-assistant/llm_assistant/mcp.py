@@ -246,15 +246,18 @@ class MCPMixin:
     def _get_all_mcp_servers(self) -> dict:
         """Get all MCP servers with their optional status.
 
-        Returns dict mapping server_name -> is_optional (bool)
+        Returns dict mapping server_name -> is_optional (bool).
+        Result is cached after first call since MCP tools don't change at runtime.
         """
-        _ensure_mcp_loaded()
-        servers = {}
-        for tool in _all_tools.values():
-            server = getattr(tool, 'server_name', None)
-            if server and server not in servers:
-                servers[server] = getattr(tool, 'mcp_optional', False)
-        return servers
+        if not hasattr(self, '_all_mcp_servers_cache'):
+            _ensure_mcp_loaded()
+            servers = {}
+            for tool in _all_tools.values():
+                server = getattr(tool, 'server_name', None)
+                if server and server not in servers:
+                    servers[server] = getattr(tool, 'mcp_optional', False)
+            self._all_mcp_servers_cache = servers
+        return self._all_mcp_servers_cache
 
     def _count_tools_for_server(self, server_name: str) -> int:
         """Count tools available from a specific MCP server."""

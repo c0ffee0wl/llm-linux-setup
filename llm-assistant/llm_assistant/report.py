@@ -209,15 +209,19 @@ language_name: {language_name}
             "evidence": evidence
         }
 
+        # Sanitize LLM output: bare '---' lines would break YAML-delimited file parsing
+        description = self._sanitize_finding_text(analysis.get('description', quick_note))
+        remediation = self._sanitize_finding_text(analysis.get('remediation', 'To be determined'))
+
         # Build finding markdown body (Description -> Remediation -> Evidence)
         finding_body = f"""
 ### Description
 
-{analysis.get('description', quick_note)}
+{description}
 
 ### Remediation
 
-{analysis.get('remediation', 'To be determined')}
+{remediation}
 
 ### Evidence
 
@@ -360,15 +364,19 @@ language_name: {language_name}
             "evidence": evidence
         }
 
+        # Sanitize LLM output: bare '---' lines would break YAML-delimited file parsing
+        description = self._sanitize_finding_text(analysis.get('description', note))
+        remediation = self._sanitize_finding_text(analysis.get('remediation', 'To be determined'))
+
         # Build finding markdown body
         finding_body = f"""
 ### Description
 
-{analysis.get('description', note)}
+{description}
 
 ### Remediation
 
-{analysis.get('remediation', 'To be determined')}
+{remediation}
 
 ### Evidence
 
@@ -616,6 +624,18 @@ Respond with a JSON object containing these fields:
                 max_num = max(max_num, num)
 
         return f"F{max_num + 1:03d}"
+
+    @staticmethod
+    def _sanitize_finding_text(text: str) -> str:
+        """Sanitize text for safe inclusion in YAML-delimited findings file.
+
+        Replaces bare '---' lines (YAML document separators) with '- - -'
+        which renders identically as a markdown horizontal rule but won't
+        break the findings file parser.
+        """
+        if not text:
+            return text
+        return re.sub(r'^---$', '- - -', text, flags=re.MULTILINE)
 
     def _write_findings_file(self, path: Path, project_meta: Dict, findings: List[Tuple[Dict, str]]):
         """Write findings.md with project YAML frontmatter + per-finding YAML blocks."""
