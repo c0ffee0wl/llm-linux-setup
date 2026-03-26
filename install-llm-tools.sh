@@ -1260,9 +1260,31 @@ detect_user_plugins() {
     fi
 }
 
+# Write uv-tool-packages.json so that future `llm install <user-plugin>` calls
+# (handled by llm-uv-tool) preserve our git-fork URLs.  llm-uv-tool's get_plugins()
+# only sees distribution names (e.g. "llm-gemini"), not source URLs, so without
+# this file it would fall back to PyPI on reinstall.
+update_uv_tool_packages_json() {
+    local config_dir packages_file
+    config_dir="$(get_llm_config_dir)"
+    packages_file="$config_dir/uv-tool-packages.json"
+    mkdir -p "$config_dir"
+    {
+        printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool"
+        [ ${#USER_PLUGINS[@]} -gt 0 ] && printf '%s\n' "${USER_PLUGINS[@]}"
+    } | sort -u | jq -R . | jq -s . > "$packages_file"
+}
+
 LLM_PLUGIN_FINGERPRINT=$(compute_plugin_list_fingerprint)
 LLM_FINGERPRINT_FILE="$LLM_TOOLS_CONFIG_DIR/llm-install-fingerprint"
 STORED_FINGERPRINT=$(cat "$LLM_FINGERPRINT_FILE" 2>/dev/null || echo "")
+
+# Build --reinstall-package args for local plugins (forces rebuild from source)
+REINSTALL_ARGS=()
+for local_path in "${LOCAL_PLUGINS[@]}"; do
+    pkg_name=$(basename "$local_path")
+    REINSTALL_ARGS+=(--reinstall-package "${pkg_name//-/_}")
+done
 
 if [ "$FORCE_LLM" = "true" ] || ! command -v llm &>/dev/null || \
    [ "$LLM_PLUGIN_FINGERPRINT" != "$STORED_FINGERPRINT" ]; then
@@ -1270,28 +1292,16 @@ if [ "$FORCE_LLM" = "true" ] || ! command -v llm &>/dev/null || \
     # Full install: plugin list changed, first run, or forced
     detect_user_plugins
 
-    WITH_FLAGS=""
+    INSTALL_ARGS=(uv tool install --force "${REINSTALL_ARGS[@]}")
     for plugin in "${ALL_PLUGINS[@]}" "${USER_PLUGINS[@]}"; do
-        WITH_FLAGS+=" --with \"$plugin\""
+        INSTALL_ARGS+=(--with "$plugin")
     done
-
-    REINSTALL_FLAGS=""
-    for local_path in "${LOCAL_PLUGINS[@]}"; do
-        pkg_name=$(basename "$local_path")
-        REINSTALL_FLAGS+=" --reinstall-package ${pkg_name//-/_}"
-    done
+    INSTALL_ARGS+=("$LLM_SOURCE")
 
     log "Installing llm with $(( ${#ALL_PLUGINS[@]} + ${#USER_PLUGINS[@]} )) plugins (${#LOCAL_PLUGINS[@]} local)..."
-    eval "uv tool install --force $REINSTALL_FLAGS $WITH_FLAGS \"$LLM_SOURCE\""
+    "${INSTALL_ARGS[@]}"
 
-    # Update uv-tool-packages.json preserving user plugins
-    LLM_CONFIG_DIR_TEMP="$(get_llm_config_dir)"
-    PACKAGES_FILE="$LLM_CONFIG_DIR_TEMP/uv-tool-packages.json"
-    mkdir -p "$LLM_CONFIG_DIR_TEMP"
-    {
-        printf '%s\n' "${ALL_PLUGINS[@]}" | grep -v "llm-uv-tool"
-        [ ${#USER_PLUGINS[@]} -gt 0 ] && printf '%s\n' "${USER_PLUGINS[@]}"
-    } | sort -u | jq -R . | jq -s . > "$PACKAGES_FILE"
+    update_uv_tool_packages_json
 
     mkdir -p "$LLM_TOOLS_CONFIG_DIR"
     echo "$LLM_PLUGIN_FINGERPRINT" > "$LLM_FINGERPRINT_FILE"
@@ -1300,14 +1310,8 @@ if [ "$FORCE_LLM" = "true" ] || ! command -v llm &>/dev/null || \
 else
     # Incremental upgrade: pull latest git commits, update PyPI packages,
     # and rebuild local plugins — no venv recreation
-    REINSTALL_FLAGS=""
-    for local_path in "${LOCAL_PLUGINS[@]}"; do
-        pkg_name=$(basename "$local_path")
-        REINSTALL_FLAGS+=" --reinstall-package ${pkg_name//-/_}"
-    done
-
     log "Upgrading llm and plugins..."
-    uv tool upgrade $REINSTALL_FLAGS llm
+    uv tool upgrade "${REINSTALL_ARGS[@]}" llm
     log "LLM and plugins upgraded"
 fi
 
