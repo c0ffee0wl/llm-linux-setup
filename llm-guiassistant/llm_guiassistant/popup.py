@@ -110,6 +110,7 @@ class PopupWindow(Gtk.ApplicationWindow):
         # Header bar
         header = Gtk.HeaderBar()
         header.set_title("LLM GUI Assistant")
+        header.set_show_close_button(True)
         self.set_titlebar(header)
 
         # WebKit view for web UI

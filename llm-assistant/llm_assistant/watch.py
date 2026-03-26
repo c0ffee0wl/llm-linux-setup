@@ -244,8 +244,6 @@ class WatchMixin:
                                 schema=WatchResponseSchema if use_schema else None
                             )
                             response_text = response.text()
-                            # Log watch mode response to database
-                            self._log_response(response)
                         except Exception as response_error:
                             ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
 
@@ -274,6 +272,8 @@ class WatchMixin:
 
                         # Show alert if we have actionable feedback
                         if has_feedback and feedback_text and feedback_text.strip():
+                            # Only log actionable watch responses to avoid empty conversations
+                            self._log_response(response)
                             self.watch_alerts_shown += 1
                             self.console.print()
                             self.console.print(Panel(
