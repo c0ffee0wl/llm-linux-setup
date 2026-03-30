@@ -1933,8 +1933,14 @@ function handleTextMessage(msg) {
         }
     }
 
+    // Finalize previous streaming container if switching to a new message
+    // (happens when continuation response starts after tool execution)
+    if (currentMessageId !== null) {
+        finalizeMessage();
+    }
+
     // Create new assistant message (pass display content separately)
-    appendMessage('assistant', msg.content, msg.messageId, displayContent);
+    appendMessage('assistant', msg.content, msg.messageId, displayContent, undefined, msg.continuation);
 }
 
 /**
@@ -2126,7 +2132,7 @@ function loadHistory(messages) {
 // Message Display
 // ============================================================================
 
-function appendMessage(role, content, streamingId, displayOverride, toolCalls) {
+function appendMessage(role, content, streamingId, displayOverride, toolCalls, isContinuation) {
     const emptyState = document.getElementById('empty-state');
     if (emptyState) {
         emptyState.remove();
@@ -2135,6 +2141,9 @@ function appendMessage(role, content, streamingId, displayOverride, toolCalls) {
     const conversation = document.getElementById('conversation');
     const container = document.createElement('div');
     container.className = 'message ' + role;
+    if (isContinuation) {
+        container.classList.add('continuation');
+    }
 
     // Strip context tags for display, but keep original in store
     // For assistant messages during live streaming, displayOverride provides pre-stripped content
@@ -2881,7 +2890,9 @@ function regenerateResponse(messageId) {
         return;
     }
 
-    messageStore.removeMessage(messageId);
+    // Remove target assistant message AND all continuation messages after it
+    // (tool-call turns create multiple assistant messages for one logical turn)
+    messageStore.truncateAfter(userMsg.id);
     updateLastMessageIndicators();
 
     safeSend({
@@ -2915,13 +2926,16 @@ function forkAtMessage(messageId) {
         return;
     }
 
-    // Convert UI message index to response index
-    // In the UI, we have alternating user/assistant messages
-    // In the database, each "response" is a user prompt + assistant response
-    // UI index 0 (user) + 1 (assistant) = response index 0
-    // UI index 2 (user) + 3 (assistant) = response index 1
-    // So response index = floor(msgIndex / 2)
-    const responseIndex = Math.floor(msgIndex / 2);
+    // Convert UI message index to response index by counting assistant
+    // messages (each assistant message maps to one Response object,
+    // including continuation messages from tool-call turns)
+    let responseIndex = 0;
+    for (let i = 0; i <= msgIndex; i++) {
+        if (messageStore.messages[i].role === 'assistant') {
+            responseIndex++;
+        }
+    }
+    responseIndex--; // Convert to 0-based
 
     showToast('Creating fork...');
 

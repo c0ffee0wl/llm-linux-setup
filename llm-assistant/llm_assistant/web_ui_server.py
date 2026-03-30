@@ -774,6 +774,14 @@ class WebUIServer:
                     )
                     tool_results.append(result)
 
+                # New message container for continuation response
+                # Tool events above used the OLD message_id (tools belong to
+                # the response that requested them). Continuation text gets a
+                # NEW message_id so it appears as a separate message below
+                # the tool call UI elements.
+                message_id = f"msg-{int(time.time() * 1000)}"
+                accumulated_text = ""
+
                 # Continue conversation with tool results (empty prompt)
                 response_holder[0] = None  # Reset for next response
                 async for chunk in self._stream_llm_response(
@@ -784,6 +792,7 @@ class WebUIServer:
                         "type": "text",
                         "content": accumulated_text,
                         "messageId": message_id,
+                        "continuation": True,
                     }):
                         # Client disconnected, stop streaming
                         cancel_flag.set()
@@ -797,6 +806,16 @@ class WebUIServer:
                         tool_calls = list(response.tool_calls())
                     except Exception:
                         pass
+
+                # Ensure container exists if continuation goes straight to
+                # more tool calls without producing any text
+                if tool_calls and not accumulated_text:
+                    await self._safe_send_json(ws, {
+                        "type": "text",
+                        "content": "",
+                        "messageId": message_id,
+                        "continuation": True,
+                    })
 
             # Extract and broadcast thinking traces if present
             response = response_holder[0]
@@ -902,19 +921,31 @@ class WebUIServer:
         if state.session.conversation:
             responses = state.session.conversation.responses
 
-            # Delete last response from database (only if logging is enabled)
-            if self._should_log(session_id) and responses:
-                last_response = responses[-1]
-                if hasattr(last_response, 'id') and last_response.id:
+            # Pop the entire turn: continuation responses (empty prompt) +
+            # the initial response (with user prompt). Tool-call turns create
+            # multiple Response objects that all belong to one logical turn.
+            responses_to_remove = []
+            while responses:
+                last = responses[-1]
+                responses_to_remove.append(responses.pop())
+                prompt_text = ""
+                if hasattr(last, 'prompt') and last.prompt:
+                    prompt_text = (last.prompt.prompt or "").strip()
+                if prompt_text:
+                    break  # Was the initial response with user prompt, done
+
+            # Delete removed responses from database (only if logging is enabled)
+            if self._should_log(session_id) and responses_to_remove:
+                response_ids = [
+                    r.id for r in responses_to_remove
+                    if hasattr(r, 'id') and r.id
+                ]
+                if response_ids:
                     loop = asyncio.get_running_loop()
                     await loop.run_in_executor(
                         None,
-                        lambda rid=last_response.id: self._delete_responses_from_db([rid])
+                        lambda ids=response_ids: self._delete_responses_from_db(ids)
                     )
-
-            # Pop from in-memory conversation
-            if responses:
-                responses.pop()
 
         # Re-query with the user content
         await self._handle_query(session_id, ws, {"query": user_content})

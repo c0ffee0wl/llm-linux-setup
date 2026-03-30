@@ -1579,6 +1579,12 @@ pre code {
     display: none;
 }
 
+/* Continuation messages: hide regenerate/fork (only meaningful on initial response) */
+.message.continuation .action-regenerate,
+.message.continuation .action-fork {
+    display: none !important;
+}
+
 /* Remove margin when inside container (gap handles spacing) */
 .message-tool-calls .tool-call {
     margin: 0;
