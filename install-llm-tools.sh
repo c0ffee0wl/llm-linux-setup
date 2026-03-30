@@ -1134,6 +1134,7 @@ REMOTE_PLUGINS=(
     # Provider plugins
     "git+https://github.com/c0ffee0wl/llm-gemini"
     "git+https://github.com/c0ffee0wl/llm-vertex"
+    "git+https://github.com/c0ffee0wl/llm-azure-embeddings"
 
     # Command plugins
     "git+https://github.com/c0ffee0wl/llm-cmd"
@@ -1513,6 +1514,26 @@ EOF
   aliases:
     - azure/gpt-5.1-codex
 EOF
+
+    # Create azure-embeddings-models.yaml for embedding models
+    log "Creating Azure OpenAI embedding models configuration..."
+
+    AZURE_EMBED_FILE="$LLM_CONFIG_DIR/azure-embeddings-models.yaml"
+    cat > "$AZURE_EMBED_FILE" <<EOF
+- model_id: azure/text-embedding-3-small
+  model_name: text-embedding-3-small
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+  aliases:
+    - azure-3-small
+
+- model_id: azure/text-embedding-3-large
+  model_name: text-embedding-3-large
+  api_base: ${AZURE_API_BASE}
+  api_key_name: azure
+  aliases:
+    - azure-3-large
+EOF
 else
     log "Azure OpenAI not configured, skipping model configuration"
 fi
@@ -1576,7 +1597,7 @@ fi
 # Set default model based on configured provider
 if [ "$AZURE_CONFIGURED" = "true" ]; then
     set_or_migrate_default_model "azure/gpt-4.1-mini"
-    # Azure embedding default is set above when llm-azure plugin is installed
+    command llm embed-models default azure/text-embedding-3-small
 elif [ "$GEMINI_CONFIGURED" = "true" ]; then
     set_or_migrate_default_model "gemini-2.5-flash"
     # Set Gemini embedding as default when Gemini is the primary provider
