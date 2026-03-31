@@ -32,11 +32,11 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
    - Tool-based command execution with structured output
    - Asyncio-based watch mode
 
-3. **Assistant Template** (`llm-templates/llm-assistant.yaml`):
+3. **System Prompt Template** (`llm_assistant/templates/system_prompt.j2`):
+   - Jinja2 template bundled inside the package
    - System prompt optimized for Terminator environment
    - Instructs AI on tool usage for terminal interaction
    - Explains context awareness and watch mode
-   - **Important**: Template loading uses explicit `template_dir() / "llm-assistant.yaml"` path to avoid conflict with the `llm-assistant/` directory in the repo (llm's `load_template()` checks cwd first)
 
 4. **Assistant Tools Plugin** (`llm-tools-assistant/`):
    - Provides structured tool definitions for terminal control
@@ -75,7 +75,7 @@ The repository includes **llm-assistant**, a TmuxAI-inspired terminal assistant 
 
 Commands executed in the Exec terminal use **prompt-based completion detection** (inspired by TmuxAI):
 
-- **PromptDetector**: Uses shared `prompt_detection.py` module to detect shell prompts
+- **PromptDetector**: Uses shared `prompt_detection.py` module from `llm-tools-core` to detect shell prompts
 - **Polls for prompt**: Instead of fixed timeout, polls until prompt appears
 - **Visual feedback**: Shows spinner animation while waiting
 - **Timeout fallback**: Falls back to 60-second timeout for long-running commands
@@ -366,7 +366,7 @@ MCP Servers:
 
 ## AI Tool Interface
 
-The AI uses structured tool calling to interact with terminals. See the `llm-assistant.yaml` template for full documentation:
+The AI uses structured tool calling to interact with terminals. See the system prompt template for full documentation:
 - `execute_in_terminal(command: str)` - Execute shell command in Exec terminal
 - `send_keypress(keypress: str)` - Send keypresses (for TUI apps like vim, htop)
 - `capture_terminal(scope: str)` - Screenshot capture ("exec" or "all")
@@ -391,9 +391,8 @@ These tools provide schema validation at the model level, ensuring the AI's requ
 
 ## Installation
 
-- Template: `llm-assistant.yaml` installed (Phase 4)
+- Application: `llm-assistant` package installed via uv (Phase 2, as part of ALL_PLUGINS)
 - Plugin: Copied to `~/.config/terminator/plugins/` (Phase 5)
-- Application: `llm-assistant` installed to `~/.local/bin/` (Phase 5)
 - Dependencies: PyGObject, dbus-python conditionally installed (Phase 1, only if Terminator detected)
 - Enable plugin: Terminator Preferences → Plugins → Check "TerminatorAssistant"
 
@@ -517,20 +516,20 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - **Self-awareness**: Filters out `self.chat_terminal_uuid` when capturing context
 - **Tool calling**: Uses llm's tool_calls() for structured command extraction with schema validation
 - **Execution**: `vte.feed_child()` via plugin
-- **Completion detection**: `PromptDetector.detect_prompt_at_end()` for smart wait-for-prompt
+- **Completion detection**: `PromptDetector.detect_prompt_at_end()` (from `llm-tools-core`) for smart wait-for-prompt
 
 ## File Locations
 
 ### Repository Files
-- `llm-assistant/llm-assistant` - Standalone application
+- `llm-assistant/llm_assistant/` - Main Python package (cli, daemon, session, context, etc.)
+- `llm-assistant/llm_assistant/templates/` - Jinja2 templates (system prompt, help text, web companion)
+- `llm-assistant/llm_assistant/static/` - Web UI assets (HTML, JS, CSS)
 - `llm-assistant/terminator-assistant-plugin/terminator_assistant.py` - Terminator plugin
-- `llm-templates/llm-assistant.yaml` - System prompt template
 - `llm-assistant/llm-tools-assistant/` - LLM plugin for structured tool definitions
 
 ### Installed Locations
-- `~/.local/bin/llm-assistant` - Application binary
+- `~/.local/bin/llm-assistant` - Application binary (via uv tool install)
 - `~/.config/terminator/plugins/terminator_assistant.py` - Plugin
-- `~/.config/io.datasette.llm/templates/llm-assistant.yaml` - Template
 
 ### Data Locations
 - `~/.config/llm-assistant/logs.db` - Conversation database (separate from llm CLI)
@@ -551,4 +550,4 @@ Use `--no-log` to run without database persistence (conversation won't be resuma
 - **D-Bus errors**: Ensure D-Bus enabled in Terminator config
 - **No terminals captured**: Enable plugin in Terminator Preferences → Plugins
 - **Watch mode not working**: Check asyncio compatibility, ensure Python 3.9+
-- **Template loading fails**: The code uses explicit `template_dir() / "llm-assistant.yaml"` to avoid conflicts with directories named `llm-assistant` in cwd. If template not found, run `./install-llm-tools.sh` to install templates. Never use bare `load_template("llm-assistant")` as it conflicts with the repo's `llm-assistant/` directory.
+- **Template loading fails**: Templates are now bundled as Jinja2 files inside the package (`llm_assistant/templates/`). If templates are missing, reinstall the package via `./install-llm-tools.sh`.

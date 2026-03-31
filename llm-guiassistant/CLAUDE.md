@@ -35,11 +35,11 @@ GTK-based conversational popup for system-wide LLM access on Linux. Uses a hybri
 └─────────────────┘
 ```
 
-**Key design:** The GTK popup is a thin shell (~300 lines) that loads the web UI from the daemon. All conversation logic, streaming, context capture, and tool execution happens in the daemon/web UI via WebSocket.
+**Key design:** The GTK popup is a thin shell that loads the web UI from the daemon. All conversation logic, streaming, context capture, and tool execution happens in the daemon/web UI via WebSocket.
 
 ## Components
 
-### popup.py (~300 lines)
+### popup.py
 Thin GTK shell with single-instance D-Bus activation:
 - `PopupApplication`: GTK Application with D-Bus activation for instant (<50ms) re-activation
 - `PopupWindow`: Loads web UI from daemon via WebKit, handles drag-drop
@@ -66,8 +66,10 @@ Located in `llm-assistant/llm_assistant/static/`:
 - maim, flameshot (screenshots via llm-tools-capture-screen)
 
 ### JavaScript (downloaded to llm-assistant static directory)
-- marked.min.js v17.0.1 (Markdown parsing)
+- marked.min.js v17.0.5 (Markdown parsing)
 - highlight.min.js v11.11.1 (syntax highlighting)
+- mermaid.min.js (diagram rendering)
+- purify.min.js (HTML sanitization)
 
 ## Hotkeys
 

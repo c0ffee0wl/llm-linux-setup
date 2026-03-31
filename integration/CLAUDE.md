@@ -6,13 +6,15 @@ This file provides guidance to Claude Code when working with shell integration f
 
 Shell integration provides the `llm` wrapper function, keybindings, tab completion, and automatic session recording for Bash and Zsh.
 
-## File Structure (Three-File Pattern)
+## File Structure
 
 | File | Purpose |
 |------|---------|
-| `llm-common.sh` | Shared: PATH, env vars, aliases, llm wrapper, auto-recording |
+| `llm-common.sh` | Shared: PATH, env vars, aliases, llm wrapper, `@()` function, `wut()`, auto-recording |
 | `llm-integration.bash` | Bash-specific: sources common, defines Bash widgets |
-| `llm-integration.zsh` | Zsh-specific: sources common, defines Zsh widgets |
+| `llm-integration.zsh` | Zsh-specific: sources common, defines Zsh widgets, smart `@` widget |
+| `llm-zsh-plugin/` | Zsh tab completion for llm commands |
+| `claude-statusline/` | Claude Code custom statusline script |
 
 ## LLM Wrapper Function (`llm-common.sh`)
 
@@ -118,6 +120,16 @@ zsh -c "source integration/llm-integration.zsh && bindkey | grep llm"
 **Completions show old commands**: Verify `compinit` is loaded (`which compinit`).
 
 **Code/rag subcommands not completing**: Re-run install script to apply modifications.
+
+## @ Function (`llm-common.sh`)
+
+The `@()` shell function provides inline AI access from any terminal. It's a thin client that connects to the `llm-assistant --daemon` backend via `llm-inlineassistant`. See [`llm-inlineassistant/CLAUDE.md`](../llm-inlineassistant/CLAUDE.md) for protocol details.
+
+In Zsh, a smart `@` widget (in `llm-integration.zsh`) intercepts `@` at line start to enter LLM mode with Tab completions.
+
+## Claude Code Statusline (`claude-statusline/`)
+
+Custom statusline script for Claude Code that displays user, host, cwd, model name, and context window usage percentage. Invoked by Claude Code's `statusline` setting.
 
 ## Adding New Features
 

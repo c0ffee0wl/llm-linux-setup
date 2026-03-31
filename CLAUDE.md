@@ -14,7 +14,6 @@ Installation and configuration system for Simon Willison's `llm` CLI tool and re
 - **Session recording & context** for AI-accessible terminal history
 - **Shell integration** with keybindings, wrapper function, tab completion
 - **Terminal assistants** (Terminator, inline `@` command, GTK popup)
-- **Workflow engine** for YAML-based automation
 - **Desktop integration** (espanso, ulauncher, speech-to-text)
 
 ## Component Documentation
@@ -26,7 +25,6 @@ Installation and configuration system for Simon Willison's `llm` CLI tool and re
 | Terminator Assistant | [`llm-assistant/CLAUDE.md`](llm-assistant/CLAUDE.md) |
 | Inline Assistant (`@`) | [`llm-inlineassistant/CLAUDE.md`](llm-inlineassistant/CLAUDE.md) |
 | GUI Assistant (GTK) | [`llm-guiassistant/CLAUDE.md`](llm-guiassistant/CLAUDE.md) |
-| Workflow Engine | [`burr_workflow/CLAUDE.md`](burr_workflow/CLAUDE.md) |
 | Desktop Integration | [`docs/DESKTOP_INTEGRATION.md`](docs/DESKTOP_INTEGRATION.md) |
 | Microsoft MCP Setup | [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md) |
 
@@ -43,6 +41,18 @@ The core design uses a **self-updating script pattern**:
 3. Prevents executing with partially-updated code mid-run
 
 **When modifying `install-llm-tools.sh`**: Phase 0 must ALWAYS run before any other operations.
+
+### Installation Levels
+
+The script supports three tiered installation levels (persisted between runs):
+
+| Level | Flag | Scope |
+|-------|------|-------|
+| 1 | `--minimal` | LLM core tools only |
+| 2 | `--standard` | Core + agentic CLI tools (Claude Code, CCR), skip extras |
+| 3 | `--full` | Everything (default) |
+
+Higher phases are gated by `INSTALL_LEVEL` checks (e.g., `if [ "$INSTALL_LEVEL" -ge 2 ]`).
 
 ### Installation Phases
 
@@ -74,24 +84,34 @@ uv tool install --force --reinstall-package <local> --with <all> llm
 Helper functions are split between two files:
 
 **`shared/common.sh`** (sourced by install script):
-| Function | Purpose |
-|----------|---------|
-| `install_apt_package(pkg, [cmd])` | Install apt packages with checks |
-| `version_at_least(v, min)` | Version comparison |
-| `ask_yes_no(prompt, default)` | Interactive prompts |
-| `install_or_upgrade_uv_tool(src)` | Unified uv tool management (auto-detects git) |
-| `install_or_upgrade_cargo_git_tool(name, url)` | Cargo tools with commit tracking |
-| `install_or_upgrade_github_release(name, repo, suffix)` | GitHub release binary with tag tracking |
-| `install_or_upgrade_rust()` | Rust version management |
-| `install_or_upgrade_nodejs()` | Node.js version management |
+
+Key function categories:
+
+| Category | Functions |
+|----------|-----------|
+| Logging & prompts | `log()`, `error()`, `warn()`, `ask_yes_no()` |
+| Version management | `compare_versions()`, `version_at_least()`, `version_less_than()` |
+| Config tracking | `get_stored_checksum()`, `store_checksum()`, `update_tracked_config()`, `update_profile_export()` |
+| System detection | `is_kali_linux()`, `is_ubuntu()`, `is_wsl()`, `has_desktop_environment()`, `is_wayland()`, `has_soundcard()` |
+| APT packages | `install_apt_package()`, `install_apt_packages()` |
+| uv tools | `install_or_upgrade_uv_tool()`, `install_or_upgrade_uv()`, `configure_uv_system_python()` |
+| Rust/cargo | `install_or_upgrade_rust()`, `install_or_upgrade_cargo_tool()`, `install_or_upgrade_cargo_git_tool()` |
+| Node.js/bun | `install_or_upgrade_nodejs()`, `install_or_upgrade_bun()`, `pkg_install_global()`, `pkg_uninstall_global()` |
+| GitHub releases | `install_or_upgrade_github_release()`, `install_github_deb_package()` |
+| Other installers | `install_or_upgrade_make_git_tool()`, `install_go()`, `install_go_tool()` |
+| Utilities | `curl_secure()`, `backup_file()`, `clear_package_caches()`, `graceful_stop_process()` |
 
 **`install-llm-tools.sh`**:
-| Function | Purpose |
-|----------|---------|
-| `update_template_file(name)` | Smart template updates with checksum |
-| `configure_azure_openai()` | Azure configuration prompts |
-| `configure_gemini()` | Gemini configuration prompts |
-| `get_llm_config_dir()` | Get llm config directory (cached) |
+
+| Category | Functions |
+|----------|-----------|
+| Config | `get_llm_config_dir()`, `update_shell_rc_file()` |
+| Templates | `update_template_file()` |
+| Providers | `configure_azure_openai()`, `configure_gemini()`, `export_azure_env_vars()`, `export_gemini_env_vars()` |
+| CCR | `configure_ccr()`, `configure_ccr_profile()`, `configure_ccr_systemd_service()`, `update_ccr_config()` |
+| Models | `set_or_migrate_default_model()`, `has_other_provider_configured()`, `get_azure_api_base()` |
+| Plugins | `compute_plugin_list_fingerprint()`, `detect_user_plugins()`, `update_uv_tool_packages_json()` |
+| Other | `update_mcp_config()`, `stop_assistant_processes()`, `configure_codex_cli()` |
 
 Use these functions for consistency rather than duplicating logic.
 
@@ -102,7 +122,7 @@ Use these functions for consistency rather than duplicating logic.
 - Model IDs: `azure/gpt-4.1-mini`, `azure/gpt-4.1`, `azure/o4-mini`, etc.
 - Default: `azure/gpt-4.1-mini`
 - Chat config: `~/.config/io.datasette.llm/extra-openai-models.yaml`
-- Embedding config: `~/.config/io.datasette.llm/azure/config.yaml`
+- Embedding config: `~/.config/io.datasette.llm/azure-embeddings-models.yaml`
 - Keys: `llm keys set azure`
 
 ### Google Gemini
@@ -133,18 +153,23 @@ Config: `~/.claude-code-router/config.json` (checksum-tracked for smart updates)
 ### Installation
 
 ```bash
-# Full installation
+# Full installation (level 3, default)
 ./install-llm-tools.sh
 
-# Minimal (LLM core only, persists for future runs)
+# Minimal (level 1: LLM core tools only, persists for future runs)
 ./install-llm-tools.sh --minimal
 
-# Override minimal preference
+# Standard (level 2: core + agentic tools, skip extras)
+./install-llm-tools.sh --standard
+
+# Full (level 3: everything, persists)
 ./install-llm-tools.sh --full
 
 # Clear package caches (npm, go, pip, cargo, uv)
 ./install-llm-tools.sh --clear-cache
 ```
+
+Install levels persist across runs. Use `--full` to override a saved lower level.
 
 ### Testing
 
@@ -168,7 +193,7 @@ llm --tool context "what did I just run?"
 | Path | Purpose |
 |------|---------|
 | `~/.config/io.datasette.llm/extra-openai-models.yaml` | Azure chat models |
-| `~/.config/io.datasette.llm/azure/config.yaml` | Azure embeddings |
+| `~/.config/io.datasette.llm/azure-embeddings-models.yaml` | Azure embeddings |
 | `~/.config/io.datasette.llm/templates/*.yaml` | LLM templates |
 | `~/.claude-code-router/config.json` | Claude Code Router |
 | `~/.profile` | Provider environment variables |
@@ -182,14 +207,19 @@ llm --tool context "what did I just run?"
 | `shared/common.sh` | Shared helper functions |
 | `integration/` | Shell integration files |
 | `llm-templates/` | Template sources |
-| `llm-assistant/` | Terminator assistant |
-| `llm-inlineassistant/` | Inline `@` command |
-| `llm-guiassistant/` | GTK popup assistant |
+| `llm-assistant/` | Terminator assistant + unified daemon |
+| `llm-inlineassistant/` | Inline `@` command (thin client) |
+| `llm-guiassistant/` | GTK popup assistant (thin client) |
 | `llm-tools-context/` | Context extraction |
 | `llm-tools-core/` | Shared Python utilities |
-| `burr_workflow/` | Workflow engine |
 | `espanso-llm/` | espanso text expander package |
 | `ulauncher-llm/` | Ulauncher extension |
+| `claudeassistant-integration/` | Claude Code assistant integration |
+| `terminator/` | Terminator terminal emulator (vendored) |
+| `scripts/` | Utility scripts (transcribe, playlist processing) |
+| `skills/` | Claude Code skills (pretty-mermaid) |
+| `docs/` | Additional documentation |
+| `plans/` | Architecture/design plans |
 
 ## Key Constraints
 

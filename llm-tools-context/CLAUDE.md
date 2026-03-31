@@ -40,7 +40,7 @@ Registered as a tool that LLMs can call during conversations:
 - Usage: `llm --tool context "what did I just run?"`
 - Allows AI to query recent terminal history including command outputs
 
-### 4. Prompt Detection Module (`llm-assistant/llm_assistant/prompt_detection.py`)
+### 4. Prompt Detection Module (`llm-tools-core/llm_tools_core/prompt_detection.py`)
 
 Shared Python module for shell prompt detection:
 - **Hybrid detection**: Unicode markers (priority 1) + regex fallback (priority 2)
@@ -124,7 +124,7 @@ All output lines are prefixed with `#c#` for identification and filtering.
 | `$SESSION_LOG_DIR/*.cast` | Session recordings (default: `/tmp/session_logs/asciinema/`) |
 | `llm-tools-context/llm_tools_context/` | Python package source |
 | `integration/llm-common.sh` | Auto-recording logic |
-| `llm-assistant/llm_assistant/prompt_detection.py` | Shared prompt detector |
+| `llm-tools-core/llm_tools_core/prompt_detection.py` | Shared prompt detector |
 
 ## Testing
 
