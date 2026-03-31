@@ -2374,7 +2374,7 @@ for optional_tool in claudechic notebooklm-mcp-cli youtube-transcript-api yt-dlp
     fi
 done
 
-# Install Claude Code skills and statusline (level 3 only)
+# Install Claude Code skills (level 3 only)
 # Skills are copied on every run to ensure latest versions are always available
 if command -v claude &>/dev/null && [ "$INSTALL_LEVEL" -ge 3 ]; then
     SKILLS_SOURCE_DIR="$SCRIPT_DIR/skills"
@@ -2402,8 +2402,10 @@ if command -v claude &>/dev/null && [ "$INSTALL_LEVEL" -ge 3 ]; then
 
         log "Claude Code skills installed to $SKILLS_DEST_DIR"
     fi
+fi
 
-    # Install Claude Code statusline (Kali-style prompt with model/context info)
+# Install Claude Code statusline (level 2+, Kali-style prompt with model/context info)
+if command -v claude &>/dev/null && [ "$INSTALL_LEVEL" -ge 2 ]; then
     STATUSLINE_SOURCE="$SCRIPT_DIR/integration/claude-statusline/statusline.sh"
     STATUSLINE_DEST="$HOME/.claude/statusline.sh"
     SETTINGS_FILE="$HOME/.claude/settings.json"
@@ -2594,6 +2596,7 @@ elif [ "$INSTALL_LEVEL" -ge 2 ]; then
     log "    - llm-inlineassistant  Inline AI assistant (@ syntax)"
     log "    - llm-assistant    Terminator AI assistant (if Terminator installed)"
     log "    - Claude Code      Anthropic's agentic coding CLI"
+    log "    - Claude Code statusline  Custom statusline with model/context info"
     log "    - blaude           Bubblewrap sandbox for Claude Code"
     log "    - Claude Code Router  Multi-provider proxy for Claude Code"
     log ""
