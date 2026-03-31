@@ -1,6 +1,6 @@
 # Usage Guide
 
-Organized by agentic level — each level builds on the previous.
+Organized by agentic level. Each level builds on the previous.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
@@ -82,7 +82,7 @@ llm "Was ist Docker?" | pbcopy           # Pipe to clipboard
 llm chat                  # New conversation
 llm chat -c               # Continue last conversation
 
-# Powerful workflow: pipe help text, then chat
+# Pipe help text, then chat about it
 docker --help | llm
 llm chat -c --md
 # > What's the difference between 'run' and 'exec'?
@@ -107,7 +107,7 @@ cat poster.pdf | llm 'describe image' -a -    # Stdin attachment
 
 ### Fragments
 
-Load context from files, URLs, repositories, and more.
+Load context from files, URLs, and repositories.
 
 ```bash
 # Local files and URLs
@@ -312,7 +312,7 @@ Suppress startup message: `export SESSION_LOG_SILENT=1`
 
 ### Context Tool
 
-Built into the assistant template — just ask naturally:
+Built into the assistant template. Just ask:
 
 ```bash
 llm "What was the error in my last command?"
@@ -337,7 +337,7 @@ llm chat                 # Continuous assistance
 
 ## Level 2: Inline Assistant (@)
 
-Daemon-backed AI assistant accessible from any terminal. Per-terminal conversations with full tool access.
+AI assistant that works in any terminal. Each terminal keeps its own conversation. Backed by the shared daemon.
 
 ### The @ Command
 
@@ -383,7 +383,7 @@ In Zsh, `@` at line start enters LLM mode:
 
 ## Level 3: Terminal AI (llm-assistant)
 
-Full-featured AI pair programming assistant for Terminator terminal. Includes knowledge bases, memory, pentest reports, MCP servers, voice I/O, and more.
+AI pair programming assistant for Terminator. This is where things get serious: knowledge bases, persistent memory, pentest reports, MCP servers, voice input/output, and a web UI.
 
 ### Getting Started
 

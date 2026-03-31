@@ -1,6 +1,6 @@
 # LLM Tools for Linux
 
-Automated installation of [Simon Willison's llm CLI](https://github.com/simonw/llm) and 40+ plugins, progressively transforming a command-line tool into a full AI-augmented development environment on Debian-based Linux.
+One script installs [Simon Willison's llm CLI](https://github.com/simonw/llm) with 40+ plugins, shell integration, terminal assistants, and desktop AI tools on Debian-based Linux.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
 <!-- DON'T EDIT THIS SECTION, INSTEAD RE-RUN doctoc TO UPDATE -->
@@ -101,7 +101,7 @@ routed-claude                       # Claude Code via multi-provider router
 
 ## Architecture
 
-All assistants share a single daemon — same tools, same context, same conversations.
+All assistants talk to one daemon. Switch from terminal to popup mid-conversation and it just works.
 
 ```mermaid
 graph TB

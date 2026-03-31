@@ -2,7 +2,7 @@
 
 ## Choosing a Provider
 
-Azure OpenAI suits enterprise and workplace environments with compliance, SLA, and data residency requirements. Google Gemini is ideal for personal projects and hobbyist use, offering a generous free tier with no credit card required.
+Azure OpenAI if your org requires compliance, SLAs, or data residency. Google Gemini for personal use (free tier, no credit card).
 
 ## Azure OpenAI
 
@@ -144,7 +144,7 @@ llm -m gemini-2.5-flash "Describe this image" -a photo.jpg
 
 **Default Model Recommendation:**
 
-This setup uses `azure/gpt-4.1-mini` as the default for its balance of performance and cost-effectiveness. For more complex tasks requiring deeper reasoning (such as extensive code analysis, multi-step problem solving, or nuanced decision making), switch to `azure/gpt-4.1`:
+`azure/gpt-4.1-mini` is the default. Fast and cheap enough for daily use. Switch to `azure/gpt-4.1` when you need more reasoning horsepower:
 
 ```bash
 # Switch to gpt-4.1 for complex tasks
@@ -156,7 +156,7 @@ llm -m azure/gpt-4.1 "Complex analysis task..."
 
 ## Model-Specific Parameters
 
-Different model providers support unique parameters beyond the standard temperature and max_tokens settings. Use the `-o` (options) flag to pass provider-specific parameters.
+Pass provider-specific parameters with `-o`.
 
 **Gemini and Vertex AI Models**
 
@@ -178,7 +178,7 @@ command llm -m gemini-2.5-flash \
   "solve this math problem step by step with code"
 ```
 
-**Code Execution Feature**: When enabled, Gemini models can write Python code, execute it in a secure sandbox, see the results, and incorporate the output into their response. This is particularly powerful for:
+**Code Execution Feature**: Gemini writes Python, runs it in a sandbox, and uses the output in its answer. Good for:
 - Mathematical calculations
 - Data analysis and visualization
 - Algorithm implementation and testing
