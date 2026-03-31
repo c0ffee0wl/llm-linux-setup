@@ -26,7 +26,6 @@ Installation and configuration system for Simon Willison's `llm` CLI tool and re
 | Inline Assistant (`@`) | [`llm-inlineassistant/CLAUDE.md`](llm-inlineassistant/CLAUDE.md) |
 | GUI Assistant (GTK) | [`llm-guiassistant/CLAUDE.md`](llm-guiassistant/CLAUDE.md) |
 | Desktop Integration | [`docs/DESKTOP_INTEGRATION.md`](docs/DESKTOP_INTEGRATION.md) |
-| Microsoft MCP Setup | [`docs/MICROSOFT_MCP_SETUP.md`](docs/MICROSOFT_MCP_SETUP.md) |
 
 ## Architecture
 

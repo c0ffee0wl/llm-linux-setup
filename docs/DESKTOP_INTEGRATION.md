@@ -1,10 +1,109 @@
 # Desktop Integration
 
-Documentation for espanso text expansion, ulauncher extension, and speech-to-text transcription.
+## GTK Popup Assistant
+
+System-wide AI assistant accessible via hotkey. Thin GTK3/WebKit2 shell backed by the llm-assistant daemon.
+
+### Hotkeys
+
+| Hotkey | Action |
+|--------|--------|
+| Super+^ | Open popup (German/European keyboards) |
+| Super+Shift+^ | Open with current selection as context |
+| Super+` | Open popup (US keyboards) |
+| Super+Shift+` | Open with current selection as context |
+
+### Keyboard Shortcuts (in popup)
+
+| Key | Action |
+|-----|--------|
+| Ctrl+Enter | Send message |
+| Ctrl+K | Action panel (fuzzy search) |
+| Up/Down | Navigate input history |
+| Escape | Close popup / close action panel |
+
+### Action Panel (Ctrl+K)
+
+Raycast-style fuzzy-searchable command palette:
+- **Copy response** (plain text)
+- **Copy markdown** (preserve formatting)
+- **New session**
+- **Refresh context**
+
+### Features
+
+- **Desktop context**: Captures all visible X11 windows (app, title, PID, CWD, window ID)
+- **Smart deduplication**: SHA256 hashing skips unchanged context between messages
+- **Image drag & drop**: Drop images onto window to attach
+- **Streaming markdown**: Real-time rendering during responses
+- **Session persistence**: Conversations persist within session
+- **Browser fallback**: Open `http://localhost:8741` in any browser
+- **Autostart**: Pre-loads on login for instant hotkey activation
+
+### Usage
+
+```bash
+# Open popup (starts daemon if needed)
+llm-guiassistant
+
+# Open with current X11 selection
+llm-guiassistant --with-selection
+
+# Start hidden (for autostart, instant hotkey activation)
+llm-guiassistant --hidden
+
+# Direct browser access (no GTK needed)
+xdg-open http://localhost:8741
+```
+
+### Manual Hotkey Configuration
+
+```bash
+# German keyboards (^ key)
+xfconf-query -c xfce4-keyboard-shortcuts \
+  -p "/commands/custom/<Super>dead_circumflex" \
+  -n -t string -s "llm-guiassistant"
+
+# US keyboards (` backtick key)
+xfconf-query -c xfce4-keyboard-shortcuts \
+  -p "/commands/custom/<Super>grave" \
+  -n -t string -s "llm-guiassistant"
+```
+
+### Limitations
+
+- X11 only (context gathering uses xdotool, xprop, xclip)
+- No voice input (use Terminator assistant for voice)
+
+### Troubleshooting
+
+```bash
+# Check daemon
+pgrep -f "llm-assistant.*daemon"
+llm-assistant --daemon              # Start if not running
+
+# Check web server
+curl http://localhost:8741/
+
+# Verify hotkeys
+xfconf-query -c xfce4-keyboard-shortcuts -l | grep guiassistant
+
+# Verify X11 tools
+which xdotool xclip xprop
+```
+
+### File Locations
+
+| Path | Purpose |
+|------|---------|
+| `~/.config/llm-guiassistant/state.json` | Window dimensions |
+| `~/.config/autostart/llm-guiassistant.desktop` | XDG autostart |
+
+---
 
 ## Text Expansion with espanso
 
-espanso provides LLM-powered text expansion in any application.
+LLM-powered text expansion in any application via llm-assistant daemon.
 
 ### Triggers
 
@@ -29,17 +128,10 @@ espanso provides LLM-powered text expansion in any application.
 ### Troubleshooting
 
 ```bash
-# Check/start service
-espanso service register && espanso start
-
-# Check status
-espanso status
-
-# View logs
-espanso log
-
-# Reload config
-espanso restart
+espanso service register && espanso start   # Start service
+espanso status                              # Check status
+espanso log                                 # View logs
+espanso restart                             # Reload config
 ```
 
 ### File Locations
@@ -50,9 +142,11 @@ espanso restart
 | `~/.config/espanso/match/packages/espanso-llm/` | LLM integration package |
 | `espanso-llm/` | Source files (repository) |
 
+---
+
 ## Ulauncher Extension
 
-Ulauncher extension for quick AI access via application launcher.
+AI access via application launcher, backed by llm-assistant daemon.
 
 ### Keywords
 
@@ -91,9 +185,11 @@ Ulauncher extension for quick AI access via application launcher.
 - Daemon not running: Extension auto-starts it, or run `llm-assistant --daemon`
 - Check status: `@ /status`
 
+---
+
 ## Speech-to-Text Transcription
 
-Uses onnx-asr with NVIDIA's Parakeet TDT model for file transcription.
+Uses onnx-asr with NVIDIA's Parakeet TDT model.
 
 ### Components
 
@@ -107,38 +203,32 @@ Uses onnx-asr with NVIDIA's Parakeet TDT model for file transcription.
 ### Usage
 
 ```bash
-# Basic transcription
-transcribe recording.mp3
-
-# Save to file
-transcribe video.mp4 -o transcript.txt
-
-# Suppress progress
-transcribe meeting.m4a 2>/dev/null | less
+transcribe recording.mp3                    # Basic transcription
+transcribe video.mp4 -o transcript.txt      # Save to file
+transcribe meeting.m4a 2>/dev/null | less   # Suppress progress
 ```
 
 ### Supported Languages (25)
 
 Bulgarian, Croatian, Czech, Danish, Dutch, English, Estonian, Finnish, French, German, Greek, Hungarian, Italian, Latvian, Lithuanian, Maltese, Polish, Portuguese, Romanian, Slovak, Slovenian, Spanish, Swedish, Russian, Ukrainian
 
-### Model Information
+### Model
 
-- Model: `nemo-parakeet-tdt-0.6b-v3` INT8 quantized (600M parameters)
-- Size: ~670MB total
+- `nemo-parakeet-tdt-0.6b-v3` INT8 quantized (600M parameters, ~670MB)
 - Location: `~/.local/share/com.pais.handy/models/parakeet-tdt-0.6b-v3-int8/`
-- Downloaded during installation (not on first use)
+- Downloaded during installation
 
 ### Handy Integration
 
 When Handy is running:
-- Provides OS-level voice input accessible from any application
+- Provides OS-level voice input from any application
 - llm-assistant's built-in voice input is automatically disabled
-- Both use the same shared INT8 model
+- Both share the same INT8 model
 
 ### Supported Formats
 
 - Native: WAV
-- Converted via pydub/ffmpeg: mp3, mp4, m4a, flac, ogg, webm
+- Via pydub/ffmpeg: mp3, mp4, m4a, flac, ogg, webm
 
 ### More Languages
 
@@ -146,6 +236,8 @@ For 99+ language support (including Asian languages):
 ```bash
 uv tool install whisper-ctranslate2
 ```
+
+---
 
 ## PipeWire VM Audio Fix
 
