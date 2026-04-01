@@ -28,6 +28,7 @@ from llm_tools_core import (
     ensure_daemon,
     stream_events,
     get_action_verb,
+    get_tool_info,
     RAGHandler,
     strip_markdown,
 )
@@ -83,9 +84,15 @@ def stream_request(query: str, mode: str = "assistant", system_prompt: str = "")
         if event_type == "text":
             yield ("text", event.get("content", ""))
         elif event_type == "tool_start":
-            yield ("tool_start", event.get("tool", ""))
+            yield ("tool_start", {
+                "tool": event.get("tool", ""),
+                "args": event.get("args", {}),
+            })
         elif event_type == "tool_done":
-            yield ("tool_done", event.get("tool", ""))
+            yield ("tool_done", {
+                "tool": event.get("tool", ""),
+                "result": event.get("result", ""),
+            })
         elif event_type == "error":
             code = event.get("code", "UNKNOWN")
             message = event.get("message", "Unknown error")
@@ -376,6 +383,7 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
     if stream:
         accumulated_text = ""
         active_tool = None
+        active_tool_args = {}
         error_message = None
         printed_separator = False
 
@@ -393,16 +401,33 @@ def send_query(prompt: str, model: Optional[str] = None, stream: bool = True) ->
                             console.print()
                             printed_separator = True
                     elif event_type == "tool_start":
-                        active_tool = data
+                        active_tool = data["tool"]
+                        active_tool_args = data.get("args", {})
                     elif event_type == "tool_done":
+                        tool_name = data["tool"]
+                        # Show suggest_command result as code block in response
+                        if tool_name == "suggest_command":
+                            cmd = active_tool_args.get("command", "")
+                            if cmd:
+                                accumulated_text += f"\n\n```\n{cmd}\n```\n\n"
                         active_tool = None
+                        active_tool_args = {}
                     elif event_type == "error":
                         error_message = data
 
                     # Update display
                     if active_tool:
                         action = get_action_verb(active_tool)
-                        spinner_text = Text(f"{action}...", style="cyan")
+                        # Show parameter value if available (like Terminator does)
+                        info = get_tool_info(active_tool)
+                        param_value = ""
+                        if info:
+                            param_name = info[0]
+                            param_value = active_tool_args.get(param_name, "")
+                        if param_value:
+                            spinner_text = Text(f"{action}: {param_value}", style="cyan")
+                        else:
+                            spinner_text = Text(f"{action}...", style="cyan")
                         live.update(Group(
                             Markdown(accumulated_text) if accumulated_text else Text(""),
                             Spinner("dots", text=spinner_text, style="cyan")
