@@ -1965,7 +1965,7 @@ EOF
         fi
 
         # Install Handy (system-wide STT) via .deb package
-        install_github_deb_package "handy" "0.8.1" \
+        install_github_deb_package "handy" "0.8.2" \
             "https://github.com/cjpais/Handy/releases/download/v{VERSION}/Handy_{VERSION}_amd64.deb" \
             "handy" "x86_64" || true
 
