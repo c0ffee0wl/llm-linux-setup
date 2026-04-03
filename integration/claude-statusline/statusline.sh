@@ -1,10 +1,23 @@
 #!/bin/bash
+# Redirect stderr to /dev/null – errors in statusline must never leak to Claude Code UI
+exec 2>/dev/null
+
 input=$(cat)
 
-cwd=$(echo "$input" | jq -r '.workspace.current_dir')
+# Validate JSON input upfront
+if ! echo "$input" | jq -e . >/dev/null 2>&1; then
+    # Fallback: minimal single-line status
+    printf "\033[1;32m(%s@%s)\033[0m" "$(whoami)" "$(hostname -s)"
+    exit 0
+fi
+
+cwd=$(echo "$input" | jq -r '.workspace.current_dir // "~"')
 user=$(whoami)
 host=$(hostname -s)
 DURATION_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
+# Ensure numeric
+DURATION_MS=${DURATION_MS%%.*}
+[[ "$DURATION_MS" =~ ^[0-9]+$ ]] || DURATION_MS=0
 
 prompt_symbol="@"
 if [ "$EUID" -eq 0 ]; then
@@ -31,9 +44,13 @@ if [[ "$ANTHROPIC_BASE_URL" =~ ^https?://(127\.0\.0\.1|localhost)(:|/) ]]; then
 fi
 
 if [ "$IS_CCR" = false ]; then
-    MODEL=$(echo "$input" | jq -r '.model.display_name')
+    MODEL=$(echo "$input" | jq -r '.model.display_name // "unknown"')
     PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
     CTX_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
+
+    # Sanitize numerics – protect against empty/non-numeric values from jq
+    [[ "$PCT" =~ ^[0-9]+$ ]] || PCT=0
+    [[ "$CTX_SIZE" =~ ^[0-9]+$ ]] || CTX_SIZE=200000
 
     GREEN='\033[32m'; YELLOW='\033[33m'; RED='\033[31m'; RESET='\033[0m'
 
@@ -57,13 +74,13 @@ if [ "$IS_CCR" = false ]; then
     # Line 2 is green by default, only the progress bar changes color
     LINE2="${GREEN}[${MODEL}] ${BAR_COLOR}${BAR}${GREEN} ${PCT}% (${CTX_LABEL})"
 
-    # Rate limits (only if present)
+    # Rate limits (only if present and numeric)
     FIVE_H=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
     WEEK=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
 
     LIMITS=""
-    [ -n "$FIVE_H" ] && LIMITS="5h: $(printf '%.0f' "$FIVE_H")%"
-    [ -n "$WEEK" ] && LIMITS="${LIMITS:+$LIMITS }7d: $(printf '%.0f' "$WEEK")%"
+    [[ "$FIVE_H" =~ ^[0-9.]+$ ]] && LIMITS="5h: $(printf '%.0f' "$FIVE_H")%"
+    [[ "$WEEK" =~ ^[0-9.]+$ ]] && LIMITS="${LIMITS:+$LIMITS }7d: $(printf '%.0f' "$WEEK")%"
     [ -n "$LIMITS" ] && LINE2="${LINE2} | ${LIMITS}"
 
     echo -e "${LINE2}${RESET}"
