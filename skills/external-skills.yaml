@@ -16,11 +16,6 @@ skills:
     repo: blader/humanizer
     ref: main
 
-  - name: content-research-writer
-    repo: ComposioHQ/awesome-claude-skills
-    ref: master
-    path: content-research-writer
-
   - name: last30days
     repo: mvanhorn/last30days-skill
     ref: main
@@ -33,8 +28,3 @@ skills:
   - name: smart-illustrator
     repo: c0ffee0wl/smart-illustrator
     ref: main
-
-  - name: content-creation
-    repo: anthropics/knowledge-work-plugins
-    ref: main
-    path: marketing/skills/content-creation
