@@ -1780,7 +1780,7 @@ if [ "$HAS_DESKTOP" = "true" ]; then
             log "Installing imagemage (Gemini image generation CLI)..."
             IMAGEMAGE_DIR="/tmp/imagemage-build"
             rm -rf "$IMAGEMAGE_DIR"
-            git clone --depth 1 https://github.com/quinnypig/imagemage.git "$IMAGEMAGE_DIR"
+            git clone --depth 1 https://github.com/c0ffee0wl/imagemage.git "$IMAGEMAGE_DIR"
             (cd "$IMAGEMAGE_DIR" && go build -o "$HOME/.local/bin/imagemage" .)
             rm -rf "$IMAGEMAGE_DIR"
             log "imagemage installed to ~/.local/bin/imagemage"

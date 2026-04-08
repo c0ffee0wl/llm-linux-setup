@@ -63,7 +63,7 @@
 - **[asciinema](https://asciinema.org/)** - Terminal session recorder (built from source for latest features)
 - **[context](../llm-tools-context/)** - Terminal history extraction from asciinema recordings (CLI + LLM tool)
 - **[Micro](https://github.com/zyedidia/micro)** - Modern terminal text editor with [llm-micro](https://github.com/ShamanicArts/llm-micro) plugin for in-editor AI assistance
-- **[imagemage](https://github.com/quinnypig/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
+- **[imagemage](https://github.com/c0ffee0wl/imagemage)** - Gemini image generation CLI (requires Go 1.22+, only installed when Gemini is configured)
 - **[onnx-asr](https://github.com/istupakov/onnx-asr)** - Speech-to-text transcription using NVIDIA Parakeet TDT (25 European languages, auto-punctuation)
 - **[llm-assistant](../llm-assistant/llm-assistant)** - TmuxAI-inspired AI assistant for Terminator terminal (automatic command execution, watch mode)
 
