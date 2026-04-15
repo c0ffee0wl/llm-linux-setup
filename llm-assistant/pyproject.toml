@@ -15,18 +15,19 @@ dependencies = [
     "iso639-lang>=2.0",
     "aiohttp>=3.9",
     "python-daemon>=3.0.0",
+    "fastapi>=0.110,<0.140",
+    "uvicorn>=0.27,<1.0",
+    "pyperclip>=1.8",
 ]
 
 [project.optional-dependencies]
 voice = ["sounddevice", "numpy", "onnx-asr"]
 tts = ["google-cloud-texttospeech", "google-auth", "strip-markdown"]
-web = ["fastapi", "uvicorn"]
-clipboard = ["pyperclip"]
 workflow = [
     "burr_workflow @ git+https://github.com/c0ffee0wl/llm-linux-setup#subdirectory=burr_workflow",
     "ruamel.yaml>=0.18.0",
 ]
-all = ["llm-assistant[voice,tts,web,clipboard,workflow]"]
+all = ["llm-assistant[voice,tts,workflow]"]
 
 [project.scripts]
 llm-assistant = "llm_assistant.cli:main"
