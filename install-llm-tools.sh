@@ -1331,12 +1331,21 @@ update_mcp_config() {
     local chrome_devtools_config=""
     if command -v google-chrome &>/dev/null || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
         log "Chrome/Chromium detected, adding chrome-devtools MCP"
-        # Pre-install chrome-devtools-mcp for faster first use (npx will use cached version)
         install_or_upgrade_global chrome-devtools-mcp
-        chrome_devtools_config=',
+
+        # Resolve the installed binary path so we can invoke it directly.
+        # Avoids npx/bunx wrappers — bunx prints a Discord promo to stdout
+        # on first run, which corrupts the MCP JSON-RPC stream.
+        local chrome_devtools_mcp_bin
+        chrome_devtools_mcp_bin=$(command -v chrome-devtools-mcp 2>/dev/null || true)
+
+        if [ -z "$chrome_devtools_mcp_bin" ]; then
+            warn "chrome-devtools-mcp binary not found after install; skipping chrome-devtools MCP server"
+        else
+            chrome_devtools_config=',
     "chrome-devtools": {
-      "command": "npx",
-      "args": ["-y", "chrome-devtools-mcp@latest", "--browser-url=http://127.0.0.1:9222"],
+      "command": "'"$chrome_devtools_mcp_bin"'",
+      "args": ["--browser-url=http://127.0.0.1:9222"],
       "optional": true,
       "include_tools": [
         "get_network_request",
@@ -1354,6 +1363,7 @@ update_mcp_config() {
         "wait_for"
       ]
     }'
+        fi
     fi
 
     # Generate expected config content
