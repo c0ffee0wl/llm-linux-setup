@@ -24,8 +24,12 @@ import sys
 import tempfile
 from pathlib import Path
 
-# Audio formats that need conversion (non-WAV)
-CONVERTIBLE_FORMATS = {'.mp3', '.mp4', '.m4a', '.flac', '.ogg', '.webm'}
+# Non-WAV audio formats and their pydub format strings (.m4a uses the mp4 demuxer)
+FORMAT_MAP = {
+    '.mp3': 'mp3', '.mp4': 'mp4', '.m4a': 'mp4',
+    '.flac': 'flac', '.ogg': 'ogg', '.webm': 'webm',
+}
+CONVERTIBLE_FORMATS = frozenset(FORMAT_MAP)
 
 
 def convert_to_wav(input_path: Path) -> tuple:
@@ -55,20 +59,8 @@ def convert_to_wav(input_path: Path) -> tuple:
 
     print(f"Converting {input_path.name} to WAV...", file=sys.stderr)
 
-    # Load audio file
     try:
-        if suffix == '.mp3':
-            audio = AudioSegment.from_mp3(str(input_path))
-        elif suffix in {'.mp4', '.m4a'}:
-            audio = AudioSegment.from_file(str(input_path), 'mp4')
-        elif suffix == '.flac':
-            audio = AudioSegment.from_file(str(input_path), 'flac')
-        elif suffix == '.ogg':
-            audio = AudioSegment.from_ogg(str(input_path))
-        elif suffix == '.webm':
-            audio = AudioSegment.from_file(str(input_path), 'webm')
-        else:
-            audio = AudioSegment.from_file(str(input_path))
+        audio = AudioSegment.from_file(str(input_path), format=FORMAT_MAP[suffix])
     except Exception as e:
         print(f"Error: Failed to load audio file: {e}", file=sys.stderr)
         print("Make sure ffmpeg is installed: sudo apt install ffmpeg", file=sys.stderr)

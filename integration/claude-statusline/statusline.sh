@@ -4,19 +4,33 @@ exec 2>/dev/null
 
 input=$(cat)
 
-# Validate JSON input upfront
-if ! echo "$input" | jq -e . >/dev/null 2>&1; then
-    # Fallback: minimal single-line status
-    printf "\033[1;32m(%s@%s)\033[0m" "$(whoami)" "$(hostname -s)"
+# Resolve user/host from shell builtins first to avoid forking whoami/hostname
+# on every statusline render. Fallbacks keep this robust if either var is unset.
+user="${USER:-$(whoami)}"
+host="${HOSTNAME%%.*}"
+[ -n "$host" ] || host="$(hostname -s)"
+
+# Parse + validate in a single jq fork. `-e` exits non-zero on null/false top-level,
+# and jq fails outright on invalid JSON — both fall through to the minimal fallback.
+# @tsv keeps field boundaries intact even if any string contains tabs/newlines.
+tsv_output=$(printf '%s' "$input" | jq -er '[
+    .workspace.current_dir // "~",
+    .cost.total_duration_ms // 0,
+    .model.display_name // "unknown",
+    (.context_window.used_percentage // 0 | floor),
+    .context_window.context_window_size // 200000,
+    .rate_limits.five_hour.used_percentage // "",
+    .rate_limits.seven_day.used_percentage // ""
+] | @tsv' 2>/dev/null)
+
+if [ -z "$tsv_output" ]; then
+    printf "\033[1;32m(%s@%s)\033[0m" "$user" "$host"
     exit 0
 fi
 
-cwd=$(echo "$input" | jq -r '.workspace.current_dir // "~"')
-user=$(whoami)
-host=$(hostname -s)
-DURATION_MS=$(echo "$input" | jq -r '.cost.total_duration_ms // 0')
-# Ensure numeric
-DURATION_MS=${DURATION_MS%%.*}
+IFS=$'\t' read -r cwd DURATION_MS MODEL PCT CTX_SIZE FIVE_H WEEK <<<"$tsv_output"
+
+# Sanitize numerics — defend against any surprise output from jq
 [[ "$DURATION_MS" =~ ^[0-9]+$ ]] || DURATION_MS=0
 
 prompt_symbol="@"
@@ -44,11 +58,6 @@ if [[ "$ANTHROPIC_BASE_URL" =~ ^https?://(127\.0\.0\.1|localhost)(:|/) ]]; then
 fi
 
 if [ "$IS_CCR" = false ]; then
-    MODEL=$(echo "$input" | jq -r '.model.display_name // "unknown"')
-    PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
-    CTX_SIZE=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-
-    # Sanitize numerics – protect against empty/non-numeric values from jq
     [[ "$PCT" =~ ^[0-9]+$ ]] || PCT=0
     [[ "$CTX_SIZE" =~ ^[0-9]+$ ]] || CTX_SIZE=200000
 
@@ -75,9 +84,6 @@ if [ "$IS_CCR" = false ]; then
     LINE2="${GREEN}[${MODEL}] ${BAR_COLOR}${BAR}${GREEN} ${PCT}% (${CTX_LABEL})"
 
     # Rate limits (only if present and numeric)
-    FIVE_H=$(echo "$input" | jq -r '.rate_limits.five_hour.used_percentage // empty')
-    WEEK=$(echo "$input" | jq -r '.rate_limits.seven_day.used_percentage // empty')
-
     LIMITS=""
     [[ "$FIVE_H" =~ ^[0-9.]+$ ]] && LIMITS="5h: $(printf '%.0f' "$FIVE_H")%"
     [[ "$WEEK" =~ ^[0-9.]+$ ]] && LIMITS="${LIMITS:+$LIMITS }7d: $(printf '%.0f' "$WEEK")%"

@@ -33,6 +33,7 @@ NC='\033[0m' # No Color
 #############################################################################
 
 LLM_TOOLS_CONFIG_DIR="${LLM_TOOLS_CONFIG_DIR:-$HOME/.config/llm-tools}"
+TEMPLATE_CHECKSUMS_FILE="$LLM_TOOLS_CONFIG_DIR/template-checksums"
 
 # Global mode flags for non-interactive script execution
 # Set these in your script before sourcing common.sh or calling ask_yes_no()
@@ -146,13 +147,47 @@ ask_yes_no() {
 }
 
 #############################################################################
+# Filesystem / Wrapper Helpers
+#############################################################################
+
+# Symlink a directory or file from the repo into a destination path, idempotently.
+# If the destination is already a symlink, leaves it alone (and just logs).
+# If it exists as a regular dir/file, removes it first so the symlink can be created.
+# Usage: link_repo_dir <source_path> <dest_path> <display_name>
+link_repo_dir() {
+    local src="$1" dest="$2" name="$3"
+    [ -n "$dest" ] || error "link_repo_dir: empty destination for $name"
+    if [ -L "$dest" ]; then
+        log "$name already linked"
+    else
+        rm -rf "$dest"
+        ln -sfn "$src" "$dest"
+        log "$name installed (symlinked)"
+    fi
+}
+
+# Create a thin wrapper script in ~/.local/bin that execs a Python module
+# inside the uv-managed `llm` tool environment. Used for context, llm-assistant,
+# llm-inlineassistant, llm-guiassistant.
+# Usage: create_uv_tool_wrapper <bin_name> <python_module> [shebang]
+create_uv_tool_wrapper() {
+    local name="$1" module="$2" shebang="${3:-#!/bin/sh}"
+    mkdir -p "$HOME/.local/bin"
+    cat > "$HOME/.local/bin/$name" <<EOF
+$shebang
+exec "\$HOME/.local/share/uv/tools/llm/bin/python3" -m $module "\$@"
+EOF
+    chmod +x "$HOME/.local/bin/$name"
+}
+
+#############################################################################
 # Checksum Functions
 #############################################################################
 
 # Get stored checksum for a template
 get_stored_checksum() {
     local template_name="$1"
-    local checksum_file="$HOME/.config/llm-tools/template-checksums"
+    local checksum_file="$TEMPLATE_CHECKSUMS_FILE"
 
     if [ ! -f "$checksum_file" ]; then
         echo ""
@@ -166,7 +201,7 @@ get_stored_checksum() {
 store_checksum() {
     local template_name="$1"
     local file_path="$2"
-    local checksum_file="$HOME/.config/llm-tools/template-checksums"
+    local checksum_file="$TEMPLATE_CHECKSUMS_FILE"
 
     # Create directory if needed
     mkdir -p "$(dirname "$checksum_file")"
@@ -174,12 +209,10 @@ store_checksum() {
     # Calculate SHA256 checksum
     local checksum=$(sha256sum "$file_path" | awk '{print $1}')
 
-    # Remove old entry if exists
-    if [ -f "$checksum_file" ]; then
-        sed -i "/^${template_name}:/d" "$checksum_file"
-    fi
-
-    # Add new entry
+    # Remove any prior entry, then append the new one.
+    # touch ensures sed -i has a file to operate on (idempotent).
+    touch "$checksum_file"
+    sed -i "/^${template_name}:/d" "$checksum_file"
     echo "${template_name}:${checksum}" >> "$checksum_file"
 }
 
@@ -678,6 +711,13 @@ install_or_upgrade_cargo_tool() {
     fi
 }
 
+# Get the SHA of the upstream HEAD commit for a git repo, or empty on network failure.
+# Normalises trailing-slash and missing-".git" forms.
+# Usage: _git_ls_remote_head <git_url>
+_git_ls_remote_head() {
+    git ls-remote "${1%.git}.git" HEAD 2>/dev/null | awk '{print $1}'
+}
+
 # Install or upgrade a Rust/Cargo tool from git with commit-hash checking
 # Only rebuilds when upstream has new commits (avoids unnecessary recompilation)
 # Usage: install_or_upgrade_cargo_git_tool tool_name git_url
@@ -689,16 +729,13 @@ install_or_upgrade_cargo_git_tool() {
     local git_url="$2"
     local version_file="$LLM_TOOLS_CONFIG_DIR/${tool_name}-commit"
 
-    # Handle URLs with or without .git suffix
-    local git_url_for_ls="${git_url%.git}.git"
-
     if ! command -v "$tool_name" &> /dev/null; then
         log "Installing $tool_name from git..."
         cargo install --locked --git "$git_url"
 
         # Store the commit hash for future update checks
         mkdir -p "$(dirname "$version_file")"
-        local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
+        local latest_commit=$(_git_ls_remote_head "$git_url")
         if [ -n "$latest_commit" ]; then
             echo "$latest_commit" > "$version_file"
         fi
@@ -706,7 +743,7 @@ install_or_upgrade_cargo_git_tool() {
         log "$tool_name is already installed, checking for updates..."
 
         # Get latest commit from GitHub
-        local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
+        local latest_commit=$(_git_ls_remote_head "$git_url")
 
         # Check stored commit hash
         local installed_commit=$(cat "$version_file" 2>/dev/null || echo "")
@@ -851,46 +888,35 @@ npm_uninstall_global() {
     return $exit_code
 }
 
-# Install or upgrade npm global package only if newer version available
-# Usage: install_or_upgrade_npm_global package_name
-install_or_upgrade_npm_global() {
-    local package="$1"
+# Compare a package's installed and registry versions and act on the result.
+# Logs and runs `npm_install install -g <package>` when an upgrade is needed,
+# logs the up-to-date message otherwise. Caller decides what to do when the
+# package isn't installed at all by passing one of:
+#   --install         -> install fresh
+#   --skip            -> log and return 0 without touching it
+# Usage: _npm_install_or_upgrade <package> {--install|--skip}
+_npm_install_or_upgrade() {
+    local package="$1" missing_action="$2"
     local installed_version latest_version
 
-    # Get installed version (empty if not installed)
     installed_version=$(npm list -g "$package" --depth=0 2>/dev/null | grep -oP "$package@\K[0-9.]+") || installed_version=""
 
     if [ -z "$installed_version" ]; then
-        log "Installing $package..."
-        npm_install install -g "$package"
-    else
-        # Get latest version from npm registry
-        latest_version=$(npm view "$package" version 2>/dev/null) || latest_version=""
-
-        if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
-            log "Upgrading $package: $installed_version -> $latest_version"
-            npm_install install -g "$package"
-        else
-            log "$package is up to date ($installed_version)"
-        fi
-    fi
-}
-
-# Upgrade npm global package only if already installed (no installation)
-# Usage: upgrade_npm_global_if_installed package_name
-upgrade_npm_global_if_installed() {
-    local package="$1"
-    local installed_version latest_version
-
-    # Get installed version (empty if not installed)
-    installed_version=$(npm list -g "$package" --depth=0 2>/dev/null | grep -oP "$package@\K[0-9.]+") || installed_version=""
-
-    if [ -z "$installed_version" ]; then
-        log "Skipping $package update (not installed)"
+        case "$missing_action" in
+            --install)
+                log "Installing $package..."
+                npm_install install -g "$package"
+                ;;
+            --skip)
+                log "Skipping $package update (not installed)"
+                ;;
+            *)
+                error "_npm_install_or_upgrade: unknown action '$missing_action' for $package"
+                ;;
+        esac
         return 0
     fi
 
-    # Get latest version from npm registry
     latest_version=$(npm view "$package" version 2>/dev/null) || latest_version=""
 
     if [ -n "$latest_version" ] && [ "$installed_version" != "$latest_version" ]; then
@@ -899,6 +925,18 @@ upgrade_npm_global_if_installed() {
     else
         log "$package is up to date ($installed_version)"
     fi
+}
+
+# Install or upgrade npm global package only if newer version available
+# Usage: install_or_upgrade_npm_global package_name
+install_or_upgrade_npm_global() {
+    _npm_install_or_upgrade "$1" --install
+}
+
+# Upgrade npm global package only if already installed (no installation)
+# Usage: upgrade_npm_global_if_installed package_name
+upgrade_npm_global_if_installed() {
+    _npm_install_or_upgrade "$1" --skip
 }
 
 #############################################################################
@@ -1072,15 +1110,13 @@ install_or_upgrade_nodejs() {
             if [ ! -d "$HOME/.nvm" ]; then
                 log "Installing nvm..."
                 curl_secure -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.4/install.sh | bash
-
-                # Source nvm immediately for this script
-                export NVM_DIR="$HOME/.nvm"
-                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             else
                 log "nvm is already installed"
-                export NVM_DIR="$HOME/.nvm"
-                [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
             fi
+
+            # Source nvm immediately for this script
+            export NVM_DIR="$HOME/.nvm"
+            [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
 
             # Install Node 22 via nvm
             log "Installing Node.js 22 via nvm..."
@@ -1515,9 +1551,9 @@ install_or_upgrade_github_release() {
         return 1
     fi
 
-    # Find the binary in extracted contents
+    # Find the binary in extracted contents (stop at first hit)
     local binary_path
-    binary_path=$(find "$tmp_dir" -name "$tool_name" -type f ! -path "$tarball_path" | head -1)
+    binary_path=$(find "$tmp_dir" -name "$tool_name" -type f ! -path "$tarball_path" -print -quit)
 
     if [ -z "$binary_path" ]; then
         warn "Could not find $tool_name binary in extracted tarball"
@@ -1581,9 +1617,8 @@ install_or_upgrade_make_git_tool() {
     local clone_dir="/tmp/${tool_name}-build"
     local version_file="$LLM_TOOLS_CONFIG_DIR/${tool_name}-commit"
 
-    # Get latest commit from GitHub (handle URLs with or without .git suffix)
-    local git_url_for_ls="${git_url%.git}.git"
-    local latest_commit=$(git ls-remote "$git_url_for_ls" HEAD 2>/dev/null | awk '{print $1}')
+    # Get latest commit from GitHub
+    local latest_commit=$(_git_ls_remote_head "$git_url")
     if [ -z "$latest_commit" ]; then
         warn "Could not fetch latest commit for $tool_name (network issue?)"
         return 1

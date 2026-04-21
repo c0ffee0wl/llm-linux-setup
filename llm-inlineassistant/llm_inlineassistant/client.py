@@ -335,8 +335,10 @@ def handle_slash_command(command: str, terminal_id: str) -> bool:
         if not raw_mode:
             try:
                 combined = strip_markdown(combined)
-            except Exception:
-                pass  # Fall back to unstripped text
+            except Exception as e:
+                # Fall back to unstripped text but tell the user why — otherwise
+                # they silently get markdown syntax in their clipboard.
+                console.print(f"[yellow]strip_markdown failed ({e}); copying raw markdown[/]")
 
         # Copy to clipboard
         try:

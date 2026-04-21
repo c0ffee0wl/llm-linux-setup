@@ -9,6 +9,12 @@ Provides common system prompt templates used by:
 from datetime import datetime
 
 
+# Sentinel returned by context-capture helpers when nothing has changed
+# since the previous capture. Callers compare against this bare form and
+# also against the wrapped form produced by ``wrap_terminal_context``.
+CONTEXT_UNCHANGED_MARKER = "[Content unchanged]"
+
+
 def build_simple_system_prompt(include_datetime: bool = True) -> str:
     """Build the system prompt for simple/non-interactive mode.
 

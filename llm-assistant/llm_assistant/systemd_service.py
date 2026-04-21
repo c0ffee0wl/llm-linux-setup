@@ -12,7 +12,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
 
 # Service unit template (simple service, no socket activation)
@@ -83,57 +83,21 @@ def generate_service_unit() -> str:
 
 
 def is_service_enabled() -> bool:
-    """Check if the systemd service is enabled.
-
-    Returns:
-        True if service is enabled, False otherwise.
-    """
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "is-enabled", get_service_name()],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        return False
+    """Check if the systemd service is enabled."""
+    ok, _ = _run_systemctl("is-enabled", get_service_name())
+    return ok
 
 
 def is_service_active() -> bool:
-    """Check if the systemd service is currently running.
-
-    Returns:
-        True if service is active (running), False otherwise.
-    """
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "is-active", get_service_name()],
-            capture_output=True,
-            text=True,
-            timeout=5
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        return False
+    """Check if the systemd service is currently running."""
+    ok, _ = _run_systemctl("is-active", get_service_name())
+    return ok
 
 
 def start_via_systemctl() -> bool:
-    """Start the daemon via systemctl.
-
-    Returns:
-        True if started successfully, False otherwise.
-    """
-    try:
-        result = subprocess.run(
-            ["systemctl", "--user", "start", get_service_name()],
-            capture_output=True,
-            text=True,
-            timeout=10
-        )
-        return result.returncode == 0
-    except (subprocess.TimeoutExpired, FileNotFoundError, Exception):
-        return False
+    """Start the daemon via systemctl."""
+    ok, _ = _run_systemctl("start", get_service_name())
+    return ok
 
 
 def _run_systemctl(*args, check: bool = False) -> Tuple[bool, str]:

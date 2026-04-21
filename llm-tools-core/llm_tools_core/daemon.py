@@ -68,6 +68,16 @@ def get_suggest_path() -> Path:
     return get_socket_dir() / "suggest"
 
 
+def sanitize_terminal_id_for_filename(terminal_id: str) -> str:
+    """Map a terminal_id into a filesystem-safe basename.
+
+    Terminal IDs may contain '/' (path-like) and ':' (tmux pane ids like
+    'tmux:%1'); both break filesystem layout if used directly. The mapping
+    is stable so existing on-disk files remain addressable.
+    """
+    return terminal_id.replace('/', '_').replace(':', '_')
+
+
 def get_sessions_dir(subdir: str) -> Path:
     """Get path for session tracking directory.
 
@@ -256,12 +266,12 @@ def write_pid_file() -> None:
 
 def remove_pid_file() -> None:
     """Remove the PID file."""
-    pid_path = get_pid_path()
-    if pid_path.exists():
-        try:
-            pid_path.unlink()
-        except OSError:
-            pass  # Ignore errors (might already be deleted)
+    try:
+        get_pid_path().unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass  # Ignore errors (e.g. permission)
 
 
 def cleanup_stale_daemon() -> None:
@@ -277,17 +287,10 @@ def cleanup_stale_daemon() -> None:
         return
 
     # Clean up stale files
-    socket_path = get_socket_path()
-    pid_path = get_pid_path()
-
-    if socket_path.exists():
+    for path in (get_socket_path(), get_pid_path()):
         try:
-            socket_path.unlink()
-        except OSError:
+            path.unlink()
+        except FileNotFoundError:
             pass
-
-    if pid_path.exists():
-        try:
-            pid_path.unlink()
         except OSError:
             pass

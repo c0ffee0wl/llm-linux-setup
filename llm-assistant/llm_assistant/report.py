@@ -8,8 +8,8 @@ This module provides pentest finding management:
 - /report command handling
 """
 
-import json
 import re
+import shutil
 import subprocess
 from datetime import datetime
 from pathlib import Path
@@ -181,8 +181,8 @@ language_name: {language_name}
                     if t.get('uuid') != self.chat_terminal_uuid:
                         context_parts.append(f"=== Terminal {t.get('title', 'unknown')} ===\n{t.get('content', '')[:2000]}")
                 context = "\n\n".join(context_parts)[:5000]
-        except Exception:
-            pass
+        except Exception as e:
+            self._debug(f"report: context capture failed: {e}")
 
         # LLM analysis with schema enforcement
         ConsoleHelper.info(self.console, f"Analyzing finding ({language_name})...")
@@ -894,10 +894,7 @@ Respond with a JSON object containing these fields:
             ConsoleHelper.error(self.console, "Project file not found")
             return True
 
-        # Check pandoc is available
-        try:
-            subprocess.run(["pandoc", "--version"], capture_output=True, check=True)
-        except (subprocess.CalledProcessError, FileNotFoundError):
+        if shutil.which("pandoc") is None:
             ConsoleHelper.error(self.console, "pandoc not found. Install with: apt install pandoc")
             return True
 

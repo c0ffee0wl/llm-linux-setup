@@ -22,7 +22,13 @@ import llm
 from llm import Tool
 from rich.console import Console
 
-from llm_tools_core import filter_new_blocks, get_assistant_default_model, get_sessions_dir
+from llm_tools_core import (
+    CONTEXT_UNCHANGED_MARKER,
+    filter_new_blocks,
+    get_assistant_default_model,
+    get_sessions_dir,
+    sanitize_terminal_id_for_filename,
+)
 
 # Mixin imports (9 mixins, excluding TerminalMixin and WatchMixin)
 from .kb import KnowledgeBaseMixin
@@ -125,7 +131,7 @@ def capture_shell_context(prev_hashes: Set[str], session_log: Optional[str] = No
     new_blocks, current_hashes = filter_new_blocks(blocks, prev_hashes)
 
     if not new_blocks:
-        return "[Content unchanged]", current_hashes
+        return CONTEXT_UNCHANGED_MARKER, current_hashes
 
     context = '\n'.join(new_blocks)
     return context, current_hashes
@@ -133,7 +139,7 @@ def capture_shell_context(prev_hashes: Set[str], session_log: Optional[str] = No
 
 def format_context_for_prompt(context: str) -> str:
     """Format captured context for injection into prompt."""
-    if not context or context == "[Content unchanged]":
+    if not context or context == CONTEXT_UNCHANGED_MARKER:
         return f"<terminal_context>{context}</terminal_context>"
 
     return f"""<terminal_context>
@@ -195,32 +201,47 @@ Returns:
 )
 
 
-def get_headless_tools() -> List[Tool]:
-    """Get tools available in headless mode."""
-    tools = [SUGGEST_COMMAND_TOOL]
+# Base tool list + implementations are memoized because llm.get_tools() triggers
+# plugin discovery and the daemon calls them on every query. HEADLESS_TOOL_NAMES
+# is frozen at import; dynamic per-session tools (MCP/skills/optional) are layered
+# on top by HeadlessSession.get_tools(), so this cache stays correct.
+_BASE_TOOLS_CACHE: Optional[List[Tool]] = None
+_BASE_IMPLS_CACHE: Optional[Dict[str, callable]] = None
+
+
+def _build_base_tools_and_impls() -> Tuple[List[Tool], Dict[str, callable]]:
+    tools: List[Tool] = [SUGGEST_COMMAND_TOOL]
+    impls: Dict[str, callable] = {'suggest_command': _suggest_command_impl}
 
     all_tools = llm.get_tools()
     for name in HEADLESS_TOOL_NAMES:
-        if name in all_tools:
-            tool = all_tools[name]
-            if isinstance(tool, Tool):
-                tools.append(tool)
-    return tools
+        tool = all_tools.get(name)
+        if not isinstance(tool, Tool):
+            continue
+        tools.append(tool)
+        impl = getattr(tool, 'implementation', None)
+        if impl:
+            impls[name] = impl
+    return tools, impls
+
+
+def _ensure_base_cache() -> None:
+    global _BASE_TOOLS_CACHE, _BASE_IMPLS_CACHE
+    if _BASE_TOOLS_CACHE is None:
+        _BASE_TOOLS_CACHE, _BASE_IMPLS_CACHE = _build_base_tools_and_impls()
+
+
+def get_headless_tools() -> List[Tool]:
+    """Get tools available in headless mode."""
+    _ensure_base_cache()
+    # Return a copy so session.get_tools() can freely mutate its local list.
+    return list(_BASE_TOOLS_CACHE)
 
 
 def get_tool_implementations() -> Dict[str, callable]:
     """Get tool implementations for auto-dispatch."""
-    implementations = {
-        'suggest_command': _suggest_command_impl,
-    }
-
-    all_tools = llm.get_tools()
-    for name in HEADLESS_TOOL_NAMES:
-        if name in all_tools:
-            tool = all_tools[name]
-            if isinstance(tool, Tool) and hasattr(tool, 'implementation') and tool.implementation:
-                implementations[name] = tool.implementation
-    return implementations
+    _ensure_base_cache()
+    return dict(_BASE_IMPLS_CACHE)
 
 
 class HeadlessSession(
@@ -263,10 +284,15 @@ class HeadlessSession(
         self.debug = debug
         self.session_log = session_log
         self.terminal_id = terminal_id
-        self.source = source  # Origin: "gui", "tui", "cli", "api", or None
+        # Origin: "gui", "tui", "cli", "api", or None. Stored via the `source`
+        # property so any conversation created later stays tagged in sync.
+        self._source: Optional[str] = source
 
         # Context tracking
         self.context_hashes: Set[str] = set()
+        # (path, st_mtime_ns, st_size) for the last session log we converted.
+        # Used to skip re-running `asciinema convert` when nothing has changed.
+        self._last_log_stat: Optional[Tuple[str, int, int]] = None
 
         # Model setup (use centralized upgrade logic for assistant default)
         self.model = llm.get_model(model_name or get_assistant_default_model())
@@ -467,12 +493,24 @@ class HeadlessSession(
             self._debug("Context capture skipped: no session log path available")
             return ""
 
-        # Validate file exists (prevents using stale paths from previous sessions)
-        if not os.path.exists(effective_log):
-            # Clear env var to prevent stale values from affecting other code
+        # Stat once: validates existence AND gives us change-detection data
+        # in a single syscall, avoiding a TOCTOU gap between exists() and stat().
+        try:
+            st = os.stat(effective_log)
+        except OSError:
             os.environ.pop('SESSION_LOG_FILE', None)
             self._debug(f"Context capture skipped: session log not found: {effective_log}")
             return ""
+
+        # Skip the asciinema convert subprocess when the log hasn't changed
+        # since our last capture for this path. The "[Content unchanged]"
+        # sentinel is what capture_shell_context returns when its own hash
+        # dedup would filter everything out, so downstream handling is
+        # already wired up for it.
+        stat_key = (effective_log, st.st_mtime_ns, st.st_size)
+        if self._last_log_stat == stat_key:
+            self._debug("Context capture: session log unchanged, skipping convert")
+            return format_context_for_prompt(CONTEXT_UNCHANGED_MARKER)
 
         # Run blocking context capture in thread to avoid blocking the event loop
         # (capture_shell_context calls asciinema convert via subprocess)
@@ -481,6 +519,7 @@ class HeadlessSession(
             capture_shell_context, prev_hashes, session_log=effective_log
         )
         self.context_hashes = new_hashes
+        self._last_log_stat = stat_key
 
         if not context:
             return ""
@@ -569,10 +608,7 @@ class HeadlessSession(
         if not self.terminal_id:
             return None
 
-        # Sanitize terminal_id for filename
-        safe_id = self.terminal_id.replace('/', '_').replace(':', '_')
-        path = self._get_sessions_dir() / safe_id
-
+        path = self._get_sessions_dir() / sanitize_terminal_id_for_filename(self.terminal_id)
         if path.exists():
             cid = path.read_text().strip()
             return cid if cid else None
@@ -583,7 +619,94 @@ class HeadlessSession(
         if not self.terminal_id:
             return
 
-        # Sanitize terminal_id for filename
-        safe_id = self.terminal_id.replace('/', '_').replace(':', '_')
-        path = self._get_sessions_dir() / safe_id
+        path = self._get_sessions_dir() / sanitize_terminal_id_for_filename(self.terminal_id)
         path.write_text(conversation_id)
+
+    @property
+    def source(self) -> Optional[str]:
+        return self._source
+
+    @source.setter
+    def source(self, value: Optional[str]) -> None:
+        self._source = value
+        if self.conversation is not None:
+            self.conversation.source = value
+
+    @property
+    def sources_enabled(self) -> bool:
+        """Whether source citations are included in search-tool results.
+
+        Backing attribute remains ``_sources_enabled`` for compatibility with
+        mixins that may still read it directly (e.g. ReportMixin).
+        """
+        return self._sources_enabled
+
+    @sources_enabled.setter
+    def sources_enabled(self, value: bool) -> None:
+        self._sources_enabled = bool(value)
+
+    def truncate_responses(self, keep_turns: int) -> int:
+        """Keep only the first ``keep_turns`` responses. Returns remaining count.
+
+        Each ``llm.Response`` corresponds to one turn. Used by the GUI's
+        edit+regenerate flow (`WebUIServer._handle_edit`) and by the daemon's
+        ``truncate`` wire command.
+        """
+        if self.conversation is None:
+            return 0
+        responses = self.conversation.responses
+        if keep_turns < len(responses):
+            self.conversation.responses = responses[:keep_turns]
+        return len(self.conversation.responses)
+
+    def pop_response(self) -> int:
+        """Drop the most recent response. Returns remaining count."""
+        if self.conversation is None:
+            return 0
+        responses = self.conversation.responses
+        if responses:
+            responses.pop()
+        return len(responses)
+
+    def pop_turn(self) -> List["llm.Response"]:
+        """Pop responses until the most recent user-prompted turn is removed.
+
+        Tool-call turns create multiple Response objects (initial + empty-prompt
+        continuations); ``pop_turn`` treats them as one logical unit and returns
+        every response it removed so callers can clean up DB rows.
+        """
+        if self.conversation is None:
+            return []
+        removed: List["llm.Response"] = []
+        responses = self.conversation.responses
+        while responses:
+            last = responses.pop()
+            removed.append(last)
+            prompt_text = ""
+            if getattr(last, 'prompt', None) is not None:
+                prompt_text = (last.prompt.prompt or "").strip()
+            if prompt_text:
+                break
+        return removed
+
+    def fork_responses(self, turns_to_keep: int) -> List["llm.Response"]:
+        """Return a shallow copy of the first ``turns_to_keep`` responses.
+
+        Callers use this when cloning history into a forked session.
+        """
+        if self.conversation is None or turns_to_keep <= 0:
+            return []
+        return list(self.conversation.responses[:turns_to_keep])
+
+    def set_model(self, model_id: str) -> "llm.Model":
+        """Switch the session's model. Keeps ``model_name`` and the active
+        conversation's model in sync so follow-up prompts use the new model.
+
+        Raises whatever ``llm.get_model`` raises for unknown model IDs.
+        """
+        new_model = llm.get_model(model_id)
+        self.model = new_model
+        self.model_name = model_id
+        if self.conversation is not None:
+            self.conversation.model = new_model
+        return new_model

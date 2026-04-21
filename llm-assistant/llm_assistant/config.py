@@ -42,6 +42,20 @@ SLASH_COMMANDS = {
 }
 
 
+# Slash commands that delegate straight to a session mixin handler method.
+# Shared between interactive session dispatch and daemon IPC dispatch so both
+# paths agree on which commands are mixin-delegated without needing to edit
+# two places when a new mixin command is added.
+# Structure: command -> (handler_method_name, human_readable_feature_name)
+MIXIN_HANDLERS = {
+    "/kb": ("_handle_kb_command", "Knowledge base"),
+    "/memory": ("_handle_memory_command", "Memory"),
+    "/rag": ("_handle_rag_command", "RAG"),
+    "/skill": ("_handle_skill_command", "Skills"),
+    "/report": ("_handle_report_command", "Report management"),
+}
+
+
 # Slash commands available in headless/daemon mode (allowlist)
 # Only these commands work via thin client (@ command)
 HEADLESS_AVAILABLE_COMMANDS = {

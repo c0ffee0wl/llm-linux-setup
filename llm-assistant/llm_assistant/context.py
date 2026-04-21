@@ -13,14 +13,27 @@ from typing import TYPE_CHECKING, Optional
 
 import llm
 
+from llm_tools_core.tokens import CHARS_PER_TOKEN, estimate_tokens, estimate_tokens_json
+
 from .utils import get_config_dir, ConsoleHelper
 from .templates import render
 
 if TYPE_CHECKING:
     from rich.console import Console
 
-# Note: hash_blocks and filter_new_blocks have been moved to llm_tools_core.hashing
-# Consumers should import directly: from llm_tools_core import hash_blocks, filter_new_blocks
+
+# Compiled once at import time; _strip_context runs twice per turn.
+_CONTEXT_TAG_PATTERNS = tuple(
+    re.compile(rf'<{tag}>.*?</{tag}>\s*', re.DOTALL)
+    for tag in (
+        'terminal_context',
+        'gui_context',
+        'conversation_summary',
+        'retrieved_documents',
+        'watch_prompt',
+    )
+)
+_EXCESS_BLANK_LINES = re.compile(r'\n{3,}')
 
 
 class ContextMixin:
@@ -66,44 +79,28 @@ class ContextMixin:
     pending_summary: Optional[str]
 
     def _estimate_tool_schema_tokens(self) -> int:
-        """
-        Estimate token count for all tool schemas.
-
-        Uses char-based estimation (4 chars = 1 token) which is fast and
-        consistent. The actual token count varies by model tokenizer, but
-        this estimate is sufficient for context window tracking.
-
-        Returns:
-            Estimated token count for all tool schemas
-        """
+        """Estimate token count for all tool schemas as sent to the API."""
         try:
-            # Build JSON representation of tool schemas (as sent to API)
             active_tools = self._get_active_tools()
             tool_schemas = []
             for tool in active_tools:
-                # Get parameters - handle both input_schema (llm.Tool) and schema (other tools)
                 if hasattr(tool, 'input_schema'):
                     params = tool.input_schema
                 elif hasattr(tool, 'schema') and isinstance(tool.schema, dict):
                     params = tool.schema.get('parameters', {})
                 else:
                     params = {}
-                schema = {
+                tool_schemas.append({
                     'name': tool.name,
                     'description': tool.description or '',
-                    'parameters': params
-                }
-                tool_schemas.append(schema)
+                    'parameters': params,
+                })
 
-            tools_json = json.dumps(tool_schemas, indent=2)
-
-            # Estimate tokens using char-based method (4 chars = 1 token)
-            tokens = len(tools_json) // 4
-            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(active_tools)} tools, {len(tools_json)} chars)")
+            tokens = estimate_tokens_json(tool_schemas)
+            self._debug(f"Estimated tool schemas: {tokens} tokens ({len(active_tools)} tools)")
             return tokens
 
         except Exception as e:
-            # Fallback
             active_tools = self._get_active_tools()
             fallback = len(active_tools) * 200
             self._debug(f"Tool schema measurement exception: {e}, using estimate: {fallback}")
@@ -127,53 +124,38 @@ class ContextMixin:
         tokens = 0
 
         try:
-            # System prompt is already rendered for current mode by Jinja2
             system_prompt_len = len(self.system_prompt)
 
             if not self.conversation.responses:
-                # No responses yet - estimate system prompt + tools
-                # System prompt chars / 4, plus measured tool overhead
-                base_tokens = system_prompt_len // 4
-                tool_tokens = self._tool_token_overhead  # Already measured in __init__
-                tokens = base_tokens + tool_tokens
+                tokens = system_prompt_len // CHARS_PER_TOKEN + self._tool_token_overhead
                 source = "estimated"
             else:
-                # Use the LAST response's tokens (represents current context window)
                 last_response = self.conversation.responses[-1]
 
                 if last_response.input_tokens is not None:
-                    # API provided accurate token counts
+                    # input_tokens is cumulative across the conversation,
+                    # so the latest value is the current context size.
                     source = "API"
-                    # Use input_tokens only - output tokens are already included in next request's input
-                    # When the next request is made, its input_tokens will include the previous output
-                    # So we only need input_tokens to know how much context we're using
                     tokens = last_response.input_tokens
                 else:
-                    # Fallback: char-based estimation for current context
-                    # Sum ALL responses - mirrors how build_messages() reconstructs history
                     source = "estimated"
-                    total_chars = system_prompt_len  # System prompt
+                    total_chars = system_prompt_len
 
-                    # Sum ALL responses (each API call sends full history)
                     for resp in self.conversation.responses:
-                        # User prompt
                         if hasattr(resp, 'prompt') and resp.prompt and resp.prompt.prompt:
                             total_chars += len(resp.prompt.prompt)
 
-                        # Assistant response - handle in-progress for last response
                         if resp is self.conversation.responses[-1] and not getattr(resp, '_done', False):
-                            # In-progress: use accumulated chunks to avoid blocking
+                            # In-progress: use accumulated chunks to avoid blocking on resp.text()
                             total_chars += len("".join(getattr(resp, '_chunks', [])))
                         else:
                             total_chars += len(resp.text())
 
-                    # Add measured tool overhead
-                    tokens = (total_chars // 4) + self._tool_token_overhead
+                    tokens = (total_chars // CHARS_PER_TOKEN) + self._tool_token_overhead
 
         except Exception as e:
             ConsoleHelper.warning(self.console, f"Token estimation failed: {e}")
-            # Ultimate fallback
-            tokens = len(self.system_prompt) // 4 + len(self.conversation.responses) * 500
+            tokens = estimate_tokens(self.system_prompt) + len(self.conversation.responses) * 500
             source = "estimated"
 
         return (tokens, source) if with_source else tokens
@@ -349,49 +331,9 @@ The `<memory>` section below contains user preferences and project-specific note
             return prompt_text
 
         result = prompt_text
-
-        # Remove terminal context section
-        result = re.sub(
-            r'<terminal_context>.*?</terminal_context>\s*',
-            '',
-            result,
-            flags=re.DOTALL
-        )
-
-        # Remove GUI context section (from guiassistant)
-        result = re.sub(
-            r'<gui_context>.*?</gui_context>\s*',
-            '',
-            result,
-            flags=re.DOTALL
-        )
-
-        # Remove conversation summary section
-        result = re.sub(
-            r'<conversation_summary>.*?</conversation_summary>\s*',
-            '',
-            result,
-            flags=re.DOTALL
-        )
-
-        # Remove RAG retrieved documents section
-        result = re.sub(
-            r'<retrieved_documents>.*?</retrieved_documents>\s*',
-            '',
-            result,
-            flags=re.DOTALL
-        )
-
-        # Remove watch mode prompts (entire iteration prompts filtered from web companion)
-        result = re.sub(
-            r'<watch_prompt>.*?</watch_prompt>\s*',
-            '',
-            result,
-            flags=re.DOTALL
-        )
-
-        # Clean up multiple consecutive newlines
-        result = re.sub(r'\n{3,}', '\n\n', result)
+        for pattern in _CONTEXT_TAG_PATTERNS:
+            result = pattern.sub('', result)
+        result = _EXCESS_BLANK_LINES.sub('\n\n', result)
 
         return result.strip()
 
@@ -405,11 +347,10 @@ The `<memory>` section below contains user preferences and project-specific note
         links_path = get_config_dir() / 'squash-links.json'
 
         links = {}
-        if links_path.exists():
-            try:
-                links = json.loads(links_path.read_text())
-            except (json.JSONDecodeError, OSError):
-                pass  # Start fresh if file is corrupted
+        try:
+            links = json.loads(links_path.read_text())
+        except (OSError, json.JSONDecodeError):
+            pass  # Missing or corrupted file: start fresh
 
         links[new_id] = {'previous': old_id, 'squashed_at': datetime.now(timezone.utc).isoformat()}
         links_path.write_text(json.dumps(links, indent=2))
@@ -420,12 +361,9 @@ The `<memory>` section below contains user preferences and project-specific note
         Displays info if this conversation was created from a squash operation.
         """
         links_path = get_config_dir() / 'squash-links.json'
-        if not links_path.exists():
-            return
-
         try:
             links = json.loads(links_path.read_text())
-        except (json.JSONDecodeError, OSError):
+        except (OSError, json.JSONDecodeError):
             return
 
         # Check if this conversation has a previous squash

@@ -21,19 +21,15 @@ fi
 __llm_cmdcomp() {
   local old_cmd=$BUFFER
   local cursor_pos=$CURSOR
+  local result
 
-  # Show a temporary indicator while processing
   BUFFER+=" ⌛"
   zle -I && zle redisplay
   BUFFER=$old_cmd
 
-  # Move to a new line for llm's output
   echo
 
-  # Call llm cmdcomp to get the suggested command
-  local result=$(command llm cmdcomp "$old_cmd")
-
-  if [ $? -eq 0 ] && [ -n "$result" ]; then
+  if result="$(command llm cmdcomp "$old_cmd")" && [ -n "$result" ]; then
     BUFFER=$result
     CURSOR=${#BUFFER}
   else
@@ -45,18 +41,10 @@ __llm_cmdcomp() {
 
 # Define the apply suggestion widget
 __llm_apply_suggest() {
-  # Apply suggested command from llm-assistant's suggest_command tool
-  local suggest_file="/tmp/llm-assistant-$(id -u)/suggest"
-
-  if [[ -f "$suggest_file" ]]; then
-    local cmd
-    cmd="$(cat "$suggest_file")"
-    rm -f "$suggest_file"
-
-    if [[ -n "$cmd" ]]; then
-      BUFFER="$cmd"
-      CURSOR=${#BUFFER}
-    fi
+  local cmd
+  if cmd="$(__llm_read_suggest)" && [[ -n "$cmd" ]]; then
+    BUFFER="$cmd"
+    CURSOR=${#BUFFER}
   fi
   zle reset-prompt
 }
@@ -75,7 +63,6 @@ bindkey '^G' __llm_apply_suggest
 __llm_smart_at() {
   local before="${BUFFER:0:$CURSOR}"
 
-  # Check if buffer is empty or contains only whitespace before cursor
   if [[ -z "${before// /}" ]]; then
     # @ at line start - enter LLM mode
     BUFFER="@ "

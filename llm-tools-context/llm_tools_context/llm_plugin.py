@@ -7,7 +7,7 @@ allowing AI to query recent terminal history.
 
 import llm
 
-from .core import get_context
+from .core import get_context, parse_count
 
 
 def context(input: str) -> str:
@@ -28,28 +28,17 @@ def context(input: str) -> str:
         Session history with commands and outputs, each line prefixed with '#c#'.
         Returns error message if context command not found or session not active.
     """
-    # Parse and validate input
-    n_commands = 1
-    all_history = False
-
+    # Parse count spec. Empty input defaults to last-command-only (1).
     if input and input.strip():
-        input_clean = input.strip()
+        try:
+            n_commands = parse_count(input)
+        except ValueError as exc:
+            return f"Error: {exc}. Must be 'all', '-a', '--all', or a positive integer."
+    else:
+        n_commands = 1
 
-        # Only allow "all", "-a", "--all", or positive integers
-        if input_clean.lower() in ["all", "-a", "--all"]:
-            all_history = True
-        elif input_clean.isdigit() and int(input_clean) > 0:
-            n_commands = int(input_clean)
-        else:
-            return f"Error: Invalid input '{input_clean}'. Must be 'all', '-a', '--all', or a positive integer."
-
-    # Call the core function directly
     try:
-        if all_history:
-            # get_context with large number for "all"
-            return get_context(n_commands=9999, raw=False)
-        else:
-            return get_context(n_commands=n_commands, raw=False)
+        return get_context(n_commands=n_commands, raw=False)
     except Exception as e:
         return f"Error retrieving context: {e}"
 

@@ -19,6 +19,8 @@ Usage in YAML:
 
 from typing import Any, ClassVar, Optional, TYPE_CHECKING
 
+from ...utils import parse_comma_list
+
 # Lazy import pattern - burr_workflow imports are deferred
 # to allow llm-assistant to work without burr_workflow installed
 try:
@@ -303,8 +305,7 @@ class HumanDecideAction(AbstractAction):
                         prompt=multi_prompt,
                         default=default if isinstance(default, str) else "",
                     )
-                    # Parse comma-separated response
-                    selected = [s.strip() for s in response.split(",") if s.strip()]
+                    selected = parse_comma_list(response)
                     # Validate selections
                     invalid = [s for s in selected if s not in choices]
                     if invalid:

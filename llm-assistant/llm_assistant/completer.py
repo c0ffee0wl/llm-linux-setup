@@ -6,6 +6,7 @@ This module provides the SlashCommandCompleter class for:
 - Dynamic completions (model names, KB names, RAG collections)
 """
 
+import logging
 from typing import TYPE_CHECKING
 
 import llm
@@ -15,6 +16,9 @@ from .config import SLASH_COMMANDS
 
 if TYPE_CHECKING:
     from .session import TerminatorAssistantSession
+
+
+logger = logging.getLogger(__name__)
 
 
 class SlashCommandCompleter(Completer):
@@ -162,8 +166,8 @@ class SlashCommandCompleter(Completer):
                         model_id,
                         start_position=-len(partial)
                     )
-        except Exception:
-            pass  # Graceful degradation if llm unavailable
+        except Exception as e:
+            logger.debug("_complete_models failed: %s", e, exc_info=True)
 
     def _complete_available_kbs(self, partial: str):
         """Complete available KB names for /kb load."""
@@ -181,8 +185,8 @@ class SlashCommandCompleter(Completer):
                             name,
                             start_position=-len(partial)
                         )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_available_kbs failed: %s", e, exc_info=True)
 
     def _complete_loaded_kbs(self, partial: str):
         """Complete loaded KB names for /kb unload."""
@@ -196,8 +200,8 @@ class SlashCommandCompleter(Completer):
                         name,
                         start_position=-len(partial)
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_loaded_kbs failed: %s", e, exc_info=True)
 
     def _complete_mcp_servers(self, partial: str):
         """Complete MCP server names for /mcp load/unload."""
@@ -212,8 +216,8 @@ class SlashCommandCompleter(Completer):
                         server_name,
                         start_position=-len(partial)
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_mcp_servers failed: %s", e, exc_info=True)
 
     def _complete_available_skills(self, partial: str):
         """Complete available skill names for /skill load."""
@@ -233,8 +237,8 @@ class SlashCommandCompleter(Completer):
                             start_position=-len(partial),
                             display_meta=desc
                         )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_available_skills failed: %s", e, exc_info=True)
 
     def _complete_loaded_skills(self, partial: str):
         """Complete loaded skill names for /skill unload."""
@@ -248,8 +252,8 @@ class SlashCommandCompleter(Completer):
                         name,
                         start_position=-len(partial)
                     )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_loaded_skills failed: %s", e, exc_info=True)
 
     def _complete_rag_collections(self, partial: str):
         """Complete RAG collection names."""
@@ -265,8 +269,8 @@ class SlashCommandCompleter(Completer):
                     )
         except ImportError:
             pass  # llm-tools-rag not installed
-        except Exception:
-            pass  # Graceful degradation
+        except Exception as e:
+            logger.debug("_complete_rag_collections failed: %s", e, exc_info=True)
 
     def _complete_findings(self, partial: str):
         """Complete finding IDs (F001, F002, etc.) for current project."""
@@ -287,8 +291,8 @@ class SlashCommandCompleter(Completer):
                             start_position=-len(partial),
                             display_meta=title
                         )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_findings failed: %s", e, exc_info=True)
 
     def _complete_report_projects(self, partial: str):
         """Complete report project names for /report open."""
@@ -306,5 +310,5 @@ class SlashCommandCompleter(Completer):
                                 name,
                                 start_position=-len(partial)
                             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("_complete_report_projects failed: %s", e, exc_info=True)

@@ -8,6 +8,54 @@ export SESSION_LOG_DIR="${SESSION_LOG_DIR:-/tmp/session_logs/asciinema}"
 
 # Privacy/telemetry defaults are set in ~/.profile (see install-llm-tools.sh)
 
+# Default --cl (context limit) for llm wrapper — centralised so bumps are one-line
+LLM_CONTEXT_LIMIT="${LLM_CONTEXT_LIMIT:-15}"
+
+# Helper: check if user supplied flags that suppress the default template
+__llm_should_skip_template() {
+    for arg in "$@"; do
+        case "$arg" in
+            -c|--continue|--cid|--conversation) return 0 ;;
+            -s*|--system*|--sf)                 return 0 ;;
+            -t*|--template*)                    return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Helper: detect -o google_search (incompatible with non-search tools)
+__llm_has_google_search() {
+    local skip_next=false
+    for arg in "$@"; do
+        if $skip_next; then
+            [[ "$arg" == *"google_search"* ]] && return 0
+            skip_next=false
+            continue
+        fi
+        case "$arg" in
+            -o|--option) skip_next=true ;;
+            -o*google_search*|--option*google_search*) return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# Run `command llm [subcmd] …` applying the default template + tools unless the
+# user supplied their own -t/-s/-c or -o google_search (incompatible with tools).
+__llm_dispatch() {
+    local -a prefix=()
+    [ -n "$1" ] && prefix=("$1")
+    shift
+    if __llm_should_skip_template "$@"; then
+        command llm "${prefix[@]}" --cl "$LLM_CONTEXT_LIMIT" "$@"
+    elif __llm_has_google_search "$@"; then
+        command llm "${prefix[@]}" -t llm --cl "$LLM_CONTEXT_LIMIT" "$@"
+    else
+        command llm "${prefix[@]}" -t llm --cl "$LLM_CONTEXT_LIMIT" \
+            --tool context --tool sandboxed_shell --tool execute_python "$@"
+    fi
+}
+
 # Custom llm wrapper function to set default template
 llm() {
     # Check for help flags - pass through to original llm
@@ -16,19 +64,6 @@ llm() {
         return $?
     fi
 
-    # List of subcommands that should NOT get the -t template parameter
-    # These are management/configuration commands, not prompt commands
-    local exclude_commands=(
-        "models" "keys" "plugins" "templates" "tools" "schemas" "fragments"
-        "collections" "embed" "embed-models" "embed-multi" "similar"
-        "aliases" "logs" "install" "uninstall"
-        "openai" "gemini" "openrouter" "vertex"
-        "cmd" "cmdcomp" "jq"
-        "rag" "git-commit" "sort" "classify"
-        "arxiv" "arxiv-search"
-    )
-
-    # Check if first argument is an excluded subcommand
     local first_arg="$1"
 
     # Special handling for chat-google-search (Google Search grounding)
@@ -36,14 +71,15 @@ llm() {
         shift  # Remove 'chat-google-search' from arguments
         local keys_file="$HOME/.config/io.datasette.llm/keys.json"
         if [ -f "$keys_file" ]; then
-            local model=""
-            if grep -q '"vertex"' "$keys_file" 2>/dev/null; then
+            local keys_content model=""
+            keys_content="$(<"$keys_file")" 2>/dev/null || keys_content=""
+            if [[ "$keys_content" == *'"vertex"'* ]]; then
                 model="vertex/gemini-2.5-flash"
-            elif grep -q '"gemini"' "$keys_file" 2>/dev/null; then
+            elif [[ "$keys_content" == *'"gemini"'* ]]; then
                 model="gemini-2.5-flash"
             fi
             if [ -n "$model" ]; then
-                command llm chat -t llm --cl 15 -m "$model" -o google_search 1 --md "$@"
+                command llm chat -t llm --cl "$LLM_CONTEXT_LIMIT" -m "$model" -o google_search 1 --md "$@"
                 return $?
             fi
         fi
@@ -51,91 +87,46 @@ llm() {
         return 1
     fi
 
-    for cmd in "${exclude_commands[@]}"; do
-        if [ "$first_arg" = "$cmd" ]; then
-            # Pass through directly without template
+    # Management/configuration subcommands that must not receive -t/template:
+    # pass straight through to the real `llm` binary.
+    case "$first_arg" in
+        models|keys|plugins|templates|tools|schemas|fragments|\
+        collections|embed|embed-models|embed-multi|similar|\
+        aliases|logs|install|uninstall|\
+        openai|gemini|openrouter|vertex|\
+        cmd|cmdcomp|jq|\
+        rag|git-commit|sort|classify|\
+        arxiv|arxiv-search)
             command llm "$@"
             return $?
-        fi
-    done
+            ;;
+    esac
 
-    # Helper function to check if template should be skipped
-    should_skip_template() {
-        for arg in "$@"; do
-            case "$arg" in
-                -c|--continue|--cid|--conversation)
-                    return 0  # Continuing conversation (has context)
-                    ;;
-                -s*|--system*|--sf)
-                    return 0  # Custom system prompt
-                    ;;
-                -t*|--template*)
-                    return 0  # Custom template
-                    ;;
-            esac
-        done
-        return 1  # Add template
-    }
-
-    # Helper function to check if google_search option is present (incompatible with non-search tools)
-    has_google_search() {
-        local skip_next=false
-        for arg in "$@"; do
-            if $skip_next; then
-                if [[ "$arg" == *"google_search"* ]]; then
-                    return 0  # google_search found
-                fi
-                skip_next=false
-                continue
-            fi
-            case "$arg" in
-                -o|--option)
-                    skip_next=true
-                    ;;
-                -o*google_search*|--option*google_search*)
-                    return 0  # google_search found (combined flag format)
-                    ;;
-            esac
-        done
-        return 1  # no google_search
-    }
-
-    # For prompt commands (prompt, chat, code) or default prompt
-    # apply the appropriate template unless user specified their own
-    # Default tools (context, sandboxed_shell) are added only when:
-    # 1. Using default assistant template (no -t, -s, -c flags)
-    # 2. AND google_search option is not present (incompatible with non-search tools)
-    if [ "$1" = "chat" ]; then
-        shift
-        if should_skip_template "$@"; then
-            # User specified -t, -s, or -c: no default template, no default tools
-            command llm chat --cl 15 "$@"
-        elif has_google_search "$@"; then
-            # google_search incompatible with non-search tools: template only, no tools
-            command llm chat -t llm --cl 15 "$@"
-        else
-            # Default: apply assistant template with default tools
-            command llm chat -t llm --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
-        fi
-    elif [ "$1" = "code" ]; then
-        shift
-        command llm -t llm-code --cl 15 "$@"
-    elif [ "$1" = "assistant" ]; then
-        shift
-        llm-assistant "$@"
-    elif [ "$1" = "sidechat" ]; then
-        echo "Warning: 'llm sidechat' is deprecated, use 'llm assistant' instead" >&2
-        shift
-        llm-assistant "$@"
-    else
-        if should_skip_template "$@"; then
-            command llm --cl 15 "$@"
-        elif has_google_search "$@"; then
-            command llm -t llm --cl 15 "$@"
-        else
-            command llm -t llm --cl 15 --tool context --tool sandboxed_shell --tool execute_python "$@"
-        fi
-    fi
+    # Prompt commands (chat, code, default): apply the appropriate template
+    # unless the user specified their own (-t/-s/-c). Default tools are added
+    # only when the default template is used AND -o google_search is absent
+    # (google_search is incompatible with non-search tools).
+    case "$1" in
+        chat)
+            shift
+            __llm_dispatch chat "$@"
+            ;;
+        code)
+            shift
+            command llm -t llm-code --cl "$LLM_CONTEXT_LIMIT" "$@"
+            ;;
+        sidechat)
+            # `;&` falls through into the `assistant` body (bash & zsh support this).
+            echo "Warning: 'llm sidechat' is deprecated, use 'llm assistant' instead" >&2
+            ;&
+        assistant)
+            shift
+            llm-assistant "$@"
+            ;;
+        *)
+            __llm_dispatch "" "$@"
+            ;;
+    esac
 }
 
 # wut function - Explains terminal command output using context tool
@@ -161,31 +152,15 @@ wut() {
 #        @ Tell me more                    -> Continues conversation
 #        @ /new                            -> Start fresh conversation
 #        @ /help                           -> Show commands
+#
+# Terminal session ID resolution is delegated to llm_tools_core.get_terminal_session_id()
+# (called by llm-inlineassistant). Exported env vars like SESSION_LOG_FILE / TMUX_PANE
+# are inherited by the subprocess, so duplicating the priority ladder here is dead work.
 @() {
     if ! command -v llm-inlineassistant &> /dev/null; then
         echo "Error: llm-inlineassistant is not installed. Run install-llm-tools.sh to install." >&2
         return 1
     fi
-
-    # Get terminal session ID for conversation tracking
-    # SESSION_LOG_FILE takes priority when available - it's unique per asciinema session
-    # and prevents context bleeding when panes are reused or recreated
-    local terminal_id=""
-    if [ -n "$SESSION_LOG_FILE" ]; then
-        # Most reliable: unique per asciinema recording session
-        terminal_id="session:$(basename "$SESSION_LOG_FILE" .cast)"
-    elif [ -n "$TMUX_PANE" ]; then
-        terminal_id="tmux:$TMUX_PANE"
-    elif [ -n "$TERM_SESSION_ID" ]; then
-        terminal_id="iterm:$TERM_SESSION_ID"
-    elif [ -n "$KONSOLE_DBUS_SESSION" ]; then
-        terminal_id="konsole:$KONSOLE_DBUS_SESSION"
-    elif [ -n "$WINDOWID" ]; then
-        terminal_id="x11:$WINDOWID"
-    else
-        terminal_id="tty:$(tty 2>/dev/null | tr '/' '_' || echo 'unknown')"
-    fi
-    export TERMINAL_SESSION_ID="$terminal_id"
 
     # Pass query via stdin to avoid shell parsing of special characters
     # (matches zsh widget approach: printf | --stdin)
@@ -196,6 +171,16 @@ wut() {
     fi
 }
 
+# Read and consume a queued suggestion from llm-assistant's suggest_command tool.
+# Writes the command to stdout and deletes the file; returns non-zero if absent.
+# Path is the daemon↔widget contract — must match what llm-assistant writes.
+__llm_read_suggest() {
+    local suggest_file="/tmp/llm-assistant-${UID}/suggest"
+    [ -f "$suggest_file" ] || return 1
+    cat "$suggest_file"
+    rm -f "$suggest_file"
+}
+
 # Alias for Claude Code Router
 alias routed-claude='ccr code'
 
@@ -203,27 +188,28 @@ alias routed-claude='ccr code'
 alias pbcopy='xsel --clipboard --input'
 alias pbpaste='xsel --clipboard --output'
 
-# VTE Integration for directory tracking in terminal emulators
-# Enables proper working directory preservation when opening new tabs/windows
-# Supports: GNOME Terminal, Terminator, Tilix, Guake, and other VTE-based terminals
-# Works by emitting OSC 7 escape sequences that asciinema transparently passes through
+# VTE-only integration: directory tracking via OSC 7 (for new tabs/windows to
+# inherit CWD in GNOME Terminal, Terminator, Tilix, Guake, etc.) and zero-width
+# Unicode markers for 100% reliable prompt detection by llm-assistant's
+# PromptDetector. Markers are NOT injected in non-VTE terminals (Kitty, etc.)
+# because those render zero-width chars as visible spaces.
 if [ -n "$VTE_VERSION" ]; then
-  for vte_script in /etc/profile.d/vte.sh /etc/profile.d/vte-*.sh; do
-    if [ -f "$vte_script" ]; then
-      . "$vte_script"
-      break
-    fi
-  done
-fi
+    for vte_script in /etc/profile.d/vte.sh /etc/profile.d/vte-*.sh; do
+        if [ -f "$vte_script" ]; then
+            . "$vte_script"
+            break
+        fi
+    done
 
-# Invisible Unicode markers for 100% reliable prompt detection in VTE terminals
-# ONLY inject in VTE terminals (Terminator, GNOME Terminal, Tilix, etc.)
-# Other terminals (Kitty) render zero-width chars as visible spaces
-# These markers are detected by llm-assistant via PromptDetector.has_unicode_markers()
-if [ -n "$VTE_VERSION" ]; then
     # \u200B = Zero Width Space, \u200D = Zero Width Joiner
     _PROMPT_START_MARKER=$'\u200B\u200D\u200B'  # Before PS1
     _INPUT_START_MARKER=$'\u200D\u200B\u200D'   # After PS1
+
+    # Temp dir for shell↔llm-assistant metadata. Resolved once at source time
+    # to avoid forking $(id -u) on every prompt; __add_prompt_markers only
+    # re-runs mkdir if the dir was removed (self-heal against tmpwatch).
+    # Must match llm_tools_core.xdg.get_temp_dir() convention.
+    _LLM_TEMP_DIR="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}/llm-assistant/${UID}"
 
     # Preexec hook: capture command start time (uses $SECONDS - no subshell!)
     # Called BEFORE each command executes
@@ -247,20 +233,31 @@ if [ -n "$VTE_VERSION" ]; then
             [ "$duration" -lt 0 ] && duration=0
         fi
 
+        # Format timestamp via shell builtins to avoid forking `date` per prompt.
+        # Fallback path keeps the hook safe on unexpected shells.
+        local ts
+        if [ -n "${BASH_VERSION:-}" ]; then
+            printf -v ts '%(%Y-%m-%d %H:%M:%S)T' -1
+        elif [ -n "${ZSH_VERSION:-}" ] && (( ${+builtins[strftime]} )); then
+            strftime -s ts '%Y-%m-%d %H:%M:%S' "$EPOCHSECONDS"
+        else
+            ts="$(date '+%Y-%m-%d %H:%M:%S')"
+        fi
+
         # Write metadata to temp file for llm-assistant to read
-        # File is named by shell PID for disambiguation between terminals
-        # Uses TMPDIR with user isolation (matches Python get_temp_dir())
-        _LLM_TEMP_DIR="${TMPDIR:-${TMP:-${TEMP:-/tmp}}}/llm-assistant/$(id -u)"
-        mkdir -p "$_LLM_TEMP_DIR" 2>/dev/null
-        printf '%s\n' "E${last_exit}T$(date '+%Y-%m-%d %H:%M:%S')D${duration}" > "$_LLM_TEMP_DIR/.prompt-meta-$$" 2>/dev/null
+        # File is named by shell PID for disambiguation between terminals.
+        # [ -d ] short-circuits mkdir (external in bash, forks) on the common
+        # path — only the first prompt after tmpwatch pays the subprocess cost.
+        [ -d "$_LLM_TEMP_DIR" ] || mkdir -p "$_LLM_TEMP_DIR" 2>/dev/null
+        printf '%s\n' "E${last_exit}T${ts}D${duration}" > "$_LLM_TEMP_DIR/.prompt-meta-$$" 2>/dev/null
 
         # Add markers to PS1/PROMPT (idempotent - only once)
         if [ -n "${BASH_VERSION:-}" ]; then
-            if [[ "$PS1" != *$'\u200B\u200D\u200B'* ]]; then
+            if [[ "$PS1" != *"$_PROMPT_START_MARKER"* ]]; then
                 PS1="${_PROMPT_START_MARKER}${PS1}${_INPUT_START_MARKER}"
             fi
         elif [ -n "${ZSH_VERSION:-}" ]; then
-            if [[ "$PROMPT" != *$'\u200B\u200D\u200B'* ]]; then
+            if [[ "$PROMPT" != *"$_PROMPT_START_MARKER"* ]]; then
                 PROMPT="${_PROMPT_START_MARKER}${PROMPT}${_INPUT_START_MARKER}"
             fi
         fi
@@ -297,6 +294,9 @@ if [ -n "$VTE_VERSION" ]; then
         # Capture exit code FIRST, run hooks, then unset flag for next command
         PROMPT_COMMAND='_LAST_EXIT=$?; '"${PROMPT_COMMAND:-:}"'; __add_prompt_markers "$_LAST_EXIT"; unset _IN_PROMPT_COMMAND _LAST_EXIT'
     elif [ -n "${ZSH_VERSION:-}" ]; then
+        # Load strftime / EPOCHSECONDS so __add_prompt_markers can format
+        # timestamps without forking `date` on every prompt.
+        zmodload -F zsh/datetime +b:strftime +b:EPOCHSECONDS 2>/dev/null
         # preexec runs BEFORE each user command - capture start time
         preexec_functions=($preexec_functions __capture_cmd_start)
         # PREPEND exit code capture to run FIRST (before Starship/P10k)
@@ -305,6 +305,12 @@ if [ -n "$VTE_VERSION" ]; then
         precmd_functions=($precmd_functions __zsh_add_markers)
     fi
 fi
+
+# True when the user has opted out of session-recording startup banners.
+# Error warnings (pty probe failure) ignore this and always print.
+__llm_session_silent() {
+    [ "$SESSION_LOG_SILENT" = "true" ] || [ "$SESSION_LOG_SILENT" = "1" ]
+}
 
 # -- Automatic asciinema session recording --
 if command -v asciinema &> /dev/null; then
@@ -317,7 +323,7 @@ if command -v asciinema &> /dev/null; then
   if [ -n "$TMUX_PANE" ]; then
     # In tmux, use pane ID (e.g., "%0", "%1", "%2")
     # Clean it for use in variable name (remove % and other special chars)
-    PANE_ID=$(echo "$TMUX_PANE" | tr -cd '[:alnum:]')
+    PANE_ID="${TMUX_PANE//[^[:alnum:]]/}"
     SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
     PANE_SUFFIX="_tmux${PANE_ID}"
   else
@@ -330,10 +336,23 @@ if command -v asciinema &> /dev/null; then
   # Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
   eval "is_recording=\${$SESSION_MARKER}"
   if [[ $- == *i* && -z "$is_recording" ]]; then
-    # Test if asciinema can actually record in this environment
-    # This prevents shell initialization failures in chroot/rescue environments
-    if asciinema rec -c "true" /dev/null --quiet 2>/dev/null; then
-      # Success - asciinema works, set up recording
+    # Probe whether asciinema can allocate a pty in this environment
+    # (fails in chroot/rescue/restricted shells). Cache the result in /tmp so
+    # only the first shell per boot pays the ~50–100ms fork cost; /tmp tmpfs
+    # clears on reboot, so chroots entered later still get a fresh probe.
+    if [ -r "/tmp/llm-asciinema-probe-${UID}" ]; then
+      _asciinema_ok=$(<"/tmp/llm-asciinema-probe-${UID}")
+    else
+      if asciinema rec -c "true" /dev/null --quiet 2>/dev/null; then
+        _asciinema_ok=1
+      else
+        _asciinema_ok=0
+      fi
+      printf '%s' "$_asciinema_ok" > "/tmp/llm-asciinema-probe-${UID}" 2>/dev/null
+    fi
+
+    if [ "$_asciinema_ok" = 1 ]; then
+      unset _asciinema_ok
       export "$SESSION_MARKER=1"
 
       # Create log directory and define filename with pane identifier
@@ -341,7 +360,7 @@ if command -v asciinema &> /dev/null; then
       export SESSION_LOG_FILE="$SESSION_LOG_DIR/$(date +"%Y-%m-%d_%H-%M-%S-%3N")_$$${PANE_SUFFIX}.cast"
 
       # Show environment variable export command (unless SESSION_LOG_SILENT is set)
-      if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+      if ! __llm_session_silent; then
         echo "Session is logged for 'context'. To query this session in another terminal, execute there:"
         echo "export SESSION_LOG_FILE='$SESSION_LOG_FILE'"
         echo ""
@@ -350,13 +369,13 @@ if command -v asciinema &> /dev/null; then
       # Replace current shell with asciinema process
       exec asciinema rec "$SESSION_LOG_FILE" --quiet
     else
-      # Failure - cannot create pty in this environment (chroot/rescue/restricted)
+      unset _asciinema_ok
       # Always show warning (ignore SESSION_LOG_SILENT for errors)
       echo "Warning: Session recording disabled (cannot create pty in this environment)" >&2
     fi
   fi
 else
-  if [ "$SESSION_LOG_SILENT" != "true" ] && [ "$SESSION_LOG_SILENT" != "1" ]; then
+  if ! __llm_session_silent; then
     echo "Warning: asciinema not found. Session recording disabled." >&2
     echo "Run the installation script to install asciinema and enable the 'context' tool." >&2
   fi

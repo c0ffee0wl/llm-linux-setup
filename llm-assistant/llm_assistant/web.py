@@ -7,7 +7,6 @@ This module provides web companion functionality:
 """
 
 import threading
-import time
 from typing import TYPE_CHECKING, Optional, Set, Dict
 
 from .templates import render
@@ -181,20 +180,24 @@ class WebMixin:
         )
         self.web_server = uvicorn.Server(config)
 
-        # Run in background thread
+        # Signal back to the caller once the event loop is assigned and
+        # ready for cross-thread broadcasts.
+        loop_ready = threading.Event()
+
         def run_server():
             import asyncio
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
-            # Store loop reference for cross-thread broadcasting
             session.web_event_loop = loop
+            loop_ready.set()
             loop.run_until_complete(self.web_server.serve())
 
         self.web_server_thread = threading.Thread(target=run_server, daemon=True)
         self.web_server_thread.start()
 
-        # Give server time to start and event loop to be set
-        time.sleep(0.5)
+        if not loop_ready.wait(timeout=5.0):
+            ConsoleHelper.error(self.console, "Web server event loop not ready after 5s")
+            return False
         return True
 
     def _stop_web_server(self):

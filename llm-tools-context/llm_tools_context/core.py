@@ -6,10 +6,10 @@ Each block contains everything from one prompt to the next, preserving the exact
 terminal formatting including multi-line commands.
 """
 
+import glob
 import os
 import re
 import subprocess
-import tempfile
 from typing import List, Optional
 
 # Import shared prompt detection module
@@ -26,7 +26,28 @@ except ImportError:
         )
 
 # Public API
-__all__ = ['get_command_blocks', 'get_context', 'get_session_log_file']
+__all__ = ['get_command_blocks', 'get_context', 'get_session_log_file', 'parse_count']
+
+# Argument values that request "all history" for the context count parser.
+_ALL_COUNT_TOKENS = frozenset({'all', '-a', '--all'})
+
+
+def parse_count(spec: str) -> Optional[int]:
+    """Parse a count spec shared by the CLI and the LLM plugin.
+
+    Returns None for "all" / "-a" / "--all", or a positive int for a digit
+    string. Raises ValueError for anything else.
+    """
+    token = spec.strip().lower()
+    if token in _ALL_COUNT_TOKENS:
+        return None
+    try:
+        n = int(token)
+    except ValueError as exc:
+        raise ValueError(f"Invalid count '{spec}': expected positive integer or 'all'") from exc
+    if n < 1:
+        raise ValueError(f"Invalid count '{spec}': must be >= 1")
+    return n
 
 # Compiled regex for filtering AI-related commands
 # Matches commands starting with: @, context, llm, llm-inlineassistant, aichat, llm-assistant, or wut
@@ -34,6 +55,42 @@ FILTERED_COMMANDS = re.compile(
     r'^(@|context|llm|llm-inlineassistant|aichat|llm-assistant|wut)(\s|$)',
     re.IGNORECASE
 )
+
+# Shared prompt patterns used by both should_exclude_block and the tail-trim
+# logic in extract_prompt_blocks.
+# Unix-style prompt char followed by command: $ # % ❯ → ➜
+COMMAND_PROMPT_RE = re.compile(r'[$#%❯→➜]\s+(.+)')
+# PowerShell prompt: "PS path> cmd" or "[user@host]: PS path> cmd"
+POWERSHELL_PROMPT_RE = re.compile(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+(.+)')
+# Same two, specialized to detect an empty `context` invocation with no output
+CONTEXT_COMMAND_RE = re.compile(r'[$#%❯→➜]\s+context(\s|$)')
+PS_CONTEXT_COMMAND_RE = re.compile(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+context(\s|$)')
+
+
+def _strip_markers(line: str) -> str:
+    """Remove tag metadata and VTE zero-width markers from a prompt line."""
+    return (PromptDetector.strip_tag_metadata(line)
+            .replace(PromptDetector.PROMPT_START_MARKER, '')
+            .replace(PromptDetector.INPUT_START_MARKER, ''))
+
+
+def _is_kali_two_line(lines: List[str]) -> bool:
+    """True if `lines` begins with a Kali two-line prompt decorative header."""
+    return len(lines) >= 2 and bool(PromptDetector.KALI_HEADER.search(lines[0]))
+
+
+def _is_bare_context_invocation(lines: List[str]) -> bool:
+    """True if `lines` is just a `context` prompt with no output yet.
+
+    Strips markers first — they otherwise break \\s+ between prompt and command.
+    """
+    stripped = [_strip_markers(line) for line in lines]
+    if len(stripped) == 1:
+        return bool(CONTEXT_COMMAND_RE.search(stripped[0])
+                    or PS_CONTEXT_COMMAND_RE.search(stripped[0]))
+    if _is_kali_two_line(stripped):
+        return bool(CONTEXT_COMMAND_RE.search(stripped[1]))
+    return False
 
 
 def find_cast_file() -> Optional[str]:
@@ -44,53 +101,25 @@ def find_cast_file() -> Optional[str]:
         if os.path.exists(cast_file):
             return cast_file
 
-    # Fall back to finding most recent cast file in log directory
+    # Fall back to most recent .cast in the log directory
     log_dir = os.environ.get("SESSION_LOG_DIR", "/tmp/session_logs/asciinema")
-    if not os.path.exists(log_dir):
-        return None
-
-    cast_files = [
-        os.path.join(log_dir, f)
-        for f in os.listdir(log_dir)
-        if f.endswith(".cast")
-    ]
-
+    cast_files = glob.glob(os.path.join(log_dir, "*.cast"))
     if not cast_files:
         return None
-
-    # Return most recently modified file
     return max(cast_files, key=os.path.getmtime)
 
 
 def convert_cast_to_text(cast_file: str) -> str:
     """Convert .cast file to readable text using asciinema."""
-    with tempfile.NamedTemporaryFile(mode='w+', suffix='.txt', delete=False) as tmp:
-        tmp_path = tmp.name
-
-    try:
-        subprocess.run(
-            ["asciinema", "convert", cast_file, tmp_path, "--overwrite"],
-            check=True,
-            capture_output=True
-        )
-
-        with open(tmp_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read()
-
-        return content
-    finally:
-        if os.path.exists(tmp_path):
-            os.unlink(tmp_path)
-
-
-def detect_prompts(text_or_lines):
-    """
-    Detect command prompts in the text.
-    Returns list of (line_number, line_content) tuples for lines that are prompts.
-
-    This is a wrapper around PromptDetector.find_all_prompts() for backwards compatibility.
-    """
-    return PromptDetector.find_all_prompts(text_or_lines)
+    # Stream to stdout to avoid a temp-file round trip.
+    # --output-format txt is explicit because the .txt filename trick doesn't
+    # apply to '-' (stdout would default to asciicast-v3 otherwise).
+    result = subprocess.run(
+        ["asciinema", "convert", "--output-format", "txt", cast_file, "-"],
+        check=True,
+        capture_output=True,
+    )
+    return result.stdout.decode("utf-8", errors="replace")
 
 
 def should_exclude_block(block: str) -> bool:
@@ -123,34 +152,17 @@ def should_exclude_block(block: str) -> bool:
 
     # Strip Unicode prompt markers and tag metadata for pattern matching
     # (consistent with PromptDetector.is_prompt_line and find_all_prompts)
-    lines = [PromptDetector.strip_tag_metadata(line)
-                  .replace(PromptDetector.PROMPT_START_MARKER, '')
-                  .replace(PromptDetector.INPUT_START_MARKER, '')
-             for line in lines]
+    lines = [_strip_markers(line) for line in lines]
 
-    # Check if this is a Kali-style two-line prompt (use shared pattern)
-    command_line_idx = 0
-
-    if len(lines) >= 2 and PromptDetector.KALI_HEADER.search(lines[0]):
-        # Skip the decorative header, use second line
-        command_line_idx = 1
-
+    # Kali two-line prompts put the command on the second line
+    command_line_idx = 1 if _is_kali_two_line(lines) else 0
     if command_line_idx >= len(lines):
         return False
 
     command_line = lines[command_line_idx]
 
-    # Extract the command after the prompt character
-    # Prompt patterns: $ # % ❯ → ➜ for Unix, > for PowerShell
-    prompt_chars = r'[$#%❯→➜]'
-    match = re.search(f'{prompt_chars}\\s+(.+)', command_line)
-
-    # Check for PowerShell prompts: PS path> command or [user@host]: PS path> command
-    if not match:
-        ps_match = re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+(.+)', command_line)
-        if ps_match:
-            match = ps_match
-
+    match = COMMAND_PROMPT_RE.search(command_line) \
+        or POWERSHELL_PROMPT_RE.search(command_line)
     if not match:
         # No command found (just a prompt), don't exclude
         return False
@@ -177,7 +189,7 @@ def extract_prompt_blocks(text: str, count: Optional[int] = 1) -> List[str]:
     # Filter out lines from previous context command outputs
     lines = [line for line in lines if not line.lstrip().startswith('#c#')]
     # Pass lines directly (no need to rejoin into text)
-    prompt_lines = detect_prompts(lines)
+    prompt_lines = PromptDetector.find_all_prompts(lines)
 
     if not prompt_lines:
         return []
@@ -200,44 +212,15 @@ def extract_prompt_blocks(text: str, count: Optional[int] = 1) -> List[str]:
         if not should_exclude_block(block):
             blocks.append(block)
 
-    # Exclude the last block if it's just an empty current prompt
-    # or if it's a self-referential context command with no output yet
+    # Drop the last block if it's (a) empty, (b) just a prompt ready for input,
+    # or (c) a bare `context` invocation echoing the user's own pending prompt.
     if blocks:
         last_block = blocks[-1]
         last_block_lines = [line for line in last_block.split('\n') if line.strip()]
-
-        if not last_block_lines:
-            # Completely empty block
+        if (not last_block_lines
+                or PromptDetector.detect_prompt_at_end(last_block)
+                or _is_bare_context_invocation(last_block_lines)):
             blocks = blocks[:-1]
-        elif PromptDetector.detect_prompt_at_end(last_block):
-            # Empty prompt (ready for input) - uses hybrid detection:
-            # 1. Unicode markers (100% reliable for VTE terminals)
-            # 2. Regex fallback (SSH sessions, non-VTE terminals)
-            blocks = blocks[:-1]
-        else:
-            # Check for context command with no output (specific to this tool)
-            # Strip markers before pattern matching (markers break \s+ between prompt and command)
-            stripped_lines = [
-                PromptDetector.strip_tag_metadata(line)
-                    .replace(PromptDetector.PROMPT_START_MARKER, '')
-                    .replace(PromptDetector.INPUT_START_MARKER, '')
-                for line in last_block_lines
-            ]
-
-            is_context_command = False
-            if len(stripped_lines) == 1:
-                if re.search(r'[$#%❯→➜]\s+context(\s|$)', stripped_lines[0]):
-                    is_context_command = True
-                elif re.search(r'(?:^\[[^\]]+\]:\s*)?PS[^>]*>\s+context(\s|$)', stripped_lines[0]):
-                    is_context_command = True
-            elif len(stripped_lines) == 2:
-                # Kali two-line prompt with context command
-                if (PromptDetector.KALI_HEADER.search(stripped_lines[0]) and
-                    re.search(r'[$#%❯→➜]\s+context(\s|$)', stripped_lines[1])):
-                    is_context_command = True
-
-            if is_context_command:
-                blocks = blocks[:-1]
 
     # Return requested number of blocks
     if count is None:
@@ -261,10 +244,6 @@ def format_output(blocks: List[str]) -> str:
     return '\n'.join(result)
 
 
-# =============================================================================
-# Public API - Library Functions
-# =============================================================================
-
 def get_session_log_file() -> Optional[str]:
     """
     Get the path to the current session's asciinema recording.
@@ -281,7 +260,7 @@ def get_session_log_file() -> Optional[str]:
     return find_cast_file()
 
 
-def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -> List[str]:
+def get_command_blocks(n_commands: Optional[int] = 3, session_log: Optional[str] = None) -> List[str]:
     """
     Extract the last N command blocks from the current asciinema recording.
 
@@ -309,10 +288,7 @@ def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -
         ...     print(block)
         ...     print("---")
     """
-    if session_log and os.path.exists(session_log):
-        cast_file = session_log
-    else:
-        cast_file = find_cast_file()
+    cast_file = session_log or find_cast_file()
     if not cast_file:
         return []
 
@@ -320,7 +296,7 @@ def get_command_blocks(n_commands: int = 3, session_log: Optional[str] = None) -
     return extract_prompt_blocks(text, n_commands)
 
 
-def get_context(n_commands: int = 3, raw: bool = False) -> str:
+def get_context(n_commands: Optional[int] = 3, raw: bool = False) -> str:
     """
     Get formatted context string from the current asciinema recording.
 

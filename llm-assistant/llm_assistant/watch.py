@@ -88,6 +88,19 @@ class WatchMixin:
     plugin_dbus: object
     exec_terminal_uuid: str
 
+    def _reset_watch_counters(self) -> None:
+        """Zero out watch-mode iteration and statistic counters.
+
+        Shared between `/watch off` (disable) and `/watch <goal>` (enable) — both
+        need the same 4 counters cleared. Does not touch watch_mode, watch_goal,
+        or watch_start_time; callers set those explicitly because their values
+        differ by call site (None vs time.time(), True vs False, etc.).
+        """
+        self.previous_watch_iteration_count = 0
+        self.watch_total_iterations = 0
+        self.watch_ai_calls = 0
+        self.watch_alerts_shown = 0
+
     def _start_watch_mode_thread(self):
         """Start watch mode in a background thread with its own event loop"""
         def watch_thread_target():

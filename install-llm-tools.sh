@@ -123,6 +123,12 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# --clear-cache is a standalone utility op: run and exit before any other work.
+if [ "$CLEAR_CACHE" = "true" ]; then
+    clear_package_caches
+    exit 0
+fi
+
 # Validate mutually exclusive flags
 if [ "$FORCE_AZURE_CONFIG" = "true" ] && [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
     error "Cannot specify both --azure and --gemini flags simultaneously."
@@ -241,6 +247,41 @@ get_llm_config_dir() {
     echo "$_LLM_CONFIG_DIR_CACHE"
 }
 
+# Fetch a stored API key from the llm key store; prints empty string if unavailable.
+# Resolves the llm binary from ~/.local/bin first so the call works during a fresh
+# install where ~/.local/bin may not yet be on PATH. Results are cached per-process
+# because each `llm keys get` invocation incurs Python cold-start cost (~hundreds of ms).
+declare -gA _LLM_KEY_CACHE=()
+get_llm_key() {
+    local provider="$1"
+    if [ "${_LLM_KEY_CACHE[$provider]+set}" = "set" ]; then
+        printf '%s\n' "${_LLM_KEY_CACHE[$provider]}"
+        return 0
+    fi
+    local llm_cmd="${HOME}/.local/bin/llm"
+    [ -x "$llm_cmd" ] || llm_cmd="llm"
+    local key=""
+    command -v "$llm_cmd" >/dev/null 2>&1 && \
+        key="$("$llm_cmd" keys get "$provider" 2>/dev/null || true)"
+    _LLM_KEY_CACHE[$provider]="$key"
+    printf '%s\n' "$key"
+}
+
+# Write content to dest; flip CCR_NEEDS_RESTART when the file's contents change.
+# Caller is responsible for any chmod/chown the file needs.
+write_and_detect_ccr_change() {
+    local dest="$1" content="$2" label="$3"
+    local old=""
+    [ -f "$dest" ] && old="$(cat "$dest")"
+    printf '%s' "$content" > "$dest"
+    if [ "$old" != "$content" ]; then
+        CCR_NEEDS_RESTART=true
+        log "$label updated"
+    else
+        log "$label unchanged"
+    fi
+}
+
 # Update shell RC file with integration
 update_shell_rc_file() {
     local rc_file="$1"
@@ -312,6 +353,7 @@ configure_azure_openai() {
 
     # Set the API key
     command llm keys set azure
+    unset '_LLM_KEY_CACHE[azure]'  # Force re-read; cache may predate the set
 
     # Verify the key was actually set
     if ! command llm keys get azure &>/dev/null; then
@@ -332,6 +374,7 @@ configure_gemini() {
 
     # Set the API key
     command llm keys set gemini
+    unset '_LLM_KEY_CACHE[gemini]'  # Force re-read; cache may predate the set
 
     # Verify the key was actually set
     if ! command llm keys get gemini &>/dev/null; then
@@ -396,7 +439,7 @@ export_azure_env_vars() {
     local resource_name=$(echo "$api_base" | sed 's|https://\([^.]*\)\..*|\1|')
 
     # Retrieve API key
-    local api_key=$(command llm keys get azure 2>/dev/null || echo "")
+    local api_key=$(get_llm_key azure)
 
     if [ -z "$api_key" ]; then
         log "WARNING: Could not retrieve Azure API key for environment variables"
@@ -415,7 +458,7 @@ export_gemini_env_vars() {
     log "Exporting Gemini environment variables..."
 
     # Retrieve API key
-    local api_key=$(command llm keys get gemini 2>/dev/null || echo "")
+    local api_key=$(get_llm_key gemini)
 
     if [ -z "$api_key" ]; then
         log "WARNING: Could not retrieve Gemini API key for environment variables"
@@ -517,9 +560,7 @@ EOF
     # Gemini: check key store directly (no file dependency)
     local has_azure_key="$AZURE_CONFIGURED"
     local has_gemini_key=false
-    if command llm keys get gemini &>/dev/null; then
-        has_gemini_key=true
-    fi
+    [ -n "$(get_llm_key gemini)" ] && has_gemini_key=true
 
     # Generate config based on available providers (use actual key existence)
     local config_content
@@ -656,22 +697,15 @@ configure_ccr() {
         return 0
     fi
 
-    # 0. Stop CCR before binary upgrade to prevent port/binary races
+    # Stop CCR before binary upgrade to prevent port/binary races
     if systemctl --user is-active claude-code-router &>/dev/null; then
         systemctl --user stop claude-code-router
         log "CCR service stopped for upgrade"
     fi
 
-    # 1. Install/update Claude Code Router
     install_or_upgrade_global @musistudio/claude-code-router ccr
-
-    # 2. Generate CCR config
     update_ccr_config
-
-    # 3. Configure ~/.profile environment variables and create env file
     configure_ccr_profile "$CCR_PORT"
-
-    # 4. Set up systemd user service for auto-start
     configure_ccr_systemd_service "$CCR_PORT"
 
     log "Claude Code Router configured"
@@ -686,34 +720,22 @@ configure_ccr_profile() {
     local env_file="${HOME}/.config/claude-code-router/env"
 
     # Retrieve API keys from llm key store
-    local llm_cmd="${HOME}/.local/bin/llm"
-    [ ! -x "$llm_cmd" ] && llm_cmd="llm"
+    local azure_key=$(get_llm_key azure)
+    local gemini_key=$(get_llm_key gemini)
 
-    local azure_key=""
-    local gemini_key=""
-    if command -v "$llm_cmd" &>/dev/null; then
-        azure_key=$("$llm_cmd" keys get azure 2>/dev/null || true)
-        gemini_key=$("$llm_cmd" keys get gemini 2>/dev/null || true)
-    fi
-
-    # Create env file for systemd service (simple KEY=value format)
+    # Compose env file content (simple KEY=value format).
+    # Pre-create with 0600 so the subsequent content write inherits restrictive perms
+    # and secrets are never briefly readable at default umask.
     mkdir -p "$(dirname "$env_file")"
-    local old_env=""
-    [ -f "$env_file" ] && old_env=$(cat "$env_file")
-    : > "$env_file"  # Truncate/create
-    chmod 600 "$env_file"  # Restrict permissions (contains secrets)
-    [ -n "$azure_key" ] && echo "AZURE_OPENAI_API_KEY=${azure_key}" >> "$env_file"
-    [ -n "$gemini_key" ] && echo "GEMINI_API_KEY=${gemini_key}" >> "$env_file"
-    [ -n "$GOOGLE_CLOUD_PROJECT" ] && echo "GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}" >> "$env_file"
-    [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && echo "GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}" >> "$env_file"
-    [ -n "$GOOGLE_CLOUD_LOCATION" ] && echo "GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}" >> "$env_file"
-    # Detect env file changes for restart tracking
-    if [ "$(cat "$env_file")" != "$old_env" ]; then
-        CCR_NEEDS_RESTART=true
-        log "CCR environment file updated"
-    else
-        log "CCR environment file unchanged"
-    fi
+    [ -f "$env_file" ] || touch "$env_file"
+    chmod 600 "$env_file"
+    local env_content=""
+    [ -n "$azure_key" ] && env_content+="AZURE_OPENAI_API_KEY=${azure_key}"$'\n'
+    [ -n "$gemini_key" ] && env_content+="GEMINI_API_KEY=${gemini_key}"$'\n'
+    [ -n "$GOOGLE_CLOUD_PROJECT" ] && env_content+="GOOGLE_CLOUD_PROJECT=${GOOGLE_CLOUD_PROJECT}"$'\n'
+    [ -n "$GOOGLE_APPLICATION_CREDENTIALS" ] && env_content+="GOOGLE_APPLICATION_CREDENTIALS=${GOOGLE_APPLICATION_CREDENTIALS}"$'\n'
+    [ -n "$GOOGLE_CLOUD_LOCATION" ] && env_content+="GOOGLE_CLOUD_LOCATION=${GOOGLE_CLOUD_LOCATION}"$'\n'
+    write_and_detect_ccr_change "$env_file" "$env_content" "CCR environment file"
 
     # Add/update CCR routing exports to ~/.profile
     # Based on CCR's createEnvVariables.ts - set both auth vars for compatibility
@@ -893,12 +915,6 @@ update_template_file() {
         "${template_name}.yaml template" "N" "false"
 }
 
-# Run cache cleanup if requested as standalone operation
-if [ "$CLEAR_CACHE" = "true" ]; then
-    clear_package_caches
-    exit 0
-fi
-
 #############################################################################
 # PHASE 0: Self-Update
 #############################################################################
@@ -911,10 +927,6 @@ if git rev-parse --git-dir > /dev/null 2>&1; then
 
     # Fetch latest changes
     git fetch origin 2>/dev/null || true
-
-    # Check if we're behind the remote (not just different)
-    #LOCAL=$(git rev-parse HEAD)
-    #REMOTE=$(git rev-parse @{u} 2>/dev/null || echo "$LOCAL")
 
     # Count commits we don't have that remote has
     BEHIND=$(git rev-list HEAD..@{u} 2>/dev/null | wc -l)
@@ -1110,13 +1122,6 @@ log "Installing llm-tools-core to user site-packages..."
 if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" --quiet 2>/dev/null; then
     pip install --user --break-system-packages -e "$SCRIPT_DIR/llm-tools-core" 2>/dev/null || \
     pip install --user -e "$SCRIPT_DIR/llm-tools-core"
-fi
-
-# Clean up legacy llm_tools directory (replaced by llm-tools-core)
-PYTHON_USER_SITE=$(python3 -m site --user-site)
-if [ -d "$PYTHON_USER_SITE/llm_tools" ]; then
-    log "Cleaning up legacy llm_tools directory..."
-    rm -rf "$PYTHON_USER_SITE/llm_tools"
 fi
 
 # Ensure llm is in PATH
@@ -1328,9 +1333,12 @@ update_mcp_config() {
     mkdir -p "$MCP_CONFIG_DIR"
 
     # Detect Chrome/Chromium for chrome-devtools MCP
-    local chrome_devtools_config=""
-    if command -v google-chrome &>/dev/null || command -v chromium &>/dev/null || command -v chromium-browser &>/dev/null; then
-        log "Chrome/Chromium detected, adding chrome-devtools MCP"
+    local chrome_devtools_config="" chrome_bin="" c
+    for c in google-chrome chromium chromium-browser; do
+        command -v "$c" &>/dev/null && { chrome_bin="$c"; break; }
+    done
+    if [ -n "$chrome_bin" ]; then
+        log "Chrome/Chromium detected ($chrome_bin), adding chrome-devtools MCP"
         install_or_upgrade_global chrome-devtools-mcp
 
         # Resolve the installed binary path so we can invoke it directly.
@@ -1420,7 +1428,7 @@ elif [ -f "$EXTRA_MODELS_FILE" ]; then
     AZURE_CONFIGURED=true
 elif has_other_provider_configured; then
     # User has another provider configured (Anthropic, OpenRouter, Vertex, etc.) - don't prompt
-    current_model=$(cat "$(get_llm_config_dir)/default_model.txt" 2>/dev/null || echo "unknown")
+    current_model=$(cat "$LLM_CONFIG_DIR/default_model.txt" 2>/dev/null || echo "unknown")
     log "Another provider already configured (default model: $current_model)"
     log "Skipping Azure OpenAI configuration (use --azure to configure)"
     AZURE_CONFIGURED=false
@@ -1445,63 +1453,22 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
     # Create extra-openai-models.yaml
     log "Creating Azure OpenAI models configuration..."
 
-    cat > "$EXTRA_MODELS_FILE" <<EOF
-- model_id: azure/gpt-4.1
-  model_name: gpt-4.1
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-4.1-mini
-  model_name: gpt-4.1-mini
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-4.1-nano
-  model_name: gpt-4.1-nano
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-5-mini
-  model_name: gpt-5-mini
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-5-nano
-  model_name: gpt-5-nano
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/gpt-5.1
-  model_name: gpt-5.1
-  api_base: ${AZURE_API_BASE}
-  api_key_name: azure
-  supports_tools: true
-  supports_schema: true
-  vision: true
-
-- model_id: azure/o4-mini
-  model_name: o4-mini
+    azure_models=(gpt-4.1 gpt-4.1-mini gpt-4.1-nano gpt-5-mini gpt-5-nano gpt-5.1 o4-mini)
+    {
+        for i in "${!azure_models[@]}"; do
+            [ "$i" -gt 0 ] && printf '\n'
+            model="${azure_models[$i]}"
+            cat <<EOF
+- model_id: azure/${model}
+  model_name: ${model}
   api_base: ${AZURE_API_BASE}
   api_key_name: azure
   supports_tools: true
   supports_schema: true
   vision: true
 EOF
+        done
+    } > "$EXTRA_MODELS_FILE"
 
     # Set default model with automatic migration from old default
     set_or_migrate_default_model "azure/gpt-4.1-mini"
@@ -1559,7 +1526,7 @@ if [ "$FORCE_GEMINI_CONFIG" = "true" ]; then
     configure_gemini
     # When forcing Gemini, disable Azure (mutually exclusive)
     AZURE_CONFIGURED=false
-elif command llm keys get gemini &>/dev/null; then
+elif [ -n "$(get_llm_key gemini)" ]; then
     # Gemini key already exists - preserve configuration
     log "Google Gemini was previously configured, preserving existing configuration"
     GEMINI_CONFIGURED=true
@@ -1617,8 +1584,8 @@ fi
 # Cache provider key existence for Phases 4-7 (avoid repeated subprocess calls)
 HAS_AZURE_KEY=false
 HAS_GEMINI_KEY=false
-command llm keys get azure &>/dev/null && HAS_AZURE_KEY=true
-command llm keys get gemini &>/dev/null && HAS_GEMINI_KEY=true
+[ -n "$(get_llm_key azure)" ] && HAS_AZURE_KEY=true
+[ -n "$(get_llm_key gemini)" ] && HAS_GEMINI_KEY=true
 
 #############################################################################
 # PHASE 4: Install/Update LLM Templates
@@ -1627,7 +1594,7 @@ command llm keys get gemini &>/dev/null && HAS_GEMINI_KEY=true
 log "Installing/updating llm templates..."
 
 # Get templates directory path
-TEMPLATES_DIR="$(get_llm_config_dir)/templates"
+TEMPLATES_DIR="$LLM_CONFIG_DIR/templates"
 
 # Create templates directory if it doesn't exist
 mkdir -p "$TEMPLATES_DIR"
@@ -1669,19 +1636,13 @@ prompt_for_session_log_dir() {
         echo ""
         echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
         echo "Terminal sessions are logged for AI context retrieval."
-        echo "Choose storage location:"
         echo ""
-        echo "  1) Temporary - Store in /tmp/session_logs/asciinema (cleared on reboot)"
-        echo "  2) Permanent - Store in ~/session_logs/asciinema (survives reboots)"
-        echo ""
-        read -p "Choice (1/2) [default: 1]: " session_choice
-        echo ""
-
-        if [ "$session_choice" = "2" ]; then
+        if ask_yes_no "Persist logs across reboots? (y=~/session_logs/asciinema, n=/tmp/session_logs/asciinema)" N; then
             SESSION_LOG_DIR_VALUE="\$HOME/session_logs/asciinema"
         else
             SESSION_LOG_DIR_VALUE="/tmp/session_logs/asciinema"
         fi
+        echo ""
     fi
 }
 
@@ -1709,23 +1670,14 @@ if [ "$INSTALL_LEVEL" -ge 2 ] && [ "$IS_WSL" != true ]; then
 
     # Create context wrapper script (CLI is now part of llm-tools-context package)
     log "Installing context wrapper..."
-    mkdir -p "$HOME/.local/bin"
-    cat > "$HOME/.local/bin/context" << 'EOF'
-#!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_tools_context.cli "$@"
-EOF
-    chmod +x "$HOME/.local/bin/context"
+    create_uv_tool_wrapper context llm_tools_context.cli
 
     # Note: llm-tools-core is already installed in the ALL_PLUGINS array (before llm-tools-context)
     # and also to user site-packages in Phase 2 for terminator plugin
 
     # Note: llm-assistant package is already installed via ALL_PLUGINS in Phase 2
     # Create wrapper script that calls into llm's environment
-    cat > "$HOME/.local/bin/llm-assistant" << 'EOF'
-#!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_assistant "$@"
-EOF
-    chmod +x "$HOME/.local/bin/llm-assistant"
+    create_uv_tool_wrapper llm-assistant llm_assistant
 
 # Install Terminator-specific components (conditional)
 # Note: Terminator plugins (llm-tools-assistant, llm-tools-imagemage) are installed via ALL_PLUGINS in Phase 2
@@ -1738,13 +1690,10 @@ if [ "$TERMINATOR_INSTALLED" = "true" ]; then
 
     # Install Terminator assistant plugin (symlink to repository)
     mkdir -p "$HOME/.config/terminator/plugins"
-    if [ -L "$HOME/.config/terminator/plugins/terminator_assistant.py" ]; then
-        log "Terminator assistant plugin already linked"
-    else
-        ln -sfn "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
-           "$HOME/.config/terminator/plugins/terminator_assistant.py"
-        log "Terminator assistant plugin installed (symlinked)"
-    fi
+    link_repo_dir \
+        "$SCRIPT_DIR/llm-assistant/terminator-assistant-plugin/terminator_assistant.py" \
+        "$HOME/.config/terminator/plugins/terminator_assistant.py" \
+        "Terminator assistant plugin"
     warn "Restart Terminator and enable plugin: Preferences → Plugins → ☑ TerminatorAssistant"
 fi
 
@@ -1753,11 +1702,7 @@ fi
 # Note: Package is already installed via ALL_PLUGINS in Phase 2
 
 # Create wrapper script for llm-inlineassistant
-cat > "$HOME/.local/bin/llm-inlineassistant" << 'EOF'
-#!/bin/sh
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_inlineassistant "$@"
-EOF
-chmod +x "$HOME/.local/bin/llm-inlineassistant"
+create_uv_tool_wrapper llm-inlineassistant llm_inlineassistant
 
 # Clean up old daemon wrapper (now uses llm-assistant --daemon instead)
 if [ -f "$HOME/.local/bin/llm-inlineassistant-daemon" ]; then
@@ -1827,14 +1772,7 @@ if [ "$HAS_DESKTOP" = "true" ]; then
         fi
 
         # Symlink espanso-llm package from repository
-        ESPANSO_LLM_DIR="$ESPANSO_PACKAGES_DIR/espanso-llm"
-        if [ -L "$ESPANSO_LLM_DIR" ]; then
-            log "espanso-llm package already linked"
-        else
-            rm -rf "$ESPANSO_LLM_DIR"  # Remove if exists as directory
-            ln -sfn "$SCRIPT_DIR/espanso-llm" "$ESPANSO_LLM_DIR"
-            log "Installed espanso-llm package (symlinked)"
-        fi
+        link_repo_dir "$SCRIPT_DIR/espanso-llm" "$ESPANSO_PACKAGES_DIR/espanso-llm" "espanso-llm package"
 
         # Register and start espanso service if newly installed
         if ! espanso status &>/dev/null; then
@@ -1857,11 +1795,7 @@ if [ "$HAS_DESKTOP" = "true" ]; then
         install_apt_package x11-utils xprop
 
         # Create wrapper script
-        cat > "$HOME/.local/bin/llm-guiassistant" << 'EOF'
-#!/bin/bash
-exec "$HOME/.local/share/uv/tools/llm/bin/python3" -m llm_guiassistant "$@"
-EOF
-        chmod +x "$HOME/.local/bin/llm-guiassistant"
+        create_uv_tool_wrapper llm-guiassistant llm_guiassistant '#!/bin/bash'
 
         # JavaScript assets (marked.js, highlight.js, purify.min.js) are bundled in git
         # at llm-assistant/llm_assistant/static/ - no runtime download needed
@@ -1992,11 +1926,10 @@ EOF
                     disown
                 fi
 
-                # Wait 5 seconds, then check for file (up to 10 more seconds)
-                sleep 5
-                for i in {1..10}; do
+                # Poll for settings file (typically appears in <1s, cap ~7.5s)
+                for i in {1..30}; do
                     [ -f "$HANDY_SETTINGS" ] && break
-                    sleep 1
+                    sleep 0.25
                 done
 
                 # Kill Handy so we can modify settings
@@ -2064,13 +1997,7 @@ if settings_file.exists():
         mkdir -p "$ULAUNCHER_EXT_DIR"
 
         # Create symlink to repository extension
-        if [ -L "$ULAUNCHER_EXT_DIR/ulauncher-llm" ]; then
-            log "ulauncher-llm extension already linked"
-        else
-            rm -rf "$ULAUNCHER_EXT_DIR/ulauncher-llm"  # Remove if exists as directory
-            ln -sfn "$SCRIPT_DIR/ulauncher-llm" "$ULAUNCHER_EXT_DIR/ulauncher-llm"
-            log "Installed ulauncher-llm extension (symlinked)"
-        fi
+        link_repo_dir "$SCRIPT_DIR/ulauncher-llm" "$ULAUNCHER_EXT_DIR/ulauncher-llm" "ulauncher-llm extension"
 
         # Configure Ulauncher hotkey to Super+Space (first-time only)
         python3 -c "
@@ -2350,25 +2277,30 @@ fi  # End of INSTALL_LEVEL >= 2 block for Phase 7
 # Set telemetry/privacy defaults for dev tools
 # These apply even in minimal mode in case tools are installed manually later
 log "Setting environment defaults..."
-# Universal
-update_profile_export "DO_NOT_TRACK" "1"
-# Claude Code
-update_profile_export "DISABLE_TELEMETRY" "1"
-update_profile_export "DISABLE_ERROR_REPORTING" "1"
-update_profile_export "DISABLE_BUG_COMMAND" "1"
-update_profile_export "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY" "1"
-update_profile_export "DISABLE_INSTALL_GITHUB_APP_COMMAND" "1"
-# VS Code / .NET / PowerShell
-update_profile_export "VSCODE_TELEMETRY_DISABLE" "1"
-update_profile_export "VSCODE_CRASH_REPORTER_DISABLE" "1"
-update_profile_export "DOTNET_CLI_TELEMETRY_OPTOUT" "1"
-update_profile_export "POWERSHELL_TELEMETRY_OPTOUT" "1"
-# AI/ML
-update_profile_export "HF_HUB_DISABLE_TELEMETRY" "1"
-# Scripting languages packaging
-update_profile_export "PYPI_DISABLE_TELEMETRY" "1"
-update_profile_export "UV_NO_TELEMETRY" "1"
-update_profile_export "SCARF_ANALYTICS" "false"
+TELEMETRY_DEFAULTS=(
+    # Universal
+    "DO_NOT_TRACK=1"
+    # Claude Code
+    "DISABLE_TELEMETRY=1"
+    "DISABLE_ERROR_REPORTING=1"
+    "DISABLE_BUG_COMMAND=1"
+    "CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1"
+    "DISABLE_INSTALL_GITHUB_APP_COMMAND=1"
+    # VS Code / .NET / PowerShell
+    "VSCODE_TELEMETRY_DISABLE=1"
+    "VSCODE_CRASH_REPORTER_DISABLE=1"
+    "DOTNET_CLI_TELEMETRY_OPTOUT=1"
+    "POWERSHELL_TELEMETRY_OPTOUT=1"
+    # AI/ML
+    "HF_HUB_DISABLE_TELEMETRY=1"
+    # Scripting languages packaging
+    "PYPI_DISABLE_TELEMETRY=1"
+    "UV_NO_TELEMETRY=1"
+    "SCARF_ANALYTICS=false"
+)
+for kv in "${TELEMETRY_DEFAULTS[@]}"; do
+    update_profile_export "${kv%%=*}" "${kv#*=}"
+done
 ensure_zprofile_sources_profile
 
 #############################################################################

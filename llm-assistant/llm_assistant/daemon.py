@@ -21,8 +21,7 @@ import signal
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 
 import daemon
 from daemon import pidfile as daemon_pidfile
@@ -31,16 +30,18 @@ from lockfile import AlreadyLocked, LockTimeout
 import click
 import llm
 import sqlite_utils
-from llm import ToolResult
 from llm.migrations import migrate
 from rich.console import Console
 
 # Import shared utilities from llm_tools_core
 from llm_tools_core import (
+    AtHandler,
+    CONTEXT_UNCHANGED_MARKER,
     get_socket_path,
     build_simple_system_prompt,
     ErrorCode,
     WORKER_IDLE_MINUTES,
+    IDLE_TIMEOUT_MINUTES,
     MAX_TOOL_ITERATIONS,
     is_daemon_process_alive,
     write_pid_file,
@@ -50,18 +51,26 @@ from llm_tools_core import (
 )
 from llm_tools_core.tool_execution import execute_tool_call
 
+from .config import SLASH_COMMANDS, HEADLESS_AVAILABLE_COMMANDS, MIXIN_HANDLERS
 from .headless_session import (
     HeadlessSession,
     get_headless_tools,
     get_tool_implementations,
 )
-from .utils import get_config_dir, get_logs_db_path, logs_on
+from .utils import get_config_dir, get_logs_db_path, logs_on, parse_command
 
 # GUI server (aiohttp - always available)
 from .web_ui_server import WebUIServer
 
 # Maximum request payload size (10 MB) - prevents unbounded memory consumption
 MAX_REQUEST_SIZE = 10 * 1024 * 1024
+
+# Slash-command dispatch groups used by _handle_slash_command. Kept at module
+# scope so the sets are built once, not per call.
+_COPY_COMMANDS = {"/copy"}
+_RESET_COMMANDS = {"/clear", "/reset", "/new"}
+_STATUS_COMMANDS = {"/info", "/status"}
+_QUIT_COMMANDS = {"/quit", "/exit"}
 
 
 def _get_default_pidfile() -> str:
@@ -89,20 +98,19 @@ def _cleanup_stale_pidfile(pidfile_path: str) -> bool:
     """
     lock_path = pidfile_path + ".lock"
 
-    # Check if PID file exists
-    if not os.path.exists(pidfile_path):
-        # No PID file, but lock file might exist from interrupted startup
-        if os.path.exists(lock_path):
-            try:
-                os.unlink(lock_path)
-            except OSError:
-                pass
-        return False
-
     # Read PID from file
     try:
         with open(pidfile_path, 'r') as f:
             pid = int(f.read().strip())
+    except FileNotFoundError:
+        # No PID file, but lock file might exist from interrupted startup
+        try:
+            os.unlink(lock_path)
+        except FileNotFoundError:
+            pass
+        except OSError:
+            pass
+        return False
     except (ValueError, OSError):
         # Corrupt PID file - clean it up
         pid = None
@@ -119,12 +127,13 @@ def _cleanup_stale_pidfile(pidfile_path: str) -> bool:
 
     # Clean up stale files
     for path in [pidfile_path, lock_path]:
-        if os.path.exists(path):
-            try:
-                os.unlink(path)
-                sys.stderr.write(f"Cleaned up stale file: {path}\n")
-            except OSError as e:
-                sys.stderr.write(f"Warning: Could not remove {path}: {e}\n")
+        try:
+            os.unlink(path)
+            sys.stderr.write(f"Cleaned up stale file: {path}\n")
+        except FileNotFoundError:
+            pass
+        except OSError as e:
+            sys.stderr.write(f"Warning: Could not remove {path}: {e}\n")
 
     return True
 
@@ -145,11 +154,11 @@ def _run_as_daemon(pidfile_path: str | None, logfile_path: str | None):
     # Ensure directories exist before opening files
     if pidfile_path:
         pidfile_dir = os.path.dirname(pidfile_path)
-        if pidfile_dir and not os.path.exists(pidfile_dir):
+        if pidfile_dir:
             os.makedirs(pidfile_dir, exist_ok=True)
     if logfile_path:
         logfile_dir = os.path.dirname(logfile_path)
-        if logfile_dir and not os.path.exists(logfile_dir):
+        if logfile_dir:
             os.makedirs(logfile_dir, exist_ok=True)
 
     # Prepare file handles (must be opened before daemonizing)
@@ -223,29 +232,25 @@ class AssistantDaemon:
         self.use_python_daemon = use_python_daemon
         self.sessions: Dict[str, SessionState] = {}
         self.server: Optional[asyncio.AbstractServer] = None
-        self.last_activity = datetime.now()
         self.start_time = datetime.now()
-        self.running = True
+        # Set inside run() once we have a running event loop; signal/shutdown
+        # handlers set it to wake the main loop without a polling sleep.
+        self._stop_event: Optional[asyncio.Event] = None
         self.console = Console(stderr=True)
 
-        # Per-terminal request queues for concurrent handling
         self.request_queues: Dict[str, asyncio.Queue] = {}
         self.workers: Dict[str, asyncio.Task] = {}
-        self.worker_last_activity: Dict[str, datetime] = {}
 
-        # Logging enabled check
         self.logging_enabled = logs_on()
+        self._db_migrated = False
 
-        # Request counter for foreground logging
-        self.request_count = 0
-
-        # Web UI server (for llm-guiassistant)
         self.web_port = int(os.environ.get('LLM_GUI_PORT', 8741))
         self.web_server: Optional["WebUIServer"] = None
 
     def _handle_signal(self):
         """Signal handler for SIGTERM/SIGINT — stops the daemon gracefully."""
-        self.running = False
+        if self._stop_event is not None:
+            self._stop_event.set()
 
     def _log_request(self, tid: str, direction: str, info: str, duration: float = None):
         """Log request activity in foreground mode."""
@@ -280,15 +285,10 @@ class AssistantDaemon:
                 source=source,
             )
             self.sessions[terminal_id] = SessionState(terminal_id, session)
-        else:
-            # Update source on existing session if provided
-            # This ensures source is correct even if session was created earlier
-            if source:
-                state = self.sessions[terminal_id]
-                state.session.source = source
-                # Also update conversation source if one exists
-                if state.session.conversation:
-                    state.session.conversation.source = source
+        elif source:
+            # A terminal_id can be reused across clients (e.g. TUI then GUI);
+            # refresh source so new responses are tagged correctly.
+            self.sessions[terminal_id].session.source = source
         return self.sessions[terminal_id]
 
     async def handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -310,9 +310,6 @@ class AssistantDaemon:
             if not data:
                 return
 
-            self.last_activity = datetime.now()
-
-            # Parse JSON request
             try:
                 request = json.loads(data.decode('utf-8').strip())
             except json.JSONDecodeError as e:
@@ -322,15 +319,13 @@ class AssistantDaemon:
             cmd = request.get('cmd', '')
             tid = request.get('tid', 'unknown')
 
-            # Log incoming request in foreground mode
             if cmd == 'query':
                 mode = request.get('mode', 'assistant')
                 query = request.get('q', '')[:50]
                 self._log_request(tid, "in", f"query ({mode}) \"{query}{'...' if len(request.get('q', '')) > 50 else ''}\"")
-            elif cmd != 'complete':  # Don't log tab completions (too noisy)
+            elif cmd != 'complete':  # Tab completions are too noisy to log
                 self._log_request(tid, "in", cmd)
 
-            # Handle commands
             if cmd == 'query':
                 await self._queue_request(tid, request, writer)
             elif cmd == 'complete':
@@ -364,13 +359,10 @@ class AssistantDaemon:
 
     async def _queue_request(self, tid: str, request: dict, writer: asyncio.StreamWriter):
         """Queue a request for the terminal's worker."""
-        # Get or create queue for this terminal
         if tid not in self.request_queues:
             self.request_queues[tid] = asyncio.Queue()
             self.workers[tid] = asyncio.create_task(self._worker(tid))
-            self.worker_last_activity[tid] = datetime.now()
 
-        # Put request in queue and wait for completion
         response_future: asyncio.Future = asyncio.get_running_loop().create_future()
         await self.request_queues[tid].put((request, writer, response_future))
 
@@ -396,8 +388,6 @@ class AssistantDaemon:
                     # Worker idle timeout - clean up
                     break
 
-                self.worker_last_activity[tid] = datetime.now()
-
                 try:
                     # Dispatch based on command type — all commands in
                     # the worker queue are serialized per terminal
@@ -421,7 +411,6 @@ class AssistantDaemon:
             # Clean up worker — use pop() to avoid KeyError if already removed
             self.request_queues.pop(tid, None)
             self.workers.pop(tid, None)
-            self.worker_last_activity.pop(tid, None)
 
     async def _process_query(self, tid: str, request: dict, writer: asyncio.StreamWriter):
         """Process a query request with NDJSON streaming."""
@@ -434,14 +423,15 @@ class AssistantDaemon:
         source = request.get('source')  # Origin: "gui", "tui", "cli", "api"
         image_paths = request.get('images', [])  # List of image file paths
 
-        # Create attachments from image paths
         attachments = []
         for path in image_paths:
-            if path and os.path.isfile(path):
-                try:
-                    attachments.append(llm.Attachment(path=path))
-                except Exception:
-                    pass  # Skip invalid attachments
+            if not path:
+                continue
+            try:
+                attachments.append(llm.Attachment(path=path))
+            except Exception as e:
+                if self.debug:
+                    self.console.print(f"[yellow]Skipped attachment {path}: {e}[/]", highlight=False)
 
         if not query:
             await self._emit_error(writer, ErrorCode.EMPTY_QUERY, "Empty query")
@@ -467,20 +457,25 @@ class AssistantDaemon:
 
         # RAG context retrieval (if RAG collection is active)
         rag_context = ""
-        if hasattr(session, 'pending_rag_context') and session.pending_rag_context:
+        if session.pending_rag_context:
             # One-shot: consume pending context from /rag search
             rag_context = session.pending_rag_context
             session.pending_rag_context = None
-        elif hasattr(session, 'active_rag_collection') and session.active_rag_collection and query.strip():
-            # Persistent mode: search on every prompt
-            if hasattr(session, '_retrieve_rag_context'):
-                rag_context = session._retrieve_rag_context(query) or ""
+        elif session.active_rag_collection and query.strip():
+            # Persistent mode: search on every prompt. Vector search does disk
+            # (and sometimes network) I/O — run off the event loop so other
+            # clients aren't blocked while we wait.
+            loop = asyncio.get_running_loop()
+            rag_context = await loop.run_in_executor(
+                None, session._retrieve_rag_context, query
+            ) or ""
 
         # Build prompt with context (order: terminal context → RAG context → user input)
+        unchanged_wrapped = f"<terminal_context>{CONTEXT_UNCHANGED_MARKER}</terminal_context>"
         prompt_parts = []
-        if context and context != "<terminal_context>[Content unchanged]</terminal_context>":
+        if context and context != unchanged_wrapped:
             prompt_parts.append(context)
-        elif context and "[Content unchanged]" in context:
+        elif context and CONTEXT_UNCHANGED_MARKER in context:
             prompt_parts.append("<terminal_context>[Terminal context unchanged from previous message]</terminal_context>")
 
         if rag_context:
@@ -498,89 +493,74 @@ class AssistantDaemon:
             system_prompt = session.get_system_prompt()
 
         implementations = get_tool_implementations()
-
-        # Add MCP and other active tool implementations if available
-        if hasattr(session, '_get_active_external_tools'):
-            active_impls = session._get_active_external_tools()
-            implementations.update(active_impls)
+        implementations.update(session._get_active_external_tools())
 
         conversation = session.get_or_create_conversation()
 
-        # Initialize database once if logging is enabled
+        # Open a fresh DB handle per query (migration ran once at startup)
         db = None
         if self.logging_enabled:
-            db_path = get_logs_db_path()
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            db = sqlite_utils.Database(db_path)
-            migrate(db)
+            db = sqlite_utils.Database(get_logs_db_path())
+            if not self._db_migrated:
+                # Logging was off at startup but turned on later — migrate once now
+                migrate(db)
+                self._db_migrated = True
 
         try:
-            # Stream the response with system prompt, tools, and attachments
+            # system prompt is only accepted on the first turn of a conversation
+            prompt_kwargs = {
+                "tools": tools if tools else None,
+                "attachments": attachments if attachments else None,
+            }
             if len(conversation.responses) == 0:
-                response = conversation.prompt(
-                    full_prompt,
-                    system=system_prompt,
-                    tools=tools if tools else None,
-                    attachments=attachments if attachments else None
-                )
-            else:
-                response = conversation.prompt(
-                    full_prompt,
-                    tools=tools if tools else None,
-                    attachments=attachments if attachments else None
-                )
+                prompt_kwargs["system"] = system_prompt
+            response = conversation.prompt(full_prompt, **prompt_kwargs)
 
-            # Stream the response text as NDJSON events
             for chunk in response:
                 if chunk:
                     await self._emit(writer, {"type": "text", "content": chunk})
 
-            # Check for tool calls
             tool_calls = list(response.tool_calls())
 
-            # Log initial response to database
             if db:
                 response.log_to_db(db)
 
-            # Process tool calls if any
             iteration = 0
-            # Build arg overrides based on session settings (sources toggle)
-            sources_enabled = getattr(session, '_sources_enabled', True)
+            sources_enabled = session.sources_enabled
             arg_overrides = {
                 "search_google": {"sources": sources_enabled},
                 "microsoft_sources": {"sources": sources_enabled},
             }
+
+            async def emit(event: dict) -> None:
+                await self._emit(writer, event)
+
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
-                # Execute each tool call and collect results
                 tool_results = []
                 for tool_call in tool_calls:
-                    result = await self._execute_tool_call(
-                        tool_call, implementations, writer, arg_overrides
+                    result = await execute_tool_call(
+                        tool_call, implementations, emit, arg_overrides
                     )
                     tool_results.append(result)
 
-                # Continue conversation with tool results
+                # Empty prompt - tool results drive the continuation
                 followup_response = conversation.prompt(
-                    "",  # Empty prompt - tool results drive the continuation
+                    "",
                     tools=tools if tools else None,
                     tool_results=tool_results
                 )
 
-                # Stream follow-up response
                 for chunk in followup_response:
                     if chunk:
                         await self._emit(writer, {"type": "text", "content": chunk})
 
-                # Check for more tool calls
                 tool_calls = list(followup_response.tool_calls())
 
-                # Log follow-up response
                 if db:
                     followup_response.log_to_db(db)
 
-            # Signal completion
             duration = time.time() - start_time
             self._log_request(tid, "out", "done", duration)
             await self._emit(writer, {"type": "done"})
@@ -590,7 +570,7 @@ class AssistantDaemon:
             self._log_request(tid, "out", f"error: {str(e)[:50]}", duration)
             await self._emit_error(writer, ErrorCode.MODEL_ERROR, str(e))
         finally:
-            if db is not None and hasattr(db, 'conn') and db.conn:
+            if db is not None and db.conn:
                 db.conn.close()
 
     async def _handle_slash_command(
@@ -603,203 +583,145 @@ class AssistantDaemon:
 
         Returns True if command was handled, False to pass to LLM.
         """
-        from .config import SLASH_COMMANDS, HEADLESS_AVAILABLE_COMMANDS
+        cmd, args = parse_command(query)
+        cmd = cmd.lower()
 
-        parts = query.split(maxsplit=1)
-        cmd = parts[0].lower()
-        args = parts[1] if len(parts) > 1 else ""
-
-        # Check if this is a known slash command that's not available in headless mode
         if cmd in SLASH_COMMANDS and cmd not in HEADLESS_AVAILABLE_COMMANDS:
-            await self._emit(writer, {"type": "text", "content": f"[yellow]{cmd} is not available in headless mode[/]"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_text_done(writer, f"[yellow]{cmd} is not available in headless mode[/]")
             return True
 
-        # Get session for commands that need it
-        # For most commands, we create the session if it doesn't exist
-        session_log = None  # Will be passed in future if needed
-        state = self.get_session_state(tid, session_log) if tid != 'unknown' else None
+        # Eagerly materialize the session; several handlers below expect one.
+        state = self.get_session_state(tid) if tid != 'unknown' else None
         session = state.session if state else None
 
-        # Commands that need a session
-        if cmd == "/model":
-            loop = asyncio.get_running_loop()
-            if not args:
-                # List available models (run in executor to avoid blocking)
-                def get_model_list():
-                    lines = ["[bold]Available models:[/]"]
-                    current = self.model_id or get_assistant_default_model()
-                    for model in llm.get_models():
-                        marker = " [green](current)[/]" if model.model_id == current else ""
-                        lines.append(f"  - {model.model_id}{marker}")
-                    return "\n".join(lines)
-                content = await loop.run_in_executor(None, get_model_list)
-                await self._emit(writer, {"type": "text", "content": content})
-            else:
-                # Switch model
-                try:
-                    new_model = await loop.run_in_executor(None, llm.get_model, args)
-                    self.model_id = args
-                    if session:
-                        session.model = new_model
-                        session.model_name = args
-                        if session.conversation:
-                            session.conversation.model = new_model
-                    await self._emit(writer, {"type": "text", "content": f"[green]Switched to model: {args}[/]"})
-                except Exception as e:
-                    await self._emit(writer, {"type": "text", "content": f"[red]Error switching model: {e}[/]"})
-            await self._emit(writer, {"type": "done"})
+        if cmd in _COPY_COMMANDS:
+            # /copy needs the host's clipboard, which only the thin client has access to.
+            await self._emit_text_done(
+                writer,
+                "[yellow]/copy is handled by the thin client; not available via daemon directly[/]"
+            )
             return True
 
-        elif cmd == "/squash":
-            if session and hasattr(session, 'squash_context'):
-                keep = args if args else None
-                try:
-                    session.squash_context(keep=keep)
-                    await self._emit(writer, {"type": "text", "content": "[green]Context squashed[/]"})
-                except Exception as e:
-                    await self._emit(writer, {"type": "text", "content": f"[red]Error squashing: {e}[/]"})
-            else:
-                await self._emit(writer, {"type": "text", "content": "[yellow]No active session to squash[/]"})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        # Mixin commands - delegate to session handlers with console capture
-        elif cmd in ("/kb", "/memory", "/rag", "/skill", "/report"):
-            handler_map = {
-                "/kb": ("_handle_kb_command", "Knowledge base"),
-                "/memory": ("_handle_memory_command", "Memory"),
-                "/rag": ("_handle_rag_command", "RAG"),
-                "/skill": ("_handle_skill_command", "Skills"),
-                "/report": ("_handle_report_command", "Report management"),
-            }
-            handler_name, feature_name = handler_map[cmd]
-            output = self._call_session_handler(session, handler_name, args)
-            if output is None:
-                await self._emit(writer, {"type": "text", "content": f"[yellow]{feature_name} not available[/]"})
-            elif output:
-                await self._emit(writer, {"type": "text", "content": output})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        elif cmd == "/mcp":
-            if session and hasattr(session, '_handle_mcp_status'):
-                def mcp_handler():
-                    if not args or args.lower() == "status":
-                        session._handle_mcp_status()
-                    elif args.lower().startswith("load "):
-                        session._handle_mcp_load(args[5:].strip())
-                    elif args.lower().startswith("unload "):
-                        session._handle_mcp_unload(args[7:].strip())
-                    else:
-                        session.console.print("[yellow]Usage: /mcp, /mcp load <server>, /mcp unload <server>[/]")
-                output = self._capture_console_output(session, mcp_handler)
-                if output:
-                    await self._emit(writer, {"type": "text", "content": output})
-            else:
-                await self._emit(writer, {"type": "text", "content": "[yellow]MCP not available[/]"})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        elif cmd == "/assistant":
-            if session:
-                if session.mode == "assistant":
-                    await self._emit(writer, {"type": "text", "content": "[dim]Already in assistant mode[/]"})
-                else:
-                    session.mode = "assistant"
-                    await self._emit(writer, {"type": "text", "content": "[green]Switched to assistant mode[/]"})
-            else:
-                await self._emit(writer, {"type": "text", "content": "[yellow]No active session[/]"})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        elif cmd == "/imagemage":
-            # Check imagemage availability
-            import shutil
-            if not shutil.which('imagemage'):
-                await self._emit(writer, {"type": "text", "content": "[yellow]imagemage not installed (requires Go 1.22+ and Gemini)[/]"})
-            elif not args or args.lower() == "status":
-                loaded = session and hasattr(session, 'loaded_optional_tools') and 'imagemage' in getattr(session, 'loaded_optional_tools', set())
-                status = "[green]loaded[/]" if loaded else "[yellow]not loaded[/]"
-                await self._emit(writer, {"type": "text", "content": f"Imagemage: {status}"})
-            elif args.lower() == "off":
-                if session and hasattr(session, 'loaded_optional_tools'):
-                    session.loaded_optional_tools.discard('imagemage')
-                    await self._emit(writer, {"type": "text", "content": "[yellow]imagemage unloaded[/]"})
-                else:
-                    await self._emit(writer, {"type": "text", "content": "[dim]imagemage was not loaded[/]"})
-            else:
-                # Load imagemage
-                if session:
-                    if not hasattr(session, 'loaded_optional_tools'):
-                        session.loaded_optional_tools = set()
-                    session.loaded_optional_tools.add('imagemage')
-                    await self._emit(writer, {"type": "text", "content": "[green]imagemage loaded[/]"})
-                else:
-                    await self._emit(writer, {"type": "text", "content": "[yellow]No active session[/]"})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        elif cmd == "/sources":
-            if session:
-                if not args or args.lower() == "status":
-                    status = "enabled" if getattr(session, '_sources_enabled', True) else "disabled"
-                    await self._emit(writer, {"type": "text", "content": f"[bold]Sources:[/] {status}"})
-                elif args.lower() == "on":
-                    session._sources_enabled = True
-                    await self._emit(writer, {"type": "text", "content": "[green]Sources enabled[/]"})
-                elif args.lower() == "off":
-                    session._sources_enabled = False
-                    await self._emit(writer, {"type": "text", "content": "[yellow]Sources disabled[/]"})
-                else:
-                    await self._emit(writer, {"type": "text", "content": "[yellow]Usage: /sources [on|off|status][/]"})
-            else:
-                await self._emit(writer, {"type": "text", "content": "[yellow]No active session[/]"})
-            await self._emit(writer, {"type": "done"})
-            return True
-
-        elif cmd == "/copy":
-            # /copy is handled by thin client via get_responses command
-            # If it reaches here, pass through (shouldn't normally happen)
-            return False
-
-        # Commands normally handled by thin client - handle here for direct daemon usage
-        elif cmd in ("/clear", "/reset", "/new"):
+        if cmd in _RESET_COMMANDS:
             await self.handle_new(tid, writer)
             return True
 
-        elif cmd in ("/info", "/status"):
-            # Delegate to handle_status
+        if cmd in _STATUS_COMMANDS:
             await self.handle_status(tid, writer)
             return True
 
-        elif cmd == "/help":
+        if cmd == "/help":
             await self.handle_help(writer)
             return True
 
-        elif cmd in ("/quit", "/exit"):
+        if cmd in _QUIT_COMMANDS:
             await self.handle_shutdown(writer)
             return True
 
-        # Not a recognized slash command - let it pass to LLM
-        # This handles user queries that happen to start with /
+        if cmd == "/model":
+            await self._cmd_model(session, args, writer)
+            return True
+
+        if cmd == "/squash":
+            await self._cmd_squash(session, args, writer)
+            return True
+
+        if cmd == "/mcp":
+            await self._cmd_mcp(session, args, writer)
+            return True
+
+        if cmd == "/sources":
+            await self._cmd_sources(session, args, writer)
+            return True
+
+        if cmd in MIXIN_HANDLERS:
+            handler_name, feature_name = MIXIN_HANDLERS[cmd]
+            output = self._call_session_handler(session, handler_name, args)
+            # Empty string output (handler printed nothing) still terminates with done.
+            if output is None:
+                await self._emit_text_done(writer, f"[yellow]{feature_name} not available[/]")
+            elif output:
+                await self._emit_text_done(writer, output)
+            else:
+                await self._emit(writer, {"type": "done"})
+            return True
+
+        # Not a recognized slash command - let queries that happen to start
+        # with '/' pass through to the LLM.
         return False
 
-    async def _execute_tool_call(
-        self,
-        tool_call,
-        implementations: Dict[str, callable],
-        writer: asyncio.StreamWriter,
-        arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
-    ) -> ToolResult:
-        """Execute a single tool call and return the result.
+    async def _cmd_model(self, session, args: str, writer: asyncio.StreamWriter) -> None:
+        loop = asyncio.get_running_loop()
+        if not args:
+            def get_model_list():
+                lines = ["[bold]Available models:[/]"]
+                current = self.model_id or get_assistant_default_model()
+                for model in llm.get_models():
+                    marker = " [green](current)[/]" if model.model_id == current else ""
+                    lines.append(f"  - {model.model_id}{marker}")
+                return "\n".join(lines)
+            content = await loop.run_in_executor(None, get_model_list)
+            await self._emit_text_done(writer, content)
+            return
+        try:
+            # llm.get_model may do plugin discovery — keep it off the event loop
+            if session is not None:
+                await loop.run_in_executor(None, session.set_model, args)
+            else:
+                await loop.run_in_executor(None, llm.get_model, args)
+            self.model_id = args
+            await self._emit_text_done(writer, f"[green]Switched to model: {args}[/]")
+        except Exception as e:
+            await self._emit_text_done(writer, f"[red]Error switching model: {e}[/]")
 
-        Uses shared execute_tool_call from llm_tools_core.
-        """
-        async def emit(event: dict) -> None:
-            await self._emit(writer, event)
+    async def _cmd_squash(self, session, args: str, writer: asyncio.StreamWriter) -> None:
+        if not session:
+            await self._emit_text_done(writer, "[yellow]No active session to squash[/]")
+            return
+        keep = args if args else None
+        try:
+            session.squash_context(keep=keep)
+            await self._emit_text_done(writer, "[green]Context squashed[/]")
+        except Exception as e:
+            await self._emit_text_done(writer, f"[red]Error squashing: {e}[/]")
 
-        return await execute_tool_call(tool_call, implementations, emit, arg_overrides)
+    async def _cmd_mcp(self, session, args: str, writer: asyncio.StreamWriter) -> None:
+        if not session:
+            await self._emit_text_done(writer, "[yellow]MCP not available[/]")
+            return
+
+        def mcp_handler():
+            if not args or args.lower() == "status":
+                session._handle_mcp_status()
+            elif args.lower().startswith("load "):
+                session._handle_mcp_load(args[5:].strip())
+            elif args.lower().startswith("unload "):
+                session._handle_mcp_unload(args[7:].strip())
+            else:
+                session.console.print("[yellow]Usage: /mcp, /mcp load <server>, /mcp unload <server>[/]")
+
+        output = self._capture_console_output(session, mcp_handler)
+        if output:
+            await self._emit_text_done(writer, output)
+        else:
+            await self._emit(writer, {"type": "done"})
+
+    async def _cmd_sources(self, session, args: str, writer: asyncio.StreamWriter) -> None:
+        if not session:
+            await self._emit_text_done(writer, "[yellow]No active session[/]")
+            return
+        action = args.lower() if args else "status"
+        if action == "status":
+            status = "enabled" if session.sources_enabled else "disabled"
+            await self._emit_text_done(writer, f"[bold]Sources:[/] {status}")
+        elif action == "on":
+            session.sources_enabled = True
+            await self._emit_text_done(writer, "[green]Sources enabled[/]")
+        elif action == "off":
+            session.sources_enabled = False
+            await self._emit_text_done(writer, "[yellow]Sources disabled[/]")
+        else:
+            await self._emit_text_done(writer, "[yellow]Usage: /sources [on|off|status][/]")
 
     async def handle_complete(self, request: dict, writer: asyncio.StreamWriter):
         """Handle completion request for slash commands and fragments."""
@@ -815,7 +737,7 @@ class AssistantDaemon:
             completions = self._complete_fragments(prefix, cwd=cwd)
         elif prefix.startswith('model:'):
             # Model name completion
-            completions = self._complete_models(prefix[6:])
+            completions = await self._complete_models(prefix[6:])
 
         # Emit completions
         await self._emit(writer, {
@@ -826,8 +748,6 @@ class AssistantDaemon:
 
     def _complete_slash_commands(self, prefix: str) -> List[Dict[str, str]]:
         """Complete slash commands (filtered for headless mode)."""
-        from .config import SLASH_COMMANDS, HEADLESS_AVAILABLE_COMMANDS
-
         prefix_lower = prefix.lower()
         completions = []
 
@@ -848,32 +768,12 @@ class AssistantDaemon:
 
         Uses AtHandler from llm-tools-core for unified completion logic.
         """
-        try:
-            from llm_tools_core import AtHandler
-            handler = AtHandler()
-            completions = handler.get_completions(prefix, cwd=cwd)
-            return [
-                {"text": c.text, "description": c.description}
-                for c in completions
-            ]
-        except ImportError:
-            # Fallback: basic fragment types if AtHandler not available
-            fragments = [
-                ("@github:", "Load GitHub repository"),
-                ("@pdf:", "Load PDF document"),
-                ("@yt:", "Load YouTube transcript"),
-                ("@arxiv:", "Load arXiv paper"),
-                ("@url:", "Load web page"),
-                ("@file:", "Load local file"),
-                ("@dir:", "Load directory contents"),
-            ]
-
-            prefix_lower = prefix.lower()
-            return [
-                {"text": frag, "description": desc}
-                for frag, desc in fragments
-                if frag.lower().startswith(prefix_lower)
-            ]
+        handler = AtHandler()
+        completions = handler.get_completions(prefix, cwd=cwd)
+        return [
+            {"text": c.text, "description": c.description}
+            for c in completions
+        ]
 
     def _call_session_handler(
         self,
@@ -925,23 +825,24 @@ class AssistantDaemon:
 
         return string_io.getvalue()
 
-    def _complete_models(self, prefix: str) -> List[Dict[str, str]]:
-        """Complete model names."""
+    async def _complete_models(self, prefix: str) -> List[Dict[str, str]]:
+        """Complete model names. Runs llm.get_models() in an executor since
+        plugin discovery can be slow and would otherwise block the event loop."""
         prefix_lower = prefix.lower()
-        completions = []
+        loop = asyncio.get_running_loop()
 
         try:
-            for model in llm.get_models():
-                model_id = model.model_id
-                if model_id.lower().startswith(prefix_lower):
-                    completions.append({
-                        "text": model_id,
-                        "description": ""
-                    })
-        except Exception:
-            pass
+            models = await loop.run_in_executor(None, llm.get_models)
+        except Exception as e:
+            if self.debug:
+                self.console.print(f"[yellow]Model completion failed: {e}[/]", highlight=False)
+            return []
 
-        return completions
+        return [
+            {"text": m.model_id, "description": ""}
+            for m in models
+            if m.model_id.lower().startswith(prefix_lower)
+        ]
 
     async def _emit(self, writer: asyncio.StreamWriter, event: dict):
         """Emit a NDJSON event."""
@@ -959,6 +860,11 @@ class AssistantDaemon:
         await self._emit(writer, {"type": "error", "code": code, "message": message})
         await self._emit(writer, {"type": "done"})
 
+    async def _emit_text_done(self, writer: asyncio.StreamWriter, content: str):
+        """Emit a single text event followed by done — the most common reply shape."""
+        await self._emit(writer, {"type": "text", "content": content})
+        await self._emit(writer, {"type": "done"})
+
     async def handle_new(self, terminal_id: str, writer: asyncio.StreamWriter):
         """Handle /new command - start fresh conversation."""
         if terminal_id in self.sessions:
@@ -966,8 +872,7 @@ class AssistantDaemon:
             state.session.reset_conversation()
             state.session.context_hashes = set()
             state.touch()
-        await self._emit(writer, {"type": "text", "content": "New conversation started."})
-        await self._emit(writer, {"type": "done"})
+        await self._emit_text_done(writer, "New conversation started.")
 
     async def handle_status(self, terminal_id: str, writer: asyncio.StreamWriter):
         """Handle status request."""
@@ -996,13 +901,10 @@ class AssistantDaemon:
             "active_sessions": len(self.sessions),
         }
 
-        await self._emit(writer, {"type": "text", "content": json.dumps(status, indent=2)})
-        await self._emit(writer, {"type": "done"})
+        await self._emit_text_done(writer, json.dumps(status, indent=2))
 
     async def handle_help(self, writer: asyncio.StreamWriter):
         """Handle help request - show available commands in headless mode."""
-        from .config import SLASH_COMMANDS, HEADLESS_AVAILABLE_COMMANDS
-
         lines = []
         for cmd, info in sorted(SLASH_COMMANDS.items()):
             if cmd not in HEADLESS_AVAILABLE_COMMANDS:
@@ -1015,14 +917,13 @@ class AssistantDaemon:
             *lines,
         ])
 
-        await self._emit(writer, {"type": "text", "content": help_text})
-        await self._emit(writer, {"type": "done"})
+        await self._emit_text_done(writer, help_text)
 
     async def handle_shutdown(self, writer: asyncio.StreamWriter):
         """Handle shutdown request."""
-        await self._emit(writer, {"type": "text", "content": "Shutting down daemon..."})
-        await self._emit(writer, {"type": "done"})
-        self.running = False
+        await self._emit_text_done(writer, "Shutting down daemon...")
+        if self._stop_event is not None:
+            self._stop_event.set()
 
     async def handle_get_responses(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
         """Handle get_responses request for /copy command.
@@ -1075,18 +976,11 @@ class AssistantDaemon:
         """
         state = self.sessions.get(terminal_id)
         if not state or not state.session.conversation:
-            await self._emit(writer, {"type": "error", "message": "No active conversation"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_error(writer, ErrorCode.INTERNAL, "No active conversation")
             return
 
-        keep_turns = request.get('keep_turns', 0)
-        responses = state.session.conversation.responses
-
-        # Each response corresponds to one turn
-        if keep_turns < len(responses):
-            state.session.conversation.responses = responses[:keep_turns]
-
-        await self._emit(writer, {"type": "truncated", "remaining": len(state.session.conversation.responses)})
+        remaining = state.session.truncate_responses(request.get('keep_turns', 0))
+        await self._emit(writer, {"type": "truncated", "remaining": remaining})
         await self._emit(writer, {"type": "done"})
 
     async def handle_pop_response(self, terminal_id: str, writer: asyncio.StreamWriter):
@@ -1099,15 +993,11 @@ class AssistantDaemon:
         """
         state = self.sessions.get(terminal_id)
         if not state or not state.session.conversation:
-            await self._emit(writer, {"type": "error", "message": "No active conversation"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_error(writer, ErrorCode.INTERNAL, "No active conversation")
             return
 
-        responses = state.session.conversation.responses
-        if responses:
-            responses.pop()
-
-        await self._emit(writer, {"type": "popped", "remaining": len(responses)})
+        remaining = state.session.pop_response()
+        await self._emit(writer, {"type": "popped", "remaining": remaining})
         await self._emit(writer, {"type": "done"})
 
     async def handle_fork(self, terminal_id: str, request: dict, writer: asyncio.StreamWriter):
@@ -1123,36 +1013,29 @@ class AssistantDaemon:
         messages = request.get('messages', [])
 
         if not new_tid:
-            await self._emit(writer, {"type": "error", "message": "new_tid required"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_error(writer, ErrorCode.PARSE_ERROR, "new_tid required")
             return
 
         source_state = self.sessions.get(terminal_id)
         if not source_state:
-            await self._emit(writer, {"type": "error", "message": "Source session not found"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_error(writer, ErrorCode.INTERNAL, "Source session not found")
             return
 
-        # Count assistant messages to determine how many responses to copy
-        # Each assistant message corresponds to one Response in conversation.responses
+        # One Response per assistant message.
         turns_to_keep = sum(1 for m in messages if m.get('role') == 'assistant')
 
-        # Create new session
         new_session = HeadlessSession(
             model_name=source_state.session.model_name,
             debug=source_state.session.debug,
             terminal_id=new_tid
         )
 
-        # Copy conversation responses up to fork point only
-        if source_state.session.conversation and turns_to_keep > 0:
+        responses_to_copy = source_state.session.fork_responses(turns_to_keep)
+        if responses_to_copy:
             new_session.get_or_create_conversation()
-            source_responses = source_state.session.conversation.responses
-            new_session.conversation.responses = list(source_responses[:turns_to_keep])
+            new_session.conversation.responses = responses_to_copy
 
-        # Register new session
-        new_state = SessionState(new_tid, new_session)
-        self.sessions[new_tid] = new_state
+        self.sessions[new_tid] = SessionState(new_tid, new_session)
 
         await self._emit(writer, {"type": "forked", "new_tid": new_tid, "messages": len(messages)})
         await self._emit(writer, {"type": "done"})
@@ -1166,14 +1049,11 @@ class AssistantDaemon:
         collection = request.get('collection', '')
 
         if not collection:
-            await self._emit(writer, {"type": "error", "message": "Collection name required"})
-            await self._emit(writer, {"type": "done"})
+            await self._emit_error(writer, ErrorCode.PARSE_ERROR, "Collection name required")
             return
 
-        # Get or create session for this terminal
         state = self.sessions.get(terminal_id)
         if not state:
-            # Create session if it doesn't exist
             session = HeadlessSession(
                 model_name=self.model_id,
                 debug=self.debug,
@@ -1184,35 +1064,18 @@ class AssistantDaemon:
 
         session = state.session
 
-        # Check if RAG is available (HeadlessSession has active_rag_collection via RAGMixin)
-        if hasattr(session, 'active_rag_collection'):
-            try:
-                # Try to activate RAG via the session's RAG mixin
-                if hasattr(session, '_handle_rag_command'):
-                    # Use the session's built-in RAG handling
-                    result = session._handle_rag_command(collection)
-                    if result:
-                        await self._emit(writer, {"type": "text", "content": result})
-                    else:
-                        # Directly set active_rag_collection if handler didn't return output
-                        session.active_rag_collection = collection
-                        await self._emit(writer, {
-                            "type": "text",
-                            "content": f"RAG collection '{collection}' activated for this session"
-                        })
-                else:
-                    # Direct RAG activation
-                    session.active_rag_collection = collection
-                    await self._emit(writer, {
-                        "type": "text",
-                        "content": f"RAG collection '{collection}' activated for this session"
-                    })
-            except Exception as e:
-                await self._emit(writer, {"type": "error", "message": str(e)})
-        else:
-            await self._emit(writer, {"type": "error", "message": "RAG not available in this session"})
+        # _handle_rag_command writes to session.console; capture it for the client.
+        # Use the same helper that /rag uses in _handle_slash_command so output is consistent.
+        try:
+            output = self._call_session_handler(session, '_handle_rag_command', collection)
+        except Exception as e:
+            await self._emit_error(writer, ErrorCode.INTERNAL, str(e))
+            return
 
-        await self._emit(writer, {"type": "done"})
+        await self._emit_text_done(
+            writer,
+            output or f"RAG collection '{collection}' activated for this session"
+        )
 
     async def idle_checker(self):
         """Periodically clean up inactive sessions to prevent memory leaks.
@@ -1222,8 +1085,7 @@ class AssistantDaemon:
         Only idle sessions (no active worker, inactive for > IDLE_TIMEOUT_MINUTES)
         are evicted.
         """
-        from llm_tools_core import IDLE_TIMEOUT_MINUTES
-        while self.running:
+        while self._stop_event is None or not self._stop_event.is_set():
             await asyncio.sleep(60)  # Check every minute
             now = datetime.now()
             stale_tids = []
@@ -1258,6 +1120,18 @@ class AssistantDaemon:
 
         # Ensure socket directory exists
         self.socket_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Run logs.db migration once at startup so it stays off the per-query path
+        if self.logging_enabled:
+            db_path = get_logs_db_path()
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            db = sqlite_utils.Database(db_path)
+            try:
+                migrate(db)
+                self._db_migrated = True
+            finally:
+                if db.conn:
+                    db.conn.close()
 
         # Always write PID file to /tmp path so is_daemon_process_alive() works
         # in both foreground and daemon modes (python-daemon has its own pidfile
@@ -1306,6 +1180,11 @@ class AssistantDaemon:
         # which is handled gracefully via writer.is_closing() checks
         signal.signal(signal.SIGPIPE, signal.SIG_IGN)
 
+        # Must be created BEFORE registering signal handlers, otherwise a signal
+        # arriving in the window between registration and event creation would
+        # leave the main loop waiting on an event that is never set.
+        self._stop_event = asyncio.Event()
+
         # Register signal handlers with the event loop for proper asyncio integration
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
@@ -1315,8 +1194,7 @@ class AssistantDaemon:
         idle_task = asyncio.create_task(self.idle_checker())
 
         try:
-            while self.running:
-                await asyncio.sleep(0.1)
+            await self._stop_event.wait()
         finally:
             idle_task.cancel()
             try:
@@ -1342,8 +1220,10 @@ class AssistantDaemon:
             await self.server.wait_closed()
 
             # Clean up socket and PID file
-            if self.socket_path.exists():
+            try:
                 self.socket_path.unlink()
+            except FileNotFoundError:
+                pass
             # Always remove /tmp PID file (python-daemon handles its own ~/.config/ pidfile)
             remove_pid_file()
 

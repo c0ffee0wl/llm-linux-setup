@@ -19,6 +19,7 @@ from .core import (
     convert_cast_to_text,
     extract_prompt_blocks,
     format_output,
+    parse_count,
 )
 
 
@@ -65,30 +66,14 @@ def main(count: str, environment: bool, show_all: bool):
             sys.exit(1)
         return
 
-    # Determine if we want all history
-    want_all = show_all or count == 'all'
-
-    if want_all:
-        count_int = None  # Signal to show all
+    # Determine if we want all history (None = all)
+    if show_all:
+        count_int = None
     else:
-        # Validate count is a number
         try:
-            count_int = int(count)
-            # Convert negative to positive with a note
-            if count_int < 0:
-                count_int = abs(count_int)
-                click.echo(
-                    f"#c# context usage note: Using {count_int} (converted from negative value)",
-                    err=True
-                )
-            # Still validate that it's not zero
-            if count_int < 1:
-                raise ValueError()
-        except (ValueError, TypeError):
-            raise click.BadParameter(
-                'Please provide a positive number or "all"',
-                param_hint="'COUNT'"
-            )
+            count_int = parse_count(count)
+        except ValueError as exc:
+            raise click.BadParameter(str(exc), param_hint="'COUNT'")
 
     if not cast_file:
         print("Error: No asciinema session recording found.", file=sys.stderr)

@@ -20,10 +20,8 @@ from llm.cli import process_fragments_in_chat
 from llm.migrations import migrate
 import sqlite_utils
 
-# Add system site-packages to path for dbus and other system-only packages
-# (Must be AFTER llm imports to avoid typing_extensions conflicts)
+# dbus is system-only; must come after llm imports to avoid typing_extensions conflicts
 sys.path.insert(0, '/usr/lib/python3/dist-packages')
-# Add user site-packages for llm_tools module (uv's isolated env doesn't include it)
 import site
 sys.path.insert(0, site.getusersitepackages())
 import os
@@ -62,7 +60,7 @@ from rich.prompt import Prompt
 from rich.spinner import Spinner as RichSpinner
 from rich.status import Status
 from rich.text import Text
-from typing import List, Optional, Tuple, Dict, Union, Set
+from typing import Any, List, Optional, Tuple, Dict, Union, Set
 
 # YAML for findings file parsing
 
@@ -75,14 +73,13 @@ from prompt_toolkit.styles import Style as PTStyle
 from llm_tools_core import PromptDetector
 from llm_tools_core import detect_os, detect_shell, detect_environment
 from .voice import VoiceInput, VOICE_AVAILABLE, VOICE_UNAVAILABLE_REASON
-# Speech module lazy-loaded to avoid import errors when llm_tools_core not installed
-# Use _get_speech_module() to access SpeechOutput, SentenceBuffer, TTS_AVAILABLE
 from .ui import Spinner
 from .completer import SlashCommandCompleter
 from .config import (
     TUI_COMMANDS,
     EXTERNAL_TOOL_DISPLAY,
     is_tui_command,
+    MIXIN_HANDLERS,
 )
 from .schemas import SafetySchema
 from .utils import (
@@ -121,12 +118,15 @@ WEB_AVAILABLE = (
     and importlib.util.find_spec("uvicorn") is not None
 )
 
-# Speech module lazy loading (TTS output)
-# Cached to avoid repeated imports
+_SIGNAL_NAMES = {
+    signal.SIGTERM: "SIGTERM",
+    signal.SIGHUP: "SIGHUP (terminal closed)",
+}
+
 _speech_module_cache = None
 
 def _get_speech_module():
-    """Lazy load speech module. Returns (SpeechOutput, SentenceBuffer, TTS_AVAILABLE) or (None, None, False)."""
+    """Lazy-load speech so the assistant still starts when TTS deps are missing."""
     global _speech_module_cache
     if _speech_module_cache is not None:
         return _speech_module_cache
@@ -136,6 +136,21 @@ def _get_speech_module():
     except ImportError:
         _speech_module_cache = (None, None, False)
     return _speech_module_cache
+
+
+_DANGEROUS_PATTERNS = [re.compile(p, re.IGNORECASE) for p in (
+    r"rm\s+-rf\s+/(?:\s|$)",          # rm -rf /
+    r"rm\s+-rf\s+/\*",                # rm -rf /*
+    r"rm\s+-rf\s+~",                  # rm -rf ~
+    r"dd\s+if=.*of=/dev/",            # dd to device
+    r"mkfs\.",                        # format filesystem
+    r">\s*/dev/sd",                   # redirect to disk
+    r":\(\)\{\s*:\|:&\s*\};:",        # fork bomb
+    r"chmod\s+-R\s+777\s+/(?:\s|$)",  # chmod 777 /
+    r"chown\s+-R.*:\s*/(?:\s|$)",     # chown / recursively
+    r"curl.*\|\s*(ba)?sh",            # curl pipe to shell
+    r"wget.*\|\s*(ba)?sh",            # wget pipe to shell
+)]
 
 
 class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin, WorkflowMixin, ReportMixin, WebMixin, TerminalMixin, ContextMixin, WatchMixin, MCPMixin):
@@ -220,7 +235,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
         # Skills state (must be initialized before _render_system_prompt)
         # Uses generic dict since SkillProperties is imported dynamically
-        self.loaded_skills: Dict[str, Tuple[Path, any]] = {}  # name -> (path, props)
+        self.loaded_skills: Dict[str, Tuple[Path, Any]] = {}  # name -> (path, props)
         self._skill_invoke_tool: Optional[Tool] = None
         self._skill_load_file_tool: Optional[Tool] = None
 
@@ -249,7 +264,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         if max_context_size is not None:
             self.max_context_size = max_context_size
         else:
-            self.max_context_size = self._get_model_context_limit(self.model_name)
+            self.max_context_size = get_model_context_limit(self.model_name)
         self._debug(f"Context limit for {self.model_name}: {self.max_context_size:,} tokens")
         self.context_squash_threshold = 0.8  # 80%
 
@@ -344,19 +359,6 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Voice auto-submit: automatically send transcribed text
         self.voice_auto_submit: bool = False
         self.auto_command_history: deque = deque(maxlen=3)  # recent commands for judge context
-        self.DANGEROUS_PATTERNS = [
-            r"rm\s+-rf\s+/(?:\s|$)",      # rm -rf /
-            r"rm\s+-rf\s+/\*",             # rm -rf /*
-            r"rm\s+-rf\s+~",               # rm -rf ~
-            r"dd\s+if=.*of=/dev/",         # dd to device
-            r"mkfs\.",                     # format filesystem
-            r">\s*/dev/sd",                # redirect to disk
-            r":\(\)\{\s*:\|:&\s*\};:",     # fork bomb
-            r"chmod\s+-R\s+777\s+/(?:\s|$)",  # chmod 777 /
-            r"chown\s+-R.*:\s*/(?:\s|$)",  # chown / recursively
-            r"curl.*\|\s*(ba)?sh",         # curl pipe to shell
-            r"wget.*\|\s*(ba)?sh",         # wget pipe to shell
-        ]
 
         # Pentest findings management
         self.findings_project: Optional[str] = None  # Current project name
@@ -394,6 +396,26 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         self.toolresult_hash_updated.clear()
         self.previous_capture_block_hashes.clear()
         self.terminal_marker_counts.clear()
+
+    @staticmethod
+    def _validate_scope(scope: str) -> str:
+        """Normalize a tool-call scope arg to {"exec", "all"}, defaulting to "exec"."""
+        return scope if scope in {"exec", "all"} else "exec"
+
+    def _clear_conversation(self) -> None:
+        """Reset conversation state shared by /clear and /reset.
+
+        Replaces the conversation, clears dedup + rewind state, and notifies
+        the web companion. Caller is responsible for any extra teardown
+        (watch mode, plugin cache, etc).
+        """
+        self.conversation = llm.Conversation(model=self.model)
+        # Set source for origin tracking (not a constructor parameter)
+        self.conversation.source = "tui"
+        self._clear_dedup_state()
+        self.rewind_undo_buffer = None
+        if self.web_clients:
+            self._broadcast_to_web({"type": "clear"})
 
     def _create_prompt_session(self) -> PromptSession:
         """Create prompt_toolkit session with voice toggle keybinding and slash command completion."""
@@ -607,11 +629,7 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
 
     def _signal_handler(self, signum, frame):
         """Handle termination signals (SIGTERM, SIGHUP)."""
-        signal_names = {
-            signal.SIGTERM: "SIGTERM",
-            signal.SIGHUP: "SIGHUP (terminal closed)"
-        }
-        signal_name = signal_names.get(signum, f"signal {signum}")
+        signal_name = _SIGNAL_NAMES.get(signum, f"signal {signum}")
 
         self.console.print()
         ConsoleHelper.warning(self.console, f"Received {signal_name}, shutting down...")
@@ -733,17 +751,10 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         """Check if current model is a Gemini model (vertex/* or gemini-*)"""
         return self.model_name.startswith("vertex/") or self.model_name.startswith("gemini-")
 
-    def _get_model_context_limit(self, model_name: str) -> int:
-        """Get the appropriate context limit for a model.
-
-        Delegates to get_model_context_limit() utility function.
-        """
-        return get_model_context_limit(model_name)
-
     def _debug(self, msg: str):
         """Print debug message if debug mode is enabled"""
         if self.debug:
-            ConsoleHelper.dim(self.console, f"DEBUG: {msg}")
+            ConsoleHelper.dim(self.console, msg)
 
     def _display_watch_stats(self):
         """Display watch mode statistics."""
@@ -837,6 +848,11 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         # Enter cbreak mode for non-blocking Escape detection during streaming
         cbreak_active = self._enter_cbreak_mode()
 
+        # Throttle in-progress web broadcasts: each chunk can be a handful of chars,
+        # so we cap updates to at most one every 60 ms or every 80 new characters.
+        web_last_broadcast_ts = 0.0
+        web_last_broadcast_len = 0
+
         try:
             with Live(thinking_spinner, refresh_per_second=10, console=self.console, transient=True) as live:
                 for chunk in response:
@@ -854,13 +870,17 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                     if has_content:
                         live.update(Markdown(accumulated_text))
 
-                    # Broadcast to web companion (non-blocking)
                     if self.web_clients:
-                        self._broadcast_to_web({
-                            "type": "assistant_chunk",
-                            "content": accumulated_text,
-                            "done": False
-                        })
+                        now = time.monotonic()
+                        text_len = len(accumulated_text)
+                        if (now - web_last_broadcast_ts) >= 0.06 or (text_len - web_last_broadcast_len) >= 80:
+                            self._broadcast_to_web({
+                                "type": "assistant_chunk",
+                                "content": accumulated_text,
+                                "done": False,
+                            })
+                            web_last_broadcast_ts = now
+                            web_last_broadcast_len = text_len
 
                     # Queue TTS if enabled (non-blocking)
                     if tts_enabled and sentence_buffer:
@@ -1494,8 +1514,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                 is_tui = False
                 try:
                     is_tui = self.plugin_dbus.is_likely_tui_active(term['uuid'])
-                except Exception:
-                    pass  # Fall back to text capture if TUI detection fails
+                except Exception as e:
+                    self._debug(f"TUI detection failed for {term_uuid[:8]}, using text capture: {e}")
 
                 if is_tui:
                     # Capture screenshot for TUI terminal
@@ -1601,6 +1621,20 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
                     context_parts.append(f'''<terminal uuid="{term['uuid']}" title="{term['title']}" cwd="{term['cwd']}">
 {content}
 </terminal>''')
+
+            # Drop per-terminal state for terminals that no longer exist
+            # (user closed them); prevents unbounded dict growth over a session.
+            live_uuids = {self._normalize_uuid(t['uuid']) for t in terminals}
+            self.terminal_content_hashes = {
+                u: h for u, h in self.terminal_content_hashes.items() if u in live_uuids
+            }
+            self.previous_capture_block_hashes = {
+                u: h for u, h in self.previous_capture_block_hashes.items() if u in live_uuids
+            }
+            self.terminal_marker_counts = {
+                u: c for u, c in self.terminal_marker_counts.items() if u in live_uuids
+            }
+            self.toolresult_hash_updated &= live_uuids
 
             # Check if ALL context parts are placeholders (no real content)
             # Placeholders: "[Content unchanged]", "[Output already in tool result above]"
@@ -2128,8 +2162,8 @@ class TerminatorAssistantSession(KnowledgeBaseMixin, MemoryMixin, RAGMixin, Skil
         Returns: (is_safe, risk_level, reason)
         """
         # Layer 1: Static pattern blocking (instant, no API call)
-        for pattern in self.DANGEROUS_PATTERNS:
-            if re.search(pattern, command, re.IGNORECASE):
+        for pattern in _DANGEROUS_PATTERNS:
+            if pattern.search(command):
                 return (False, "dangerous", "Blocked by static rule: matches dangerous pattern")
 
         # Layer 2: LLM judge with structured output
@@ -2578,7 +2612,6 @@ Screenshot size: {file_size} bytes"""
         # Use provided cwd or current directory
         working_dir = cwd or os.getcwd()
 
-        # Log the command being executed
         self._debug(f"execute_command_async: {command[:100]}...")
 
         try:
@@ -2703,6 +2736,11 @@ Screenshot size: {file_size} bytes"""
         cmd = parts[0].lower()
         args = parts[1] if len(parts) > 1 else ""
 
+        mixin_entry = MIXIN_HANDLERS.get(cmd)
+        if mixin_entry is not None:
+            handler_name, _ = mixin_entry
+            return getattr(self, handler_name)(args)
+
         if cmd == "/help":
             if self.voice_input:
                 voice_status = "[green]available[/]"
@@ -2715,31 +2753,15 @@ Screenshot size: {file_size} bytes"""
             return True
 
         elif cmd == "/clear":
-            # Reset conversation (system prompt will be passed on next interaction)
             try:
-                self.conversation = llm.Conversation(model=self.model)
-                # Set source for origin tracking (not a constructor parameter)
-                self.conversation.source = "tui"
-                self._clear_dedup_state()
-                # Clear rewind undo buffer (fresh start = no undo)
-                self.rewind_undo_buffer = None
-                # Broadcast clear to web companion
-                if self.web_clients:
-                    self._broadcast_to_web({"type": "clear"})
+                self._clear_conversation()
                 ConsoleHelper.success(self.console, "Conversation cleared")
             except Exception as e:
                 ConsoleHelper.error(self.console, f"Error clearing conversation: {e}")
             return True
 
         elif cmd == "/reset":
-            # Clear conversation and reset terminal states (like tmuxai /reset)
             try:
-                # Clear conversation
-                self.conversation = llm.Conversation(model=self.model)
-                # Set source for origin tracking (not a constructor parameter)
-                self.conversation.source = "tui"
-
-                # Disable watch mode if active
                 if self.watch_mode:
                     with self.watch_lock:
                         self.watch_mode = False
@@ -2750,25 +2772,14 @@ Screenshot size: {file_size} bytes"""
                             except RuntimeError:
                                 pass  # Loop already closed
 
-                # Re-render system prompt (ensures watch mode state is correct)
                 self._update_system_prompt()
                 self.original_system_prompt = self.system_prompt
 
-                # Clear plugin cache
                 if hasattr(self, 'plugin_dbus') and self.plugin_dbus:
                     self.plugin_dbus.clear_cache()
 
-                self._clear_dedup_state()
-
-                # Clear rewind undo buffer (full reset = no undo)
-                self.rewind_undo_buffer = None
-
-                # Reset watch mode iteration count
+                self._clear_conversation()
                 self.previous_watch_iteration_count = 0
-
-                # Broadcast clear to web companion
-                if self.web_clients:
-                    self._broadcast_to_web({"type": "clear"})
 
                 ConsoleHelper.success(self.console, "Conversation cleared and terminal states reset")
             except Exception as e:
@@ -2967,11 +2978,9 @@ Screenshot size: {file_size} bytes"""
                     else:
                         ConsoleHelper.warning(self.console, f"No model matching queries: {queries}")
             else:
-                # Direct model name
                 try:
                     self.model = llm.get_model(args)
                     self.model_name = args
-                    # Update conversation model
                     self.conversation.model = self.model
                     # Recalculate tool token overhead (tools change with model)
                     self._tool_token_overhead = self._estimate_tool_schema_tokens()
@@ -3050,13 +3059,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     with self.watch_lock:
                         self.watch_mode = False
                         self.watch_goal = None
-                        # Reset iteration count for next enable
-                        self.previous_watch_iteration_count = 0
-                        # Reset statistics
                         self.watch_start_time = None
-                        self.watch_total_iterations = 0
-                        self.watch_ai_calls = 0
-                        self.watch_alerts_shown = 0
+                        self._reset_watch_counters()
                         # Re-render system prompt without watch mode context
                         self._update_system_prompt()
                         if self.watch_task and not self.watch_task.done():
@@ -3101,13 +3105,8 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 with self.watch_lock:
                     self.watch_mode = True
                     self.watch_goal = args
-                    # Reset iteration count for fresh analysis with new goal
-                    self.previous_watch_iteration_count = 0
-                    # Initialize statistics
                     self.watch_start_time = time.time()
-                    self.watch_total_iterations = 0
-                    self.watch_ai_calls = 0
-                    self.watch_alerts_shown = 0
+                    self._reset_watch_counters()
                     # Re-render system prompt with watch mode context
                     self._update_system_prompt()
                     self._start_watch_mode_thread()
@@ -3122,12 +3121,6 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
             keep_instruction = args if args else None
             self.squash_context(keep=keep_instruction)
             return True
-
-        elif cmd == "/kb":
-            return self._handle_kb_command(args)
-
-        elif cmd == "/memory":
-            return self._handle_memory_command(args)
 
         elif cmd == "/auto":
             # Auto mode: LLM-judged autonomous command execution
@@ -3254,12 +3247,6 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 ConsoleHelper.error(self.console, "Usage: /speech on, /speech off, /speech status")
             return True
 
-        elif cmd == "/rag":
-            return self._handle_rag_command(args)
-
-        elif cmd == "/skill":
-            return self._handle_skill_command(args)
-
         elif cmd == "/screenshot":
             # Parse: /screenshot [mode] [delay] [prompt...]
             # delay can be a number (0-30) or "-" for default
@@ -3383,9 +3370,6 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
             else:
                 ConsoleHelper.error(self.console, "Usage: /sources [on|off|status]")
             return True
-
-        elif cmd == "/report":
-            return self._handle_report_command(args)
 
         elif cmd == "/workflow":
             import asyncio
@@ -3590,10 +3574,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                 )
 
         elif tool_name == "capture_terminal":
-            scope = get_str("scope", "exec")
-            # Validate scope (fixes scope validation inconsistency)
-            if scope not in {"exec", "all"}:
-                scope = "exec"
+            scope = self._validate_scope(get_str("scope", "exec"))
 
             self.console.print()
             ConsoleHelper.info(self.console, f"Capturing screenshot ({scope})...")
@@ -3697,9 +3678,7 @@ Watch mode: {"enabled" if self.watch_mode else "disabled"}{watch_goal_line}
                     tool_call_id=tool_call_id
                 )
 
-            scope = get_str("scope", "exec")
-            if scope not in ("exec", "all"):
-                scope = "exec"  # Default to exec for invalid scope
+            scope = self._validate_scope(get_str("scope", "exec"))
             case_sensitive = tool_args.get("case_sensitive", False)
 
             self.console.print()

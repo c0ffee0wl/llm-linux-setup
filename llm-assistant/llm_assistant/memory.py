@@ -58,9 +58,8 @@ class MemoryMixin:
         """Get local AGENTS.md path from cwd if exists."""
         return self._find_agents_file(Path.cwd())
 
-    def _load_memories(self) -> None:
-        """Load global and local AGENTS.md files."""
-        # Load global memory (case-insensitive)
+    def _load_global_memory(self) -> None:
+        """Load global AGENTS.md (case-insensitive) into cache."""
         config_dir = get_config_dir()
         config_dir.mkdir(parents=True, exist_ok=True)
         global_path = self._find_agents_file(config_dir)
@@ -76,7 +75,8 @@ class MemoryMixin:
             self._global_memory_path = None
             self._global_memory = ""
 
-        # Load local memory (case-insensitive)
+    def _load_local_memory(self) -> None:
+        """Load local (cwd) AGENTS.md (case-insensitive) into cache."""
         local_path = self._get_local_agents_path()
         if local_path:
             self._local_memory_path = local_path
@@ -89,6 +89,11 @@ class MemoryMixin:
         else:
             self._local_memory_path = None
             self._local_memory = ""
+
+    def _load_memories(self) -> None:
+        """Load global and local AGENTS.md files."""
+        self._load_global_memory()
+        self._load_local_memory()
 
     def _get_memory_content(self) -> str:
         """Get combined memory content for system prompt injection.
@@ -184,8 +189,10 @@ class MemoryMixin:
                 new_content = f"## Notes\n\n{entry}\n"
                 path.write_text(new_content)
 
-            # Reload memories to update cached content
-            self._load_memories()
+            if target == "global":
+                self._load_global_memory()
+            else:
+                self._load_local_memory()
             return True
 
         except PermissionError:

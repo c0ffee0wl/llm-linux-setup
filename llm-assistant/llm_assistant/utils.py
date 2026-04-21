@@ -10,7 +10,6 @@ are imported from llm_tools_core and re-exported here for backward compatibility
 """
 
 import os
-from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, List, Optional, Tuple, Type, TypeVar, Union, overload
 
@@ -270,41 +269,6 @@ def render_grouped_list(
     if not loaded and not available:
         console.print()
         ConsoleHelper.dim(console, empty_msg)
-
-
-# =============================================================================
-# Exception Handling Decorator
-# =============================================================================
-
-
-def safe_operation(error_prefix: str = "Operation failed", return_on_error: Any = False):
-    """Decorator for consistent exception handling.
-
-    Use on methods that have a simple try/except pattern and a uniform
-    error message format. Not suitable for complex error handling.
-
-    Args:
-        error_prefix: Prefix for error message (e.g., "Failed to load KB")
-        return_on_error: Value to return when exception occurs
-
-    Example:
-        @safe_operation("Failed to load KB")
-        def _load_kb(self, name: str) -> bool:
-            content = Path(name).read_text()
-            ...
-            return True
-    """
-    def decorator(func: Callable) -> Callable:
-        @wraps(func)
-        def wrapper(self, *args, **kwargs):
-            try:
-                return func(self, *args, **kwargs)
-            except Exception as e:
-                if hasattr(self, 'console'):
-                    self.console.print(f"[red]{error_prefix}: {e}[/]")
-                return return_on_error
-        return wrapper
-    return decorator
 
 
 # =============================================================================

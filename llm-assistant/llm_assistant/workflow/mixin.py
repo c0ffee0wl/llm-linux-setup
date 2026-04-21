@@ -8,20 +8,16 @@ providing:
 - Interrupt handling with clean state preservation
 - Integration with the session's command execution
 
-Usage:
-    class TerminatorAssistantSession(
-        KnowledgeBaseMixin, MemoryMixin, RAGMixin, SkillsMixin,
-        WorkflowMixin,  # Add as 11th mixin
-        ReportMixin, WebMixin, TerminalMixin, ContextMixin,
-        WatchMixin, MCPMixin
-    ):
-        pass
+Mix into the session class alongside the other feature mixins.
 """
 
 import os
+import re
 import signal
 from pathlib import Path
 from typing import Any, Optional, TYPE_CHECKING
+
+from ..utils import get_config_dir
 
 if TYPE_CHECKING:
     from burr_workflow.actions.registry import ActionRegistry
@@ -57,7 +53,7 @@ class WorkflowMixin:
     workflow_waiting_for_input: bool = False
 
     # Internal state
-    _workflow_ctx: dict = None
+    _workflow_ctx: Optional[dict] = None
     _workflow_progress: Optional[Any] = None
     _interrupt_requested: bool = False
     _current_process: Optional[Any] = None
@@ -91,11 +87,9 @@ class WorkflowMixin:
             Path to the SQLite database for this workflow
         """
         # Sanitize workflow name for filename
-        import re
         safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', workflow_name)[:50]
 
-        # Use llm-assistant config directory
-        config_dir = Path.home() / ".config" / "llm-assistant" / "workflows"
+        config_dir = get_config_dir() / "workflows"
         config_dir.mkdir(parents=True, exist_ok=True)
 
         return config_dir / f"{safe_name}.db"
@@ -224,9 +218,7 @@ class WorkflowMixin:
                 "db_path": str(self._workflow_db_path),
             }
 
-            # Create audit logger for execution logging
-            # Logs stored in ~/.config/llm-assistant/workflow-logs/
-            audit_log_dir = Path.home() / ".config" / "llm-assistant" / "workflow-logs"
+            audit_log_dir = get_config_dir() / "workflow-logs"
             audit_log_dir.mkdir(parents=True, exist_ok=True)
             self._workflow_audit_logger = FileAuditLogger(log_dir=audit_log_dir)
 

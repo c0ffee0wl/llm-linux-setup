@@ -7,7 +7,8 @@ bridging workflow LLM actions to llm-assistant's model capabilities.
 
 from typing import Any, Optional, TYPE_CHECKING
 import json
-import re
+
+from ..utils import _extract_json
 
 if TYPE_CHECKING:
     from llm import Conversation, Model
@@ -222,39 +223,34 @@ Respond with JSON matching this schema."""
                 temperature=effective_temp,
             )
             
-            try:
-                # Parse JSON
-                text = self._extract_json(response)
-                parsed = json.loads(text)
-                
-                # Validate against schema if jsonschema available
-                try:
-                    import jsonschema
-                    jsonschema.validate(parsed, schema)
-                except ImportError:
-                    pass  # Skip validation if jsonschema not installed
-                except jsonschema.ValidationError as e:
-                    if attempt == max_retries - 1:
-                        raise LLMSchemaValidationError(
-                            f"Schema validation failed: {e.message}"
-                        )
-                    # Retry with error feedback
-                    prompt = f"""Previous response was invalid: {e.message}
-
-Please fix and try again. {prompt}"""
-                    continue
-                
-                return parsed
-                
-            except json.JSONDecodeError as e:
+            parsed = _extract_json(response)
+            if parsed is None:
                 if attempt == max_retries - 1:
                     raise LLMSchemaValidationError(
-                        f"Failed to parse JSON after {max_retries} attempts: {e}"
+                        f"Failed to parse JSON after {max_retries} attempts. "
+                        f"Last response: {response[:200]}"
                     )
-                # Retry with error feedback
-                prompt = f"""Previous response was not valid JSON: {e}
+                prompt = f"""Previous response was not valid JSON.
 
 Please respond with valid JSON only. {prompt}"""
+                continue
+
+            try:
+                import jsonschema
+                jsonschema.validate(parsed, schema)
+            except ImportError:
+                pass  # Skip validation if jsonschema not installed
+            except jsonschema.ValidationError as e:
+                if attempt == max_retries - 1:
+                    raise LLMSchemaValidationError(
+                        f"Schema validation failed: {e.message}"
+                    )
+                prompt = f"""Previous response was invalid: {e.message}
+
+Please fix and try again. {prompt}"""
+                continue
+
+            return parsed
         
         # Should not reach here
         raise LLMSchemaValidationError("Failed to get valid JSON response")
@@ -325,38 +321,3 @@ Respond with ONLY the choice text, nothing else. No explanation, no punctuation.
         raise LLMChoiceError(
             f"LLM did not select a valid choice from {choices}. Got: {response}"
         )
-    
-    def _extract_json(self, text: str) -> str:
-        """Extract JSON from potentially markdown-wrapped response."""
-        text = text.strip()
-        
-        # Handle markdown code blocks
-        if text.startswith("```"):
-            lines = text.split("\n")
-            # Skip opening fence
-            start = 1
-            if lines[0].startswith("```json"):
-                start = 1
-            elif lines[0] == "```":
-                start = 1
-            
-            # Find closing fence
-            end = len(lines)
-            for i in range(len(lines) - 1, 0, -1):
-                if lines[i].strip() == "```":
-                    end = i
-                    break
-            
-            text = "\n".join(lines[start:end])
-        
-        # Try to find JSON object or array
-        # Match outermost braces/brackets
-        brace_match = re.search(r'\{[\s\S]*\}', text)
-        if brace_match:
-            return brace_match.group()
-        
-        bracket_match = re.search(r'\[[\s\S]*\]', text)
-        if bracket_match:
-            return bracket_match.group()
-        
-        return text.strip()

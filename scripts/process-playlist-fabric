@@ -129,24 +129,14 @@ def get_playlist_videos(playlist_url: str, sort_by_date: bool = True) -> tuple[l
 
 
 # Reusable API and formatter instances (created once, reused for all videos)
-_transcript_api: YouTubeTranscriptApi | None = None
-_text_formatter: TextFormatter | None = None
+_TRANSCRIPT_API = YouTubeTranscriptApi()
+_TEXT_FORMATTER = TextFormatter()
 
 
-def get_transcript_api() -> YouTubeTranscriptApi:
-    """Get or create the shared YouTubeTranscriptApi instance."""
-    global _transcript_api
-    if _transcript_api is None:
-        _transcript_api = YouTubeTranscriptApi()
-    return _transcript_api
-
-
-def get_text_formatter() -> TextFormatter:
-    """Get or create the shared TextFormatter instance."""
-    global _text_formatter
-    if _text_formatter is None:
-        _text_formatter = TextFormatter()
-    return _text_formatter
+def _is_rate_limit(err_str: str) -> bool:
+    """Return True if the error message matches a known rate-limit pattern."""
+    lowered = err_str.lower()
+    return any(p in lowered for p in RATE_LIMIT_PATTERNS)
 
 
 def get_transcript(video_id: str, preferred_languages: list[str] = None) -> tuple[str | None, str | None, bool]:
@@ -159,16 +149,13 @@ def get_transcript(video_id: str, preferred_languages: list[str] = None) -> tupl
     if preferred_languages is None:
         preferred_languages = ['en']
 
-    api = get_transcript_api()
-    formatter = get_text_formatter()
-
     try:
         # Try preferred languages first
         try:
-            raw_transcript = api.fetch(video_id, languages=preferred_languages)
+            raw_transcript = _TRANSCRIPT_API.fetch(video_id, languages=preferred_languages)
         except NoTranscriptFound:
             # Try to find any transcript and translate if possible
-            transcript_list = api.list(video_id)
+            transcript_list = _TRANSCRIPT_API.list(video_id)
             raw_transcript = None
 
             for transcript in transcript_list:
@@ -194,7 +181,7 @@ def get_transcript(video_id: str, preferred_languages: list[str] = None) -> tupl
                 return None, "No transcript available", False
 
         # Format transcript
-        text = formatter.format_transcript(raw_transcript)
+        text = _TEXT_FORMATTER.format_transcript(raw_transcript)
         text = text.replace('\n', ' ').replace('[Music]', '')
         text = ' '.join(text.split())  # Normalize whitespace
 
@@ -211,14 +198,9 @@ def get_transcript(video_id: str, preferred_languages: list[str] = None) -> tupl
     except VideoUnavailable:
         return None, "Video unavailable", False
     except CouldNotRetrieveTranscript as e:
-        # Check if error message indicates rate limiting
-        error_str = str(e).lower()
-        is_rate_limit = any(p in error_str for p in RATE_LIMIT_PATTERNS)
-        return None, str(e)[:200], is_rate_limit
+        return None, str(e)[:200], _is_rate_limit(str(e))
     except Exception as e:
-        error_str = str(e).lower()
-        is_rate_limit = any(p in error_str for p in RATE_LIMIT_PATTERNS)
-        return None, str(e)[:200], is_rate_limit
+        return None, str(e)[:200], _is_rate_limit(str(e))
 
 
 def save_transcript(output_dir: Path, video_id: str, transcript: str):

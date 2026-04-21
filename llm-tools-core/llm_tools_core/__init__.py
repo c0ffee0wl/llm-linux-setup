@@ -66,6 +66,7 @@ from .daemon import (
     get_sessions_dir,
     get_pid_path,
     ensure_socket_dir,
+    sanitize_terminal_id_for_filename,
     write_suggested_command,
     read_suggested_command,
     is_daemon_process_alive,
@@ -113,6 +114,7 @@ from .linux_context import (
 
 # Shared system prompts
 from .prompts import (
+    CONTEXT_UNCHANGED_MARKER,
     build_simple_system_prompt,
     build_context_section,
     wrap_terminal_context,
@@ -234,6 +236,7 @@ __all__ = [
     "get_suggest_path",
     "get_sessions_dir",
     "ensure_socket_dir",
+    "sanitize_terminal_id_for_filename",
     "write_suggested_command",
     "read_suggested_command",
     "DAEMON_STARTUP_TIMEOUT",
@@ -268,6 +271,7 @@ __all__ = [
     "format_gui_context",
     "MAX_SELECTION_BYTES",
     # System prompts
+    "CONTEXT_UNCHANGED_MARKER",
     "build_simple_system_prompt",
     "build_context_section",
     "wrap_terminal_context",

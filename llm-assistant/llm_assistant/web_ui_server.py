@@ -22,15 +22,13 @@ import time
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
-from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Dict, Optional, Set
+from typing import TYPE_CHECKING, AsyncIterator, Dict, Optional, Set
 
 from aiohttp import web
 import llm
 import sqlite_utils
-from llm import ToolResult
 
 from llm_tools_core.markdown import strip_markdown
-from llm_tools_core.xdg import get_config_dir
 from llm_tools_core.tool_execution import execute_tool_call
 from llm_tools_core import (
     MAX_TOOL_ITERATIONS,
@@ -40,7 +38,6 @@ from llm_tools_core import (
     gather_context,
     format_gui_context,
     strip_context_tags,
-    format_tool_call_markdown,
     get_assistant_default_model,
 )
 from llm_tools_core.hashing import hash_gui_context
@@ -50,6 +47,21 @@ from .utils import get_logs_db_path
 
 if TYPE_CHECKING:
     from .daemon import AssistantDaemon
+
+
+_COLLECTION_NAME_RE = re.compile(r'^[\w\-]+$')
+_COLLECTION_NAME_ERROR = "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"
+
+
+def _invalid_collection_name(name: str) -> Optional[web.Response]:
+    """Return a 400 JSON response if ``name`` fails the RAG-collection rules.
+
+    ``None`` means the name is valid. Callers short-circuit on a non-None
+    return, keeping the validation block a single line per handler.
+    """
+    if not name or not _COLLECTION_NAME_RE.match(name) or len(name) > 64:
+        return web.json_response({"error": _COLLECTION_NAME_ERROR}, status=400)
+    return None
 
 
 class WebUIServer:
@@ -111,7 +123,6 @@ class WebUIServer:
         self.app.router.add_get("/", self.handle_index)
         self.app.router.add_get("/ws", self.handle_websocket)
         self.app.router.add_post("/upload", self.handle_upload)
-        # Note: /context endpoint removed - daemon captures context directly for guiassistant sessions
 
         # API routes for health, history, completions, capture, models, and RAG
         self.app.router.add_get("/api/health", self.handle_api_health)
@@ -568,25 +579,6 @@ class WebUIServer:
             cancel_flag.set()
             raise
 
-    async def _execute_tool_call(
-        self,
-        tool_call,
-        implementations: Dict[str, Callable],
-        ws: web.WebSocketResponse,
-        arg_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
-        message_id: Optional[str] = None,
-    ) -> ToolResult:
-        """Execute a single tool call and return the result.
-
-        Uses shared execute_tool_call from llm_tools_core.
-        """
-        async def emit(event: dict) -> None:
-            await self._safe_send_json(ws, event)
-
-        return await execute_tool_call(
-            tool_call, implementations, emit, arg_overrides, message_id=message_id
-        )
-
     async def _handle_query(
         self,
         session_id: str,
@@ -595,7 +587,6 @@ class WebUIServer:
     ):
         """Handle a query message with streaming response and tool execution."""
         query = msg.get("query", "").strip()
-        mode = msg.get("mode", "assistant")
         image_paths = msg.get("images", [])
         no_log = msg.get("noLog", False)
 
@@ -708,20 +699,47 @@ class WebUIServer:
         cancel_flag = threading.Event()
         response_holder: list = [None]  # Thread-safe container for response
 
+        # Throttle per-chunk broadcasts so the ws doesn't drown in tiny frames.
+        # Matches the TUI web-broadcast cadence (session.py): one update per
+        # ~60 ms OR every ~80 new characters, whichever comes first.
+        stream_ts = 0.0
+        stream_len = 0
+
+        async def send_stream_text(continuation: bool = False, force: bool = False) -> bool:
+            """Send the current accumulated_text, honoring the throttle window.
+            Returns False if the client disconnected."""
+            nonlocal stream_ts, stream_len
+            now = time.monotonic()
+            text_len = len(accumulated_text)
+            if not force and (now - stream_ts) < 0.06 and (text_len - stream_len) < 80:
+                return True
+            payload = {
+                "type": "text",
+                "content": accumulated_text,
+                "messageId": message_id,
+            }
+            if continuation:
+                payload["continuation"] = True
+            if not await self._safe_send_json(ws, payload):
+                return False
+            stream_ts = now
+            stream_len = text_len
+            return True
+
         try:
             # Stream initial response
             async for chunk in self._stream_llm_response(
                 full_query, session, cancel_flag, response_holder, attachments
             ):
                 accumulated_text += chunk
-                if not await self._safe_send_json(ws, {
-                    "type": "text",
-                    "content": accumulated_text,
-                    "messageId": message_id,
-                }):
+                if not await send_stream_text():
                     # Client disconnected, stop streaming
                     cancel_flag.set()
                     return
+            # Flush the tail so the final tokens always reach the client.
+            if accumulated_text and not await send_stream_text(force=True):
+                cancel_flag.set()
+                return
 
             # Get tool calls from response
             response = response_holder[0]
@@ -751,6 +769,9 @@ class WebUIServer:
                     "messageId": message_id,
                 })
 
+            async def emit(event: dict) -> None:
+                await self._safe_send_json(ws, event)
+
             while tool_calls and iteration < MAX_TOOL_ITERATIONS:
                 iteration += 1
 
@@ -765,12 +786,11 @@ class WebUIServer:
                     except Exception:
                         pass  # Continue without logging on error
 
-                # Execute each tool call and collect results
                 tool_results = []
                 for tool_call in tool_calls:
-                    result = await self._execute_tool_call(
-                        tool_call, implementations, ws, arg_overrides,
-                        message_id=message_id
+                    result = await execute_tool_call(
+                        tool_call, implementations, emit, arg_overrides,
+                        message_id=message_id,
                     )
                     tool_results.append(result)
 
@@ -781,6 +801,10 @@ class WebUIServer:
                 # the tool call UI elements.
                 message_id = f"msg-{int(time.time() * 1000)}"
                 accumulated_text = ""
+                # Reset throttle window per message so the first chunk of a
+                # continuation isn't held back by a stale timestamp.
+                stream_ts = 0.0
+                stream_len = 0
 
                 # Continue conversation with tool results (empty prompt)
                 response_holder[0] = None  # Reset for next response
@@ -788,15 +812,13 @@ class WebUIServer:
                     "", session, cancel_flag, response_holder, tool_results=tool_results
                 ):
                     accumulated_text += chunk
-                    if not await self._safe_send_json(ws, {
-                        "type": "text",
-                        "content": accumulated_text,
-                        "messageId": message_id,
-                        "continuation": True,
-                    }):
+                    if not await send_stream_text(continuation=True):
                         # Client disconnected, stop streaming
                         cancel_flag.set()
                         return
+                if accumulated_text and not await send_stream_text(continuation=True, force=True):
+                    cancel_flag.set()
+                    return
 
                 # Check for more tool calls
                 response = response_holder[0]
@@ -887,7 +909,7 @@ class WebUIServer:
 
         responses = state.session.conversation.responses
 
-        # Delete old responses from database (only if logging is enabled)
+        # Collect IDs for DB cleanup BEFORE truncating — the truncate drops them from memory.
         if self._should_log(session_id) and keep_turns < len(responses):
             response_ids = [r.id for r in responses[keep_turns:] if hasattr(r, 'id') and r.id]
             if response_ids:
@@ -897,11 +919,8 @@ class WebUIServer:
                     lambda ids=response_ids: self._delete_responses_from_db(ids)
                 )
 
-        # Truncate in-memory conversation
-        if keep_turns < len(responses):
-            state.session.conversation.responses = responses[:keep_turns]
+        state.session.truncate_responses(keep_turns)
 
-        # Now send the edited content as a new query
         await self._handle_query(session_id, ws, {"query": new_content})
 
     async def _handle_regenerate(
@@ -919,22 +938,8 @@ class WebUIServer:
 
         state = self.daemon.get_session_state(session_id, source="gui")
         if state.session.conversation:
-            responses = state.session.conversation.responses
+            responses_to_remove = state.session.pop_turn()
 
-            # Pop the entire turn: continuation responses (empty prompt) +
-            # the initial response (with user prompt). Tool-call turns create
-            # multiple Response objects that all belong to one logical turn.
-            responses_to_remove = []
-            while responses:
-                last = responses[-1]
-                responses_to_remove.append(responses.pop())
-                prompt_text = ""
-                if hasattr(last, 'prompt') and last.prompt:
-                    prompt_text = (last.prompt.prompt or "").strip()
-                if prompt_text:
-                    break  # Was the initial response with user prompt, done
-
-            # Delete removed responses from database (only if logging is enabled)
             if self._should_log(session_id) and responses_to_remove:
                 response_ids = [
                     r.id for r in responses_to_remove
@@ -947,7 +952,6 @@ class WebUIServer:
                         lambda ids=response_ids: self._delete_responses_from_db(ids)
                     )
 
-        # Re-query with the user content
         await self._handle_query(session_id, ws, {"query": user_content})
 
     def _rebuild_conversation_responses(
@@ -1954,12 +1958,9 @@ class WebUIServer:
                     status=400
                 )
 
-            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
-            if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
-                return web.json_response(
-                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
-                    status=400
-                )
+            invalid = _invalid_collection_name(collection)
+            if invalid is not None:
+                return invalid
 
             # Validate top_k bounds (reasonable range: 1-100)
             if not isinstance(top_k, int) or top_k < 1 or top_k > 100:
@@ -2012,13 +2013,11 @@ class WebUIServer:
                     status=400
                 )
 
-            # Validate collection name if provided (None is allowed to deactivate)
+            # Validate collection name if provided (None is allowed to deactivate).
             if collection is not None:
-                if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
-                    return web.json_response(
-                        {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
-                        status=400
-                    )
+                invalid = _invalid_collection_name(collection)
+                if invalid is not None:
+                    return invalid
 
             # Store active collection for this session (None = deactivate)
             state = self.daemon.get_session_state(session_id, source="gui")
@@ -2063,12 +2062,9 @@ class WebUIServer:
                     status=400
                 )
 
-            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
-            if not re.match(r'^[\w\-]+$', collection) or len(collection) > 64:
-                return web.json_response(
-                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
-                    status=400
-                )
+            invalid = _invalid_collection_name(collection)
+            if invalid is not None:
+                return invalid
 
             # Validate path based on type
             is_url = path.startswith('http://') or path.startswith('https://')
@@ -2082,7 +2078,6 @@ class WebUIServer:
                 # Handle glob patterns: use the directory part for validation
                 if '*' in expanded or '?' in expanded:
                     # For globs, validate the base directory
-                    import glob as glob_module
                     base_dir = os.path.dirname(expanded.split('*')[0].split('?')[0])
                     if base_dir:
                         real_base = os.path.realpath(base_dir)
@@ -2148,12 +2143,9 @@ class WebUIServer:
                     status=400
                 )
 
-            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
-            if not re.match(r'^[\w\-]+$', name) or len(name) > 64:
-                return web.json_response(
-                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
-                    status=400
-                )
+            invalid = _invalid_collection_name(name)
+            if invalid is not None:
+                return invalid
 
             handler = RAGHandler()
             if not handler.available():
@@ -2187,12 +2179,9 @@ class WebUIServer:
                     status=400
                 )
 
-            # Validate collection name (alphanumeric, underscore, hyphen; max 64 chars)
-            if not re.match(r'^[\w\-]+$', name) or len(name) > 64:
-                return web.json_response(
-                    {"error": "Invalid collection name (alphanumeric, underscore, hyphen only; max 64 chars)"},
-                    status=400
-                )
+            invalid = _invalid_collection_name(name)
+            if invalid is not None:
+                return invalid
 
             handler = RAGHandler()
             if not handler.available():
@@ -2311,8 +2300,6 @@ class WebUIServer:
                     else:
                         session.active_mcp_servers.discard(name)
                 elif tool_type == 'optional':
-                    if not hasattr(session, 'loaded_optional_tools'):
-                        session.loaded_optional_tools = set()
                     if enabled:
                         session.loaded_optional_tools.add(name)
                     else:
