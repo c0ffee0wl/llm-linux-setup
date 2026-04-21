@@ -9,7 +9,7 @@ This module provides model-specific context limits used by:
 from typing import Dict
 
 # Model-specific context limits (input tokens)
-# Based on provider documentation as of 2025-12
+# Based on provider documentation as of 2026-04
 MODEL_CONTEXT_LIMITS: Dict[str, int] = {
     # Azure OpenAI / OpenAI - GPT-4.1 series (1M context)
     "gpt-4.1": 1000000,
@@ -20,7 +20,7 @@ MODEL_CONTEXT_LIMITS: Dict[str, int] = {
     "gpt-4o": 128000,
     "gpt-4o-mini": 128000,
 
-    # Azure OpenAI / OpenAI - GPT-5 series (272k context)
+    # Azure OpenAI / OpenAI - GPT-5 series (272k input context)
     "gpt-5": 270000,
     "gpt-5-mini": 270000,
     "gpt-5-nano": 270000,
@@ -32,6 +32,13 @@ MODEL_CONTEXT_LIMITS: Dict[str, int] = {
     "gpt-5.1-codex-max": 270000,
     "gpt-5.2": 270000,
     "gpt-5.2-chat": 110000,
+    "gpt-5.2-codex": 270000,
+    "gpt-5.3-chat": 110000,
+    "gpt-5.3-codex": 270000,
+    "gpt-5.4": 920000,
+    "gpt-5.4-pro": 920000,
+    "gpt-5.4-mini": 270000,
+    "gpt-5.4-nano": 270000,
 
     # Azure OpenAI / OpenAI - Reasoning models (o-series)
     "o1": 200000,
@@ -60,13 +67,13 @@ DEFAULT_CONTEXT_LIMIT = 200000
 # Model upgrades for assistant applications
 # Maps lightweight default models to more capable versions
 ASSISTANT_MODEL_UPGRADES: Dict[str, str] = {
-    "azure/gpt-4.1-mini": "azure/gpt-5.1-codex",
+    "azure/gpt-4.1-mini": "azure/gpt-5.3-codex",
     # Future: add more as needed
     # "gemini-2.5-flash-lite": "gemini-2.5-flash",
 }
 
 # Fallback model when llm.get_default_model() fails
-ASSISTANT_MODEL_FALLBACK = "azure/gpt-5.1-codex"
+ASSISTANT_MODEL_FALLBACK = "azure/gpt-5.3-codex"
 
 
 def get_assistant_default_model() -> str:
@@ -83,7 +90,7 @@ def get_assistant_default_model() -> str:
     Examples:
         >>> # If system default is azure/gpt-4.1-mini:
         >>> get_assistant_default_model()
-        'azure/gpt-5.1-codex'
+        'azure/gpt-5.3-codex'
         >>> # If system default is gemini-2.5-flash:
         >>> get_assistant_default_model()
         'gemini-2.5-flash'  # No upgrade rule, returns as-is

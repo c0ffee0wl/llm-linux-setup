@@ -36,7 +36,7 @@ Uses Azure-hosted OpenAI models (not direct OpenAI API).
 - `azure/gpt-4.1-mini` - GPT-4.1 Mini (balanced, **default**)
 - `azure/gpt-4.1-nano` - GPT-4.1 Nano (fast, cost-effective)
 - `azure/o4-mini` - O4 Mini (advanced reasoning)
-- `azure/gpt-5-mini`, `azure/gpt-5-nano`, `azure/gpt-5.1` - GPT-5 models
+- `azure/gpt-5.4-mini`, `azure/gpt-5.4-nano`, `azure/gpt-5.4` - GPT-5.4 models (registration required for `gpt-5.4`)
 
 **Note**: Model IDs shown above are examples from a specific Azure deployment. Your available models depend on your Azure Foundry configuration. Use `llm models` to see your configured models.
 

@@ -410,7 +410,7 @@ configure_codex_cli() {
 
     # Generate config.toml
     cat > ~/.codex/config.toml <<EOF
-model = "gpt-5.1-codex"
+model = "gpt-5.3-codex"
 model_provider = "azure"
 model_reasoning_effort = "medium"
 
@@ -1453,7 +1453,7 @@ if [ "$AZURE_CONFIGURED" = "true" ]; then
     # Create extra-openai-models.yaml
     log "Creating Azure OpenAI models configuration..."
 
-    azure_models=(gpt-4.1 gpt-4.1-mini gpt-4.1-nano gpt-5-mini gpt-5-nano gpt-5.1 o4-mini)
+    azure_models=(gpt-4.1 gpt-4.1-mini gpt-4.1-nano gpt-5.4-mini gpt-5.4-nano gpt-5.4 o4-mini)
     {
         for i in "${!azure_models[@]}"; do
             [ "$i" -gt 0 ] && printf '\n'
@@ -1473,7 +1473,7 @@ EOF
     # Set default model with automatic migration from old default
     set_or_migrate_default_model "azure/gpt-4.1-mini"
 
-    # Create extra-responses-models.yaml for Responses API models (gpt-5.1-codex)
+    # Create extra-responses-models.yaml for Responses API models (gpt-5.3-codex)
     # These models require the Responses API and do NOT work with Chat Completions
     log "Creating Azure OpenAI Responses API models configuration..."
 
@@ -1482,14 +1482,14 @@ EOF
 # Azure OpenAI models that require the Responses API
 # These models do NOT work with Chat Completions API
 
-- model_id: gpt-5.1-codex
-  model_name: gpt-5.1-codex
+- model_id: gpt-5.3-codex
+  model_name: gpt-5.3-codex
   api_base: "${AZURE_API_BASE}"
   api_key_name: azure
   vision: true
   reasoning: true
   aliases:
-    - azure/gpt-5.1-codex
+    - azure/gpt-5.3-codex
 EOF
 
     # Create azure-embeddings-models.yaml for embedding models
