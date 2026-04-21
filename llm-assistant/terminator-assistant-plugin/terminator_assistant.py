@@ -21,12 +21,14 @@ import base64
 import heapq
 import os
 import math
+import re
 import threading
 import traceback
 import gi
 gi.require_version('Vte', '2.91')  # noqa: E402
 gi.require_version('Gdk', '3.0')  # noqa: E402
-from gi.repository import Vte, Gdk  # noqa: E402
+gi.require_version('Gtk', '3.0')  # noqa: E402
+from gi.repository import Vte, Gdk, Gtk  # noqa: E402
 import terminatorlib.plugin as plugin  # noqa: E402
 from terminatorlib.terminator import Terminator  # noqa: E402
 from terminatorlib.util import dbg, err  # noqa: E402
@@ -161,6 +163,10 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
         self.terminator = Terminator()
 
+        # VTE minor version is constant for the process lifetime; cache once
+        # to avoid redundant calls on every capture hot path.
+        self._vte_version = Vte.get_minor_version()
+
         # Content caching to avoid repeated VTE queries
         self.content_cache = {}  # uuid -> content
         self.last_capture = {}   # uuid -> timestamp
@@ -180,6 +186,81 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
 
         dbg('TerminatorAssistant initialized')
 
+    def _resolve_vte(self, terminal_uuid):
+        """Resolve a terminal UUID to its VTE widget or raise RuntimeError.
+
+        Callers' outer ``except Exception`` handlers map the raised error to
+        the appropriate D-Bus return sentinel (empty string, {}, [], False, etc).
+        """
+        terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
+        if not terminal:
+            err(f'Terminal {terminal_uuid} not found')
+            raise RuntimeError(f"Terminal with UUID {terminal_uuid} not found")
+        vte = terminal.get_vte()
+        if not vte:
+            err(f'VTE not accessible for terminal {terminal_uuid}')
+            raise RuntimeError(f"Could not access VTE for terminal {terminal_uuid}")
+        return vte
+
+    def _capture_vte_range(self, vte, start_row, end_row, term_width):
+        """Extract text from a VTE rectangle, using the version-appropriate API.
+
+        Uses ``get_text_range_format`` on VTE >= 72, falling back to
+        ``get_text_range`` with a lambda predicate on older VTE. Returns the
+        string content (never None) or raises if the underlying call fails.
+        """
+        if self._vte_version >= 72:
+            result = vte.get_text_range_format(
+                Vte.Format.TEXT,
+                start_row, 0,
+                end_row, term_width - 1,
+            )
+        else:
+            result = vte.get_text_range(
+                start_row, 0,
+                end_row, term_width - 1,
+                lambda *a: True,
+            )
+        if isinstance(result, tuple):
+            return result[0] if result else ''
+        if result is None:
+            return ''
+        return str(result)
+
+    @staticmethod
+    def _terminal_metadata(term):
+        """Build the D-Bus metadata dict for a single terminal widget.
+
+        Shared helper used by both ``get_all_terminals_metadata`` and
+        ``get_terminals_in_same_tab`` so the field extraction stays consistent.
+        """
+        title = term.titlebar.get_custom_string()
+        if not title:
+            title = term.get_window_title() or 'Terminal'
+        vte = term.get_vte()
+        focused = bool(vte and vte.has_focus())
+        cwd = term.get_cwd() or '~'
+        return {
+            'uuid': term.uuid.urn,
+            'title': title,
+            'focused': str(focused),  # Convert boolean to string for D-Bus
+            'cwd': cwd,
+        }
+
+    def _fallback_capture_end(self, vte, start_row, term_height):
+        """Compute a safe end-row when the VTE cursor position is unavailable.
+
+        Prefers the vadjustment's current scroll position; falls back to
+        ``start_row + term_height`` if even that can't be read.
+        """
+        try:
+            vadj = vte.get_vadjustment()
+            if vadj:
+                return math.floor(vadj.get_value() + term_height) - 1
+        except Exception:
+            pass
+        return start_row + term_height
+
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='(ii)')
     def get_cursor_position(self, terminal_uuid):
         """
@@ -193,16 +274,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             Returns (-1, -1) on error.
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return (-1, -1)
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return (-1, -1)
-
+            vte = self._resolve_vte(terminal_uuid)
             col, row = vte.get_cursor_position()
             dbg(f'Cursor position for {terminal_uuid}: col={col}, row={row}')
             return (col, row)
@@ -227,21 +299,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             # Handle D-Bus -1 as None for auto-detect
             if lines == -1:
                 lines = None
-            # Find terminal by UUID with validation
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return f"ERROR: Terminal with UUID {terminal_uuid} not found"
-
-            # Get VTE widget with validation
-            try:
-                vte = terminal.get_vte()
-                if not vte:
-                    err(f'VTE not accessible for terminal {terminal_uuid}')
-                    return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
-            except Exception as e:
-                err(f'Error accessing VTE: {e}')
-                return f"ERROR: VTE access failed: {str(e)}"
+            vte = self._resolve_vte(terminal_uuid)
 
             # Auto-detect visible viewport size if not specified
             if lines is None:
@@ -289,63 +347,13 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 capture_start = 0
                 capture_end = lines - 1
 
-            # DEBUG: Log capture parameters
-            dbg(f'CAPTURE DEBUG for {terminal_uuid}:')
-            dbg('  Capture mode: viewport-based')
-            dbg(f'  Terminal width: {term_width}')
-            dbg(f'  Requested lines: {lines}')
-            dbg(f'  Calculated range: start_row={capture_start}, end_row={capture_end}')
-            dbg(f'  Range span: {capture_end - capture_start + 1} rows')
+            dbg(f'CAPTURE for {terminal_uuid}: width={term_width}, rows=[{capture_start}, {capture_end}] ({capture_end - capture_start + 1} lines)')
 
-            # Version-aware content capture with error handling
-            content = None
-            vte_version = Vte.get_minor_version()
-
-            if vte_version >= 72:
-                # Modern VTE: use get_text_range_format
-                dbg(f'Using get_text_range_format (VTE {vte_version})')
-                try:
-                    result = vte.get_text_range_format(
-                        Vte.Format.TEXT,
-                        capture_start, 0,           # start row, start col
-                        capture_end, term_width - 1     # end row, end col (full width)
-                    )
-                    # Verify it's a tuple and extract text
-                    # Handle edge cases: None, empty tuple, or direct string
-                    if isinstance(result, tuple):
-                        content = result[0] if result else ''
-                    elif result is None:
-                        content = ''
-                    else:
-                        content = str(result)
-                except Exception as e:
-                    err(f'VTE 72+ capture failed: {e}')
-                    return f"ERROR: Content capture failed: {str(e)}"
-            else:
-                # Older VTE: use get_text_range with lambda
-                # Returns tuple (text, attributes) - must extract [0]
-                dbg(f'Using get_text_range (VTE {vte_version})')
-                try:
-                    result = vte.get_text_range(
-                        capture_start, 0,           # start row, start col
-                        capture_end, term_width - 1,    # end row, end col (full width)
-                        lambda *a: True  # Include all cells
-                    )
-                    # Extract text from tuple (same pattern as logger.py, remote.py)
-                    # Handle edge cases: None, empty tuple, or direct string
-                    if isinstance(result, tuple):
-                        content = result[0] if result else ''
-                    elif result is None:
-                        content = ''
-                    else:
-                        content = str(result) if result else ''
-                except Exception as e:
-                    err(f'VTE legacy capture failed: {e}')
-                    return f"ERROR: Content capture failed: {str(e)}"
-
-            if content is None:
-                err('Content capture returned None')
-                return f"ERROR: Failed to capture content from terminal {terminal_uuid}"
+            try:
+                content = self._capture_vte_range(vte, capture_start, capture_end, term_width)
+            except Exception as e:
+                err(f'VTE capture failed (version {self._vte_version}): {e}')
+                return f"ERROR: Content capture failed: {str(e)}"
 
             # Cache the result (thread-safe)
             with self.cache_lock:
@@ -380,64 +388,25 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
                 err(f'Invalid start_row: {start_row} (must be >= 0)')
                 return f"ERROR: start_row must be non-negative, got {start_row}"
 
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return f"ERROR: Terminal with UUID {terminal_uuid} not found"
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
+            vte = self._resolve_vte(terminal_uuid)
 
             term_width = vte.get_column_count()
             term_height = vte.get_row_count()
 
-            # Calculate end row: use cursor position (where command output ends)
-            # This allows dynamic expansion to capture full command output
+            # Prefer cursor position (marks end of command output); fall back to
+            # vadjustment-based viewport end, then to a fixed offset.
             try:
                 _, cursor_row = vte.get_cursor_position()
-                if cursor_row >= 0:
-                    capture_end = cursor_row
-                else:
-                    # Fallback if cursor position unavailable
-                    vadj = vte.get_vadjustment()
-                    if vadj:
-                        scroll_pos = vadj.get_value()
-                        capture_end = math.floor(scroll_pos + term_height) - 1
-                    else:
-                        capture_end = start_row + term_height
             except Exception:
-                # Ultimate fallback
-                try:
-                    vadj = vte.get_vadjustment()
-                    if vadj:
-                        scroll_pos = vadj.get_value()
-                        capture_end = math.floor(scroll_pos + term_height) - 1
-                    else:
-                        capture_end = start_row + term_height
-                except Exception:
-                    capture_end = start_row + term_height
+                cursor_row = -1
+            if cursor_row >= 0:
+                capture_end = cursor_row
+            else:
+                capture_end = self._fallback_capture_end(vte, start_row, term_height)
 
             dbg(f'capture_from_row: start={start_row}, end={capture_end}, span={capture_end - start_row + 1} rows')
 
-            # Version-aware content capture
-            vte_version = Vte.get_minor_version()
-
-            if vte_version >= 72:
-                result = vte.get_text_range_format(
-                    Vte.Format.TEXT,
-                    start_row, 0,
-                    capture_end, term_width - 1
-                )
-                content = result[0] if isinstance(result, tuple) else (result or '')
-            else:
-                result = vte.get_text_range(
-                    start_row, 0,
-                    capture_end, term_width - 1,
-                    lambda *a: True
-                )
-                content = result[0] if isinstance(result, tuple) else (result or '')
+            content = self._capture_vte_range(vte, start_row, capture_end, term_width)
 
             # NOTE: Autosuggestion ghost text (zsh-autosuggestions, fish, etc.)
             # is NOT trimmed here. Shell suggestions render beyond the cursor
@@ -468,21 +437,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             Base64-encoded PNG image data, or error message starting with "ERROR:"
         """
         try:
-            # Find terminal by UUID
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return f"ERROR: Terminal with UUID {terminal_uuid} not found"
-
-            # Get VTE widget
-            try:
-                vte = terminal.get_vte()
-                if not vte:
-                    err(f'VTE not accessible for terminal {terminal_uuid}')
-                    return f"ERROR: Could not access VTE for terminal {terminal_uuid}"
-            except Exception as e:
-                err(f'Error accessing VTE: {e}')
-                return f"ERROR: VTE access failed: {str(e)}"
+            vte = self._resolve_vte(terminal_uuid)
 
             # Get the widget's GdkWindow (the actual rendered window)
             gdk_window = vte.get_window()
@@ -537,15 +492,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             True on success, False on error
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return False
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'Could not access VTE for terminal {terminal_uuid}')
-                return False
+            vte = self._resolve_vte(terminal_uuid)
 
             # Feed text to VTE (convert to bytes)
             vte.feed_child(text.encode('utf-8'))
@@ -579,15 +526,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             True on success, False on error
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return False
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'Could not access VTE for terminal {terminal_uuid}')
-                return False
+            vte = self._resolve_vte(terminal_uuid)
 
             # O(1) lookup using module-level SPECIAL_KEYS constant (case-insensitive)
             keypress_bytes = SPECIAL_KEYS.get(keypress.lower())
@@ -622,39 +561,14 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
         terminals_info = []
 
         try:
-            dbg(f'DEBUG: self.terminator = {self.terminator}')
-            dbg(f'DEBUG: hasattr terminals = {hasattr(self.terminator, "terminals")}')
-            dbg(f'DEBUG: self.terminator.terminals = {self.terminator.terminals}')
-            dbg(f'DEBUG: len(self.terminator.terminals) = {len(self.terminator.terminals)}')
-
             # Copy terminals list to avoid race with GTK thread modifying it during iteration
             terminals_snapshot = list(self.terminator.terminals)
             for term in terminals_snapshot:
                 try:
-                    dbg(f'DEBUG: Processing terminal {term}')
-                    # Get custom title if set, otherwise use automatic title
-                    title = term.titlebar.get_custom_string()
-                    if not title:
-                        title = term.get_window_title() or 'Terminal'
-
-                    # Check focus state
-                    focused = False
-                    vte = term.get_vte()
-                    if vte:
-                        focused = vte.has_focus()
-
-                    # Get current working directory
-                    cwd = term.get_cwd() or '~'
-
-                    terminals_info.append({
-                        'uuid': term.uuid.urn,
-                        'title': title,
-                        'focused': str(focused),  # Convert boolean to string for D-Bus
-                        'cwd': cwd
-                    })
+                    terminals_info.append(self._terminal_metadata(term))
                 except Exception as term_error:
                     # Terminal may have been destroyed between snapshot and access
-                    dbg(f'DEBUG: Skipping terminal (may be destroyed): {term_error}')
+                    dbg(f'Skipping terminal (may be destroyed): {term_error}')
 
             dbg(f'Retrieved metadata for {len(terminals_info)} terminals')
             return terminals_info
@@ -682,9 +596,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
         parent = widget.get_parent()
 
         while parent is not None:
-            # Check if parent is a Notebook (Gtk.Notebook for tabs)
-            # Notebook has get_n_pages method that containers don't have
-            if hasattr(parent, 'get_n_pages'):
+            if isinstance(parent, Gtk.Notebook):
                 dbg(f'_get_tab_container: found Notebook, returning tab container {widget}')
                 return widget  # widget is the tab's root container
             widget = parent
@@ -712,65 +624,43 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             - focused: "True" or "False" indicating if terminal has focus
             - cwd: Current working directory
         """
-        dbg(f'[SIDECHAT-PLUGIN] get_terminals_in_same_tab called with UUID: {reference_terminal_uuid}')
+        dbg(f'get_terminals_in_same_tab called with UUID: {reference_terminal_uuid}')
         terminals_info = []
 
         try:
-            # Find the reference terminal
             reference_term = self.terminator.find_terminal_by_uuid(reference_terminal_uuid)
             if not reference_term:
-                err(f'[SIDECHAT-PLUGIN] Reference terminal {reference_terminal_uuid} not found')
+                err(f'Reference terminal {reference_terminal_uuid} not found')
                 return []
 
-            # Get the tab container for the reference terminal
             reference_tab = self._get_tab_container(reference_term)
             if not reference_tab:
-                err('[SIDECHAT-PLUGIN] Could not get tab container for reference terminal')
+                err('Could not get tab container for reference terminal')
                 return []
 
-            dbg(f'[SIDECHAT-PLUGIN] Reference tab container: {reference_tab}')
-            dbg(f'[SIDECHAT-PLUGIN] Total terminals in Terminator instance: {len(self.terminator.terminals)}')
-
-            # Filter terminals to only those in the same TAB
             # Copy terminals list to avoid race with GTK thread modifying it during iteration
             terminals_snapshot = list(self.terminator.terminals)
             for term in terminals_snapshot:
                 try:
                     term_tab = self._get_tab_container(term)
                 except Exception as e:
-                    dbg(f'[SIDECHAT-PLUGIN] Could not get tab container for terminal: {e}')
+                    dbg(f'Could not get tab container for terminal: {e}')
                     continue
 
                 # Compare tab container objects (same instance = same tab)
-                # Both containers are obtained in the same call, so object identity is stable
-                if term_tab is None:
+                if term_tab is None or term_tab is not reference_tab:
                     continue
-                if term_tab is reference_tab:
-                    # Get terminal metadata (same code as get_all_terminals_metadata)
-                    title = term.titlebar.get_custom_string()
-                    if not title:
-                        title = term.get_window_title() or 'Terminal'
+                try:
+                    terminals_info.append(self._terminal_metadata(term))
+                except Exception as term_error:
+                    dbg(f'Skipping terminal (may be destroyed): {term_error}')
 
-                    focused = False
-                    vte = term.get_vte()
-                    if vte:
-                        focused = vte.has_focus()
-
-                    cwd = term.get_cwd() or '~'
-
-                    terminals_info.append({
-                        'uuid': term.uuid.urn,
-                        'title': title,
-                        'focused': str(focused),
-                        'cwd': cwd
-                    })
-
-            dbg(f'[SIDECHAT-PLUGIN] Retrieved metadata for {len(terminals_info)} terminals in same tab as {reference_terminal_uuid}')
+            dbg(f'Retrieved metadata for {len(terminals_info)} terminals in same tab as {reference_terminal_uuid}')
             return terminals_info
 
         except Exception as e:
-            err(f'[SIDECHAT-PLUGIN] Error getting terminals in same tab: {e}')
-            err(f'[SIDECHAT-PLUGIN] Traceback: {traceback.format_exc()}')
+            err(f'Error getting terminals in same tab: {e}')
+            err(f'Traceback: {traceback.format_exc()}')
             return []
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='', out_signature='s')
@@ -1011,32 +901,27 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             self.tui_cache_time[terminal_uuid] = time.time()
             self._evict_old_cache_entries()
 
-    def _evict_old_cache_entries(self):
-        """Remove oldest cache entries if cache exceeds max size.
-
-        Must be called while holding cache_lock.
-        Uses LRU eviction based on timestamps.
-
-        Optimized: O(n log n) instead of O(n²) by sorting once and deleting in batch.
+    @staticmethod
+    def _evict_by_timestamp(primary, timestamps, max_size):
+        """Drop oldest entries from ``primary`` (and matching ``timestamps``)
+        until it fits ``max_size``. Must be called with cache_lock held.
+        O(n log k) where k = number of entries to evict.
         """
-        # Evict content cache entries - find all entries to evict in one pass
-        excess_content = len(self.content_cache) - CACHE_MAX_SIZE
-        if excess_content > 0 and self.last_capture:
-            # Use heapq.nsmallest for O(n log k) where k = excess_content
-            oldest_keys = heapq.nsmallest(excess_content, self.last_capture,
-                                          key=self.last_capture.get)
-            for key in oldest_keys:
-                self.content_cache.pop(key, None)
-                self.last_capture.pop(key, None)
+        excess = len(primary) - max_size
+        if excess <= 0 or not timestamps:
+            return
+        oldest_keys = heapq.nsmallest(excess, timestamps, key=timestamps.get)
+        for key in oldest_keys:
+            primary.pop(key, None)
+            timestamps.pop(key, None)
 
-        # Evict TUI cache entries
-        excess_tui = len(self.tui_cache) - CACHE_MAX_SIZE
-        if excess_tui > 0 and self.tui_cache_time:
-            oldest_keys = heapq.nsmallest(excess_tui, self.tui_cache_time,
-                                          key=self.tui_cache_time.get)
-            for key in oldest_keys:
-                self.tui_cache.pop(key, None)
-                self.tui_cache_time.pop(key, None)
+    def _evict_old_cache_entries(self):
+        """Remove oldest entries from both content and TUI caches if over size.
+
+        Must be called while holding ``cache_lock``.
+        """
+        self._evict_by_timestamp(self.content_cache, self.last_capture, CACHE_MAX_SIZE)
+        self._evict_by_timestamp(self.tui_cache, self.tui_cache_time, CACHE_MAX_SIZE)
 
     @dbus.service.method(PLUGIN_BUS_NAME, in_signature='s', out_signature='b')
     def scroll_to_bottom(self, terminal_uuid):
@@ -1097,16 +982,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             True if terminal has active text selection, False otherwise
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return False
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return False
-
+            vte = self._resolve_vte(terminal_uuid)
             has_sel = vte.get_has_selection()
             dbg(f'has_selection for {terminal_uuid}: {has_sel}')
             return has_sel
@@ -1131,23 +1007,13 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             or error message starting with "ERROR:"
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return "ERROR: Terminal not found"
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return "ERROR: VTE not accessible"
+            vte = self._resolve_vte(terminal_uuid)
 
             # Check if there's actually a selection
             if not vte.get_has_selection():
                 dbg(f'get_selection for {terminal_uuid}: no selection')
                 return ""
 
-            # Get the GTK clipboard
-            from gi.repository import Gtk
             clipboard = Gtk.Clipboard.get_default(Gdk.Display.get_default())
             if not clipboard:
                 err('Could not access clipboard')
@@ -1307,15 +1173,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             True on success, False on error
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return False
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return False
+            vte = self._resolve_vte(terminal_uuid)
 
             vadj = vte.get_vadjustment()
             if not vadj:
@@ -1355,15 +1213,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             Returns empty dict on error.
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return {}
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return {}
+            vte = self._resolve_vte(terminal_uuid)
 
             vadj = vte.get_vadjustment()
             if not vadj:
@@ -1402,20 +1252,9 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             - end_col: End column of match (int)
             Returns empty list on error or no matches.
         """
-        import re
-
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return []
+            vte = self._resolve_vte(terminal_uuid)
 
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return []
-
-            # Get full scrollback content
             vadj = vte.get_vadjustment()
             if not vadj:
                 return []
@@ -1423,23 +1262,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             total_lines = int(vadj.get_upper())
             term_width = vte.get_column_count()
 
-            # Capture full scrollback
-            vte_version = Vte.get_minor_version()
-            if vte_version >= 72:
-                result = vte.get_text_range_format(
-                    Vte.Format.TEXT,
-                    0, 0,
-                    total_lines - 1, term_width - 1
-                )
-                content = result[0] if isinstance(result, tuple) else (result or '')
-            else:
-                result = vte.get_text_range(
-                    0, 0,
-                    total_lines - 1, term_width - 1,
-                    lambda *a: True
-                )
-                content = result[0] if isinstance(result, tuple) else (result or '')
-
+            content = self._capture_vte_range(vte, 0, total_lines - 1, term_width)
             if not content:
                 return []
 
@@ -1503,15 +1326,7 @@ class TerminatorAssistant(plugin.Plugin, dbus.service.Object):
             "OK" on success, or error message starting with "ERROR:"
         """
         try:
-            terminal = self.terminator.find_terminal_by_uuid(terminal_uuid)
-            if not terminal:
-                err(f'Terminal {terminal_uuid} not found')
-                return "ERROR: Terminal not found"
-
-            vte = terminal.get_vte()
-            if not vte:
-                err(f'VTE not accessible for terminal {terminal_uuid}')
-                return "ERROR: VTE not accessible"
+            vte = self._resolve_vte(terminal_uuid)
 
             # Check if already subscribed (ref counting)
             if terminal_uuid in self.content_watchers:
