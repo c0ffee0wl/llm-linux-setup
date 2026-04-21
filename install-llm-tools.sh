@@ -1334,23 +1334,24 @@ update_mcp_config() {
 
     # Detect Chrome/Chromium for chrome-devtools MCP
     local chrome_devtools_config="" chrome_bin="" c
-    for c in google-chrome chromium chromium-browser; do
-        command -v "$c" &>/dev/null && { chrome_bin="$c"; break; }
-    done
-    if [ -n "$chrome_bin" ]; then
-        log "Chrome/Chromium detected ($chrome_bin), adding chrome-devtools MCP"
-        install_or_upgrade_global chrome-devtools-mcp
+    if [ "$INSTALL_LEVEL" -ge 3 ]; then
+        for c in google-chrome chromium chromium-browser; do
+            command -v "$c" &>/dev/null && { chrome_bin="$c"; break; }
+        done
+        if [ -n "$chrome_bin" ]; then
+            log "Chrome/Chromium detected ($chrome_bin), adding chrome-devtools MCP"
+            install_or_upgrade_global chrome-devtools-mcp
 
-        # Resolve the installed binary path so we can invoke it directly.
-        # Avoids npx/bunx wrappers — bunx prints a Discord promo to stdout
-        # on first run, which corrupts the MCP JSON-RPC stream.
-        local chrome_devtools_mcp_bin
-        chrome_devtools_mcp_bin=$(command -v chrome-devtools-mcp 2>/dev/null || true)
+            # Resolve the installed binary path so we can invoke it directly.
+            # Avoids npx/bunx wrappers — bunx prints a Discord promo to stdout
+            # on first run, which corrupts the MCP JSON-RPC stream.
+            local chrome_devtools_mcp_bin
+            chrome_devtools_mcp_bin=$(command -v chrome-devtools-mcp 2>/dev/null || true)
 
-        if [ -z "$chrome_devtools_mcp_bin" ]; then
-            warn "chrome-devtools-mcp binary not found after install; skipping chrome-devtools MCP server"
-        else
-            chrome_devtools_config=',
+            if [ -z "$chrome_devtools_mcp_bin" ]; then
+                warn "chrome-devtools-mcp binary not found after install; skipping chrome-devtools MCP server"
+            else
+                chrome_devtools_config=',
     "chrome-devtools": {
       "command": "'"$chrome_devtools_mcp_bin"'",
       "args": ["--browser-url=http://127.0.0.1:9222"],
@@ -1371,6 +1372,7 @@ update_mcp_config() {
         "wait_for"
       ]
     }'
+            fi
         fi
     fi
 
