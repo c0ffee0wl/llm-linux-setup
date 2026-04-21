@@ -94,18 +94,41 @@ def _is_bare_context_invocation(lines: List[str]) -> bool:
 
 
 def find_cast_file() -> Optional[str]:
-    """Find the current session's cast file."""
-    # First, check environment variable
+    """Find the current session's cast file.
+
+    Inside a tmux pane or screen window, we refuse to pick a sibling pane's
+    log by mtime — that would silently conflate sessions. We only match files
+    whose basename carries the current pane/window suffix.
+    """
+    # Authoritative: the shell told us exactly which file.
     if "SESSION_LOG_FILE" in os.environ:
         cast_file = os.environ["SESSION_LOG_FILE"]
         if os.path.exists(cast_file):
             return cast_file
 
-    # Fall back to most recent .cast in the log directory
     log_dir = os.environ.get("SESSION_LOG_DIR", "/tmp/session_logs/asciinema")
     cast_files = glob.glob(os.path.join(log_dir, "*.cast"))
     if not cast_files:
         return None
+
+    required_suffixes: List[str] = []
+    tmux_pane = os.environ.get("TMUX_PANE", "")
+    sty = os.environ.get("STY", "")
+    window = os.environ.get("WINDOW", "")
+    if tmux_pane:
+        required_suffixes.append(f"_tmux{re.sub(r'[^A-Za-z0-9]', '', tmux_pane)}")
+    if sty and window:
+        required_suffixes.append(f"_screen{re.sub(r'[^A-Za-z0-9]', '', window)}")
+
+    if required_suffixes:
+        filtered = [
+            f for f in cast_files
+            if all(s in os.path.basename(f) for s in required_suffixes)
+        ]
+        if not filtered:
+            return None
+        return max(filtered, key=os.path.getmtime)
+
     return max(cast_files, key=os.path.getmtime)
 
 

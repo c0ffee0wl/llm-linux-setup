@@ -23,7 +23,7 @@ import socket
 import subprocess
 import time
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Iterator, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +185,7 @@ def get_terminal_session_id() -> str:
     Checks these environment variables in priority order:
     1. TERMINAL_SESSION_ID - set by @() shell function (preferred)
     2. SESSION_LOG_FILE - asciinema recording path (most unique, prevents context bleeding)
-    3. TMUX_PANE - tmux pane identifier
+    3. Multiplexer composition - TMUX_PANE and/or STY+WINDOW (nested muxes compose)
     4. TERM_SESSION_ID - iTerm2
     5. KONSOLE_DBUS_SESSION - Konsole
     6. WINDOWID - X11 window ID
@@ -209,10 +209,21 @@ def get_terminal_session_id() -> str:
     if session_log:
         return f"session:{Path(session_log).stem}"
 
-    # Check terminal-specific environment variables
-    # Prefixes match the shell @() function in llm-common.sh for consistent terminal IDs
+    # Compose a multiplexer-aware identifier so nested setups
+    # (screen inside tmux, tmux inside screen) don't collapse to the outer layer.
+    parts: List[str] = []
+    tmux_pane = os.environ.get('TMUX_PANE')
+    if tmux_pane:
+        parts.append(f"tmux:{tmux_pane}")
+    sty = os.environ.get('STY')
+    window = os.environ.get('WINDOW')
+    if sty and window:
+        parts.append(f"screen:{sty}:{window}")
+    if parts:
+        return "|".join(parts)
+
+    # Check remaining terminal-specific env vars (GUI terminals without muxes)
     terminal_vars = {
-        'TMUX_PANE': 'tmux',
         'TERM_SESSION_ID': 'iterm',
         'KONSOLE_DBUS_SESSION': 'konsole',
         'WINDOWID': 'x11',

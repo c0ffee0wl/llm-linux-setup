@@ -72,8 +72,12 @@ export SESSION_LOG_SILENT=1
 
 - **Each pane/window gets independent recording** (intentional design)
 - Different panes = different workflows = separate contexts
-- Uses pane-specific markers (e.g., `IN_ASCIINEMA_SESSION_tmux_0`)
-- Session filenames include pane identifiers: `2025-10-05_14-30-45-123_12345_tmux0.cast`
+- Uses composed markers per active multiplexer layer:
+  - tmux pane `%3` → `IN_ASCIINEMA_SESSION_tmux3`, filename suffix `_tmux3`
+  - screen window `1` → `IN_ASCIINEMA_SESSION_screen1`, filename suffix `_screen1`
+  - screen window `1` inside tmux pane `%3` → `IN_ASCIINEMA_SESSION_tmux3_screen1`, suffix `_tmux3_screen1`
+- Session filenames include the composed suffix, e.g. `2025-10-05_14-30-45-123_12345_tmux3.cast`
+- **Strict fallback**: if `$SESSION_LOG_FILE` is unset inside a multiplexer, `context` only considers `.cast` files whose basename carries the current pane/window suffix — never a sibling pane's log. If nothing matches, it reports no session instead of guessing.
 
 ### Unified Recording Alternative
 
@@ -149,4 +153,4 @@ llm plugins | grep context
 
 **Context shows wrong session**: Check `echo $SESSION_LOG_FILE` or manually set it.
 
-**New tmux panes don't record**: Check `env | grep IN_ASCIINEMA_SESSION` shows pane-specific markers.
+**New tmux panes / screen windows don't record**: Check `env | grep IN_ASCIINEMA_SESSION` shows a pane/window-specific marker (e.g. `IN_ASCIINEMA_SESSION_tmux3=1` or `IN_ASCIINEMA_SESSION_screen1=1`). Nested multiplexers compose both layers, e.g. `IN_ASCIINEMA_SESSION_tmux3_screen1=1`.

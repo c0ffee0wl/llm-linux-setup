@@ -227,7 +227,7 @@ llm --tool context "what did I just run?"
 3. **Path Assumptions**: Writes to `~/.bashrc`, `~/.zshrc`, `~/.config/`
 4. **Rust 1.85+**: Required for modern cargo tools
 5. **Node.js 20+**: Required for Claude Code
-6. **Per-Pane Recording**: Each tmux pane gets independent recording (intentional)
+6. **Per-Pane/Window Recording**: Each tmux pane and screen window gets independent recording (intentional); nested multiplexers compose both layers
 
 ## Special Packages & Forks
 

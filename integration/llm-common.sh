@@ -315,22 +315,17 @@ __llm_session_silent() {
 # -- Automatic asciinema session recording --
 if command -v asciinema &> /dev/null; then
   # Only run if this is an interactive shell and we're not already in asciinema
-  # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts)
+  # NOTE: In tmux/screen, each pane/window gets its own recording (intentional - separate workflows = separate contexts).
+  # Nested multiplexers (screen inside tmux, tmux inside screen) are identified by combining both layers.
 
-  # Determine unique session identifier based on multiplexer type
-  # NOTE: Only tmux needs special handling due to environment variable inheritance between panes
-  # Screen windows are isolated and don't need pane-specific markers
+  PANE_SUFFIX=""
   if [ -n "$TMUX_PANE" ]; then
-    # In tmux, use pane ID (e.g., "%0", "%1", "%2")
-    # Clean it for use in variable name (remove % and other special chars)
-    PANE_ID="${TMUX_PANE//[^[:alnum:]]/}"
-    SESSION_MARKER="IN_ASCIINEMA_SESSION_tmux_${PANE_ID}"
-    PANE_SUFFIX="_tmux${PANE_ID}"
-  else
-    # Default for regular terminals and screen (no special handling needed)
-    SESSION_MARKER="IN_ASCIINEMA_SESSION"
-    PANE_SUFFIX=""
+    PANE_SUFFIX+="_tmux${TMUX_PANE//[^[:alnum:]]/}"
   fi
+  if [ -n "$STY" ] && [ -n "$WINDOW" ]; then
+    PANE_SUFFIX+="_screen${WINDOW//[^[:alnum:]]/}"
+  fi
+  SESSION_MARKER="IN_ASCIINEMA_SESSION${PANE_SUFFIX}"
 
   # Check if this specific session is already recording
   # Use eval for bash/zsh compatibility (bash uses ${!var}, zsh uses ${(P)var})
