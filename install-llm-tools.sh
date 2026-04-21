@@ -791,14 +791,14 @@ configure_ccr_systemd_service() {
     local expected_content="[Unit]
 Description=Claude Code Router - Multi-provider proxy for Claude Code
 After=network.target
+StartLimitBurst=5
+StartLimitIntervalSec=60
 
 [Service]
 Type=simple
 ExecStart=${ccr_path} start
 Restart=on-failure
 RestartSec=5
-StartLimitBurst=5
-StartLimitIntervalSec=60
 Environment=PORT=${port}
 Environment=PATH=${current_path}
 EnvironmentFile=${env_file}
