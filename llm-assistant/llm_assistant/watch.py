@@ -11,6 +11,7 @@ import asyncio
 import re
 import time
 import threading
+import traceback
 from typing import TYPE_CHECKING, List, Optional
 
 from rich.markdown import Markdown
@@ -189,6 +190,8 @@ class WatchMixin:
                     exec_status = ""
                     should_skip = False
 
+                    self._debug(f"watch: iteration {self.watch_total_iterations} start")
+
                     with self.watch_lock:
                         # Capture terminal content with smart deduplication:
                         # - Unchanged terminals → [Content unchanged] placeholder
@@ -225,13 +228,19 @@ class WatchMixin:
                         if not context or not context.strip():
                             # No context to analyze
                             should_skip = True
+                            self._debug("watch: skip (empty context)")
                         elif context == CONTEXT_UNCHANGED_MARKER and not tui_attachments:
                             # All terminals unchanged and no new TUI screenshots
                             should_skip = True
+                            self._debug("watch: skip (context unchanged, no TUI)")
                         else:
                             # Have new content - prepare prompt data under lock
                             self.previous_watch_iteration_count += 1
                             self.watch_ai_calls += 1
+                            self._debug(
+                                f"watch: proceeding (ctx={len(context)} chars, "
+                                f"tui={len(tui_attachments)}, exec={exec_status})"
+                            )
 
                     # AI call OUTSIDE lock to avoid blocking main thread
                     # Uses model.prompt() (isolated call) instead of self._prompt()
@@ -249,6 +258,7 @@ class WatchMixin:
                         try:
                             # Use schema if model supports it for reliable parsing
                             use_schema = getattr(self.model, 'supports_schema', False)
+                            self._debug(f"watch: calling model (supports_schema={use_schema})")
                             response = self.model.prompt(
                                 prompt,
                                 system=self._build_system_prompt(),
@@ -257,8 +267,15 @@ class WatchMixin:
                                 schema=WatchResponseSchema if use_schema else None
                             )
                             response_text = response.text()
+                            self._debug(
+                                f"watch: got response ({len(response_text or '')} chars): "
+                                f"{(response_text or '')[:120]!r}"
+                            )
+                            if not (response_text and response_text.strip()):
+                                self._debug("watch: response_text is empty after model call")
                         except Exception as response_error:
                             ConsoleHelper.warning(self.console, f"Watch mode response error: {response_error}")
+                            self._debug(f"watch: response exception traceback:\n{traceback.format_exc()}")
 
                     # Only show if AI has actionable feedback - outside lock
                     if not should_skip and response_text and response_text.strip():
@@ -271,6 +288,10 @@ class WatchMixin:
                             # Schema response - use structured fields
                             has_feedback = parsed.has_actionable_feedback
                             feedback_text = parsed.feedback
+                            self._debug(
+                                f"watch: schema parsed has_feedback={has_feedback} "
+                                f"feedback_len={len(feedback_text or '')}"
+                            )
                         else:
                             # Not a schema response or parsing failed, use fallback
                             has_feedback = None
@@ -279,9 +300,11 @@ class WatchMixin:
                         if has_feedback is None:
                             if NO_COMMENT_PATTERN.search(response_text):
                                 has_feedback = False
+                                self._debug("watch: fallback matched NoComment, no alert")
                             else:
                                 has_feedback = True
                                 feedback_text = response_text
+                                self._debug("watch: fallback treating raw response as feedback")
 
                         # Show alert if we have actionable feedback
                         if has_feedback and feedback_text and feedback_text.strip():

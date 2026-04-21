@@ -20,10 +20,12 @@ from llm.cli import process_fragments_in_chat
 from llm.migrations import migrate
 import sqlite_utils
 
-# dbus is system-only; must come after llm imports to avoid typing_extensions conflicts
-sys.path.insert(0, '/usr/lib/python3/dist-packages')
+# dbus is system-only; append (not insert) so venv packages keep priority —
+# otherwise the apt-installed fastapi/starlette can get mixed with the venv's
+# and `/web` crashes with a Router on_startup TypeError.
+sys.path.append('/usr/lib/python3/dist-packages')
 import site
-sys.path.insert(0, site.getusersitepackages())
+sys.path.append(site.getusersitepackages())
 import os
 import re
 import time
