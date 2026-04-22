@@ -4,11 +4,11 @@ exec 2>/dev/null
 
 input=$(cat)
 
-# Resolve user/host from shell builtins first to avoid forking whoami/hostname
-# on every statusline render. Fallbacks keep this robust if either var is unset.
-user="${USER:-$(whoami)}"
-host="${HOSTNAME%%.*}"
-[ -n "$host" ] || host="$(hostname -s)"
+# $USER can be stale under sudo; $HOSTNAME is empty in non-interactive bash.
+# /etc/hostname isn't authoritative either (diverges from the live kernel
+# hostname after hostnamectl/containers), so fork hostname -s.
+user=$(id -un)
+host=$(hostname -s)
 
 # Parse + validate in a single jq fork. `-e` exits non-zero on null/false top-level,
 # and jq fails outright on invalid JSON — both fall through to the minimal fallback.
@@ -42,14 +42,14 @@ else
     info_color="34"
 fi
 
-# Format duration
-MINS=$((DURATION_MS / 60000))
-SECS=$(((DURATION_MS % 60000) / 1000))
-
-# Line 1: identity + directory + duration
+# Line 1: identity + directory + (duration, only once the first turn completes)
 printf "\033[1;${info_color}m(%s%s%s\033[0;${prompt_color}m)-[\033[0;1m%s\033[0;${prompt_color}m]" \
     "$user" "$prompt_symbol" "$host" "$cwd"
-printf " | \033[0;${info_color}m%sm %ss\033[0m\n" "$MINS" "$SECS"
+if [ "$DURATION_MS" -gt 0 ]; then
+    printf " | \033[0;${info_color}m%sm %ss" \
+        "$((DURATION_MS / 60000))" "$(((DURATION_MS % 60000) / 1000))"
+fi
+printf "\033[0m\n"
 
 # Line 2: model + context bar + rate limits (only when NOT behind CCR)
 IS_CCR=false
