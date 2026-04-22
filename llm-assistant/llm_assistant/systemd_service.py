@@ -79,6 +79,11 @@ def generate_service_unit() -> str:
     """
     executable = get_executable()
     current_path = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+    # Non-login installers (sudo'd setup scripts) often lack these in PATH.
+    home = Path.home()
+    path_parts = current_path.split(":")
+    extras = [str(home / ".cargo" / "bin"), str(home / ".local" / "bin")]
+    current_path = ":".join([p for p in extras if p not in path_parts] + path_parts)
     return SERVICE_UNIT_TEMPLATE.format(executable=executable, path=current_path)
 
 
@@ -160,11 +165,12 @@ def install_service() -> bool:
         print(f"Warning: enable failed: {output}")
         return False
 
-    # Start the service
-    print(f"Starting {service_name}...")
-    success, output = _run_systemctl("start", service_name)
+    # restart (not start) so a regenerated unit file replaces the stale env
+    # of an already-running daemon.
+    print(f"Restarting {service_name}...")
+    success, output = _run_systemctl("restart", service_name)
     if not success:
-        print(f"Warning: start failed: {output}")
+        print(f"Warning: restart failed: {output}")
         # Service is enabled but not started - still consider partial success
 
     print(f"\nService installed: {service_path}")
