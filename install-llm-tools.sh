@@ -781,9 +781,12 @@ configure_ccr_systemd_service() {
         fi
     fi
 
-    # Capture current PATH (includes NVM, cargo, etc.) for systemd
-    # Systemd services don't inherit shell environment, so we must pass PATH explicitly
+    # Non-login sudo installers lack ~/.cargo/bin and ~/.local/bin in PATH;
+    # systemd captures this value, so prepend before capture.
     local current_path="$PATH"
+    for d in "$HOME/.cargo/bin" "$HOME/.local/bin"; do
+        case ":$current_path:" in *":$d:"*) ;; *) current_path="$d:$current_path";; esac
+    done
 
     # Generate expected service content
     # API keys are loaded from EnvironmentFile (created by configure_ccr_profile)
@@ -1124,8 +1127,7 @@ if ! uv pip install --system --break-system-packages -e "$SCRIPT_DIR/llm-tools-c
     pip install --user -e "$SCRIPT_DIR/llm-tools-core"
 fi
 
-# Ensure llm is in PATH
-export PATH=$HOME/.local/bin:$PATH
+export PATH=$HOME/.cargo/bin:$HOME/.local/bin:$PATH
 
 #############################################################################
 # Define ALL plugins to be installed with LLM
@@ -1701,6 +1703,15 @@ if command -v systemctl &> /dev/null && systemctl --user status &> /dev/null 2>&
     log "Installing llm-assistant systemd user service..."
     if "$HOME/.local/bin/llm-assistant" --service 2>/dev/null; then
         log "llm-assistant systemd service enabled (faster @ command startup)"
+
+        # Daemon's captured PATH must reach asciinema or @ silently returns no context.
+        if systemctl --user is-active llm-assistant.service &>/dev/null; then
+            unit_path=$(systemctl --user show -p Environment --value llm-assistant.service \
+                | tr ' ' '\n' | sed -n 's/^PATH=//p' | head -1)
+            if [ -n "$unit_path" ] && ! env -i PATH="$unit_path" command -v asciinema >/dev/null 2>&1; then
+                warn "llm-assistant daemon cannot find asciinema on its captured PATH — @ will return empty context (unit PATH: $unit_path)"
+            fi
+        fi
     else
         warn "Could not install systemd service, using traditional daemon mode"
     fi
@@ -2361,15 +2372,22 @@ SETTINGS_EOF
     fi
 fi
 
-# Install/update blaude (bubblewrap sandbox for Claude Code)
-log "Installing/updating blaude..."
+# Install/update tools shipped as raw files from the c0ffee0wl/blaude repo
+install_blaude_repo_script() {
+    local name="$1"
+    local dest="$HOME/.local/bin/$name"
+    log "Installing/updating $name..."
+    if curl_secure -fsSL -H "Cache-Control: no-cache" \
+        "https://raw.githubusercontent.com/c0ffee0wl/blaude/main/$name" -o "$dest"; then
+        chmod +x "$dest"
+        log "$name installed to $dest"
+    else
+        warn "Failed to download $name"
+    fi
+}
 mkdir -p "$HOME/.local/bin"
-if curl_secure -fsSL -H "Cache-Control: no-cache" https://raw.githubusercontent.com/c0ffee0wl/blaude/main/blaude -o "$HOME/.local/bin/blaude"; then
-    chmod +x "$HOME/.local/bin/blaude"
-    log "blaude installed to ~/.local/bin/blaude"
-else
-    warn "Failed to download blaude"
-fi
+install_blaude_repo_script blaude           # bubblewrap sandbox for Claude Code
+install_blaude_repo_script osc52-clipboard  # OSC 52 PTY proxy for VTE terminals
 
 # Update JS-based tools if a package manager is available
 if [ -n "$JS_PKG_MGR" ]; then

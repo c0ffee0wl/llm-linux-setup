@@ -147,31 +147,31 @@ def install_service() -> bool:
     # Create unit directory if needed
     unit_dir.mkdir(parents=True, exist_ok=True)
 
-    # Generate and write service unit
     service_content = generate_service_unit()
-    print(f"Writing {service_path}")
-    service_path.write_text(service_content)
+    needs_update = (not service_path.exists()
+                    or service_path.read_text() != service_content)
+    if needs_update:
+        print(f"Writing {service_path}")
+        service_path.write_text(service_content)
+        print("Reloading systemd daemon...")
+        success, output = _run_systemctl("daemon-reload")
+        if not success:
+            print(f"Warning: daemon-reload failed: {output}")
 
-    # Reload systemd daemon
-    print("Reloading systemd daemon...")
-    success, output = _run_systemctl("daemon-reload")
-    if not success:
-        print(f"Warning: daemon-reload failed: {output}")
-
-    # Enable the service
     print(f"Enabling {service_name}...")
     success, output = _run_systemctl("enable", service_name)
     if not success:
         print(f"Warning: enable failed: {output}")
         return False
 
-    # restart (not start) so a regenerated unit file replaces the stale env
-    # of an already-running daemon.
-    print(f"Restarting {service_name}...")
-    success, output = _run_systemctl("restart", service_name)
-    if not success:
-        print(f"Warning: restart failed: {output}")
-        # Service is enabled but not started - still consider partial success
+    # restart only when the unit actually changed, so no-op updates don't
+    # churn a healthy daemon (and drop in-flight @ queries).
+    is_active, _ = _run_systemctl("is-active", service_name)
+    if needs_update or not is_active:
+        print(f"Restarting {service_name}...")
+        success, output = _run_systemctl("restart", service_name)
+        if not success:
+            print(f"Warning: restart failed: {output}")
 
     print(f"\nService installed: {service_path}")
     print("\nTo check status:")
