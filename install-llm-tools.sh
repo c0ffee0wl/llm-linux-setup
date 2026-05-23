@@ -42,6 +42,9 @@ FORCE_LLM=false
 INSTALL_LEVEL=""  # 1=minimal, 2=standard, 3=full (empty=use saved/default)
 WSL_FLAG=""       # "", "force", or "disable"
 CCR_FLAG=false
+UNINSTALL=false
+DRY_RUN=false
+FORCE_UNINSTALL=false
 
 # Preserve original args before parsing consumes them via shift.
 # Used by self-update (exec "$0") to re-run with the same flags.
@@ -89,6 +92,18 @@ while [[ $# -gt 0 ]]; do
             CCR_FLAG=true
             shift
             ;;
+        --uninstall)
+            UNINSTALL=true
+            shift
+            ;;
+        --dry-run)
+            DRY_RUN=true
+            shift
+            ;;
+        --force)
+            FORCE_UNINSTALL=true
+            shift
+            ;;
         --help|-h)
             echo "Usage: $0 [OPTIONS]"
             echo ""
@@ -106,6 +121,9 @@ while [[ $# -gt 0 ]]; do
             echo "  --gemini       Force (re)configuration of Google Gemini, even if already configured"
             echo "  --force-llm    Force LLM reinstall even if plugins/sources haven't changed"
             echo "  --clear-cache  Clear package caches (npm, go, pip, pipx, cargo, uv) to reclaim disk space"
+            echo "  --uninstall    Remove installed LLM components (keeps user data, system packages, runtimes)"
+            echo "  --dry-run      With --uninstall: show what would be removed without changing anything"
+            echo "  --force        With --uninstall: skip per-group prompts and remove everything"
             echo "  --help         Show this help message"
             echo ""
             echo "Examples:"
@@ -115,6 +133,9 @@ while [[ $# -gt 0 ]]; do
             echo "  $0 --full       # Install everything (level 3)"
             echo "  $0 --azure      # Reconfigure Azure OpenAI settings"
             echo "  $0 --gemini     # Reconfigure Google Gemini settings"
+            echo "  $0 --uninstall              # Per-group prompts (default Y) before removing each group"
+            echo "  $0 --uninstall --dry-run    # Preview removals without touching anything"
+            echo "  $0 --uninstall --force      # Remove everything, no prompts"
             exit 0
             ;;
         *)
@@ -126,6 +147,22 @@ done
 # --clear-cache is a standalone utility op: run and exit before any other work.
 if [ "$CLEAR_CACHE" = "true" ]; then
     clear_package_caches
+    exit 0
+fi
+
+# --force and --dry-run only make sense alongside --uninstall.
+if [ "$UNINSTALL" != "true" ]; then
+    if [ "$FORCE_UNINSTALL" = "true" ]; then
+        error "--force only applies to --uninstall. Use --uninstall --force to remove everything without prompts."
+    fi
+    if [ "$DRY_RUN" = "true" ]; then
+        error "--dry-run only applies to --uninstall."
+    fi
+fi
+
+# --uninstall is also a standalone op: run and exit before any install work.
+if [ "$UNINSTALL" = "true" ]; then
+    run_uninstall
     exit 0
 fi
 

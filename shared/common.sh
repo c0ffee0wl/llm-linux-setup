@@ -1858,6 +1858,421 @@ graceful_stop_process() {
 }
 
 #############################################################################
+# Uninstall Helpers
+#############################################################################
+
+# Run a destructive command, or describe it under DRY_RUN.
+# Usage: do_or_dry "<description>" <command...>
+do_or_dry() {
+    local description="$1"; shift
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        log "[dry-run] $description"
+        return 0
+    fi
+    log "$description"
+    "$@"
+}
+
+# Prompt before uninstalling a group; auto-yes when FORCE_UNINSTALL=true.
+# Returns 0 to proceed, 1 to skip. Records skipped groups in UNINSTALL_SKIPPED.
+# Usage: if confirm_uninstall "Systemd user services"; then ...; fi
+confirm_uninstall() {
+    local label="$1"
+    if [ "${FORCE_UNINSTALL:-false}" = "true" ]; then
+        log "Uninstalling: $label"
+        return 0
+    fi
+    if ask_yes_no "Uninstall $label?" Y; then
+        return 0
+    fi
+    UNINSTALL_SKIPPED+=("$label")
+    log "Skipped: $label"
+    return 1
+}
+
+# Uninstall a uv tool if present. No-op if not installed.
+# Usage: uninstall_uv_tool <tool_name>
+uninstall_uv_tool() {
+    local tool="$1"
+    if ! command -v uv >/dev/null 2>&1; then
+        return 0
+    fi
+    if uv tool list 2>/dev/null | grep -qE "^${tool}( |$)"; then
+        do_or_dry "uv tool uninstall $tool" uv tool uninstall "$tool" || warn "uv tool uninstall $tool failed"
+    fi
+}
+
+# Uninstall a cargo tool if present. No-op if not installed.
+# Usage: uninstall_cargo_tool <tool_name>
+uninstall_cargo_tool() {
+    local tool="$1"
+    if ! command -v cargo >/dev/null 2>&1; then
+        return 0
+    fi
+    if cargo install --list 2>/dev/null | grep -qE "^${tool} v"; then
+        do_or_dry "cargo uninstall $tool" cargo uninstall "$tool" || warn "cargo uninstall $tool failed"
+    fi
+}
+
+# Remove a Go-installed binary from GOPATH/bin. Go has no `go uninstall`.
+# Usage: uninstall_go_tool <binary_name>
+uninstall_go_tool() {
+    local name="$1"
+    local gopath
+    gopath="$(go env GOPATH 2>/dev/null || echo "$HOME/go")"
+    local bin="$gopath/bin/$name"
+    if [ -f "$bin" ]; then
+        do_or_dry "rm $bin" rm -f "$bin"
+    fi
+}
+
+# Remove our installer-written blocks from a shell rc file, including
+# commented-out copies. Each block is: a marker comment line (optionally
+# prefixed with '# ' i.e. fully commented out), followed by lines up to the
+# next blank line or the next top-level '# ' header.
+# Markers covered: "LLM Session Log Directory", "LLM Session Log Silent Mode",
+# "LLM Tools Integration". Also strips any orphan SESSION_LOG_DIR /
+# SESSION_LOG_SILENT export lines as a defensive measure for older installs.
+# Backs up the file before modifying.
+# Usage: remove_shell_rc_block <rc_file>
+remove_shell_rc_block() {
+    local rc_file="$1"
+    [ -f "$rc_file" ] || return 0
+
+    # Quick check: anything to do?
+    if ! grep -qE '^[[:space:]]*#?[[:space:]]*(# )?(LLM Session Log Directory|LLM Session Log Silent Mode|LLM Tools Integration)|^[[:space:]]*#?[[:space:]]*export[[:space:]]+SESSION_LOG_(DIR|SILENT)=' "$rc_file"; then
+        return 0
+    fi
+
+    if [ "${DRY_RUN:-false}" = "true" ]; then
+        log "[dry-run] strip LLM integration blocks from $rc_file"
+        return 0
+    fi
+
+    backup_file "$rc_file"
+
+    local tmp
+    tmp="$(mktemp)"
+    awk '
+        function is_marker(line) {
+            return (line ~ /^[[:space:]]*#?[[:space:]]*(# )?LLM Session Log Directory[[:space:]]*$/) \
+                || (line ~ /^[[:space:]]*#?[[:space:]]*(# )?LLM Session Log Silent Mode/) \
+                || (line ~ /^[[:space:]]*#?[[:space:]]*(# )?LLM Tools Integration[[:space:]]*$/)
+        }
+        function is_block_terminator(line) {
+            # Blank line or a new top-level "# " header (but not our own continuation)
+            if (line ~ /^[[:space:]]*$/) return 1
+            if (line ~ /^[[:space:]]*#/ && !is_marker(line) && line !~ /^[[:space:]]*#?[[:space:]]*(if |source |fi$|fi[[:space:]]|export )/) return 1
+            return 0
+        }
+        BEGIN { in_block = 0 }
+        {
+            if (in_block) {
+                if (is_block_terminator($0)) {
+                    in_block = 0
+                    # Drop blank terminator too so we collapse the gap
+                    if ($0 ~ /^[[:space:]]*$/) next
+                    print
+                    next
+                }
+                # Still inside block — drop the line
+                next
+            }
+            if (is_marker($0)) {
+                in_block = 1
+                next
+            }
+            # Defensive: drop orphan SESSION_LOG_DIR / SESSION_LOG_SILENT exports
+            if ($0 ~ /^[[:space:]]*#?[[:space:]]*export[[:space:]]+SESSION_LOG_(DIR|SILENT)=/) next
+            print
+        }
+    ' "$rc_file" > "$tmp"
+
+    # Preserve original file permissions — mktemp creates 0600, but a typical
+    # ~/.bashrc is 0644 and `mv` would otherwise replace the mode.
+    chmod --reference="$rc_file" "$tmp" 2>/dev/null || true
+    mv "$tmp" "$rc_file"
+    log "Removed LLM integration block(s) from $rc_file (backup created)"
+}
+
+#############################################################################
+# Uninstall Orchestrator
+#############################################################################
+
+# Remove a systemd --user unit cleanly: stop, disable, delete file.
+# Usage: _uninstall_systemd_unit <unit_name>
+_uninstall_systemd_unit() {
+    local unit="$1"
+    local unit_file="$HOME/.config/systemd/user/$unit"
+    if command -v systemctl >/dev/null 2>&1; then
+        if systemctl --user list-unit-files 2>/dev/null | grep -qE "^${unit}([[:space:]]|$)"; then
+            do_or_dry "systemctl --user stop $unit" \
+                bash -c "systemctl --user stop '$unit' 2>/dev/null || true"
+            do_or_dry "systemctl --user disable $unit" \
+                bash -c "systemctl --user disable '$unit' 2>/dev/null || true"
+        fi
+    fi
+    if [ -f "$unit_file" ]; then
+        do_or_dry "rm $unit_file" rm -f "$unit_file" || warn "Failed to remove $unit_file"
+    fi
+}
+
+# Run the full uninstall flow with per-group prompts (default Y).
+# Honors FORCE_UNINSTALL (skip prompts, remove all) and DRY_RUN (describe only).
+# Preserves: API keys, user configs, session logs, system apt packages, runtimes.
+run_uninstall() {
+    UNINSTALL_SKIPPED=()
+    local removed_anything=false
+
+    # An inherited YES_MODE / NO_MODE would silently bypass every prompt
+    # without the user knowing. Uninstall has its own --force gate instead.
+    unset YES_MODE NO_MODE
+
+    log "LLM Tools Uninstall"
+    if [ "$DRY_RUN" = "true" ]; then
+        log "Mode: DRY RUN — nothing will be changed"
+    fi
+    if [ "$FORCE_UNINSTALL" = "true" ]; then
+        log "Mode: --force — no per-group prompts"
+    fi
+    echo ""
+    log "User data will be preserved (~/.config/io.datasette.llm, ~/.claude-code-router,"
+    log "~/.codex, ~/.config/llm-assistant, session recordings, ~/.profile exports)."
+    log "System apt packages (espanso, ulauncher, handy) and runtimes (bun, go, node,"
+    log "rust, uv, pipx) will NOT be removed."
+    echo ""
+
+    # 1. Systemd user services
+    if confirm_uninstall "Systemd user services (claude-code-router, llm-assistant, llm-server)"; then
+        _uninstall_systemd_unit "claude-code-router.service"
+        _uninstall_systemd_unit "llm-assistant.service"
+        _uninstall_systemd_unit "llm-server.socket"
+        _uninstall_systemd_unit "llm-server.service"
+        if command -v systemctl >/dev/null 2>&1; then
+            do_or_dry "systemctl --user daemon-reload" \
+                bash -c "systemctl --user daemon-reload 2>/dev/null || true"
+        fi
+        if command -v espanso >/dev/null 2>&1; then
+            do_or_dry "espanso stop" bash -c "espanso stop 2>/dev/null || pkill espanso 2>/dev/null || true"
+        fi
+        removed_anything=true
+    fi
+
+    # 2. Running assistant processes (catch anything systemd didn't handle)
+    if confirm_uninstall "Running assistant processes (llm-assistant daemon, llm-guiassistant)"; then
+        if [ "$DRY_RUN" = "true" ]; then
+            log "[dry-run] graceful_stop_process llm-assistant.*--daemon"
+            log "[dry-run] graceful_stop_process python.*llm_assistant.*--daemon"
+            log "[dry-run] graceful_stop_process llm-guiassistant"
+            log "[dry-run] graceful_stop_process python.*llm_guiassistant"
+        else
+            graceful_stop_process "llm-assistant.*--daemon" 10 "llm-assistant daemon" || true
+            graceful_stop_process "python.*llm_assistant.*--daemon" 10 "Python llm-assistant" || true
+            graceful_stop_process "llm-guiassistant" 10 "llm-guiassistant" || true
+            graceful_stop_process "python.*llm_guiassistant" 10 "Python llm-guiassistant" || true
+        fi
+        removed_anything=true
+    fi
+
+    # 3. LLM core + all plugins (single uv tool — uninstalling llm removes the whole env)
+    if confirm_uninstall "LLM core tool and all installed plugins (uv tool 'llm')"; then
+        uninstall_uv_tool llm
+        removed_anything=true
+    fi
+
+    # 4. Other uv tools
+    if confirm_uninstall "Other uv tools (gitingest, files-to-prompt, llm-server, toko, tldr, llm-observability, claudechic, notebooklm-mcp-cli, youtube-transcript-api, yt-dlp)"; then
+        local uv_tool
+        for uv_tool in gitingest files-to-prompt llm-server toko tldr llm-observability claudechic notebooklm-mcp-cli youtube-transcript-api yt-dlp; do
+            uninstall_uv_tool "$uv_tool"
+        done
+        removed_anything=true
+    fi
+
+    # 5. Cargo tools
+    if confirm_uninstall "Cargo tools (argc, asciinema, yek)"; then
+        local cargo_tool
+        for cargo_tool in argc asciinema yek; do
+            uninstall_cargo_tool "$cargo_tool"
+        done
+        removed_anything=true
+    fi
+
+    # 6. npm/bun globals
+    if confirm_uninstall "JS globals (claude-code-router, codex, gemini-cli, opencode-ai, claude-agent-acp, chrome-devtools-mcp)"; then
+        # JS package manager detection isn't run by the standalone uninstall path,
+        # so do it here. Falls back to "" with a warning if neither bun nor npm exists.
+        if [ -z "${JS_PKG_MGR:-}" ]; then
+            detect_js_package_manager
+        fi
+        if [ "$JS_PKG_MGR" = "npm" ] && [ -z "${NPM_PREFIX:-}" ]; then
+            detect_npm_permissions
+        fi
+        local js_pkg
+        for js_pkg in \
+            "@musistudio/claude-code-router|ccr" \
+            "@openai/codex|codex" \
+            "@google/gemini-cli|gemini" \
+            "opencode-ai|opencode" \
+            "@zed-industries/claude-agent-acp|claude-agent-acp" \
+            "chrome-devtools-mcp|chrome-devtools-mcp"; do
+            local pkg="${js_pkg%|*}" bin="${js_pkg#*|}"
+            if pkg_is_installed_global "$pkg" "$bin" 2>/dev/null; then
+                do_or_dry "pkg_uninstall_global $pkg" pkg_uninstall_global "$pkg" "$bin" \
+                    || warn "Failed to uninstall $pkg"
+            fi
+        done
+        removed_anything=true
+    fi
+
+    # 7. Go tools
+    if confirm_uninstall "Go tools (imagemage)"; then
+        uninstall_go_tool imagemage
+        removed_anything=true
+    fi
+
+    # 8. Claude Code native binary
+    if confirm_uninstall "Claude Code native binary (~/.local/bin/claude)"; then
+        if [ -f "$HOME/.local/bin/claude" ]; then
+            do_or_dry "rm ~/.local/bin/claude" rm -f "$HOME/.local/bin/claude" \
+                || warn "Failed to remove ~/.local/bin/claude (in use? try again from another shell)"
+        fi
+        removed_anything=true
+    fi
+
+    # 9. Wrapper scripts in ~/.local/bin
+    if confirm_uninstall "Wrapper scripts (~/.local/bin/{context,llm-assistant,llm-inlineassistant,llm-guiassistant,transcribe,blaude,osc52-clipboard,md2cb})"; then
+        local wrapper
+        for wrapper in context llm-assistant llm-inlineassistant llm-guiassistant transcribe blaude osc52-clipboard md2cb; do
+            if [ -f "$HOME/.local/bin/$wrapper" ] || [ -L "$HOME/.local/bin/$wrapper" ]; then
+                do_or_dry "rm ~/.local/bin/$wrapper" rm -f "$HOME/.local/bin/$wrapper" \
+                    || warn "Failed to remove ~/.local/bin/$wrapper"
+            fi
+        done
+        removed_anything=true
+    fi
+
+    # 10. Desktop integration files
+    if confirm_uninstall "Desktop integration (Terminator plugin, espanso-llm, ulauncher-llm, micro plugin, XFCE shortcuts, Parakeet model, llm-guiassistant autostart, MCP config)"; then
+        # Paths installed as symlinks — refuse to delete if user replaced with
+        # a real file/dir (their customizations would be silently destroyed).
+        local sym_path
+        for sym_path in \
+            "$HOME/.config/terminator/plugins/terminator_assistant.py" \
+            "$HOME/.config/espanso/match/packages/espanso-llm" \
+            "$HOME/.config/espanso/match/packages/espanso-llm-ask-llm" \
+            "$HOME/.local/share/ulauncher/extensions/ulauncher-llm"; do
+            if [ -L "$sym_path" ]; then
+                do_or_dry "rm $sym_path" rm -f "$sym_path" \
+                    || warn "Failed to remove $sym_path"
+            elif [ -e "$sym_path" ]; then
+                warn "Keeping $sym_path — not a symlink (appears user-customized)"
+            fi
+        done
+
+        # Always-files: safe to rm -f.
+        local file_path
+        for file_path in \
+            "$HOME/.config/terminator/plugins/terminator_sidechat.py" \
+            "$HOME/.config/autostart/llm-guiassistant.desktop"; do
+            if [ -e "$file_path" ] || [ -L "$file_path" ]; then
+                do_or_dry "rm $file_path" rm -f "$file_path" \
+                    || warn "Failed to remove $file_path"
+            fi
+        done
+
+        # llm-micro plugin (git-cloned directory).
+        if [ -d "$HOME/.config/micro/plug/llm" ]; then
+            do_or_dry "rm -rf ~/.config/micro/plug/llm" rm -rf "$HOME/.config/micro/plug/llm" \
+                || warn "Failed to remove ~/.config/micro/plug/llm"
+        fi
+
+        # Parakeet ONNX model (~500MB) — leave the rest of ~/.local/share/com.pais.handy/
+        # alone (settings, etc., are handy's user data).
+        if [ -d "$HOME/.local/share/com.pais.handy/models" ]; then
+            do_or_dry "rm -rf ~/.local/share/com.pais.handy/models" \
+                rm -rf "$HOME/.local/share/com.pais.handy/models" \
+                || warn "Failed to remove Parakeet model directory"
+        fi
+
+        # XFCE custom keyboard shortcuts pointing at llm-guiassistant. Both
+        # layout variants (DE/AT/CH and US fallback) and the Shift modifier
+        # are reset; --reset on a missing property is benign.
+        if command -v xfconf-query >/dev/null 2>&1; then
+            local shortcut_key
+            for shortcut_key in dead_circumflex grave; do
+                do_or_dry "xfconf-query --reset <Super>$shortcut_key" \
+                    bash -c "xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/<Super>$shortcut_key' -r 2>/dev/null || true"
+                do_or_dry "xfconf-query --reset <Super><Shift>$shortcut_key" \
+                    bash -c "xfconf-query -c xfce4-keyboard-shortcuts -p '/commands/custom/<Super><Shift>$shortcut_key' -r 2>/dev/null || true"
+            done
+        fi
+
+        # MCP config — only remove if our checksum matches (user may have edited it)
+        local mcp_file="$HOME/.llm-tools-mcp/mcp.json"
+        if [ -f "$mcp_file" ]; then
+            local stored current
+            stored="$(get_stored_checksum mcp-config)"
+            current="$(sha256sum "$mcp_file" 2>/dev/null | awk '{print $1}')"
+            if [ -n "$stored" ] && [ "$stored" = "$current" ]; then
+                do_or_dry "rm $mcp_file" rm -f "$mcp_file" || warn "Failed to remove $mcp_file"
+            elif [ -f "$mcp_file" ]; then
+                warn "Keeping $mcp_file — appears user-modified (checksum mismatch)"
+            fi
+        fi
+        removed_anything=true
+    fi
+
+    # 11. Shell rc integration blocks
+    if confirm_uninstall "Shell rc integration blocks (~/.bashrc, ~/.zshrc — even if commented out)"; then
+        remove_shell_rc_block "$HOME/.bashrc"
+        remove_shell_rc_block "$HOME/.zshrc"
+        log "Note: ~/.zprofile bridge to ~/.profile left in place (keeps preserved API-key exports visible to ZSH)"
+        removed_anything=true
+    fi
+
+    # 12. Install-script bookkeeping
+    if confirm_uninstall "Install-script bookkeeping (~/.config/llm-tools/)"; then
+        if [ -d "$HOME/.config/llm-tools" ]; then
+            do_or_dry "rm -rf ~/.config/llm-tools" rm -rf "$HOME/.config/llm-tools" \
+                || warn "Failed to remove ~/.config/llm-tools"
+        fi
+        removed_anything=true
+    fi
+
+    # Final report
+    echo ""
+    if [ "$DRY_RUN" = "true" ]; then
+        log "Dry run complete. No changes were made."
+    elif [ "$removed_anything" = "true" ]; then
+        log "Uninstall complete."
+    else
+        log "Nothing to uninstall (or all groups skipped)."
+    fi
+
+    if [ "${#UNINSTALL_SKIPPED[@]}" -gt 0 ]; then
+        echo ""
+        log "Skipped groups (kept on system):"
+        local s
+        for s in "${UNINSTALL_SKIPPED[@]}"; do
+            echo "  - $s"
+        done
+    fi
+
+    echo ""
+    log "Preserved (not touched by --uninstall):"
+    echo "  - ~/.config/io.datasette.llm/  (API keys, templates, models)"
+    echo "  - ~/.claude-code-router/  + ~/.config/claude-code-router/env  (CCR config + secrets)"
+    echo "  - ~/.codex/  (Codex config)"
+    echo "  - ~/.config/llm-assistant/  (knowledge base, findings, logs)"
+    echo "  - \$SESSION_LOG_DIR  (asciinema session recordings)"
+    echo "  - ~/.local/share/com.pais.handy/  (handy settings; models/ subdir IS removed)"
+    echo "  - ~/.profile  (API-key exports and other env vars)"
+    echo "  - ~/.zprofile  (ZSH ↔ ~/.profile bridge)"
+    echo "  - System apt packages (espanso, ulauncher, handy) and runtimes (bun, go, node, rust, uv, pipx)"
+}
+
+#############################################################################
 # CCR Service Readiness
 #############################################################################
 
