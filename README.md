@@ -1,5 +1,33 @@
 # LLM Tools for Linux
 
+> [!CAUTION]
+> **This project is deprecated and no longer maintained.** Its functionality now exists in better, more popular open-source form. Use the alternatives below instead.
+
+## ⚠️ Deprecated — use llm-setup + Zap instead
+
+Since Warp was open-sourced and forked as **[Zap](https://github.com/zerx-lab/zap)**, the terminal-AI and agent features this repo assembled by hand are now available in a more capable, actively maintained tool. Rather than keep reimplementing that here, the setup has been split into two focused, lighter-weight repositories that together replace everything in this project:
+
+| Use instead | Replaces | What it does |
+|-------------|----------|--------------|
+| **[llm-setup](https://github.com/c0ffee0wl/llm-setup)** | Levels 0, 1, 5 | Installs Simon Willison's `llm` CLI, Claude Code, Claude Code skills, and helper tools (gitingest, imagemage, `blaude` sandbox) on Debian/Kali. Idempotent and non-interactive. |
+| **[zap-setup](https://github.com/c0ffee0wl/zap-setup)** | Levels 2–4 | Configures [Zap](https://github.com/zerx-lab/zap) (the open-source Warp fork) with AI providers, MCP servers, themes, and Terminator-style keybindings. **Linux and Windows.** |
+
+```bash
+# llm CLI + Claude Code + skills (Debian/Kali)
+git clone https://github.com/c0ffee0wl/llm-setup ~/llm-setup
+cd ~/llm-setup && ./linux/setup.sh
+
+# Zap terminal with AI agents (Debian/Kali; Windows supported too)
+git clone https://github.com/c0ffee0wl/zap-setup ~/zap-setup
+cd ~/zap-setup && ./linux/setup.sh
+```
+
+Prefer [Zap](https://github.com/zerx-lab/zap) directly if you just want the terminal without the opinionated defaults.
+
+The original documentation below is preserved for reference only.
+
+---
+
 One script installs [Simon Willison's llm CLI](https://github.com/simonw/llm) with 40+ plugins, shell integration, terminal assistants, and desktop AI tools on Debian-based Linux.
 
 <!-- START doctoc generated TOC please keep comment here to allow auto update -->
